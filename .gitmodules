@@ -1,0 +1,3 @@
+[submodule "CANSAT_AAS_2026_BAROMETER"]
+	path = CANSAT_AAS_2026_BAROMETER
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_BAROMETER
