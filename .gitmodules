@@ -1,3 +1,24 @@
 [submodule "CANSAT_AAS_2026_BAROMETER"]
 	path = CANSAT_AAS_2026_BAROMETER
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_BAROMETER
+[submodule "camera"]
+	path = camera
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_CAMERA
+[submodule "comm"]
+	path = comm
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_COMM
+[submodule "flight_logic"]
+	path = flight_logic
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_Flight_Logic
+[submodule "gcs"]
+	path = gcs
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GCS
+[submodule "imu"]
+	path = imu
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_IMU
+[submodule "motor"]
+	path = motor
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_MOTOR
+[submodule "voltage"]
+	path = voltage
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_VOLTAGE
