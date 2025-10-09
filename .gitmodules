@@ -5,21 +5,31 @@
 [submodule "camera"]
 	path = Sensor_Camera
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_CAMERA
+	branch = main
 [submodule "comm"]
 	path = comm
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_COMM
+	branch = main
 [submodule "flight_logic"]
 	path = flight_logic
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_Flight_Logic
+	branch = main
 [submodule "gcs"]
 	path = Sensor_Gcs
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GCS
+	branch = main
 [submodule "imu"]
 	path = Sensor_Imu
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_IMU
+	branch = main
 [submodule "motor"]
 	path = Sensor_Motor
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_MOTOR
+	branch = main
 [submodule "voltage"]
 	path = Sensor_Voltage
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_VOLTAGE
+	branch = main
+[submodule "Sensor_Gps"]
+	path = Sensor_Gps
+	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GPS
