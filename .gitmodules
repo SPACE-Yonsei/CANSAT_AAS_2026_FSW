@@ -1,6 +1,7 @@
 [submodule "CANSAT_AAS_2026_BAROMETER"]
 	path = CANSAT_AAS_2026_BAROMETER
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_BAROMETER
+	branch = main
 [submodule "camera"]
 	path = camera
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_CAMERA
