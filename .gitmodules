@@ -33,3 +33,4 @@
 [submodule "Sensor_Gps"]
 	path = Sensor_Gps
 	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GPS
+	barnch = main
