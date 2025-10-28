@@ -81,13 +81,13 @@ app_dict[appargs.HkAppArg.AppID] = hkapp_elements
 #########################################################
 # BarometerApp                                          #
 #########################################################
-from barometer import Sensor_Barometer
+from Sensor_Barometer import barometerapp
 
 parent_pipe, child_pipe = Pipe()
 
 # Add Process, pipe to elements dictionary
 barometerapp_elements = app_elements()
-barometerapp_elements.process = Process(target = Sensor_Barometer.barometerapp_main, args = (main_queue, child_pipe, ))
+barometerapp_elements.process = Process(target = barometerapp.barometerapp_main, args = (main_queue, child_pipe, ))
 barometerapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
