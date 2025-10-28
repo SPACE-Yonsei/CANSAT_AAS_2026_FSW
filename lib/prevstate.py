@@ -6,6 +6,8 @@ from lib import events
 PREV_ALT_CAL = 0
 PREV_STATE  = 0
 PREV_MAX_ALT = 0
+Target_lat = 0
+Target_lon = 0
 
 prevstate_file_path = 'lib/prevstate.txt'
 

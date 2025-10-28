@@ -62,6 +62,7 @@ class GpsAppArg:
     # Message ID
     MID_SendHK : types.MID = 1201
     MID_SendGpsTlmData : types.MID = 1202
+    MID_SendGpsFlightLogicData : types.MID = 1203
 
 class ImuAppArg:
     # AppID should be unique
@@ -91,6 +92,7 @@ class FlightlogicAppArg:
     MID_RocketMotorStandby : types.MID = 1406
     MID_SendSimulationStatustoTlm : types.MID = 1407
     MID_SendCameraActivateToCam : types.MID = 1408
+    MID_SendPayloadMotorRatation : types.MID = 1408
     
 class TachometerAppArg:
     # AppID should be unique
