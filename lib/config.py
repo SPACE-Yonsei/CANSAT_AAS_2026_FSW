@@ -7,7 +7,7 @@ CONF_PAYLOAD = 1
 CONF_CONTAINER = 2
 CONF_ROCKET = 3
 
-FSW_CONF = CONF_NONE
+FSW_CONF = CONF_PAYLOAD
 
 config_file_path = 'lib/config.txt'
 
