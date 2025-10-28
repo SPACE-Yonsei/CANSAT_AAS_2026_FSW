@@ -1,0 +1,5 @@
+eventlogs/
+__pycache__/
+lib/__pycache__/
+*.pyc
+lib/config.txt
