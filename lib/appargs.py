@@ -35,7 +35,7 @@ class BarometerAppArg:
     # AppID should be unique
     AppID : types.AppID = 10
     # Application name used in log
-    AppName : str = "Barometer"
+    AppName : str = "Sensor_Barometer"
 
     # Message ID
     MID_SendHK : types.MID = 1001
