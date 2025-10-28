@@ -18,7 +18,7 @@ if not os.path.exists(config_file_path):
 # Select the FSW operation mode
 # Currently supports PAYLOAD, CONTAINER, ROCKET
 # SELECTED=NONE
-SELECTED=PAYLOAD
+# SELECTED=PAYLOAD
 # SELECTED=CONTAINER
 # SELECTED=ROCKET"""
 
