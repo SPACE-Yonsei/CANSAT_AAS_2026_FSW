@@ -96,7 +96,7 @@ app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 #########################################################
 # CameraApp                                             #
 #########################################################
-
+"""
 from Sensor_Camera import cameraapp
 
 parent_pipe, child_pipe = Pipe()
@@ -108,7 +108,7 @@ cameraapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
 app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
-
+"""
 #########################################################
 # GpsApp                                                #
 #########################################################
