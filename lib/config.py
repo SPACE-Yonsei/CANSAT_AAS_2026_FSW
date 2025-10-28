@@ -17,8 +17,8 @@ if not os.path.exists(config_file_path):
     initial_conf_file_content = """# Config.txt
 # Select the FSW operation mode
 # Currently supports PAYLOAD, CONTAINER, ROCKET
-SELECTED=NONE
-# SELECTED=PAYLOAD
+# SELECTED=NONE
+SELECTED=PAYLOAD
 # SELECTED=CONTAINER
 # SELECTED=ROCKET"""
 
