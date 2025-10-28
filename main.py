@@ -97,7 +97,7 @@ app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 # CameraApp                                             #
 #########################################################
 
-from camera import Sensor_Camera as cameraapp
+from Sensor_Camera import cameraapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -112,7 +112,7 @@ app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
 #########################################################
 # GpsApp                                                #
 #########################################################
-from gps import gpsapp
+from Sensor_Gps import gpsapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -127,7 +127,7 @@ app_dict[appargs.GpsAppArg.AppID] = gpsapp_elements
 #########################################################
 # ImuApp                                                #
 #########################################################
-from imu import imuapp
+from Sensor_Imu import imuapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -143,7 +143,7 @@ app_dict[appargs.ImuAppArg.AppID] = imuapp_elements
 #########################################################
 # TachometerApp                                         #
 #########################################################
-from tachometer import tachometerapp
+"""from tachometer import tachometerapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -154,7 +154,7 @@ tachometerapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
 app_dict[appargs.TachometerAppArg.AppID] = tachometerapp_elements
-
+"""
 
 #########################################################
 # CommApp                                               #
@@ -175,7 +175,7 @@ app_dict[appargs.CommAppArg.AppID] = commapp_elements
 #########################################################
 # VoltageApp                                            #
 #########################################################
-from voltage import voltageapp
+from Sensor_Voltage import voltageapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -190,7 +190,7 @@ app_dict[appargs.VoltageAppArg.AppID] = voltageapp_elements
 #########################################################
 # FlightlogicApp                                        #
 #########################################################
-from flightlogic import flightlogicapp
+from flight_logic import flightlogicapp
 
 parent_pipe, child_pipe = Pipe()
 
@@ -205,7 +205,7 @@ app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 #########################################################
 # Gimbalmotorapp                                        #
 #########################################################
-from motor import gimbalmotorapp
+from Sensor_Motor import gimbalmotorapp
 
 parent_pipe, child_pipe = Pipe()
 
