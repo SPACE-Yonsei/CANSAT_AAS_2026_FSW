@@ -74,7 +74,6 @@ class ImuAppArg:
     MID_SendHK : types.MID = 1301
     # Send Imu Data to comms app for tememetry
     MID_SendImuTlmData : types.MID = 1302
-    MID_SendYawData : types.MID = 1303
     MID_SendImuFlightLogicData : types.MID = 1304
 
 class FlightlogicAppArg:
@@ -132,11 +131,11 @@ class VoltageAppArg:
     MID_SendHK : types.MID = 1701
     MID_SendVoltageTlmData : types.MID = 1702
 
-class GimbalmotorAppArg:
+class motorAppArg:
     # AppID should be unique
     AppID : types.AppID = 18
     # Application name used in log
-    AppName : str = "Gimbalmotor"
+    AppName : str = "Motor"
 
     # Message ID
     MID_SendHK : types.MID = 1801

@@ -205,13 +205,13 @@ app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 #########################################################
 # Gimbalmotorapp                                        #
 #########################################################
-from Sensor_Motor import gimbalmotorapp
+from Sensor_Motor import motorapp
 
 parent_pipe, child_pipe = Pipe()
 
 # Add Process, pipe to elements dictionary
 gimbalmotorapp_elements = app_elements()
-gimbalmotorapp_elements.process = Process(target = gimbalmotorapp.gimbalmotorapp_main, args = (main_queue, child_pipe, ))
+gimbalmotorapp_elements.process = Process(target = motorapp.gimbalmotorapp_main, args = (main_queue, child_pipe, ))
 gimbalmotorapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
