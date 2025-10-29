@@ -69,10 +69,8 @@ class ImuAppArg:
     AppID : types.AppID = 13
     # Application name used in log
     AppName : str = "Imu"
-
     # Message ID
     MID_SendHK : types.MID = 1301
-    # Send Imu Data to comms app for tememetry
     MID_SendImuTlmData : types.MID = 1302
     MID_SendImuFlightLogicData : types.MID = 1304
 
@@ -92,16 +90,6 @@ class FlightlogicAppArg:
     MID_SendSimulationStatustoTlm : types.MID = 1407
     MID_SendCameraActivateToCam : types.MID = 1408
     MID_SendPayloadMotorRatation : types.MID = 1408
-    
-class TachometerAppArg:
-    # AppID should be unique
-    AppID : types.AppID = 15
-    # Application name used in log
-    AppName : str = "Tachometer"
-
-    # Message ID
-    MID_SendHK : types.MID = 1501
-    MID_SendDegPerSec : types.MID = 1502
 
 class CommAppArg:
     # AppID should be unique

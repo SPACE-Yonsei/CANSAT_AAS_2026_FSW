@@ -45,24 +45,6 @@ class app_elements:
 # The app dictionary has key as AppID, app elements as Value
 app_dict = dict[types.AppID, app_elements]()
 
-"""
-# e.g importing test app and executing runloop
-#########################################################
-# SampleApp                                             #
-#########################################################
-from sampleapp import sampleapp
-
-parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
-sampleapp_elements = app_elements()
-sampleapp_elements.process = Process(target = sampleapp.sampleapp_main, args = (main_queue, child_pipe, ))
-sampleapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
-app_dict[appargs.SampleAppArg.AppID] = sampleapp_elements
-"""
-
 #########################################################
 # HK APP                                                #
 #########################################################
@@ -96,7 +78,7 @@ app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 #########################################################
 # CameraApp                                             #
 #########################################################
-"""
+
 from Sensor_Camera import cameraapp
 
 parent_pipe, child_pipe = Pipe()
@@ -108,7 +90,7 @@ cameraapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
 app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
-"""
+
 #########################################################
 # GpsApp                                                #
 #########################################################
@@ -138,23 +120,6 @@ imuapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
 app_dict[appargs.ImuAppArg.AppID] = imuapp_elements
-
-
-#########################################################
-# TachometerApp                                         #
-#########################################################
-"""from tachometer import tachometerapp
-
-parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
-tachometerapp_elements = app_elements()
-tachometerapp_elements.process = Process(target = tachometerapp.tachometerapp_main, args = (main_queue, child_pipe, ))
-tachometerapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
-app_dict[appargs.TachometerAppArg.AppID] = tachometerapp_elements
-"""
 
 #########################################################
 # CommApp                                               #
@@ -210,12 +175,12 @@ from Sensor_Motor import motorapp
 parent_pipe, child_pipe = Pipe()
 
 # Add Process, pipe to elements dictionary
-gimbalmotorapp_elements = app_elements()
-gimbalmotorapp_elements.process = Process(target = motorapp.gimbalmotorapp_main, args = (main_queue, child_pipe, ))
-gimbalmotorapp_elements.pipe = parent_pipe
+motorapp_elements = app_elements()
+motorapp_elements.process = Process(target = motorapp.motorapp_main, args = (main_queue, child_pipe, ))
+motorapp_elements.pipe = parent_pipe
 
 # Add the process to dictionary
-app_dict[appargs.GimbalmotorAppArg.AppID] = gimbalmotorapp_elements
+app_dict[appargs.motorAppArg.AppID] = motorapp_elements
 
 #########################################################
 # Add Apps HERE                                         #
