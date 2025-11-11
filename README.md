@@ -17,6 +17,9 @@ Please clone this FSW in /home/pi for smooth automatic initialization! Set the r
     python3 -m venv venv # 가상환경 설치
     source venv/bin/activate # 가상환경 실행
 
+    sudo apt update
+    sudo apt install python3.13-dev
+
 ## 1. Install Adafruit Blinka
 Before installing Adafruit modules, follow the steps provided in the link below to install adafruit-blinka
 https://learn.adafruit.com/circuitpython-on-raspberrypi-linux/installing-circuitpython-on-raspberry-pi
