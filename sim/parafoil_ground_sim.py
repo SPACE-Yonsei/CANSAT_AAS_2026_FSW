@@ -132,7 +132,7 @@ def main() -> int:
 	parser.add_argument("--kp-us", type=float, default=2.0, help="[servo mode] Heading P gain in us/deg, default 2.0")
 	parser.add_argument("--pigpio", action="store_true", help="Output PWM using pigpio (requires Raspberry Pi and pigpio)")
 	parser.add_argument("--left-gpio", type=int, default=12, help="GPIO pin for left motor PWM (default: 18)")
-	parser.add_argument("--right-gpio", type=int, default=19, help="GPIO pin for right motor PWM (default: 19)")
+	parser.add_argument("--right-gpio", type=int, default=13, help="GPIO pin for right motor PWM (default: 19)")
 	parser.add_argument("--min-us", type=int, default=1000, help="Servo min pulse width in us (default: 1000)")
 	parser.add_argument("--max-us", type=int, default=2000, help="Servo max pulse width in us (default: 2000)")
 	parser.add_argument("--trim-left-us", type=int, default=0, help="[servo mode] Trim offset for left servo in us, default 0")
