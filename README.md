@@ -9,8 +9,13 @@ Please clone this FSW in /home/pi for smooth automatic initialization! Set the r
     
     sudo apt update
     sudo apt install git
-    cd /home/pi
-    git clone git@github.com:SPACE-Yonsei/CANSAT_AAS_2025_FSW.git
+    ssh-keygen -t rsa -b 4096 -C "jmpark3972@yonsei.ac.kr" # Enter 3번
+    cat ~/.ssh/id_rsa.pub # 키 복사, github 세팅 -> SSH and GPG key -> New SSH Key -> Title 아무거나, key 그대로 붙여넣기
+    git clone git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_FSW.git
+
+    pi@spacey:~/CANSAT_AAS_2026_FSW $
+    python3 -m venv venv # 가상환경 설치
+    source venv/bin/activate # 가상환경 실행
 
 ## 1. Install Adafruit Blinka
 Before installing Adafruit modules, follow the steps provided in the link below to install adafruit-blinka
