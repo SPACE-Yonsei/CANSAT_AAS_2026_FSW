@@ -6,7 +6,9 @@ To make a new app, copy from sample app and replace 'sample' to app name (case s
 
 ## 0. Clone directory
 Please clone this FSW in /home/pi for smooth automatic initialization! Set the raspberry pi name as pi!
-
+    
+    sudo apt update
+    sudo apt install git
     cd /home/pi
     git clone git@github.com:SPACE-Yonsei/CANSAT_AAS_2025_FSW.git
 
