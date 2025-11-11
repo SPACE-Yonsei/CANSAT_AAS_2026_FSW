@@ -3,6 +3,7 @@
 import math
 import sys
 import argparse
+import time
 from typing import Tuple
 
 try:
@@ -165,68 +166,79 @@ def main() -> int:
 	print("Parafoil Ground Simulation")
 	print("Enter 'q' at any prompt to quit.")
 
-	while True:
-		try:
-			raw = input("\nTarget GPS lat,lon (deg, e.g., 37.1234,127.1234): ").strip()
-			if raw.lower() == "q":
-				break
+	# Initial target set to 0,0; allow one-time override
+	t_lat = 0.0
+	t_lon = 0.0
+	try:
+		raw = input("\nTarget GPS lat,lon [default 0.0,0.0]: ").strip()
+		if raw.lower() == "q":
+			return 0
+		if raw != "":
 			t_lat_str, t_lon_str = [s.strip() for s in raw.split(",")]
 			t_lat = float(t_lat_str)
 			t_lon = float(t_lon_str)
+	except Exception:
+		print("Invalid target input. Using default 0.0,0.0.")
 
+	# Current GPS once
+	while True:
+		try:
 			raw = input("Current GPS lat,lon (deg): ").strip()
 			if raw.lower() == "q":
-				break
+				return 0
 			c_lat_str, c_lon_str = [s.strip() for s in raw.split(",")]
 			c_lat = float(c_lat_str)
 			c_lon = float(c_lon_str)
+			break
+		except Exception:
+			print("Invalid current GPS input. Please try again.")
 
+	print("\nRunning... Press Ctrl+C to exit.")
+	while True:
+		try:
 			if sensor is not None:
 				imu_heading = read_bno055_heading_deg(sensor)
 				if imu_heading is None:
-					print("BNO055 returned invalid heading, please input manually this time.")
-					raw = input("IMU heading (deg, 0..360, 0=N/Up, CW): ").strip()
-					if raw.lower() == "q":
-						break
-					imu_heading = float(raw) % 360.0
-				else:
-					print(f"BNO055 heading: {imu_heading:.2f} deg")
+					print("BNO055 heading invalid; skipping this cycle.")
+					time.sleep(1.0)
+					continue
 			else:
 				raw = input("IMU heading (deg, 0..360, 0=N/Up, CW): ").strip()
 				if raw.lower() == "q":
 					break
 				imu_heading = float(raw) % 360.0
 
-		except Exception:
-			print("Invalid input format. Please try again.")
-			continue
+			bearing = haversine_bearing(c_lat, c_lon, t_lat, t_lon)
+			err = normalize_angle_deg(bearing - imu_heading)
 
-		bearing = haversine_bearing(c_lat, c_lon, t_lat, t_lon)
-		err = normalize_angle_deg(bearing - imu_heading)
+			if args.mode == "servo":
+				left_us, right_us = servo_mix_continuous(err, args.neutral_us, args.delta_max_us, args.kp_us)
+				left_us += args.trim_left_us
+				right_us += args.trim_right_us
+				# Clamp to allowed servo range
+				left_us = max(args.min_us, min(args.max_us, left_us))
+				right_us = max(args.min_us, min(args.max_us, right_us))
+				print(f"Bearing: {bearing:.2f} deg | IMU: {imu_heading:.2f} deg | Error: {err:.2f} deg")
+				print(f"Servo PWM us L/R: {left_us} / {right_us} (neutral {args.neutral_us}, kp_us {args.kp_us})")
+			else:
+				left_thr, right_thr = steering_mix(err, args.base, args.max_thr, args.kp)
+				left_us = throttle_to_pwm(left_thr, args.min_us, args.max_us)
+				right_us = throttle_to_pwm(right_thr, args.min_us, args.max_us)
+				print(f"Bearing: {bearing:.2f} deg | IMU: {imu_heading:.2f} deg | Error: {err:.2f} deg")
+				print(f"Throttle L/R: {left_thr:.3f} / {right_thr:.3f} -> PWM us L/R: {left_us} / {right_us}")
 
-		if args.mode == "servo":
-			left_us, right_us = servo_mix_continuous(err, args.neutral_us, args.delta_max_us, args.kp_us)
-			left_us += args.trim_left_us
-			right_us += args.trim_right_us
-			# Clamp to allowed servo range
-			left_us = max(args.min_us, min(args.max_us, left_us))
-			right_us = max(args.min_us, min(args.max_us, right_us))
-			print(f"Bearing: {bearing:.2f} deg | IMU: {imu_heading:.2f} deg | Error: {err:.2f} deg")
-			print(f"Servo PWM us L/R: {left_us} / {right_us} (neutral {args.neutral_us}, kp_us {args.kp_us})")
-		else:
-			left_thr, right_thr = steering_mix(err, args.base, args.max_thr, args.kp)
-			left_us = throttle_to_pwm(left_thr, args.min_us, args.max_us)
-			right_us = throttle_to_pwm(right_thr, args.min_us, args.max_us)
-			print(f"Bearing: {bearing:.2f} deg | IMU: {imu_heading:.2f} deg | Error: {err:.2f} deg")
-			print(f"Throttle L/R: {left_thr:.3f} / {right_thr:.3f} -> PWM us L/R: {left_us} / {right_us}")
+			if pi is not None:
+				try:
+					pi.set_servo_pulsewidth(args.left_gpio, left_us)
+					pi.set_servo_pulsewidth(args.right_gpio, right_us)
+				except Exception as e:
+					print(f"pigpio set error: {e}")
 
-
-		if pi is not None:
-			try:
-				pi.set_servo_pulsewidth(args.left_gpio, left_us)
-				pi.set_servo_pulsewidth(args.right_gpio, right_us)
-			except Exception as e:
-				print(f"pigpio set error: {e}")
+			# 1 Hz update when using BNO055
+			if sensor is not None:
+				time.sleep(1.0)
+		except KeyboardInterrupt:
+			break
 
 	if pi is not None:
 		try:
