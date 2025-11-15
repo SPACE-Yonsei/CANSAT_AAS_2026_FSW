@@ -20,11 +20,6 @@ Please clone this FSW in /home/pi for smooth automatic initialization! Set the r
     sudo apt update
     sudo apt install python3.13-dev
 
-    #pico
-    sudo apt install thonny
-    python3 -m pip install pyserial
-    sudo usermod -a -G dialout pi
-
 
 ## 1. Install Adafruit Blinka
 Before installing Adafruit modules, follow the steps provided in the link below to install adafruit-blinka
@@ -36,7 +31,7 @@ The flight software uses Adafruit CircuitPython modules
     pip3 install adafruit-circuitpython-bmp3xx
     pip3 install adafruit-circuitpython-gps
     pip3 install adafruit-circuitpython-bno055
-    pip3 install adafruit-circuitpython-ads1x15
+    pip install adafruit-circuitpython-ina23x
     pip3 install adafruit-circuitpython-motor
 
 ## 3. Install Video Related modules
