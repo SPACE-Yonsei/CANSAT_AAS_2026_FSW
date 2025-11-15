@@ -43,6 +43,8 @@ Picamera2 module is used in Raspberry Pi Camera recording
 It is pre-installed on Rapsberry Pi OS images
 
     sudo apt install python3-picamera2
+    
+    sudo apt install -y libcamera-apps libcamera-tools
 
 ## 4. Install Basic modules
 Other basic modules should be installed too
