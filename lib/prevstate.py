@@ -6,8 +6,8 @@ from lib import events
 PREV_ALT_CAL = 0
 PREV_STATE  = 0
 PREV_MAX_ALT = 0
-Target_lat = 0
-Target_lon = 0
+Target_lat = 38
+Target_lon = 128
 
 prevstate_file_path = 'lib/prevstate.txt'
 
@@ -15,13 +15,17 @@ def write_prevstate_file():
     global PREV_ALT_CAL
     global PREV_STATE
     global PREV_MAX_ALT
+    global Target_lat
+    global Target_lon
 
     content = f"""# Prevstate.txt
 # The Config below stores the prev flight data
 # DO NOT EDIT MANUALLY
 STATE={PREV_STATE}
 ALTCAL={PREV_ALT_CAL}
-MAXALT={PREV_MAX_ALT}"""
+MAXALT={PREV_MAX_ALT}
+TARGET_LAT={Target_lat}
+TARGET_LON={Target_lon}"""
 
     with open(prevstate_file_path, 'w') as file:
         file.write(content)
@@ -54,11 +58,24 @@ def update_maxalt(alt:float):
     PREV_MAX_ALT = alt
     write_prevstate_file()
 
+def update_target_gps(lat: float, lon: float):
+    """Update target GPS coordinates."""
+    global Target_lat
+    global Target_lon
+    Target_lat = lat
+    Target_lon = lon
+    write_prevstate_file()
+    events.LogEvent("RECOVERY", events.EventType.info, f"Target GPS updated: Lat={lat}, Lon={lon}")
+    return
+
 def init_prevstate():
 
     global PREV_STATE
     global PREV_ALT_CAL
     global PREV_MAX_ALT
+    global Target_lat
+    global Target_lon
+    
     if not os.path.exists(prevstate_file_path):
         print(f"#################################################################\n\nPrevstate file does not exist, Using initial state\n\n#################################################################")
         write_prevstate_file()
@@ -100,5 +117,31 @@ def init_prevstate():
                 else:
                     events.LogEvent("RECOVERY", events.EventType.info, f"Prev maxalt is {prev_maxalt}")
                     PREV_MAX_ALT = float(prev_maxalt)
+            
+            elif "TARGET_LAT=" in prevstate_line:
+                target_lat_str = prevstate_line.split("=")[1].strip()
+                if target_lat_str == "NONE" or target_lat_str == "":
+                    events.LogEvent("RECOVERY", events.EventType.info, "Target latitude is NONE")
+                    Target_lat = 0
+                else:
+                    try:
+                        Target_lat = float(target_lat_str)
+                        events.LogEvent("RECOVERY", events.EventType.info, f"Target latitude restored: {Target_lat}")
+                    except ValueError:
+                        events.LogEvent("RECOVERY", events.EventType.error, f"Invalid target latitude: {target_lat_str}")
+                        Target_lat = 0
+            
+            elif "TARGET_LON=" in prevstate_line:
+                target_lon_str = prevstate_line.split("=")[1].strip()
+                if target_lon_str == "NONE" or target_lon_str == "":
+                    events.LogEvent("RECOVERY", events.EventType.info, "Target longitude is NONE")
+                    Target_lon = 0
+                else:
+                    try:
+                        Target_lon = float(target_lon_str)
+                        events.LogEvent("RECOVERY", events.EventType.info, f"Target longitude restored: {Target_lon}")
+                    except ValueError:
+                        events.LogEvent("RECOVERY", events.EventType.error, f"Invalid target longitude: {target_lon_str}")
+                        Target_lon = 0
 
     return

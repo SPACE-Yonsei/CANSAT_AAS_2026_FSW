@@ -89,7 +89,8 @@ class FlightlogicAppArg:
     MID_RocketMotorStandby : types.MID = 1406
     MID_SendSimulationStatustoTlm : types.MID = 1407
     MID_SendCameraActivateToCam : types.MID = 1408
-    MID_SendPayloadMotorRatation : types.MID = 1408
+    MID_SendPayloadMotorRatation : types.MID = 1409
+    MID_PayloadEggMotorActivate : types.MID = 1410
 
 class CommAppArg:
     # AppID should be unique
