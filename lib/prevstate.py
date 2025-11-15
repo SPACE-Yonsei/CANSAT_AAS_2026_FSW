@@ -6,8 +6,8 @@ from lib import events
 PREV_ALT_CAL = 0
 PREV_STATE  = 0
 PREV_MAX_ALT = 0
-Target_lat = 38
-Target_lon = 128
+Target_lat = 0
+Target_lon = 0
 
 prevstate_file_path = 'lib/prevstate.txt'
 
@@ -34,10 +34,14 @@ def reset_prevstate():
     global PREV_STATE
     global PREV_ALT_CAL
     global PREV_MAX_ALT
+    global Target_lat
+    global Target_lon
 
     PREV_STATE = "NONE"
     PREV_ALT_CAL = "NONE"
     PREV_MAX_ALT = "NONE"
+    Target_lat = 0
+    Target_lon = 0
     write_prevstate_file()
     return
 
