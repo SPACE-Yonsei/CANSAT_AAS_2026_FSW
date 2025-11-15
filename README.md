@@ -35,9 +35,6 @@ The flight software uses Adafruit CircuitPython modules
     pip3 install adafruit-circuitpython-motor
 
 ## 3. Install Video Related modules
-Opencv2 module is used in USB camera recording
-
-    pip install opencv-python
 
 Picamera2 module is used in Raspberry Pi Camera recording
 It is pre-installed on Rapsberry Pi OS images
@@ -45,6 +42,11 @@ It is pre-installed on Rapsberry Pi OS images
     sudo apt install python3-picamera2
     
     sudo apt install -y libcamera-apps libcamera-tools
+
+    sudo nano /boot/firmware/config.txt
+    camera_auto_detect=0
+    [all]
+    dtoverlay=imx708
 
 ## 4. Install Basic modules
 Other basic modules should be installed too
