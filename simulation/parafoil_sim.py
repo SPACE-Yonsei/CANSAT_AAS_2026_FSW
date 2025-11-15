@@ -15,6 +15,14 @@ except ImportError:
     IMU_AVAILABLE = False
     print("⚠️  Warning: BNO055 IMU 센서 모듈을 불러올 수 없습니다.")
 
+# 파라포일 모터 제어
+try:
+    from Sensor_Motor import parafoil_motor
+    MOTOR_AVAILABLE = True
+except ImportError:
+    MOTOR_AVAILABLE = False
+    print("⚠️  Warning: 파라포일 모터 모듈을 불러올 수 없습니다.")
+
 def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371000  # 지구 반지름 (미터)
     
@@ -41,16 +49,7 @@ def calculate_bearing_angle(lat1: float, lon1: float, lat2: float, lon2: float) 
     return gps_angle_deg
 
 def calculate_turn_angle(target_yaw: float, gps_angle: float) -> float:
-    """
-    회전해야 할 각도 계산 (-180 ~ +180도)
-    
-    Args:
-        target_yaw: 현재 heading (IMU yaw, 0-360도)
-        gps_angle: 목표 방향 (GPS bearing, 0-360도)
-    
-    Returns:
-        회전 각도 (-180 ~ +180도, 음수=왼쪽, 양수=오른쪽)
-    """
+
     angle_diff = target_yaw - gps_angle
     
     while angle_diff > 180:
@@ -61,15 +60,6 @@ def calculate_turn_angle(target_yaw: float, gps_angle: float) -> float:
     return angle_diff
 
 def simulate_parafoil_motor(turn: float) -> dict:
-    """
-    파라포일 모터 제어 시뮬레이션
-    
-    Args:
-        turn: 회전 각도 (-180 ~ +180도, 음수=왼쪽, 양수=오른쪽)
-    
-    Returns:
-        모터 제어 정보 딕셔너리
-    """
     TURN_THRESHOLD = 10  # 데드존 (±15도)
     MAX_TURN_ANGLE = 90  # 최대 회전 각도 (전속력)
     PARAFOIL_MOTOR_MIN_PULSE = 1250  # 최소 펄스 (실제 코드와 동일)
@@ -114,15 +104,7 @@ def simulate_parafoil_motor(turn: float) -> dict:
     return result
 
 def print_simulation_result(current_pos: dict, target_pos: dict, current_yaw: float, motor_result: dict):
-    """
-    시뮬레이션 결과 출력
-    
-    Args:
-        current_pos: 현재 위치 {'lat': float, 'lon': float}
-        target_pos: 목표 위치 {'lat': float, 'lon': float}
-        current_yaw: 현재 heading (0-360도)
-        motor_result: 모터 제어 결과
-    """
+
     distance = calculate_distance_haversine(
         current_pos['lat'], current_pos['lon'],
         target_pos['lat'], target_pos['lon']
@@ -174,12 +156,12 @@ def print_simulation_result(current_pos: dict, target_pos: dict, current_yaw: fl
 
 def interactive_simulation():
     """
-    대화형 시뮬레이션 모드 (BNO055 센서에서 IMU yaw 값 읽기)
+    대화형 시뮬레이션 모드 (BNO055 센서에서 IMU yaw 값 읽기, 실제 모터 제어)
     """
     print("\n" + "="*70)
-    print("파라포일 조종 알고리즘 시뮬레이션")
+    print("파라포일 조종 알고리즘 시뮬레이션 (실제 모터 제어 포함)")
     print("="*70)
-    print("\nGPS 좌표를 입력하고 BNO055 센서에서 IMU heading을 읽어 모터 제어를 시뮬레이션합니다.\n")
+    print("\nGPS 좌표를 입력하고 BNO055 센서에서 IMU heading을 읽어 실제 모터를 제어합니다.\n")
     
     # BNO055 IMU 센서 초기화
     i2c_instance = None
@@ -199,6 +181,28 @@ def interactive_simulation():
     else:
         print("⚠️  BNO055 센서 모듈이 없습니다. 수동 입력 모드로 진행합니다.")
         use_sensor = False
+    
+    # 파라포일 모터 초기화
+    motor_pi = None
+    use_motor = False
+    
+    if MOTOR_AVAILABLE:
+        try:
+            print("🔧 파라포일 모터 초기화 중...")
+            motor_pi = parafoil_motor.init_parafoil_motor()
+            if motor_pi is None or not motor_pi.connected:
+                print("❌ pigpio 데몬에 연결할 수 없습니다.")
+                print("   sudo pigpiod 명령으로 pigpio 데몬을 시작해주세요.")
+            else:
+                print("✅ 파라포일 모터 초기화 완료")
+                use_motor = True
+        except Exception as e:
+            print(f"❌ 파라포일 모터 초기화 실패: {e}")
+            print("⚠️  모터 없이 시뮬레이션만 진행합니다.")
+            use_motor = False
+    else:
+        print("⚠️  파라포일 모터 모듈이 없습니다. 시뮬레이션만 진행합니다.")
+        use_motor = False
     
     # 목표 GPS 좌표 입력
     print("\n🎯 목표 GPS 좌표를 입력하세요:")
@@ -259,6 +263,14 @@ def interactive_simulation():
             # 모터 제어 시뮬레이션
             motor_result = simulate_parafoil_motor(turn_angle)
             
+            # 실제 모터 제어 (가능한 경우)
+            if use_motor and motor_pi is not None:
+                try:
+                    parafoil_motor.rotate_parafoil_motor(motor_pi, turn_angle)
+                    print(f"   🔧 실제 모터 제어 완료: {motor_result['action']}")
+                except Exception as e:
+                    print(f"   ❌ 모터 제어 오류: {e}")
+            
             # 결과 출력
             print_simulation_result(current_pos, target_pos, current_yaw, motor_result)
             
@@ -280,11 +292,21 @@ def interactive_simulation():
             print("\n\n시뮬레이션을 종료합니다.")
             break
     
-    # 센서 종료
+    # 센서 및 모터 종료
     if i2c_instance is not None:
         try:
             imu.imu_terminate(i2c_instance)
             print("✅ BNO055 IMU 센서 종료 완료")
+        except:
+            pass
+    
+    if motor_pi is not None and use_motor:
+        try:
+            print("\n모터 정지 중...")
+            parafoil_motor.rotate_parafoil_motor(motor_pi, 0)  # 모터 정지
+            time.sleep(0.5)
+            parafoil_motor.terminate_parafoil_motor(motor_pi)
+            print("✅ 파라포일 모터 종료 완료")
         except:
             pass
 
