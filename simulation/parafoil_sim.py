@@ -2,9 +2,18 @@
 import math
 import sys
 import os
+import time
 
 # 프로젝트 루트 경로 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# BNO055 IMU 센서 읽기
+try:
+    from Sensor_Imu import imu
+    IMU_AVAILABLE = True
+except ImportError:
+    IMU_AVAILABLE = False
+    print("⚠️  Warning: BNO055 IMU 센서 모듈을 불러올 수 없습니다.")
 
 def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371000  # 지구 반지름 (미터)
@@ -165,26 +174,50 @@ def print_simulation_result(current_pos: dict, target_pos: dict, current_yaw: fl
 
 def interactive_simulation():
     """
-    대화형 시뮬레이션 모드
+    대화형 시뮬레이션 모드 (BNO055 센서에서 IMU yaw 값 읽기)
     """
     print("\n" + "="*70)
     print("파라포일 조종 알고리즘 시뮬레이션")
     print("="*70)
-    print("\nGPS 좌표와 IMU heading을 입력하여 모터 제어를 시뮬레이션합니다.\n")
+    print("\nGPS 좌표를 입력하고 BNO055 센서에서 IMU heading을 읽어 모터 제어를 시뮬레이션합니다.\n")
+    
+    # BNO055 IMU 센서 초기화
+    i2c_instance = None
+    imu_sensor = None
+    
+    if IMU_AVAILABLE:
+        try:
+            print("🔧 BNO055 IMU 센서 초기화 중...")
+            i2c_instance, imu_sensor = imu.init_imu()
+            print("✅ BNO055 IMU 센서 초기화 완료")
+        except Exception as e:
+            print(f"❌ BNO055 IMU 센서 초기화 실패: {e}")
+            print("⚠️  센서 없이 시뮬레이션을 계속하려면 수동 입력 모드로 전환됩니다.")
+            use_sensor = False
+        else:
+            use_sensor = True
+    else:
+        print("⚠️  BNO055 센서 모듈이 없습니다. 수동 입력 모드로 진행합니다.")
+        use_sensor = False
     
     # 목표 GPS 좌표 입력
-    print("🎯 목표 GPS 좌표를 입력하세요:")
+    print("\n🎯 목표 GPS 좌표를 입력하세요:")
     try:
         target_lat = float(input("   목표 위도 (예: 37.5665): "))
         target_lon = float(input("   목표 경도 (예: 126.9780): "))
     except ValueError:
         print("❌ 잘못된 입력입니다. 숫자를 입력해주세요.")
+        if i2c_instance is not None:
+            imu.imu_terminate(i2c_instance)
         return
     
     target_pos = {'lat': target_lat, 'lon': target_lon}
     
-    # 현재 GPS 좌표와 heading 입력 (반복)
-    print("\n📍 현재 위치와 heading을 입력하세요 (종료: Ctrl+C):\n")
+    # 현재 GPS 좌표 입력 (반복)
+    if use_sensor:
+        print("\n📍 현재 GPS 좌표를 입력하고 Enter를 누르면 센서에서 IMU yaw 값을 읽습니다 (종료: Ctrl+C):\n")
+    else:
+        print("\n📍 현재 위치와 heading을 입력하세요 (종료: Ctrl+C):\n")
     
     step = 1
     while True:
@@ -192,10 +225,25 @@ def interactive_simulation():
             print(f"\n--- 시뮬레이션 단계 {step} ---")
             current_lat = float(input("   현재 위도: "))
             current_lon = float(input("   현재 경도: "))
-            current_yaw = float(input("   현재 Heading (BNO055 IMU Yaw, 0-360°): "))
             
-            # 0-360도로 정규화 (BNO055 quaternion에서 계산된 yaw)
-            current_yaw = current_yaw % 360
+            # BNO055 센서에서 yaw 값 읽기
+            if use_sensor:
+                print("   📡 BNO055 센서에서 yaw 값을 읽는 중...")
+                try:
+                    sensor_data = imu.read_sensor_data(imu_sensor)
+                    # read_sensor_data는 (roll, pitch, yaw, ...) 튜플 반환
+                    current_yaw = sensor_data[2]  # yaw는 인덱스 2
+                    print(f"   ✅ 센서에서 읽은 Yaw: {current_yaw:.2f}°")
+                    time.sleep(0.1)  # 센서 안정화 대기
+                except Exception as e:
+                    print(f"   ❌ 센서 읽기 오류: {e}")
+                    print("   수동 입력 모드로 전환합니다.")
+                    current_yaw = float(input("   현재 Heading (0-360°): "))
+                    current_yaw = current_yaw % 360
+            else:
+                # 수동 입력 모드
+                current_yaw = float(input("   현재 Heading (0-360°): "))
+                current_yaw = current_yaw % 360
             
             current_pos = {'lat': current_lat, 'lon': current_lon}
             
@@ -231,6 +279,14 @@ def interactive_simulation():
         except KeyboardInterrupt:
             print("\n\n시뮬레이션을 종료합니다.")
             break
+    
+    # 센서 종료
+    if i2c_instance is not None:
+        try:
+            imu.imu_terminate(i2c_instance)
+            print("✅ BNO055 IMU 센서 종료 완료")
+        except:
+            pass
 
 def quick_test():
     """
