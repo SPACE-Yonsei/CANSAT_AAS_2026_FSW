@@ -89,17 +89,5 @@ There is a bug with adafruit board library (https://forums.raspberrypi.com/viewt
 
     sudo rpi-update 0ccee17
 
-## When using USB camera using pads
-we need to configure the pi.
-
-on /boot/firmware/cmdline.txt, add the following after rootwait
-
-    modules-load=dwc2,g_ether
-
-on /boot/firmware/config.txt, add the following 
-
-    dtoverlay=dwc2,dr_mode=host 
-    
-on /etc/modules, add
-
-    dwc2
+## Camera Configuration
+Currently using Pi Cam v3 (CSI) only. USB camera (FIT0892) support has been removed.
