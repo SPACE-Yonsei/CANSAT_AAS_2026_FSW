@@ -22,6 +22,7 @@ Please clone this FSW in /home/pi for smooth automatic initialization! Set the r
 
     #pico
     sudo apt install thonny
+    python3 -m pip install pyserial
 
 ## 1. Install Adafruit Blinka
 Before installing Adafruit modules, follow the steps provided in the link below to install adafruit-blinka
