@@ -5,7 +5,6 @@ import os
 CONF_NONE = 0
 CONF_PAYLOAD = 1
 CONF_CONTAINER = 2
-CONF_ROCKET = 3
 
 FSW_CONF = CONF_PAYLOAD
 
@@ -19,8 +18,7 @@ if not os.path.exists(config_file_path):
 # Currently supports PAYLOAD, CONTAINER, ROCKET
 # SELECTED=NONE
 # SELECTED=PAYLOAD
-# SELECTED=CONTAINER
-# SELECTED=ROCKET"""
+# SELECTED=CONTAINER"""
 
     with open(config_file_path, 'w') as file:
         file.write(initial_conf_file_content)
@@ -45,8 +43,4 @@ else:
         elif config_line == "SELECTED=CONTAINER":
             print("#################################################################\n\n CONTAINER SELECTED \n\n#################################################################")
             FSW_CONF = CONF_CONTAINER
-            break
-        elif config_line == "SELECTED=ROCKET":
-            print("#################################################################\n\n ROCKET SELECTED \n\n#################################################################")
-            FSW_CONF = CONF_ROCKET
             break

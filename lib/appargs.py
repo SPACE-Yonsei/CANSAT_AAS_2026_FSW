@@ -82,11 +82,9 @@ class FlightlogicAppArg:
 
     # Message ID
     MID_SendHK : types.MID = 1401
-    MID_RocketMotorActivate : types.MID = 1402
     MID_PayloadReleaseMotorActivate : types.MID = 1403
     MID_SendCurrentStateToTlm : types.MID = 1404
     MID_PayloadReleaseMotorStandby : types.MID = 1405
-    MID_RocketMotorStandby : types.MID = 1406
     MID_SendSimulationStatustoTlm : types.MID = 1407
     MID_SendCameraActivateToCam : types.MID = 1408
     MID_SendPayloadMotorRatation : types.MID = 1409
