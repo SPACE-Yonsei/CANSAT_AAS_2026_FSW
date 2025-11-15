@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-Parafoil Control Algorithm Simulation
-지상에서 파라포일 조종 알고리즘을 시뮬레이션하는 스크립트
-
-사용법:
-    python3 simulation/parafoil_sim.py
-"""
 
 import math
 import sys
@@ -15,18 +7,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Haversine 공식을 사용하여 두 GPS 좌표 간의 거리를 계산 (미터 단위)
-    
-    Args:
-        lat1: 시작점 위도
-        lon1: 시작점 경도
-        lat2: 목표점 위도
-        lon2: 목표점 경도
-    
-    Returns:
-        거리 (미터)
-    """
     R = 6371000  # 지구 반지름 (미터)
     
     phi1 = math.radians(lat1)
@@ -41,18 +21,7 @@ def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: fl
     return distance
 
 def calculate_bearing_angle(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    현재 위치에서 목표 위치까지의 방위각 계산 (0-360도)
-    
-    Args:
-        lat1: 현재 위도
-        lon1: 현재 경도
-        lat2: 목표 위도
-        lon2: 목표 경도
-    
-    Returns:
-        방위각 (0-360도)
-    """
+
     gps_angle_rad = math.atan2(lat2 - lat1, lon2 - lon1)
     gps_angle_deg = math.degrees(gps_angle_rad)
     
@@ -75,7 +44,6 @@ def calculate_turn_angle(target_yaw: float, gps_angle: float) -> float:
     """
     angle_diff = target_yaw - gps_angle
     
-    # -180 ~ +180도로 정규화 (가장 짧은 경로)
     while angle_diff > 180:
         angle_diff -= 360
     while angle_diff < -180:
@@ -95,8 +63,8 @@ def simulate_parafoil_motor(turn: float) -> dict:
     """
     TURN_THRESHOLD = 15  # 데드존 (±15도)
     MAX_TURN_ANGLE = 90  # 최대 회전 각도 (전속력)
-    PARAFOIL_MOTOR_MIN_PULSE = 1250  # 최소 펄스
-    PARAFOIL_MOTOR_MAX_PULSE = 1750  # 최대 펄스
+    PARAFOIL_MOTOR_MIN_PULSE = 500  # 최소 펄스 (실제 코드와 동일)
+    PARAFOIL_MOTOR_MAX_PULSE = 2500  # 최대 펄스 (실제 코드와 동일)
     
     result = {
         'turn': turn,
@@ -115,7 +83,6 @@ def simulate_parafoil_motor(turn: float) -> dict:
     # 회전 각도의 절댓값
     turn_magnitude = abs(turn)
     
-    # 데드존을 뺀 유효 회전 각도
     effective_turn = min(turn_magnitude - TURN_THRESHOLD, MAX_TURN_ANGLE - TURN_THRESHOLD)
     
     # 속도 비율 계산 (0.0 ~ 1.0)
@@ -163,7 +130,7 @@ def print_simulation_result(current_pos: dict, target_pos: dict, current_yaw: fl
     print(f"\n📍 현재 위치:")
     print(f"   위도: {current_pos['lat']:.6f}°")
     print(f"   경도: {current_pos['lon']:.6f}°")
-    print(f"   Heading (IMU Yaw): {current_yaw:.2f}°")
+    print(f"   Heading (BNO055 IMU Yaw): {current_yaw:.2f}°")
     
     print(f"\n🎯 목표 위치:")
     print(f"   위도: {target_pos['lat']:.6f}°")
@@ -225,9 +192,9 @@ def interactive_simulation():
             print(f"\n--- 시뮬레이션 단계 {step} ---")
             current_lat = float(input("   현재 위도: "))
             current_lon = float(input("   현재 경도: "))
-            current_yaw = float(input("   현재 Heading (IMU Yaw, 0-360°): "))
+            current_yaw = float(input("   현재 Heading (BNO055 IMU Yaw, 0-360°): "))
             
-            # 0-360도로 정규화
+            # 0-360도로 정규화 (BNO055 quaternion에서 계산된 yaw)
             current_yaw = current_yaw % 360
             
             current_pos = {'lat': current_lat, 'lon': current_lon}
