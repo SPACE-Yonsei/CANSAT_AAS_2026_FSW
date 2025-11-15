@@ -70,10 +70,10 @@ def simulate_parafoil_motor(turn: float) -> dict:
     Returns:
         모터 제어 정보 딕셔너리
     """
-    TURN_THRESHOLD = 15  # 데드존 (±15도)
+    TURN_THRESHOLD = 10  # 데드존 (±15도)
     MAX_TURN_ANGLE = 90  # 최대 회전 각도 (전속력)
-    PARAFOIL_MOTOR_MIN_PULSE = 500  # 최소 펄스 (실제 코드와 동일)
-    PARAFOIL_MOTOR_MAX_PULSE = 2500  # 최대 펄스 (실제 코드와 동일)
+    PARAFOIL_MOTOR_MIN_PULSE = 1250  # 최소 펄스 (실제 코드와 동일)
+    PARAFOIL_MOTOR_MAX_PULSE = 1750  # 최대 펄스 (실제 코드와 동일)
     
     result = {
         'turn': turn,
