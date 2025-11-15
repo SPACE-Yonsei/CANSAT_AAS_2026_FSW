@@ -28,7 +28,9 @@ def pack_msg (target: MsgStructure) -> str:
             events.LogEvent("MsgStructure", events.EventType.error, f"error when packing message : message is not filled")
             return "ERROR"   
         else:
-            return str(target.sender_app) + "|" + str(target.receiver_app) + "|" + str(target.MsgID) + "|" + target.data
+            # Convert data to string if it's not already (handles list, dict, etc.)
+            data_str = str(target.data) if not isinstance(target.data, str) else target.data
+            return str(target.sender_app) + "|" + str(target.receiver_app) + "|" + str(target.MsgID) + "|" + data_str
     except Exception as e:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when packing message : {e}")
         return "ERROR"
