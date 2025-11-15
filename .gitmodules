@@ -1,36 +1,36 @@
 [submodule "CANSAT_AAS_2026_BAROMETER"]
 	path = Sensor_Barometer
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_BAROMETER
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_BAROMETER.git
 	branch = main
 [submodule "camera"]
 	path = Sensor_Camera
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_CAMERA
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_CAMERA.git
 	branch = main
 [submodule "comm"]
 	path = comm
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_COMM
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_COMM.git
 	branch = main
 [submodule "flight_logic"]
 	path = flight_logic
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_Flight_Logic
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_Flight_Logic.git
 	branch = main
 [submodule "gcs"]
 	path = Sensor_Gcs
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GCS
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_GCS.git
 	branch = main
 [submodule "imu"]
 	path = Sensor_Imu
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_IMU
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_IMU.git
 	branch = main
 [submodule "motor"]
 	path = Sensor_Motor
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_MOTOR
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_MOTOR.git
 	branch = main
 [submodule "voltage"]
 	path = Sensor_Voltage
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_VOLTAGE
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_VOLTAGE.git
 	branch = main
 [submodule "Sensor_Gps"]
 	path = Sensor_Gps
-	url = https://github.com/SPACE-Yonsei/CANSAT_AAS_2026_GPS
-	branch = main
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_GPS.git
+	branch = pico
