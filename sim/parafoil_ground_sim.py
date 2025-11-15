@@ -131,27 +131,35 @@ def main() -> int:
             # err가 양수(+)이면 목표가 오른쪽 -> 오른쪽으로 돌아야 함 -> 오른쪽 줄 당김
             # err가 음수(-)이면 목표가 왼쪽 -> 왼쪽으로 돌아야 함 -> 왼쪽 줄 당김
             
-            left_pulse = 0
-            right_pulse = 0
+            # 비례 제어(P-Control)를 위한 설정
+            # MAX_CONTROL_PULSE: 최대로 당길 수 있는 펄스 폭 (MIN_PULSE와의 차이)
+            # P_GAIN: 비례 게인. 이 값을 튜닝하여 반응성을 조절합니다. (예: 1.0)
+            MAX_CONTROL_PULSE = PARAFOIL_MAX_PULSE - PARAFOIL_MIN_PULSE
+            P_GAIN = 1.0
+
+            left_pulse = PARAFOIL_MIN_PULSE
+            right_pulse = PARAFOIL_MIN_PULSE
             action = "Straight"
 
             if err < -TURN_THRESHOLD: 
                 # 왼쪽으로 턴 (왼쪽 줄 당김, 오른쪽 풀기)
                 action = "LEFT TURN"
-                left_pulse = PARAFOIL_MAX_PULSE
-                right_pulse = 0 # 또는 PARAFOIL_MIN_PULSE
+                # 에러(-180~0)에 비례하여 펄스 증가. abs(err)가 클수록 더 많이 당김.
+                turn_amount = min(abs(err) * P_GAIN, 180.0) / 180.0 # 0.0 ~ 1.0
+                left_pulse = PARAFOIL_MIN_PULSE + int(turn_amount * MAX_CONTROL_PULSE)
+                right_pulse = PARAFOIL_MIN_PULSE
                 
             elif err > TURN_THRESHOLD:
                 # 오른쪽으로 턴 (오른쪽 줄 당김, 왼쪽 풀기)
                 action = "RIGHT TURN"
-                left_pulse = 0 # 또는 PARAFOIL_MIN_PULSE
-                right_pulse = PARAFOIL_MAX_PULSE
+                # 에러(0~180)에 비례하여 펄스 증가. err가 클수록 더 많이 당김.
+                turn_amount = min(err * P_GAIN, 180.0) / 180.0 # 0.0 ~ 1.0
+                right_pulse = PARAFOIL_MIN_PULSE + int(turn_amount * MAX_CONTROL_PULSE)
+                left_pulse = PARAFOIL_MIN_PULSE
                 
             else:
-                # 직진 (둘 다 풀기)
+                # 직진 (둘 다 최소 위치)
                 action = "Straight"
-                left_pulse = 0 # 또는 PARAFOIL_MIN_PULSE
-                right_pulse = 0 # 또는 PARAFOIL_MIN_PULSE
 
             # 4. 실제 모터 출력
             pi.set_servo_pulsewidth(args.left_gpio, left_pulse)
