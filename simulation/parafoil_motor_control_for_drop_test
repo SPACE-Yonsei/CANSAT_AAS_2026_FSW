@@ -1,0 +1,62 @@
+import math
+import random
+import time
+from unittest import mock
+
+def main():
+    target_pos = (100.0, 200.0)
+
+    current_pos = (0.0, 0.0)
+    
+    GPS_ERROR_RADIUS_METERS = 3.0
+
+    kp = 1/2
+
+    # 10번의 시뮬레이션 수행 (0.1초 간격으로 1초 동안)
+    for i in range(2):
+        # print(f"시뮬레이션 {i+1} (시간: {i*0.1:.1f}초)")
+
+        # # 1. GPS 오차 시뮬레이션 (난수 생성)
+        # # 실제 위치(current_pos) 주변에 무작위 오차를 더해 측정된 위치를 만듭니다.
+        # error_angle = random.uniform(0, 2 * math.pi)
+        # error_radius = random.uniform(0, GPS_ERROR_RADIUS_METERS)
+        # gps_error_x = error_radius * math.cos(error_angle)
+        # gps_error_y = error_radius * math.sin(error_angle)
+        
+        # measured_pos = (current_pos[0] + gps_error_x, current_pos[1] + gps_error_y)
+        
+        # 2. 측정된 위치를 기준으로 목표까지의 각도 계산
+        dx = target_pos[0] - measured_pos[0]
+        dy = target_pos[1] - measured_pos[1]
+        
+        # 방위각 기준 목표까지의 각도(heading)를 라디안으로 계산
+        error = math.degrees(math.atan2(dx, dy))
+        initial_error = error # 조정 전 원본 값 저장
+
+
+        dead_zone_deg = 10.0
+        if abs(error) < dead_zone_deg:
+            error = 0.0
+        
+        elif error > 90:
+            error = 90
+        elif error < -90:
+            error = -90
+
+        motor_angle = error * kp
+
+        def angle_to_purse(angle):
+            return int(MIN_PULSE + ((angle/45)*(MAX_PULSE - MIN_PULSE)))
+
+        left_servo_angle = 90도
+        right_servo_angle = 90도
+
+        if motor_angle > 0: # 목표가 오른쪽에 있을 때 -> 우회전
+            # 오른쪽 모터를 당김
+            pi.motor_purse(PAYLOAD_MOTOR_PIN, angle_to_purse(motor_angle))
+        elif motor_angle < 0: # 목표가 왼쪽에 있을 때 -> 좌회전
+            # 왼쪽 모터를 당김
+            pi.motor_purse(PAYLOAD_MOTOR_PIN, angle_to_purse(motor_angle))
+
+if __name__ == "__main__":
+    main()
