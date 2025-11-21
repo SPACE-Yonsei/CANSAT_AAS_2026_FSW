@@ -34,7 +34,7 @@ def main():
         initial_error = error # 조정 전 원본 값 저장
 
 
-        dead_zone_deg = 10.0
+        dead_zone_deg = 5.0
         if abs(error) < dead_zone_deg:
             error = 0.0
         
