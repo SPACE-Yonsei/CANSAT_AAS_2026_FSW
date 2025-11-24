@@ -90,17 +90,17 @@ if __name__ == "__main__":
     #     #PARAFOIL_MOTOR_MID_PULSE   # 다시 중간 위치로
     # ]
 
-    try:
-        print("0도부터 90도까지 10도 간격으로 모터를 움직입니다.")
-        print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
-        
-        # 0부터 90 미만까지 10씩 증가 (0, 10, 20, ..., 80)
-        for angle in range(0, 90, -10):
-            pulse = angle_to_purse(angle)
-            print(f"Angle: {angle}° -> Pulse: {pulse}µs")
-            pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-            pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-            time.sleep(1) # 1초 동안 움직임 확인
+    
+    print("0도부터 90도까지 10도 간격으로 모터를 움직입니다.")
+    print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
+    
+    # 0부터 90 미만까지 10씩 증가 (0, 10, 20, ..., 80)
+    for angle in range(0, 90, -10):
+        pulse = angle_to_purse(angle)
+        print(f"Angle: {angle}° -> Pulse: {pulse}µs")
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
+        time.sleep(1) # 1초 동안 움직임 확인
 
     #     while True:
             
@@ -125,5 +125,5 @@ if __name__ == "__main__":
     # except KeyboardInterrupt:
     #     print("\n프로그램을 종료합니다.")
 
-    # finally:
-    #     terminate_parafoil_motor(pi)
+    #  finally:
+    #      terminate_parafoil_motor(pi)
