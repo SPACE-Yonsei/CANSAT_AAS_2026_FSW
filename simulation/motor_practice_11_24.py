@@ -53,6 +53,8 @@ def init_parafoil_motor():
 def terminate_parafoil_motor(pi):
     pi.stop()
 
+def angle_to_purse(angle):
+    return int(PARAFOIL_MOTOR_MIN_PULSE + ((angle/45)*(PARAFOIL_MOTOR_MAX_PULSE - PARAFOIL_MOTOR_MIN_PULSE)))
 #############################################
 
 
@@ -72,12 +74,13 @@ if __name__ == "__main__":
         print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
 
         while True:
+            
             # 1. 왼쪽 모터 테스트 (MIN -> MAX -> STOP)
             print("--- 왼쪽 모터 테스트 ---")
             for pulse in pulse_positions:
                 print(f"  - 왼쪽 모터 {pulse}µs 위치로 이동")
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-                time.sleep(3)
+                time.sleep(1)
             pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 왼쪽 모터 정지
             time.sleep(1)
 
@@ -86,7 +89,7 @@ if __name__ == "__main__":
             for pulse in pulse_positions:
                 print(f"  - 오른쪽 모터 {pulse}µs 위치로 이동")
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-                time.sleep(3)
+                time.sleep(1)
             pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 오른쪽 모터 정지
             time.sleep(1)
 
