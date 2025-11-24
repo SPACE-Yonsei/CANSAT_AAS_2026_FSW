@@ -56,7 +56,7 @@ def terminate_parafoil_motor(pi):
     pi.stop()
 
 def angle_to_purse(angle):
-    return int(PARAFOIL_MOTOR_MIN_PULSE + ((angle/45)*(PARAFOIL_MOTOR_MAX_PULSE - PARAFOIL_MOTOR_MIN_PULSE)))
+    return int(PARAFOIL_MOTOR_MIN_PULSE + ((angle/180)*(PARAFOIL_MOTOR_MAX_PULSE - PARAFOIL_MOTOR_MIN_PULSE)))
 #############################################
 
 # dead_zone_deg = 10.0
