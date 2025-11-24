@@ -71,7 +71,7 @@ def angle_to_purse(angle):
 if __name__ == "__main__":
     pi = init_parafoil_motor()
     
-    for angle in range(90,0,-10):
+    for angle in range(0,90,10):
         pulse = angle_to_purse(angle)
         print(f"Angle: {angle} -> Pulse: {pulse}")
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
