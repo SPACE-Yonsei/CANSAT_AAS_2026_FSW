@@ -3,6 +3,8 @@ import time
 TARGET_DEGREE = 0
 PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
 PARAFOIL_RIGHT_MOTOR_PIN = 13  # gpio 13, physical pin 33
+PARAFOIL_RIGHT_MOTOR_PIN_egg = 5  # gpio 13, physical pin 33
+PARAFOIL_LEFT_MOTOR_PIN_egg = 6 # gpio 12, physical pin 32
 
 # Calibrate the pulse range, us unit
 PARAFOIL_MOTOR_MIN_PULSE = 530
@@ -74,7 +76,10 @@ if __name__ == "__main__":
         print(f"Angle: {angle} -> Pulse: {pulse}")
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN_egg, pulse)
+        
         time.sleep(0.1)
+    
     # # 모터를 움직일 펄스 값들을 리스트로 정의
     # pulse_positions = [
     #     PARAFOIL_MOTOR_MIN_PULSE,  # 최소 위치 (약 0도)
