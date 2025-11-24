@@ -80,24 +80,12 @@ if __name__ == "__main__":
         while True:
             print("\n--- 0도에서 80도로 이동 ---")
             # 0부터 90 미만까지 10씩 증가 (0, 10, 20, ..., 80)
-            for angle in range(0, 90, 10):
+            for angle in range(0, 90, -10):
                 pulse = angle_to_purse(angle)
                 print(f"Angle: {angle}° -> Pulse: {pulse}µs")
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
                 time.sleep(0.5)
-
-            time.sleep(1) # 최대 각도에서 잠시 대기
-
-            print("\n--- 80도에서 0도로 이동 ---")
-            # 80부터 0까지 10씩 감소 (80, 70, ..., 0)
-            for angle in range(80, -1, -10):
-                pulse = angle_to_purse(angle)
-                print(f"Angle: {angle}° -> Pulse: {pulse}µs")
-                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-                time.sleep(0.5)
-            
             time.sleep(2) # 한 사이클 후 잠시 대기
 
     except KeyboardInterrupt:
