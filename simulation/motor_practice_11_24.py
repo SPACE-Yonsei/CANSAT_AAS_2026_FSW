@@ -72,15 +72,23 @@ if __name__ == "__main__":
         print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
 
         while True:
+            # 1. 왼쪽 모터 테스트 (MIN -> MAX -> STOP)
+            print("--- 왼쪽 모터 테스트 ---")
             for pulse in pulse_positions:
-                print(f"현재 적용된 펄스 값: {pulse}µs")
-
-                print("  - 왼쪽 모터 작동")
+                print(f"  - 왼쪽 모터 {pulse}µs 위치로 이동")
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
                 time.sleep(3)
-                print("  - 오른쪽 모터 작동")
+            pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 왼쪽 모터 정지
+            time.sleep(1)
+
+            # 2. 오른쪽 모터 테스트 (MIN -> MAX -> STOP)
+            print("--- 오른쪽 모터 테스트 ---")
+            for pulse in pulse_positions:
+                print(f"  - 오른쪽 모터 {pulse}µs 위치로 이동")
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
                 time.sleep(3)
+            pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 오른쪽 모터 정지
+            time.sleep(1)
 
     except KeyboardInterrupt:
         print("\n프로그램을 종료합니다.")
