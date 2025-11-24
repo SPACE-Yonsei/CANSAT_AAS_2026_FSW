@@ -62,9 +62,9 @@ if __name__ == "__main__":
     # 모터를 움직일 펄스 값들을 리스트로 정의
     pulse_positions = [
         PARAFOIL_MOTOR_MIN_PULSE,  # 최소 위치 (약 0도)
-        PARAFOIL_MOTOR_MID_PULSE,  # 중간 위치 (약 90도)
+        #PARAFOIL_MOTOR_MID_PULSE,  # 중간 위치 (약 90도)
         PARAFOIL_MOTOR_MAX_PULSE,  # 최대 위치 (약 180도)
-        PARAFOIL_MOTOR_MID_PULSE   # 다시 중간 위치로
+        #PARAFOIL_MOTOR_MID_PULSE   # 다시 중간 위치로
     ]
 
     try:
