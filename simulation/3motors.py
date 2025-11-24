@@ -78,7 +78,7 @@ if __name__ == "__main__":
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
         #pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN_egg, pulse)
         
-        time.sleep(0.1)
+        time.sleep(2)
     
     # # 모터를 움직일 펄스 값들을 리스트로 정의
     # pulse_positions = [
