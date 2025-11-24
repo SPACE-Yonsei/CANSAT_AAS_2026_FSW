@@ -1,10 +1,8 @@
 import time
 
 TARGET_DEGREE = 0
-PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
-PARAFOIL_RIGHT_MOTOR_PIN = 13  # gpio 13, physical pin 33
-PARAFOIL_RIGHT_MOTOR_PIN_egg = 5  # gpio 13, physical pin 33
-PARAFOIL_LEFT_MOTOR_PIN_egg = 6 # gpio 12, physical pin 32
+PARAFOIL_LEFT_MOTOR_PIN = 12
+PARAFOIL_RIGHT_MOTOR_PIN = 13
 
 # Calibrate the pulse range, us unit
 PARAFOIL_MOTOR_MIN_PULSE = 530
@@ -74,56 +72,37 @@ def angle_to_purse(angle):
 
 if __name__ == "__main__":
     pi = init_parafoil_motor()
-    
-    # for angle in range(90):
-    #     pulse = angle_to_purse(angle)
-    #     print(f"Angle: {angle} -> Pulse: {pulse}")
-    #     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-    #     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-    #     time.sleep(0.1)
-    
-    # # 모터를 움직일 펄스 값들을 리스트로 정의
-    # pulse_positions = [
-    #     PARAFOIL_MOTOR_MIN_PULSE,  # 최소 위치 (약 0도)
-    #     #PARAFOIL_MOTOR_MID_PULSE,  # 중간 위치 (약 90도)
-    #     PARAFOIL_MOTOR_MAX_PULSE,  # 최대 위치 (약 180도)
-    #     #PARAFOIL_MOTOR_MID_PULSE   # 다시 중간 위치로
-    # ]
 
-    
-    print("0도부터 90도까지 10도 간격으로 모터를 움직입니다.")
-    print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
-    
-    # 0부터 90 미만까지 10씩 증가 (0, 10, 20, ..., 80)
-    for angle in range(0, 90, -10):
-        pulse = angle_to_purse(angle)
-        print(f"Angle: {angle}° -> Pulse: {pulse}µs")
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-        time.sleep(1) # 1초 동안 움직임 확인
+    try:
+        print("모터를 0도 -> 80도 -> 0도로 왕복 운동합니다.")
+        print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
 
-    #     while True:
+        while True:
+            print("\n--- 0도에서 80도로 이동 ---")
+            # 0부터 90 미만까지 10씩 증가 (0, 10, 20, ..., 80)
+            for angle in range(0, 90, 10):
+                pulse = angle_to_purse(angle)
+                print(f"Angle: {angle}° -> Pulse: {pulse}µs")
+                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
+                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
+                time.sleep(0.5)
+
+            time.sleep(1) # 최대 각도에서 잠시 대기
+
+            print("\n--- 80도에서 0도로 이동 ---")
+            # 80부터 0까지 10씩 감소 (80, 70, ..., 0)
+            for angle in range(80, -1, -10):
+                pulse = angle_to_purse(angle)
+                print(f"Angle: {angle}° -> Pulse: {pulse}µs")
+                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
+                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
+                time.sleep(0.5)
             
-    #         # 1. 왼쪽 모터 테스트 (MIN -> MAX -> STOP)
-    #         print("--- 왼쪽 모터 테스트 ---")
-    #         for pulse in pulse_positions:
-    #             print(f"  - 왼쪽 모터 {pulse}µs 위치로 이동")
-    #             pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-    #             time.sleep(1)
-    #         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 왼쪽 모터 정지
-    #         time.sleep(1)
+            time.sleep(2) # 한 사이클 후 잠시 대기
 
-    #         # 2. 오른쪽 모터 테스트 (MIN -> MAX -> STOP)
-    #         print("--- 오른쪽 모터 테스트 ---")
-    #         for pulse in pulse_positions:
-    #             print(f"  - 오른쪽 모터 {pulse}µs 위치로 이동")
-    #             pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-    #             time.sleep(1)
-    #         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, PARAFOIL_MOTOR_STOP_PULSE) # 오른쪽 모터 정지
-    #         time.sleep(1)
+    except KeyboardInterrupt:
+        print("\n프로그램을 종료합니다.")
 
-    # except KeyboardInterrupt:
-    #     print("\n프로그램을 종료합니다.")
-
-    #  finally:
-    #      terminate_parafoil_motor(pi)
+    finally:
+        print("모터를 정지합니다.")
+        terminate_parafoil_motor(pi)
