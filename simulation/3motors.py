@@ -75,7 +75,7 @@ if __name__ == "__main__":
         pulse = angle_to_purse(angle)
         print(f"Angle: {angle} -> Pulse: {pulse}")
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
+        #pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
         #pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN_egg, pulse)
         
         time.sleep(2)
