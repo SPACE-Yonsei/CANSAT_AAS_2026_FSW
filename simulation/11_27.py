@@ -84,23 +84,6 @@ if __name__ == "__main__":
                 
                 # 모터 반응 속도 고려 (너무 빠르면 모터가 못 따라감)
                 time.sleep(0.02)
-
-            print() # 줄바꿈
-
-            # 2. 90도 -> 0도 (역방향 복귀 - 모터 보호용)
-            # range(90, -1, -1)은 90부터 0까지 1씩 감소
-            for angle in range(90, -1, -1):
-                change = angle * 10.7778
-                
-                left_pulse = int(1500 - change)
-                right_pulse = int(1500 + change)
-                
-                print(f"[복귀] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
-                
-                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                
-                time.sleep(0.02)
             
             print() # 줄바꿈
             print("--- 1회 왕복 완료, 1초 대기 ---")
