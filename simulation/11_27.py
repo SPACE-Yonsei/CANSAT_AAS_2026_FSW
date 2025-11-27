@@ -46,10 +46,10 @@ if __name__ == "__main__":
                 
                 print(f"왼쪽 모터 펄스: {left_pulse}")                
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-                time.sleep(0.1)
+                #time.sleep(0.1)
                 print(f"오른쪽 모터 펄스: {right_pulse}")
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                time.sleep(0.1)
+                #time.sleep(0.1)
 
     except KeyboardInterrupt:
         print("\n프로그램을 종료합니다.")
