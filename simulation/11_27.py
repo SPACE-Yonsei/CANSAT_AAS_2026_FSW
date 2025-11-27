@@ -71,10 +71,10 @@ if __name__ == "__main__":
                 change = angle * 10.7778
                 
                 # 왼쪽: 2470에서 시작해서 점점 줄어듦 (2470 -> 1500)
-                left_pulse = int(2470 - change)
+                left_pulse = int(2500 - change)
                 
                 # 오른쪽: 1500에서 시작해서 점점 늘어남 (1500 -> 2470)
-                right_pulse = int(1500 + change)
+                right_pulse = int(500 + change)
                 
                 # 출력 (\r로 같은 줄에 갱신)
                 print(f"[전진] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
