@@ -37,19 +37,19 @@ if __name__ == "__main__":
         print("서보 모터를 지정된 펄스 값으로 자동 순환합니다.")
         print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
         
-        while True:
-            # 정의된 위치들을 하나씩 순F회
-            for error in range(90):
-                # 왼쪽 모터는 530에서 2470으로, 오른쪽 모터는 2470에서 530으로 움직이도록 계산
-                left_pulse = int(2500 - (10/9) * error)
-                right_pulse = int(500 + (10/9) * error)
-                
-                print(f"왼쪽 모터 펄스: {left_pulse}")                
-                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-                #time.sleep(0.1)
-                print(f"오른쪽 모터 펄스: {right_pulse}")
-                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                #time.sleep(0.1)
+        #while True:
+        error=10
+        for error in range(90):
+            # 왼쪽 모터는 530에서 2470으로, 오른쪽 모터는 2470에서 530으로 움직이도록 계산
+            left_pulse = int(2500 - (10/9) * error)
+            right_pulse = int(500 + (10/9) * error)
+            
+            print(f"왼쪽 모터 펄스: {left_pulse}")                
+            pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+            time.sleep(0.05)
+            print(f"오른쪽 모터 펄스: {right_pulse}")
+            pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+            time.sleep(0.05)
 
     except KeyboardInterrupt:
         print("\n프로그램을 종료합니다.")
