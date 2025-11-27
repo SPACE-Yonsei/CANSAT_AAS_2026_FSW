@@ -92,7 +92,7 @@ if __name__ == "__main__":
             for angle in range(90, -1, -1):
                 change = angle * 10.7778
                 
-                left_pulse = int(2500 - change)
+                left_pulse = int(1500 - change)
                 right_pulse = int(1500 + change)
                 
                 print(f"[복귀] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
