@@ -81,10 +81,10 @@ if __name__ == "__main__":
             #     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
             #     time.sleep(1)
 
-            for error in list(range(10, 100, 10)):
+            for error in list(range(180)):
                 # 왼쪽 모터는 530에서 2470으로, 오른쪽 모터는 2470에서 530으로 움직이도록 계산
-                left_pulse = int(2500 - (10/9) * error)
-                right_pulse = int(500 + (10/9) * error)
+                left_pulse = int(2500 - error)
+                right_pulse = int(500 + error)
                 
                 print(f"왼쪽 모터 펄스: {left_pulse}")                
                 print(f"Error: {error:2d} -> Left Pulse: {left_pulse}, Right Pulse: {right_pulse}")
