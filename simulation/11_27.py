@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import time
-
+import math
 # Target Degree based on IMU
 TARGET_DEGREE = 0
 PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
@@ -40,12 +40,15 @@ if __name__ == "__main__":
         while True:
             # 정의된 위치들을 하나씩 순F회
             for error in range(90):
-                # *** 현재 적용되는 펄스 값을 print하는 기능 ***
-                print(f"현재 각도: {error}µs")
+                # 왼쪽 모터는 530에서 2470으로, 오른쪽 모터는 2470에서 530으로 움직이도록 계산
+                left_pulse = int(PARAFOIL_MOTOR_MIN_PULSE + ((PARAFOIL_MOTOR_MAX_PULSE - PARAFOIL_MOTOR_MIN_PULSE) / 89) * error)
+                right_pulse = int(PARAFOIL_MOTOR_MAX_PULSE - ((PARAFOIL_MOTOR_MAX_PULSE - PARAFOIL_MOTOR_MIN_PULSE) / 89) * error)
                 
-                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, int(500+10/9*error))
+                print(f"왼쪽 모터 펄스: {left_pulse}")                
+                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
                 time.sleep(0.5)
-                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, int(2500-10/9*error))
+                print(f"오른쪽 모터 펄스: {right_pulse}")
+                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
                 time.sleep(0.5)
 
     except KeyboardInterrupt:
