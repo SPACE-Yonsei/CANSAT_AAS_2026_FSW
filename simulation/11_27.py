@@ -90,7 +90,7 @@ if __name__ == "__main__":
                 print(f"Error: {error:2d} -> Left Pulse: {left_pulse}, Right Pulse: {right_pulse}")
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                time.sleep(0.1)
+                time.sleep(1)
 
     except KeyboardInterrupt:
         print("\n프로그램을 종료합니다.")
