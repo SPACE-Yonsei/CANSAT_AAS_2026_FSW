@@ -8,8 +8,8 @@ PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
 PARAFOIL_RIGHT_MOTOR_PIN = 13  # gpio 13, physical pin 33
 
 # Calibrate the pulse range, us unit
-PARAFOIL_MOTOR_MIN_PULSE = 1250 # 0.5ms
-PARAFOIL_MOTOR_MAX_PULSE = 1750 # 2.5ms
+PARAFOIL_MOTOR_MIN_PULSE = 530 # 0.5ms
+PARAFOIL_MOTOR_MAX_PULSE = 2470 # 2.5ms
 PARAFOIL_MOTOR_STOP_PULSE = 1  # 1us
 
 def init_parafoil_motor():
@@ -79,7 +79,6 @@ if __name__ == "__main__":
                 pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
                 time.sleep(1)
                 pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-                # 모터가 움직일 시간을 2초 동안 기다립니다.
                 time.sleep(1)
 
     except KeyboardInterrupt:
