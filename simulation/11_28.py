@@ -98,7 +98,7 @@ if __name__ == "__main__":
                 else:
                     left_pulse = left_neutral
                     right_pulse = right_neutral
-                print(f"[전진] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
+                print(f"[전진] 각도: {angle} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
 
 
             print() # 줄바꿈
