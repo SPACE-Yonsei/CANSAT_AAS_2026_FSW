@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import time
-
+import math
 # Target Degree based on IMU
 TARGET_DEGREE = 0
 PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
@@ -90,7 +90,7 @@ if __name__ == "__main__":
                 dx, dy = pos
                 angle = math.degrees(math.atan2(dx, dy))
                 angle = angle_define_range(angle)
-                change = angle * 10.7778 /2
+                change = angle * 10.7778
                 if angle>5:
                     left_pulse = int(2500 + change)
                 elif angle<-5: 
