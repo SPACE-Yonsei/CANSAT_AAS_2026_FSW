@@ -85,11 +85,14 @@ if __name__ == "__main__":
                 dx, dy = pos
                 angle = math.degrees(math.atan2(dx, dy))
                 
+                
                 change = angle * 10.7778
                 if angle>5:
                     left_pulse = int(2500 + change)
+                    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
                 elif angle<-5: 
                     right_pulse = int(500 + change)
+                    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
                 else:
                     left_pulse = left_neutral
                     right_pulse = right_neutral
