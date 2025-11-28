@@ -54,37 +54,44 @@ def rotate_parafoil_motor(pi, turn:float):
 
 #############################################
 
-
 if __name__ == "__main__":
     pi = init_parafoil_motor()
 
-    # 모터를 움직일 펄스 값들을 리스트로 정의
-    pulse_positions = [
-        PARAFOIL_MOTOR_MIN_PULSE,  # 최소 위치 (약 0도)
-        1500,                     # 중간 위치 (약 90도)
-        PARAFOIL_MOTOR_MAX_PULSE,  # 최대 위치 (약 180도)
-        1500                      # 다시 중간 위치로
-    ]
-
     try:
-        print("서보 모터를 지정된 펄스 값으로 자동 순환합니다.")
-        print("프로그램을 종료하려면 Ctrl+C를 누르세요.")
+        print("서보 모터 상호 역방향 제어를 시작합니다.")
+        print("Left: 2470 -> 1500 | Right: 1500 -> 2470")
+        print("Ctrl+C를 눌러 종료하세요.")
         
         while True:
-            # 정의된 위치들을 하나씩 순F회
-            for pulse in pulse_positions:
-                # *** 현재 적용되는 펄스 값을 print하는 기능 ***
-                print(f"현재 적용된 펄스 값: {pulse}µs")
+            # 1. 0도 -> 90도 (정방향 진행)
+            # range(91)은 0부터 90까지
+            for angle in range(91):
+                # 변화량 계산 (90도 동안 약 970펄스 변화 -> 1도당 약 10.77)
+                # angle이 커질수록 change값도 커짐
+                change = angle * 10.7778
                 
-                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, pulse)
-                time.sleep(1)
-                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, pulse)
-                time.sleep(1)
+                # 왼쪽: 2470에서 시작해서 점점 줄어듦 (2470 -> 1500)
+                left_pulse = int(2500 - change)
+                
+                # 오른쪽: 1500에서 시작해서 점점 늘어남 (1500 -> 2470)
+                right_pulse = int(500 + change)
+                
+                # 출력 (\r로 같은 줄에 갱신)
+                print(f"[전진] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
+                
+                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+                
+                # 모터 반응 속도 고려 (너무 빠르면 모터가 못 따라감)
+                time.sleep(0.02)
+            
+            print() # 줄바꿈
+            print("--- 1회 왕복 완료, 1초 대기 ---")
+            time.sleep(1)
 
     except KeyboardInterrupt:
         print("\n프로그램을 종료합니다.")
-        pass
-
+        
     finally:
-        # 프로그램 종료 시 모터를 안전하게 정지
+        # 프로그램 종료 시 안전하게 정지
         terminate_parafoil_motor(pi)
