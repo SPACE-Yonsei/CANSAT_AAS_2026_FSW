@@ -22,11 +22,6 @@ def init_parafoil_motor():
 def terminate_parafoil_motor(pi):
     pi.stop()
 
-def angle_define_range(angle) -> int:
-    if angle < 0:
-        angle = 0
-    elif angle > 180:
-        angle = 180
     
     return angle
 
@@ -89,7 +84,7 @@ if __name__ == "__main__":
             for pos in target_pos:
                 dx, dy = pos
                 angle = math.degrees(math.atan2(dx, dy))
-                angle = angle_define_range(angle)
+                
                 change = angle * 10.7778
                 if angle>5:
                     left_pulse = int(2500 + change)
@@ -98,7 +93,9 @@ if __name__ == "__main__":
                 else:
                     left_pulse = left_neutral
                     right_pulse = right_neutral
-\
+                print(f"[전진] 각도: {angle} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
+
+
             print() # 줄바꿈
             print("--- 1회 왕복 완료, 1초 대기 ---")
             time.sleep(1)
