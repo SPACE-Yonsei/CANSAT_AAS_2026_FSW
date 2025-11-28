@@ -2,110 +2,79 @@
 
 import time
 import math
-# Target Degree based on IMU
-TARGET_DEGREE = 0
-PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
-PARAFOIL_RIGHT_MOTOR_PIN = 13  # gpio 13, physical pin 33
+import pigpio
 
-# Calibrate the pulse range, us unit
-PARAFOIL_MOTOR_MIN_PULSE = 530 # 0.5ms
-PARAFOIL_MOTOR_MAX_PULSE = 2470 # 2.5ms
-PARAFOIL_MOTOR_STOP_PULSE = 1  # 1us
+# 핀 설정
+PARAFOIL_LEFT_MOTOR_PIN = 12 
+PARAFOIL_RIGHT_MOTOR_PIN = 13  
+
+# 펄스 범위
+PARAFOIL_MOTOR_MIN_PULSE = 530 
+PARAFOIL_MOTOR_MAX_PULSE = 2470
 
 def init_parafoil_motor():
-    import pigpio
     pi = pigpio.pi()
+    if not pi.connected:
+        print("[에러] pigpio 데몬 연결 실패. 'sudo pigpiod' 실행 확인 필요")
+        exit()
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
     return pi
 
 def terminate_parafoil_motor(pi):
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
     pi.stop()
-
-    
-    return angle
-
-
-def rotate_parafoil_motor(pi, turn:float):
-
-    TURN_THRESHOLD = 15
-    willing_to_turn = turn # 모터가 돌아야 하는 각도 - 180~ 180도 사이로 입력
-
-    if willing_to_turn < -TURN_THRESHOLD:
-        # Turn Left: Pull the left motor line
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, PARAFOIL_MOTOR_MAX_PULSE)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
-    elif willing_to_turn > TURN_THRESHOLD:
-        # Turn Right: Pull the right motor line
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, PARAFOIL_MOTOR_MAX_PULSE)
-    else:
-        # Go Straight: Keep motors idle
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
-
-    return
-
-#############################################
 
 if __name__ == "__main__":
     pi = init_parafoil_motor()
+    
     left_neutral = 2500
     right_neutral = 500
+    
     try:
-        print("서보 모터 상호 역방향 제어를 시작합니다.")
-        print("Left: 2470 -> 1500 | Right: 1500 -> 2470")
-        print("Ctrl+C를 눌러 종료하세요.")
+        print("서보 모터 제어 시작 (Ctrl+C로 종료)")
         
         while True:
-            # 1. 0도 -> 90도 (정방향 진행)
-            # range(91)은 0부터 90까지
-            # for angle in range(91):
-            #     # 변화량 계산 (90도 동안 약 970펄스 변화 -> 1도당 약 10.77)
-            #     # angle이 커질수록 change값도 커짐
-                
-            #     change = angle * 10.7778 /2
-
-            #     # 왼쪽: 2470에서 시작해서 점점 줄어듦 (2470 -> 1500)
-            #     left_pulse = int(2500 - change)
-                
-            #     # 오른쪽: 1500에서 시작해서 점점 늘어남 (1500 -> 2470)
-            #     right_pulse = int(500 + change)
-                
-            #     # 출력 (\r로 같은 줄에 갱신)
-            #     print(f"[전진] 각도: {angle:2d} | 좌: {left_pulse} | 우: {right_pulse}", end='\r')
-                
-            #     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-            #     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                
-            #     # 모터 반응 속도 고려 (너무 빠르면 모터가 못 따라감)
-            #     time.sleep(0.02)
-            target_pos=[(1,1),(-1,1),(-1,-1),(1,-1)]
+            target_pos = [(1,1), (-1,1), (-1,-1), (1,-1)]
+            
             for pos in target_pos:
+                # [수정 1] 매번 중립 값으로 초기화 (안전장치)
+                left_pulse = left_neutral
+                right_pulse = right_neutral
+                
                 dx, dy = pos
                 angle = math.degrees(math.atan2(dx, dy))
                 
+                # 변화량 계산 (음수 각도 고려하여 절대값 사용 추천)
+                change = abs(angle * 10.7778)
                 
-                change = angle * 10.7778
-                if angle>5:
-                    left_pulse = int(2500 - change)
-                    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-                elif angle<-5: 
-                    right_pulse = int(500 - change)
-                    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-                else:
-                    left_pulse = left_neutral
-                    right_pulse = right_neutral
-                    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-                    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+                # [수정 2] 로직 명확화
+                if angle > 5:
+                    # 우회전 -> 왼쪽 당김 (2500에서 뺌)
+                    left_pulse = int(left_neutral - change)
+                elif angle < -5:
+                    # 좌회전 -> 오른쪽 당김 (500에서 더함)
+                    right_pulse = int(right_neutral + change)
+                
+                # 범위 제한 (하드웨어 보호)
+                left_pulse = max(PARAFOIL_MOTOR_MIN_PULSE, min(left_pulse, PARAFOIL_MOTOR_MAX_PULSE))
+                right_pulse = max(PARAFOIL_MOTOR_MIN_PULSE, min(right_pulse, PARAFOIL_MOTOR_MAX_PULSE))
 
-            print() # 줄바꿈
-            print("--- 1회 왕복 완료, 1초 대기 ---")
+                # [수정 3] 모터 구동 명령 (반드시 둘 다 보내야 함)
+                pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+                pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+                
+                print(f"목표:{pos} | 각도:{angle:5.1f} | 좌:{left_pulse} | 우:{right_pulse}")
+                
+                # [수정 4] ★★★ 여기가 없어서 안 움직였던 것입니다! ★★★
+                # 모터가 움직일 물리적 시간을 줍니다.
+                time.sleep(1.0) 
+
+            print("--- 1회 순회 완료 ---")
             time.sleep(1)
 
     except KeyboardInterrupt:
-        print("\n프로그램을 종료합니다.")
-        
+        print("\n종료합니다.")
     finally:
-        # 프로그램 종료 시 안전하게 정지
         terminate_parafoil_motor(pi)
