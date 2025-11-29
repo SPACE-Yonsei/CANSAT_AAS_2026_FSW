@@ -6,7 +6,19 @@ CONF_NONE = 0
 CONF_PAYLOAD = 1
 CONF_CONTAINER = 2
 
+STATE_NAME_TO_ID = {
+    "LAUNCHPAD": 0,
+    "LAUNCH_PAD": 0,
+    "ASCENT": 1,
+    "APOGEE": 2,
+    "DESCENT": 3,
+    "PROBE_RELEASE": 4,
+    "PROBERELEASE": 4,
+    "LANDED": 5,
+}
+
 FSW_CONF = CONF_PAYLOAD
+STATE_OVERRIDE: int | None = None
 
 config_file_path = 'lib/config.txt'
 
@@ -15,10 +27,12 @@ if not os.path.exists(config_file_path):
 
     initial_conf_file_content = """# Config.txt
 # Select the FSW operation mode
-# Currently supports PAYLOAD, CONTAINER, ROCKET
-# SELECTED=NONE
+# Currently supports PAYLOAD, CONTAINER
 # SELECTED=PAYLOAD
-# SELECTED=CONTAINER"""
+#
+# Optional: Force the initial flight-logic state (LAUNCHPAD, ASCENT,
+# APOGEE, DESCENT, PROBE_RELEASE, LANDED, or NONE)
+# STATE_OVERRIDE=NONE"""
 
     with open(config_file_path, 'w') as file:
         file.write(initial_conf_file_content)
@@ -29,18 +43,42 @@ else:
     with open(config_file_path, 'r') as file:
         lines = file.readlines()
 
-    config_lines = [line.strip() for line in lines if not line.strip().startswith('#')]
-    for config_line in config_lines:
-        config_line = config_line.strip().replace(" ", "").replace("\t", "")
-        if config_line == "SELECTED=NONE":
-            FSW_CONF = CONF_NONE
-            print("#################################################################\n\n NONE SELECTED \n\n#################################################################")
-            break
-        elif config_line == "SELECTED=PAYLOAD":
-            print("#################################################################\n\n PAYLOAD SELECTED \n\n#################################################################")
-            FSW_CONF = CONF_PAYLOAD
-            break
-        elif config_line == "SELECTED=CONTAINER":
-            print("#################################################################\n\n CONTAINER SELECTED \n\n#################################################################")
-            FSW_CONF = CONF_CONTAINER
-            break
+    selected_set = False
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+
+        config_line = stripped.replace(" ", "").replace("\t", "")
+        upper_line = config_line.upper()
+
+        if upper_line.startswith("SELECTED=") and not selected_set:
+            value = upper_line.split("=", 1)[1]
+            if value == "NONE":
+                FSW_CONF = CONF_NONE
+                print("#################################################################\n\n NONE SELECTED \n\n#################################################################")
+            elif value == "PAYLOAD":
+                FSW_CONF = CONF_PAYLOAD
+                print("#################################################################\n\n PAYLOAD SELECTED \n\n#################################################################")
+            elif value == "CONTAINER":
+                FSW_CONF = CONF_CONTAINER
+                print("#################################################################\n\n CONTAINER SELECTED \n\n#################################################################")
+            else:
+                print(f"#################################################################\n\n INVALID CONFIG SELECTED={value}, defaulting to PAYLOAD \n\n#################################################################")
+                FSW_CONF = CONF_PAYLOAD
+            selected_set = True
+
+        elif upper_line.startswith("STATE_OVERRIDE="):
+            value = upper_line.split("=", 1)[1]
+            if value in ("", "NONE"):
+                STATE_OVERRIDE = None
+                print("#################################################################\n\n STATE OVERRIDE DISABLED \n\n#################################################################")
+            elif value.isdigit() and int(value) in STATE_NAME_TO_ID.values():
+                STATE_OVERRIDE = int(value)
+                print(f"#################################################################\n\n STATE OVERRIDE SET TO {STATE_OVERRIDE} \n\n#################################################################")
+            elif value in STATE_NAME_TO_ID:
+                STATE_OVERRIDE = STATE_NAME_TO_ID[value]
+                print(f"#################################################################\n\n STATE OVERRIDE SET TO {value} \n\n#################################################################")
+            else:
+                STATE_OVERRIDE = None
+                print(f"#################################################################\n\n INVALID STATE_OVERRIDE={value} (ignored) \n\n#################################################################")

@@ -72,6 +72,19 @@ when initially running flight software, you will get the error
 
 you should specify the operation mode of the FSW by editing the lib/config.txt file
 
+# Force flight-logic state (for bench tests)
+Add the optional `STATE_OVERRIDE` entry in `lib/config.txt` when you need the software
+to boot directly into a specific flight state (e.g., to spin the parafoil motors while
+on the bench). Valid options are `LAUNCHPAD`, `ASCENT`, `APOGEE`, `DESCENT`,
+`PROBE_RELEASE`, `LANDED`, or `NONE` to disable the override:
+
+```
+SELECTED=PAYLOAD
+STATE_OVERRIDE=DESCENT
+```
+
+The override only affects startup; once running, the state machine continues normally.
+
 # Optional Configuraton
 ## Granting permission to interface (Not Root)
 When not running on root, permission to interfaces should be given
