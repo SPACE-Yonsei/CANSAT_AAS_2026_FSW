@@ -17,3 +17,7 @@ PICAM_Video/
 *.h264
 *.jpg
 *.png
+__pycache__/
+*.pyc
+lib/prevstate.txt
+sensorlogs/
