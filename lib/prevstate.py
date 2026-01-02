@@ -8,6 +8,9 @@ PREV_STATE  = 0
 PREV_MAX_ALT = 0
 Target_lat = 0
 Target_lon = 0
+# F1, F2 requirements - persist through resets
+PREV_PACKET_COUNT = 0
+PREV_ST_TIMEDELTA = 0  # seconds
 
 prevstate_file_path = 'lib/prevstate.txt'
 
@@ -17,6 +20,8 @@ def write_prevstate_file():
     global PREV_MAX_ALT
     global Target_lat
     global Target_lon
+    global PREV_PACKET_COUNT
+    global PREV_ST_TIMEDELTA
 
     content = f"""# Prevstate.txt
 # The Config below stores the prev flight data
@@ -25,7 +30,9 @@ STATE={PREV_STATE}
 ALTCAL={PREV_ALT_CAL}
 MAXALT={PREV_MAX_ALT}
 TARGET_LAT={Target_lat}
-TARGET_LON={Target_lon}"""
+TARGET_LON={Target_lon}
+PACKET_COUNT={PREV_PACKET_COUNT}
+ST_TIMEDELTA={PREV_ST_TIMEDELTA}"""
 
     with open(prevstate_file_path, 'w') as file:
         file.write(content)
@@ -36,12 +43,16 @@ def reset_prevstate():
     global PREV_MAX_ALT
     global Target_lat
     global Target_lon
+    global PREV_PACKET_COUNT
+    global PREV_ST_TIMEDELTA
 
     PREV_STATE = "NONE"
     PREV_ALT_CAL = "NONE"
     PREV_MAX_ALT = "NONE"
     Target_lat = 0
     Target_lon = 0
+    PREV_PACKET_COUNT = 0
+    PREV_ST_TIMEDELTA = 0
     write_prevstate_file()
     return
 
@@ -72,6 +83,20 @@ def update_target_gps(lat: float, lon: float):
     events.LogEvent("RECOVERY", events.EventType.info, f"Target GPS updated: Lat={lat}, Lon={lon}")
     return
 
+def update_packet_count(count: int):
+    """Update packet count (F1 requirement)."""
+    global PREV_PACKET_COUNT
+    PREV_PACKET_COUNT = count
+    write_prevstate_file()
+    return
+
+def update_st_timedelta(seconds: float):
+    """Update ST timedelta in seconds (F2 requirement)."""
+    global PREV_ST_TIMEDELTA
+    PREV_ST_TIMEDELTA = seconds
+    write_prevstate_file()
+    return
+
 def init_prevstate():
 
     global PREV_STATE
@@ -79,6 +104,8 @@ def init_prevstate():
     global PREV_MAX_ALT
     global Target_lat
     global Target_lon
+    global PREV_PACKET_COUNT
+    global PREV_ST_TIMEDELTA
     
     if not os.path.exists(prevstate_file_path):
         print(f"#################################################################\n\nPrevstate file does not exist, Using initial state\n\n#################################################################")
@@ -147,5 +174,25 @@ def init_prevstate():
                     except ValueError:
                         events.LogEvent("RECOVERY", events.EventType.error, f"Invalid target longitude: {target_lon_str}")
                         Target_lon = 0
+            
+            # F1 requirement - Packet count persistence
+            elif "PACKET_COUNT=" in prevstate_line:
+                packet_count_str = prevstate_line.split("=")[1].strip()
+                try:
+                    PREV_PACKET_COUNT = int(packet_count_str)
+                    events.LogEvent("RECOVERY", events.EventType.info, f"Packet count restored: {PREV_PACKET_COUNT}")
+                except ValueError:
+                    events.LogEvent("RECOVERY", events.EventType.error, f"Invalid packet count: {packet_count_str}")
+                    PREV_PACKET_COUNT = 0
+            
+            # F2 requirement - Mission time (ST timedelta) persistence
+            elif "ST_TIMEDELTA=" in prevstate_line:
+                st_timedelta_str = prevstate_line.split("=")[1].strip()
+                try:
+                    PREV_ST_TIMEDELTA = float(st_timedelta_str)
+                    events.LogEvent("RECOVERY", events.EventType.info, f"ST timedelta restored: {PREV_ST_TIMEDELTA} seconds")
+                except ValueError:
+                    events.LogEvent("RECOVERY", events.EventType.error, f"Invalid ST timedelta: {st_timedelta_str}")
+                    PREV_ST_TIMEDELTA = 0
 
     return
