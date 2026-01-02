@@ -12,7 +12,6 @@ from lib import msgstructure
 from lib import logging
 from lib import events
 from lib import types
-
 # Multiprocessing Library is used on Python FSW V2
 # Each application should have its own runloop
 # Import the application and execute the runloop here.
@@ -46,140 +45,126 @@ class app_elements:
 app_dict = dict[types.AppID, app_elements]()
 
 #########################################################
-# HK APP                                                #
+# Lazy Import Wrapper Functions                         #
+# Each subprocess imports its own module on startup     #
+# This enables parallel imports for faster boot time    #
 #########################################################
 
-from hk import hkapp
+def hkapp_launcher(queue, pipe):
+    from hk import hkapp
+    hkapp.hkapp_main(queue, pipe)
+
+def barometerapp_launcher(queue, pipe):
+    from Sensor_Barometer import barometerapp
+    barometerapp.barometerapp_main(queue, pipe)
+
+def cameraapp_launcher(queue, pipe):
+    from Sensor_Camera import cameraapp
+    cameraapp.cameraapp_main(queue, pipe)
+
+def gpsapp_launcher(queue, pipe):
+    from Sensor_Gps import gpsapp
+    gpsapp.gpsapp_main(queue, pipe)
+
+def imuapp_launcher(queue, pipe):
+    from Sensor_Imu import imuapp
+    imuapp.imuapp_main(queue, pipe)
+
+def commapp_launcher(queue, pipe):
+    from comm import commapp
+    commapp.commapp_main(queue, pipe)
+
+def voltageapp_launcher(queue, pipe):
+    from Sensor_Voltage import voltageapp
+    voltageapp.voltageapp_main(queue, pipe)
+
+def flightlogicapp_launcher(queue, pipe):
+    from flight_logic import flightlogicapp
+    flightlogicapp.flightlogicapp_main(queue, pipe)
+
+def motorapp_launcher(queue, pipe):
+    from Sensor_Motor import motorapp
+    motorapp.motorapp_main(queue, pipe)
+
+#########################################################
+# HK APP                                                #
+#########################################################
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 hkapp_elements = app_elements()
-hkapp_elements.process = Process(target = hkapp.hkapp_main, args = (main_queue, child_pipe, ))
+hkapp_elements.process = Process(target=hkapp_launcher, args=(main_queue, child_pipe,))
 hkapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.HkAppArg.AppID] = hkapp_elements
 
 #########################################################
 # BarometerApp                                          #
 #########################################################
-from Sensor_Barometer import barometerapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 barometerapp_elements = app_elements()
-barometerapp_elements.process = Process(target = barometerapp.barometerapp_main, args = (main_queue, child_pipe, ))
+barometerapp_elements.process = Process(target=barometerapp_launcher, args=(main_queue, child_pipe,))
 barometerapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 
 #########################################################
 # CameraApp                                             #
 #########################################################
-
-from Sensor_Camera import cameraapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 cameraapp_elements = app_elements()
-cameraapp_elements.process = Process(target = cameraapp.cameraapp_main, args = (main_queue, child_pipe, ))
+cameraapp_elements.process = Process(target=cameraapp_launcher, args=(main_queue, child_pipe,))
 cameraapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
 
 #########################################################
 # GpsApp                                                #
 #########################################################
-from Sensor_Gps import gpsapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 gpsapp_elements = app_elements()
-gpsapp_elements.process = Process(target = gpsapp.gpsapp_main, args = (main_queue, child_pipe, ))
+gpsapp_elements.process = Process(target=gpsapp_launcher, args=(main_queue, child_pipe,))
 gpsapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.GpsAppArg.AppID] = gpsapp_elements
 
 #########################################################
 # ImuApp                                                #
 #########################################################
-from Sensor_Imu import imuapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 imuapp_elements = app_elements()
-imuapp_elements.process = Process(target = imuapp.imuapp_main, args = (main_queue, child_pipe, ))
+imuapp_elements.process = Process(target=imuapp_launcher, args=(main_queue, child_pipe,))
 imuapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.ImuAppArg.AppID] = imuapp_elements
 
 #########################################################
 # CommApp                                               #
 #########################################################
-from comm import commapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 commapp_elements = app_elements()
-commapp_elements.process = Process(target = commapp.commapp_main, args = (main_queue, child_pipe, ))
+commapp_elements.process = Process(target=commapp_launcher, args=(main_queue, child_pipe,))
 commapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.CommAppArg.AppID] = commapp_elements
-
 
 #########################################################
 # VoltageApp                                            #
 #########################################################
-from Sensor_Voltage import voltageapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 voltageapp_elements = app_elements()
-voltageapp_elements.process = Process(target = voltageapp.voltageapp_main, args = (main_queue, child_pipe, ))
+voltageapp_elements.process = Process(target=voltageapp_launcher, args=(main_queue, child_pipe,))
 voltageapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.VoltageAppArg.AppID] = voltageapp_elements
 
 #########################################################
 # FlightlogicApp                                        #
 #########################################################
-from flight_logic import flightlogicapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 flightlogicapp_elements = app_elements()
-flightlogicapp_elements.process = Process(target = flightlogicapp.flightlogicapp_main, args = (main_queue, child_pipe, ))
+flightlogicapp_elements.process = Process(target=flightlogicapp_launcher, args=(main_queue, child_pipe,))
 flightlogicapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 
 #########################################################
 # Gimbalmotorapp                                        #
 #########################################################
-from Sensor_Motor import motorapp
-
 parent_pipe, child_pipe = Pipe()
-
-# Add Process, pipe to elements dictionary
 motorapp_elements = app_elements()
-motorapp_elements.process = Process(target = motorapp.motorapp_main, args = (main_queue, child_pipe, ))
+motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe,))
 motorapp_elements.pipe = parent_pipe
-
-# Add the process to dictionary
 app_dict[appargs.motorAppArg.AppID] = motorapp_elements
 
 #########################################################
