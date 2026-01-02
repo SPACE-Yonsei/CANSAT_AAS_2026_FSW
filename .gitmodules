@@ -34,3 +34,7 @@
 	path = Sensor_Imu
 	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_IMU.git
 	branch = main
+[submodule "Sensor_Distance"]
+	path = Sensor_Distance
+	url = git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_Distance.git
+	branch = main
