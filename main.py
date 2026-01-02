@@ -193,7 +193,7 @@ parent_pipe, child_pipe = Pipe()
 motorapp_elements = app_elements()
 motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe, log_queue))
 motorapp_elements.pipe = parent_pipe
-app_dict[appargs.motorAppArg.AppID] = motorapp_elements
+app_dict[appargs.MotorAppArg.AppID] = motorapp_elements
 
 #########################################################
 # DistanceApp (VL53L1CX ToF Sensor)                     #

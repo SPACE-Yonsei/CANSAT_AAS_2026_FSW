@@ -4,7 +4,6 @@
 from lib import appargs
 from lib import msgstructure
 from lib import events
-from lib import types
 
 import os
 import signal
@@ -57,8 +56,8 @@ def hkapp_init():
         ## User Defined Initialization goes HERE
         events.LogEvent(appargs.HkAppArg.AppName, events.EventType.info, "hkapp Initialization Complete")
 
-    except:
-        events.LogEvent(appargs.HkAppArg.AppName, events.EventType.error, "Error during initialization")
+    except Exception as e:
+        events.LogEvent(appargs.HkAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
 
 # Termination
 def hkapp_terminate():

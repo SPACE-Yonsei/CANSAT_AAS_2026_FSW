@@ -22,20 +22,11 @@ class HkAppArg:
 
     MID_SendCombinedHK : types.MID = 202
 
-class SampleAppArg:
-    # AppID should be unique
-    AppID : types.AppID = 99
-    # Application name used in log
-    AppName : str = "Sample"
-
-    # Message ID
-    MID_SendHK : types.MID = 9901
-
 class BarometerAppArg:
     # AppID should be unique
     AppID : types.AppID = 10
     # Application name used in log
-    AppName : str = "Sensor_Barometer"
+    AppName : str = "Barometer"
 
     # Message ID
     MID_SendHK : types.MID = 1001
@@ -118,7 +109,7 @@ class VoltageAppArg:
     MID_SendHK : types.MID = 1701
     MID_SendVoltageTlmData : types.MID = 1702
 
-class motorAppArg:
+class MotorAppArg:
     # AppID should be unique
     AppID : types.AppID = 18
     # Application name used in log

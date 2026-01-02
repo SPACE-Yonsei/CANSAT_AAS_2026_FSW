@@ -1,5 +1,32 @@
 # Fixes Needed for CANSAT Flight Software
 
+## ✅ Completed Refactoring (pdr branch)
+
+### 1. Naming Convention Fixes
+- ✅ `motorAppArg` → `MotorAppArg` (PascalCase 통일)
+- ✅ `SampleAppArg` 제거 (dead code)
+- ✅ `AppName: "Sensor_Barometer"` → `"Barometer"` (간결화)
+
+### 2. Bare Except 수정
+- ✅ `hk/hkapp.py` - `except:` → `except Exception as e:`
+- ✅ `comm/commapp.py` - `except:` → `except Exception:`
+- ✅ `Sensor_Imu/imu.py` - `except:` → `except (FileNotFoundError, ValueError):`
+- ✅ `Sensor_Gps/gps_7click.py` - `except:` → `except Exception:`
+
+### 3. 불필요한 Import 제거
+- ✅ `flight_logic/flightlogicapp.py` - `from lib import types` 제거
+- ✅ `comm/commapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Motor/motorapp.py` - `from lib import types`, `config` 제거
+- ✅ `Sensor_Barometer/barometerapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Gps/gpsapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Imu/imuapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Voltage/voltageapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Camera/cameraapp.py` - `from lib import types` 제거
+- ✅ `hk/hkapp.py` - `from lib import types` 제거
+- ✅ `Sensor_Distance/distanceapp.py` - `from lib import types` 제거
+
+---
+
 ## Summary of Issues from Logs
 
 1. **Motor App Initialization Error** - Motor app fails during initialization
@@ -20,17 +47,17 @@ def motorapp_init():
         # Disable Keyboardinterrupt since Termination is handled by parent process
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Initializating motorapp")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Initializating motorapp")
         ## User Defined Initialization goes HERE
         
         # TODO: Add specific initialization code here
         # If hardware is not connected, handle gracefully
         
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
     
     except Exception as e:
         # IMPROVED: Log the specific error instead of generic message
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
         # Optionally, set a flag to indicate hardware is not available
         # MOTORAPP_HARDWARE_AVAILABLE = False
         raise  # Re-raise if you want the app to terminate, or remove this to continue
