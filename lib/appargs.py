@@ -126,3 +126,17 @@ class motorAppArg:
 
     # Message ID
     MID_SendHK : types.MID = 1801
+
+
+class DistanceAppArg:
+    # AppID should be unique
+    AppID : types.AppID = 19
+    # Application name used in log
+    AppName : str = "Distance"
+
+    # Message ID
+    MID_SendHK : types.MID = 1901
+    # Send distance data to flight logic for egg release trigger
+    MID_SendDistanceFlightLogicData : types.MID = 1902
+    # Send distance data to telemetry
+    MID_SendDistanceTlmData : types.MID = 1903

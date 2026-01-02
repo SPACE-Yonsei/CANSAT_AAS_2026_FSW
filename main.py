@@ -108,6 +108,12 @@ def motorapp_launcher(queue, pipe, log_queue):
     from Sensor_Motor import motorapp
     motorapp.motorapp_main(queue, pipe)
 
+def distanceapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
+    from Sensor_Distance import distanceapp
+    distanceapp.distanceapp_main(queue, pipe)
+
 #########################################################
 # HK APP                                                #
 #########################################################
@@ -188,6 +194,15 @@ motorapp_elements = app_elements()
 motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe, log_queue))
 motorapp_elements.pipe = parent_pipe
 app_dict[appargs.motorAppArg.AppID] = motorapp_elements
+
+#########################################################
+# DistanceApp (VL53L1CX ToF Sensor)                     #
+#########################################################
+parent_pipe, child_pipe = Pipe()
+distanceapp_elements = app_elements()
+distanceapp_elements.process = Process(target=distanceapp_launcher, args=(main_queue, child_pipe, log_queue))
+distanceapp_elements.pipe = parent_pipe
+app_dict[appargs.DistanceAppArg.AppID] = distanceapp_elements
 
 #########################################################
 # Add Apps HERE                                         #

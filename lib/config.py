@@ -4,16 +4,13 @@ import os
 
 CONF_NONE = 0
 CONF_PAYLOAD = 1
-CONF_CONTAINER = 2
 
 STATE_NAME_TO_ID = {
     "LAUNCHPAD": 0,
-    "LAUNCH_PAD": 0,
     "ASCENT": 1,
-    "APOGEE": 2,
-    "DESCENT": 3,
-    "PROBE_RELEASE": 4,
-    "PROBERELEASE": 4,
+    "APOGEE": 2,        # 컨테이너-페이로드 사출
+    "DESCENT": 3,       # 파라포일 모터 제어 시작
+    "EGG_RELEASE": 4,   # 상공 2m에서 계란 사출
     "LANDED": 5,
 }
 
@@ -23,15 +20,14 @@ STATE_OVERRIDE: int | None = None
 config_file_path = 'lib/config.txt'
 
 if not os.path.exists(config_file_path):
-    print(f"#################################################################\n\nConfig file does not exist: {config_file_path}, Configure the config file to run FSW!\n\n#################################################################")
+    print(f"Config file does not exist: {config_file_path}, Creating default config...")
 
     initial_conf_file_content = """# Config.txt
-# Select the FSW operation mode
-# Currently supports PAYLOAD, CONTAINER
+# FSW Configuration for Payload
 # SELECTED=PAYLOAD
 #
-# Optional: Force the initial flight-logic state (LAUNCHPAD, ASCENT,
-# APOGEE, DESCENT, PROBE_RELEASE, LANDED, or NONE)
+# Optional: Force the initial flight-logic state
+# (LAUNCHPAD, ASCENT, APOGEE, DESCENT, PROBE_RELEASE, LANDED, or NONE)
 # STATE_OVERRIDE=NONE"""
 
     with open(config_file_path, 'w') as file:
@@ -56,15 +52,12 @@ else:
             value = upper_line.split("=", 1)[1]
             if value == "NONE":
                 FSW_CONF = CONF_NONE
-                print("#################################################################\n\n NONE SELECTED \n\n#################################################################")
+                print("[CONFIG] NONE selected - FSW will not run")
             elif value == "PAYLOAD":
                 FSW_CONF = CONF_PAYLOAD
-                print("#################################################################\n\n PAYLOAD SELECTED \n\n#################################################################")
-            elif value == "CONTAINER":
-                FSW_CONF = CONF_CONTAINER
-                print("#################################################################\n\n CONTAINER SELECTED \n\n#################################################################")
+                print("[CONFIG] PAYLOAD mode selected")
             else:
-                print(f"#################################################################\n\n INVALID CONFIG SELECTED={value}, defaulting to PAYLOAD \n\n#################################################################")
+                print(f"[CONFIG] Invalid SELECTED={value}, defaulting to PAYLOAD")
                 FSW_CONF = CONF_PAYLOAD
             selected_set = True
 
@@ -72,13 +65,13 @@ else:
             value = upper_line.split("=", 1)[1]
             if value in ("", "NONE"):
                 STATE_OVERRIDE = None
-                print("#################################################################\n\n STATE OVERRIDE DISABLED \n\n#################################################################")
+                print("[CONFIG] STATE_OVERRIDE disabled")
             elif value.isdigit() and int(value) in STATE_NAME_TO_ID.values():
                 STATE_OVERRIDE = int(value)
-                print(f"#################################################################\n\n STATE OVERRIDE SET TO {STATE_OVERRIDE} \n\n#################################################################")
+                print(f"[CONFIG] STATE_OVERRIDE set to {STATE_OVERRIDE}")
             elif value in STATE_NAME_TO_ID:
                 STATE_OVERRIDE = STATE_NAME_TO_ID[value]
-                print(f"#################################################################\n\n STATE OVERRIDE SET TO {value} \n\n#################################################################")
+                print(f"[CONFIG] STATE_OVERRIDE set to {value} ({STATE_OVERRIDE})")
             else:
                 STATE_OVERRIDE = None
-                print(f"#################################################################\n\n INVALID STATE_OVERRIDE={value} (ignored) \n\n#################################################################")
+                print(f"[CONFIG] Invalid STATE_OVERRIDE={value}, ignored")
