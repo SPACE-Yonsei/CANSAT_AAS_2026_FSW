@@ -48,7 +48,7 @@ echo "Installing basic modules"
 pip3 install numpy==1.26.4
 
 echo "Setting up crontab"
-(crontab -l 2>/dev/null; echo "@reboot /home/pi/CANSAT_AAS_2025_FSW/startup.sh") | crontab -
+(crontab -l 2>/dev/null; echo "@reboot /home/pi/CANSAT_AAS_2026_FSW/startup.sh") | crontab -
 
 echo "Rebooting"
 sudo systemctl reboot
