@@ -1,49 +1,64 @@
-# Events.py
-# Author : Hyeon Lee
-# Print, save Event logs
-import os
-from lib import logging
-from datetime import datetime
+# events.py
+# Author: Hyeon Lee (Refactored for multiprocessing)
+# Event logging interface using Python's logging module
 
-# Create log directory if it doesn't exist
-log_dir = './eventlogs'
-if not os.path.exists(log_dir): 
-    os.makedirs(log_dir)
-
-# Open the log files depending on error types
-infologfile = open(os.path.join(log_dir, 'info_event.txt'), 'a')
-errorlogfile = open(os.path.join(log_dir, 'error_event.txt'), 'a') 
-debuglogfile = open(os.path.join(log_dir, 'debug_event.txt'), 'a') 
-
-# Write the log file generation message
-logging.logdata(infologfile, "Log file generated")
-logging.logdata(errorlogfile, "Log file generated")
-logging.logdata(errorlogfile, "Log file generated")
+import logging
+from lib import logging as fsw_logging
 
 class EventType:
+    """이벤트 타입 상수"""
     error = 0
     info = 1
     debug = 2
 
-def LogEvent(app_name : str ,event_type : int, event_msg : str, print_event=True):
 
-    event_type_str_arr = ["ERROR", "INFO","DEBUG"]
-    t = datetime.now().isoformat(sep=' ', timespec='milliseconds')
-    data_to_log = f"{event_type_str_arr[event_type]} | {app_name} : {event_msg}"
+def init_events_main_process():
+    """
+    Main process에서 호출. 로깅 시스템 초기화.
+    Returns log_queue to pass to subprocesses.
+    """
+    log_queue = fsw_logging.setup_logging_main_process()
+    
+    # Log initialization
+    logger = fsw_logging.get_logger('MAIN')
+    logger.info("=== FSW Logging System Initialized ===")
+    
+    return log_queue
 
-    log_to_write = f"[{t}] {data_to_log}\n"
 
-    # Save the logs into separate file by event type
-    if event_type == EventType.info:
-        infologfile.write(log_to_write)
-        infologfile.flush()
-    elif event_type == EventType.error:
-        errorlogfile.write(log_to_write)
-        errorlogfile.flush()
+def init_events_subprocess(log_queue):
+    """
+    Subprocess에서 호출. 로깅 시스템 연결.
+    """
+    fsw_logging.setup_logging_subprocess(log_queue)
+
+
+def shutdown_events():
+    """
+    Main process 종료 시 호출. 로깅 시스템 정리.
+    """
+    logger = fsw_logging.get_logger('MAIN')
+    logger.info("=== FSW Logging System Shutdown ===")
+    fsw_logging.shutdown_logging()
+
+
+def LogEvent(app_name: str, event_type: int, event_msg: str, print_event=True):
+    """
+    이벤트 로깅 함수.
+    
+    Args:
+        app_name: 앱 이름 (logger name으로 사용)
+        event_type: EventType.error, EventType.info, EventType.debug
+        event_msg: 로그 메시지
+        print_event: 콘솔 출력 여부 (현재는 handler 레벨에서 제어됨)
+    """
+    logger = fsw_logging.get_logger(app_name)
+    
+    if event_type == EventType.error:
+        logger.error(event_msg)
+    elif event_type == EventType.info:
+        logger.info(event_msg)
     elif event_type == EventType.debug:
-        debuglogfile.write(log_to_write)
-        debuglogfile.flush()
-
-    if print_event:
-        print(log_to_write, end="")
-    return
+        logger.debug(event_msg)
+    else:
+        logger.info(event_msg)

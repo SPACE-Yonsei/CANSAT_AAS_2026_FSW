@@ -9,14 +9,17 @@ MAINAPP_RUNSTATUS = True
 # Custum libraries
 from lib import appargs
 from lib import msgstructure
-from lib import logging
 from lib import events
 from lib import types
+
 # Multiprocessing Library is used on Python FSW V2
 # Each application should have its own runloop
 # Import the application and execute the runloop here.
 
 from multiprocessing import Process, Queue, Pipe, connection
+
+# Initialize logging system FIRST (before any LogEvent calls)
+log_queue = events.init_events_main_process()
 
 # Load configuration files
 from lib import config
@@ -48,41 +51,60 @@ app_dict = dict[types.AppID, app_elements]()
 # Lazy Import Wrapper Functions                         #
 # Each subprocess imports its own module on startup     #
 # This enables parallel imports for faster boot time    #
+# log_queue is passed for multiprocessing-safe logging  #
 #########################################################
 
-def hkapp_launcher(queue, pipe):
+def hkapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from hk import hkapp
     hkapp.hkapp_main(queue, pipe)
 
-def barometerapp_launcher(queue, pipe):
+def barometerapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Barometer import barometerapp
     barometerapp.barometerapp_main(queue, pipe)
 
-def cameraapp_launcher(queue, pipe):
+def cameraapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Camera import cameraapp
     cameraapp.cameraapp_main(queue, pipe)
 
-def gpsapp_launcher(queue, pipe):
+def gpsapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Gps import gpsapp
     gpsapp.gpsapp_main(queue, pipe)
 
-def imuapp_launcher(queue, pipe):
+def imuapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Imu import imuapp
     imuapp.imuapp_main(queue, pipe)
 
-def commapp_launcher(queue, pipe):
+def commapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from comm import commapp
     commapp.commapp_main(queue, pipe)
 
-def voltageapp_launcher(queue, pipe):
+def voltageapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Voltage import voltageapp
     voltageapp.voltageapp_main(queue, pipe)
 
-def flightlogicapp_launcher(queue, pipe):
+def flightlogicapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from flight_logic import flightlogicapp
     flightlogicapp.flightlogicapp_main(queue, pipe)
 
-def motorapp_launcher(queue, pipe):
+def motorapp_launcher(queue, pipe, log_queue):
+    from lib import events
+    events.init_events_subprocess(log_queue)
     from Sensor_Motor import motorapp
     motorapp.motorapp_main(queue, pipe)
 
@@ -91,7 +113,7 @@ def motorapp_launcher(queue, pipe):
 #########################################################
 parent_pipe, child_pipe = Pipe()
 hkapp_elements = app_elements()
-hkapp_elements.process = Process(target=hkapp_launcher, args=(main_queue, child_pipe,))
+hkapp_elements.process = Process(target=hkapp_launcher, args=(main_queue, child_pipe, log_queue))
 hkapp_elements.pipe = parent_pipe
 app_dict[appargs.HkAppArg.AppID] = hkapp_elements
 
@@ -100,7 +122,7 @@ app_dict[appargs.HkAppArg.AppID] = hkapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 barometerapp_elements = app_elements()
-barometerapp_elements.process = Process(target=barometerapp_launcher, args=(main_queue, child_pipe,))
+barometerapp_elements.process = Process(target=barometerapp_launcher, args=(main_queue, child_pipe, log_queue))
 barometerapp_elements.pipe = parent_pipe
 app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 
@@ -109,7 +131,7 @@ app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 cameraapp_elements = app_elements()
-cameraapp_elements.process = Process(target=cameraapp_launcher, args=(main_queue, child_pipe,))
+cameraapp_elements.process = Process(target=cameraapp_launcher, args=(main_queue, child_pipe, log_queue))
 cameraapp_elements.pipe = parent_pipe
 app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
 
@@ -118,7 +140,7 @@ app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 gpsapp_elements = app_elements()
-gpsapp_elements.process = Process(target=gpsapp_launcher, args=(main_queue, child_pipe,))
+gpsapp_elements.process = Process(target=gpsapp_launcher, args=(main_queue, child_pipe, log_queue))
 gpsapp_elements.pipe = parent_pipe
 app_dict[appargs.GpsAppArg.AppID] = gpsapp_elements
 
@@ -127,7 +149,7 @@ app_dict[appargs.GpsAppArg.AppID] = gpsapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 imuapp_elements = app_elements()
-imuapp_elements.process = Process(target=imuapp_launcher, args=(main_queue, child_pipe,))
+imuapp_elements.process = Process(target=imuapp_launcher, args=(main_queue, child_pipe, log_queue))
 imuapp_elements.pipe = parent_pipe
 app_dict[appargs.ImuAppArg.AppID] = imuapp_elements
 
@@ -136,7 +158,7 @@ app_dict[appargs.ImuAppArg.AppID] = imuapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 commapp_elements = app_elements()
-commapp_elements.process = Process(target=commapp_launcher, args=(main_queue, child_pipe,))
+commapp_elements.process = Process(target=commapp_launcher, args=(main_queue, child_pipe, log_queue))
 commapp_elements.pipe = parent_pipe
 app_dict[appargs.CommAppArg.AppID] = commapp_elements
 
@@ -145,7 +167,7 @@ app_dict[appargs.CommAppArg.AppID] = commapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 voltageapp_elements = app_elements()
-voltageapp_elements.process = Process(target=voltageapp_launcher, args=(main_queue, child_pipe,))
+voltageapp_elements.process = Process(target=voltageapp_launcher, args=(main_queue, child_pipe, log_queue))
 voltageapp_elements.pipe = parent_pipe
 app_dict[appargs.VoltageAppArg.AppID] = voltageapp_elements
 
@@ -154,7 +176,7 @@ app_dict[appargs.VoltageAppArg.AppID] = voltageapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 flightlogicapp_elements = app_elements()
-flightlogicapp_elements.process = Process(target=flightlogicapp_launcher, args=(main_queue, child_pipe,))
+flightlogicapp_elements.process = Process(target=flightlogicapp_launcher, args=(main_queue, child_pipe, log_queue))
 flightlogicapp_elements.pipe = parent_pipe
 app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 
@@ -163,7 +185,7 @@ app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 motorapp_elements = app_elements()
-motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe,))
+motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe, log_queue))
 motorapp_elements.pipe = parent_pipe
 app_dict[appargs.motorAppArg.AppID] = motorapp_elements
 
@@ -212,9 +234,12 @@ def terminate_FSW():
     prevstate.reset_prevstate()
     
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"All Termination Process complete, terminating FSW")
+    
+    # Shutdown logging system
+    events.shutdown_events()
+    
     sys.exit()
     return
-# Import and execute each app's runloop HERE
 
 # Check run status, restart correspoding app when run status is false
 # TBD
@@ -249,10 +274,14 @@ def runloop(Main_Queue : Queue):
 
 # Operation starts HERE
 if __name__ == '__main__':
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "Starting FSW...")
 
     # Start each app's process
     for appID in app_dict:
         app_dict[appID].process.start()
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Started AppID {appID}")
 
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "All processes started. Entering main runloop.")
+    
     # Main app runloop
     runloop(main_queue)
