@@ -22,3 +22,11 @@ while True:
             f"Bus: {bus_v:6.3f} V | "
             f"Shunt: {shunt_v*1000:7.3f} mV | "
             f"Current: {current*1000:7.3f} mA | "
+            f"Power: {power*1000:7.3f} mW"
+        )
+
+        time.sleep(0.5)
+
+    except KeyboardInterrupt:
+        print("\n측정 종료")
+        break
