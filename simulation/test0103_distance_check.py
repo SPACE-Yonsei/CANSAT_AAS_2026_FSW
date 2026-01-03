@@ -42,4 +42,4 @@ try:
 except KeyboardInterrupt:
     # 프로그램 종료 시 센서 작동을 중지한다
     vl53.stop_ranging()
-    print(측정을 종료한다.)
+    print("측정을 종료한다.")
