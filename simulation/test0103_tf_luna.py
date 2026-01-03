@@ -1,17 +1,23 @@
-import smbus
 import time
+import board
+import busio
 
 I2C_ADDR = 0x10
-bus = smbus.SMBus(1)
+
+i2c = busio.I2C(board.SCL, board.SDA)
+
+while not i2c.try_lock():
+    pass
 
 def read_distance_cm():
-    data = bus.read_i2c_block_data(I2C_ADDR, 0x00, 2)
-    return data[0] + (data[1] << 8)
+    buf = bytearray(2)
+    i2c.writeto_then_readfrom(I2C_ADDR, bytes([0x00]), buf)
+    return buf[0] | (buf[1] << 8)
 
-while True:
-    try:
+try:
+    while True:
         d = read_distance_cm()
         print(f"Distance: {d} cm")
-    except Exception as e:
-        print("I2C error:", e)
-    time.sleep(0.1)
+        time.sleep(0.1)
+finally:
+    i2c.unlock()
