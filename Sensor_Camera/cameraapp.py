@@ -43,7 +43,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             picam_stop_recording()
     
     elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendCameraActivateToCam:
-        events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"CAMERA ACTIVATION BY LOGIC")
+        # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"CAMERA ACTIVATION BY LOGIC")
         picam_start_recording()
 
     else:
@@ -128,7 +128,7 @@ def picam_start_recording():
     PICAM_RECORDING = True
     picam.PICAM_RECORDING = True
     
-    events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam recording flag is TRUE")
+    # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam recording flag is TRUE")
     return
 
 def picam_stop_recording():
@@ -136,7 +136,7 @@ def picam_stop_recording():
     PICAM_RECORDING = False
     picam.PICAM_RECORDING = False
 
-    events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam recording flag is FALSE")
+    # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam recording flag is FALSE")
     return
 
 def picam_record_thread(picam_instance, picamencoder_instance):
@@ -148,9 +148,9 @@ def picam_record_thread(picam_instance, picamencoder_instance):
     while CAMERAAPP_RUNSTATUS:
         if PICAM_RECORDING == True:
             try:
-                events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam Recording Start")
+                # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam Recording Start")
                 picam.record(picam_instance, picamencoder_instance, CAMERA_RECORD_SEC)
-                events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam Recording End")
+                # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Picam Recording End")
 
             except Exception as e:
                 events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.error, f"Error Recording picam : {e}")

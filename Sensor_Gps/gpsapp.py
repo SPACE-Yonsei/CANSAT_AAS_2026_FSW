@@ -145,9 +145,8 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"Error parsing GPS data: {e}, rcv_data={rcv_data}")
         else:
             # GPS 데이터가 없을 때 (None 또는 형식 불일치) - 이전 값 유지
-            # 처음 몇 번만 로그 출력 (너무 많은 로그 방지)
-            if send_counter < 5 or send_counter % 100 == 0:  # 10초마다 한 번씩
-                events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.debug, f"GPS data not available, keeping previous values (Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f})")
+            # 로그 출력 비활성화
+            pass
 
         # FlightLogic으로 데이터 전송 (매 루프마다)
         if GPS_LAT != 0.0 or GPS_LON != 0.0:
@@ -173,9 +172,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             )
             if status == False:
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, "Error When sending GPS Tlm Message")
-            else:
-                # GPS 데이터 전송 성공 시 로그 출력 (디버깅용)
-                events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.debug, f"GPS TLM sent: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}")
+            # GPS TLM 전송 성공 로그 비활성화
             send_counter = 0
 
         # GPS read rate: 10Hz (reduced from 25Hz to avoid I2C bus conflicts with other sensors)

@@ -113,12 +113,11 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             tlm_data.gps_lon = float(sep_data[3])
             tlm_data.gps_sats = int(sep_data[4])
             
-            # GPS 데이터 수신 시 항상 로그 출력 (디버깅용)
-            if tlm_data.gps_lat != 0.0 and tlm_data.gps_lon != 0.0:
-                events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, f"GPS TLM received: Lat={tlm_data.gps_lat:.6f}, Lon={tlm_data.gps_lon:.6f}, Alt={tlm_data.gps_alt:.2f}m, Sats={tlm_data.gps_sats}")
-            else:
-                # GPS 데이터가 0인 경우에도 수신 확인을 위해 로그 출력
-                events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, f"GPS TLM received (no fix): Lat={tlm_data.gps_lat:.6f}, Lon={tlm_data.gps_lon:.6f}, Alt={tlm_data.gps_alt:.2f}m, Sats={tlm_data.gps_sats}, Time={tlm_data.gps_time}")
+            # GPS TLM 수신 로그 비활성화
+            # if tlm_data.gps_lat != 0.0 and tlm_data.gps_lon != 0.0:
+            #     events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, f"GPS TLM received: Lat={tlm_data.gps_lat:.6f}, Lon={tlm_data.gps_lon:.6f}, Alt={tlm_data.gps_alt:.2f}m, Sats={tlm_data.gps_sats}")
+            # else:
+            #     events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, f"GPS TLM received (no fix): Lat={tlm_data.gps_lat:.6f}, Lon={tlm_data.gps_lon:.6f}, Alt={tlm_data.gps_alt:.2f}m, Sats={tlm_data.gps_sats}, Time={tlm_data.gps_time}")
         except (ValueError, IndexError) as e:
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR parsing GPS data: {e}, data: {recv_msg.data}")
             return
