@@ -239,10 +239,16 @@ def terminate_FSW():
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID}")
         app_dict[appID].pipe.send(termination_message_to_send)
 
-    # Join all processes to make sure every processes is killed
+    # Join all processes with timeout, force kill if not responding
     for appID in app_dict:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Joining AppID {appID}")
-        app_dict[appID].process.join()
+        app_dict[appID].process.join(timeout=3)  # 3초 타임아웃
+        if app_dict[appID].process.is_alive():
+            events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, f"AppID {appID} not responding, force killing")
+            app_dict[appID].process.terminate()
+            app_dict[appID].process.join(timeout=1)
+            if app_dict[appID].process.is_alive():
+                app_dict[appID].process.kill()
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID} complete")
 
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Manual termination! Resetting prev state file")
@@ -283,7 +289,15 @@ def runloop(Main_Queue : Queue):
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "KeyboardInterrupt Detected, Terminating FSW")
         MAINAPP_RUNSTATUS = False
 
-    terminate_FSW()
+    try:
+        terminate_FSW()
+    except KeyboardInterrupt:
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, "Force terminating all processes...")
+        for appID in app_dict:
+            if app_dict[appID].process.is_alive():
+                app_dict[appID].process.kill()
+        events.shutdown_events()
+        sys.exit(1)
     return
 
 

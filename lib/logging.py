@@ -53,9 +53,9 @@ def setup_logging_main_process() -> Queue:
     )
     debug_handler.setLevel(logging.DEBUG)
     
-    # Console handler
+    # Console handler - DEBUG 레벨부터 모두 출력
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)
     
     # Formatter
     formatter = logging.Formatter(
