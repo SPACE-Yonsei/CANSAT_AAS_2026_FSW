@@ -1,14 +1,14 @@
 import time
 import board
 import busio
-from adafruit_vl53l5cx import VL53L5CX
+import adafruit_vl53l1x
 
 # I2C 설정
 i2c = busio.I2C(board.SCL, board.SDA)
 
 # 센서 초기화 (VL53L5CX는 초기화에 시간이 몇 초 걸릴 수 있습니다)
 print("센서를 초기화 중입니다...")
-vl53 = VL53L5CX(i2c)
+vl53 = adafruit_vl53l1x.VL53L1X(i2c)
 
 # 기본 설정 (해상도 4x4, 15Hz 업데이트)
 vl53.resolution = 16  # 4x4 영역
