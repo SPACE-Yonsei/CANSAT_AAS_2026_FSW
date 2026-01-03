@@ -72,6 +72,7 @@ def update_maxalt(alt:float):
     global PREV_MAX_ALT
     PREV_MAX_ALT = alt
     write_prevstate_file()
+    return
 
 def update_target_gps(lat: float, lon: float):
     """Update target GPS coordinates."""

@@ -18,6 +18,7 @@ STATE_NAME_TO_ID = {
 
 FSW_CONF = CONF_PAYLOAD
 STATE_OVERRIDE: int | None = None
+YAW_OFFSET: float = 0.0  # IMU yaw 오프셋 (도 단위, 현장에서 캔위성 앞쪽 방향을 0도로 맞추기 위해 사용)
 
 config_file_path = 'lib/config.txt'
 
@@ -30,7 +31,11 @@ if not os.path.exists(config_file_path):
 #
 # Optional: Force the initial flight-logic state
 # (LAUNCHPAD, ASCENT, APOGEE, DESCENT, PROBE_RELEASE, LANDED, or NONE)
-# STATE_OVERRIDE=NONE"""
+# STATE_OVERRIDE=NONE
+#
+# Optional: IMU yaw offset in degrees (현장에서 캔위성 앞쪽 방향을 0도로 맞추기)
+# 예: 캔위성 앞쪽이 자북에서 30도 오른쪽이면 YAW_OFFSET=-30
+# YAW_OFFSET=0.0"""
 
     with open(config_file_path, 'w') as file:
         file.write(initial_conf_file_content)
@@ -77,3 +82,12 @@ else:
             else:
                 STATE_OVERRIDE = None
                 print(f"[CONFIG] Invalid STATE_OVERRIDE={value}, ignored")
+        
+        elif upper_line.startswith("YAW_OFFSET="):
+            value = upper_line.split("=", 1)[1]
+            try:
+                YAW_OFFSET = float(value)
+                print(f"[CONFIG] YAW_OFFSET set to {YAW_OFFSET} degrees")
+            except ValueError:
+                YAW_OFFSET = 0.0
+                print(f"[CONFIG] Invalid YAW_OFFSET={value}, defaulting to 0.0")

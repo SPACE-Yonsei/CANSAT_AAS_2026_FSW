@@ -87,6 +87,10 @@ def read_sensor_data(sensor):
         if IMU_FORWARD_AXIS == 'Y':
             # Y축이 앞쪽이면 90° 오프셋 적용 (X축 기준 → Y축 기준)
             yaw_deg = yaw_deg + 90
+        
+        # config.txt에서 설정한 YAW_OFFSET 적용 (현장에서 0점 조절용)
+        from lib import config
+        yaw_deg = yaw_deg + config.YAW_OFFSET
 
         # 쿼터니언으로부터 pitch 계산 (라디안 단위)
         try: # arcsin 함수의 정의역 문제
@@ -111,9 +115,11 @@ def read_sensor_data(sensor):
         # 라디안을 도(degree)로 변환
         roll_deg = math.degrees(roll)
         
-        # 음수 각도를 0~360도로 변환
+        # 음수 각도를 0~360도로 변환 (YAW_OFFSET 적용 후)
         if yaw_deg < 0:
             yaw_deg += 360
+        elif yaw_deg >= 360:
+            yaw_deg -= 360
         
         if roll_deg < 0:
             roll_deg += 360
