@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+
+import time
+import RPi.GPIO as GPIO 
+
+SOLENOID_PIN = 5
+
+SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
+SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
+
+def init_solenoid():
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
+
+def unlock_solenoid():
+    try:
+        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)        
+        time.sleep(0.5) 
+        GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
+        
+    except Exception as e:
+        pass
+
+def terminate_solenoid():
+    GPIO.cleanup()
+
+if __name__ == "__main__":
+    init_solenoid()
+    try:
+        while True:
+
+            print("\n--- 1. 잠금 해제 상태 ---")
+            unlock_solenoid()
+            input("Enter를 눌러 순간 잠금 해제 상태로 전환")
+            
+            print("\n--- 2. 순간 잠금 해제 (100ms) 상태 ---")
+            unlock_solenoid()
+            input("Enter를 눌러 종료")
+            break
+
+    except KeyboardInterrupt:
+        print("\n프로그램 종료 요청 (Ctrl+C)")
+
+    finally:
+        terminate_solenoid()
