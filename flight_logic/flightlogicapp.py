@@ -609,7 +609,6 @@ def launchpad_state_transition(Main_Queue : Queue, force: bool = False):
 
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 0 ; Standby
@@ -635,7 +634,6 @@ def ascent_state_transition(Main_Queue : Queue, force: bool = False):
     
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 1 ; Ascent
@@ -657,7 +655,6 @@ def apogee_state_transition(Main_Queue : Queue, force: bool = False):
 
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 2 ; Apogee
@@ -672,7 +669,6 @@ def descent_state_transition(Main_Queue:Queue, force: bool = False):
     
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 3 ; Deploy
@@ -695,7 +691,6 @@ def probe_release_state_transition(Main_Queue:Queue, force: bool = False):
     
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 4 ; Payload Sep
@@ -722,7 +717,6 @@ def landed_state_transition(Main_Queue : Queue, force: bool = False):
     
     # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
-        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
         return
 
     # Set the Current State to 5 ; Landing

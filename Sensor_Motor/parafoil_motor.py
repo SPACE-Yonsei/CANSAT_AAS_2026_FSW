@@ -1,80 +1,87 @@
 #!/usr/bin/env python3
+"""
+파라포일 모터 제어
 
-#from gpiozero import AngularServo
-#import math, random, time
+왼쪽 모터 (GPIO 12): 500 = 올림(당김), 1500 = 내림(풀림)
+오른쪽 모터 (GPIO 13): 500 = 올림(당김), 1500 = 내림(풀림)
+
+왼쪽으로 선회: 왼쪽 내림(1500) + 오른쪽 올림(500)
+오른쪽으로 선회: 왼쪽 올림(500) + 오른쪽 내림(1500)
+직진: 양쪽 내림(1500, 1500)
+"""
 
 import time
 
-PARAFOIL_LEFT_MOTOR_PIN = 12 # gpio 12, physical pin 32
-PARAFOIL_RIGHT_MOTOR_PIN = 13  # gpio 13, physical pin 33
+PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
+PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 
-# Calibrate the pulse range
-PARAFOIL_LEFT_MOTOR_MIN_PULSE = 1500   # Neutral/stop position
-PARAFOIL_LEFT_MOTOR_MAX_PULSE = 2470   # Maximum speed (reverse)
-PARAFOIL_RIGHT_MOTOR_MIN_PULSE = 530   # Maximum speed (forward)
-PARAFOIL_RIGHT_MOTOR_MAX_PULSE = 1500  # Neutral/stop position
+# 모터 펄스 범위
+MOTOR_UP = 500     # 줄 당김 (올림)
+MOTOR_DOWN = 1500  # 줄 풀림 (내림)
 
 # Hardware-safe pulse boundaries
-PULSE_MIN = 1400
-PULSE_MAX = 2400
+PULSE_MIN = 500
+PULSE_MAX = 1500
 
 def init_parafoil_motor():
     import pigpio
     pi = pigpio.pi()
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
+    # 초기화: 양쪽 모두 내림 (직진 상태)
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
     return pi
 
 def terminate_parafoil_motor(pi):
     if pi is not None:
-        pi.stop()
+        # 종료 시 양쪽 모두 내림
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+        time.sleep(0.1)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 def _clamp_pulse(pulse: int) -> int:
-    """Clamp servo pulsewidth to the safe 1400-2400 µs range."""
+    """Clamp servo pulsewidth to the safe range."""
     return max(PULSE_MIN, min(PULSE_MAX, pulse))
 
 def rotate_parafoil_motor(pi, turn: float):
     """
-    Control parafoil motors with proportional speed control.
+    파라포일 모터 제어 (비례 제어)
     
     Args:
         pi: pigpio instance
-        turn: Angle difference in degrees (-180 to +180)
-              - Negative: turn left (use left motor)
-              - Positive: turn right (use right motor)
+        turn: 각도 차이 (-180 ~ +180)
+              - 음수: 왼쪽 선회 (왼쪽 내림 + 오른쪽 올림)
+              - 양수: 오른쪽 선회 (왼쪽 올림 + 오른쪽 내림)
     """
-    TURN_THRESHOLD = 15  # Dead zone in degrees (±15 degrees)
-    MAX_TURN_ANGLE = 90  # Maximum turn angle for full speed
+    TURN_THRESHOLD = 15  # 데드존 (±15도)
+    MAX_TURN_ANGLE = 90  # 최대 속도를 위한 각도
     
-    # If within dead zone, stop motors (set to neutral position)
+    # 데드존 내: 직진 (양쪽 모두 내림)
     if abs(turn) <= TURN_THRESHOLD:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, PARAFOIL_LEFT_MOTOR_MIN_PULSE)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, PARAFOIL_RIGHT_MOTOR_MAX_PULSE)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
         return
     
-    # Calculate turn magnitude (absolute value)
+    # 회전 크기 계산
     turn_magnitude = abs(turn)
-    
-    # Effective turn after subtracting dead zone
-    # Range: 0 to (MAX_TURN_ANGLE - TURN_THRESHOLD)
     effective_turn = min(turn_magnitude - TURN_THRESHOLD, MAX_TURN_ANGLE - TURN_THRESHOLD)
     
-    # Calculate speed ratio (0.0 to 1.0)
+    # 속도 비율 (0.0 ~ 1.0)
     speed_ratio = effective_turn / (MAX_TURN_ANGLE - TURN_THRESHOLD)
     
-    if turn < 0:  # Turn Left - use left motor
-        # Left motor: 1500 (neutral) to 2470 (max speed reverse)
-        # speed_ratio 0.0 -> 1500, speed_ratio 1.0 -> 2470
-        left_pulse_range = PARAFOIL_LEFT_MOTOR_MAX_PULSE - PARAFOIL_LEFT_MOTOR_MIN_PULSE
-        left_motor_pulse = int(PARAFOIL_LEFT_MOTOR_MIN_PULSE + (speed_ratio * left_pulse_range))
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, _clamp_pulse(left_motor_pulse))
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, _clamp_pulse(PARAFOIL_RIGHT_MOTOR_MAX_PULSE))  # Right motor neutral
-    else:  # Turn Right - use right motor
-        # Right motor: 1500 (neutral) to 530 (max speed forward)
-        # speed_ratio 0.0 -> 1500, speed_ratio 1.0 -> 530
-        right_pulse_range = PARAFOIL_RIGHT_MOTOR_MAX_PULSE - PARAFOIL_RIGHT_MOTOR_MIN_PULSE
-        right_motor_pulse = int(PARAFOIL_RIGHT_MOTOR_MAX_PULSE - (speed_ratio * right_pulse_range))
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, _clamp_pulse(PARAFOIL_LEFT_MOTOR_MIN_PULSE))  # Left motor neutral
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, _clamp_pulse(right_motor_pulse))
+    # 펄스 범위: 1500(내림) ~ 500(올림)
+    pulse_range = MOTOR_DOWN - MOTOR_UP  # 1000
+    
+    if turn < 0:  # 왼쪽 선회: 왼쪽 내림, 오른쪽 올림
+        left_pulse = MOTOR_DOWN  # 왼쪽 내림 (1500)
+        right_pulse = int(MOTOR_DOWN - (speed_ratio * pulse_range))  # 오른쪽 올림 (1500 → 500)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, _clamp_pulse(left_pulse))
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, _clamp_pulse(right_pulse))
+    else:  # 오른쪽 선회: 왼쪽 올림, 오른쪽 내림
+        left_pulse = int(MOTOR_DOWN - (speed_ratio * pulse_range))  # 왼쪽 올림 (1500 → 500)
+        right_pulse = MOTOR_DOWN  # 오른쪽 내림 (1500)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, _clamp_pulse(left_pulse))
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, _clamp_pulse(right_pulse))
     
     return
