@@ -385,7 +385,7 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
         if not EGG_MOTOR_ACTIVATED and TARGET_REACHED and BAROMETER_EGG_DROP_COUNTER >= 2:
             events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Target reached and egg drop altitude reached ({altitude:.2f}m), activating egg ejection motor")
             PayloadEggMotorActivateMsg = msgstructure.MsgStructure()
-            msgstructure.send_msg(Main_Queue, PayloadEggMotorActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadEggMotorActivate, "")
+            msgstructure.send_msg(Main_Queue, PayloadEggMotorActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadEggMotorActivate, "")
             EGG_MOTOR_ACTIVATED = True
         elif not TARGET_REACHED and altitude <= EGG_DROP_ALT_THRESHOLD:
             # Log that we're at drop altitude but haven't reached target yet
@@ -517,7 +517,7 @@ def control_motor_with_gps(Main_Queue:Queue, recent_lat:float, recent_lon:float)
 
     # Send motor control command (simulation과 동일하게 모터 제어)
     SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
+    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
     return
 
 def control_motor_with_heading(Main_Queue:Queue, target_heading:float):
@@ -542,7 +542,7 @@ def control_motor_with_heading(Main_Queue:Queue, target_heading:float):
     turn_data = str(turn)
     
     SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
+    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
     return
 
 def control_motor_stop(Main_Queue:Queue):
@@ -554,7 +554,7 @@ def control_motor_stop(Main_Queue:Queue):
     turn_data = "0.0"
     
     SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
+    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
     return
 
 def gps_logic(Main_Queue:Queue, recent_lat:float, recent_lon:float):
@@ -621,7 +621,7 @@ def launchpad_state_transition(Main_Queue : Queue):
     # Reset the mechanism depending on the FSW config
     if config.FSW_CONF == config.CONF_CONTAINER:
         PayloadReleaseMotorStandbyMsg = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, PayloadReleaseMotorStandbyMsg, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorStandby, "")
+        msgstructure.send_msg(Main_Queue, PayloadReleaseMotorStandbyMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorStandby, "")
 
     return
 
@@ -686,7 +686,7 @@ def probe_release_state_transition(Main_Queue:Queue):
     msgstructure.send_msg(Main_Queue, ActivateCameraToCamappMsg, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
 
     PayloadReleaseMotorActivateMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, PayloadReleaseMotorActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.motorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorActivate, "")
+    msgstructure.send_msg(Main_Queue, PayloadReleaseMotorActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorActivate, "")
     
     # Container -> Activate Motor to release payload
 

@@ -131,10 +131,9 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_LON  = float(rcv_data[3])
                 GPS_SATS = int(rcv_data[4])
                 GPS_FIX_QUALITY = int(rcv_data[5]) if len(rcv_data) > 5 else 0
-                # Print GPS data for debugging (similar to gps.py)
-                # Always print GPS data like gps.py does
-                print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
-                sys.stdout.flush()  # Ensure output is visible immediately in multiprocessing
+                # Print GPS data for debugging (disabled)
+                # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
+                # sys.stdout.flush()
                 # GPS 값이 유효한 경우에만 이벤트 로그 출력
                 if GPS_LAT != 0.0 or GPS_LON != 0.0 or GPS_SATS > 0:
                     events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPS data read: Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}")

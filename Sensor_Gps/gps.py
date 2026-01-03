@@ -154,13 +154,18 @@ def gps_readdata(pi):
         # 위도
         try:
             lat = unit_convert_deg(float(gga[2])) if gga[2] else 0
+            # gga[3]가 'S'(남위)이면 음수, 'N'(북위)이면 양수
+            if len(gga) > 3 and gga[3] == 'S':
+                lat = lat * -1
         except (ValueError, IndexError):
             lat = 0
 
         # 경도
         try:
             lon = unit_convert_deg(float(gga[4])) if gga[4] else 0
-            lon = lon * -1
+            # gga[5]가 'W'(서경)이면 음수, 'E'(동경)이면 양수
+            if len(gga) > 5 and gga[5] == 'W':
+                lon = lon * -1
         except (ValueError, IndexError):
             lon = 0
 
