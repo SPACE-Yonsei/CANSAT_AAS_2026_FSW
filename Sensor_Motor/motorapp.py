@@ -32,7 +32,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
     global PAYLOAD_MOTOR_ENABLE
 
     if recv_msg.MsgID == appargs.MainAppArg.MID_TerminateProcess:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"MOTORAPP TERMINATION DETECTED")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MOTORAPP TERMINATION DETECTED")
         MOTORAPP_RUNSTATUS = False
 
     # On receiving yaw data
@@ -51,7 +51,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
         if config.FSW_CONF in PAYLOAD_MODES:
             activateeggmotor(motor_instance)
         else:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"Not Performing Payload-Egg Motor Activation, current conf : {config.FSW_CONF}")    
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload-Egg Motor Activation, current conf : {config.FSW_CONF}")    
 
     # On Payload Release motor activation command
     elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadReleaseMotorActivate:
@@ -59,7 +59,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
         if config.FSW_CONF == config.CONF_CONTAINER:
             activatepayloadreleasemotor(motor_instance)
         else:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Activation, current conf : {config.FSW_CONF}")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Activation, current conf : {config.FSW_CONF}")
 
     # On Payload Release motor standby command
     elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadReleaseMotorStandby:
@@ -67,37 +67,37 @@ def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
         if config.FSW_CONF == config.CONF_CONTAINER:
             standbypayloadreleasemotor(motor_instance)
         else:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Standby, current conf : {config.FSW_CONF}")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Standby, current conf : {config.FSW_CONF}")
 
 
     elif recv_msg.MsgID == appargs.CommAppArg.MID_RouteCmd_MEC:
         if config.FSW_CONF == config.CONF_CONTAINER:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"MEC : Current conf : container, Current Option : {recv_msg.data}...")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current conf : container, Current Option : {recv_msg.data}...")
             if recv_msg.data == "ON":
                 activatepayloadreleasemotor(motor_instance)
             elif recv_msg.data == "OFF":
                 freepayloadreleasemotor(motor_instance)
             else:
-                events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"Error Activating container motor, invalid option : {recv_msg.data}")
+                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error Activating container motor, invalid option : {recv_msg.data}")
 
         elif config.FSW_CONF in PAYLOAD_MODES:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"MEC : Current conf : payload, Current Option : {recv_msg.data}")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current conf : payload, Current Option : {recv_msg.data}")
             if recv_msg.data == "ON":
                 PAYLOAD_MOTOR_ENABLE = True
             elif recv_msg.data == "OFF":
                 PAYLOAD_MOTOR_ENABLE = False
             else:
-                events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"Error Activating payload motor, invalid option : {recv_msg.data}")
+                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error Activating payload motor, invalid option : {recv_msg.data}")
             
     else:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
     return
 
 def send_hk(Main_Queue : Queue):
     global MOTORAPP_RUNSTATUS
     while MOTORAPP_RUNSTATUS:
         motorHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, motorHK, appargs.motorAppArg.AppID, appargs.HkAppArg.AppID, appargs.motorAppArg.MID_SendHK, str(MOTORAPP_RUNSTATUS))
+        msgstructure.send_msg(Main_Queue, motorHK, appargs.MotorAppArg.AppID, appargs.HkAppArg.AppID, appargs.MotorAppArg.MID_SendHK, str(MOTORAPP_RUNSTATUS))
         time.sleep(1)
     return
 
@@ -112,7 +112,7 @@ def motorapp_init():
         # Disable Keyboardinterrupt since Termination is handled by parent process
         signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Initializating motorapp")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Initializating motorapp")
         ## User Defined Initialization goes HERE
         motor_instance = None
 
@@ -126,23 +126,23 @@ def motorapp_init():
                 'parafoil': parafoil_instance,
                 'egg_motor': egg_motor_instance
             }
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Payload motors (parafoil + egg) standby")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Payload motors (parafoil + egg) standby")
 
         elif config.FSW_CONF == config.CONF_CONTAINER:
             motor_instance = container_motor.init_MG996R()
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Container motor standby")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Container motor standby")
             standbypayloadreleasemotor(motor_instance)
 
         else:
-            events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "No Valid configuration!")
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "No Valid configuration!")
             MOTORAPP_RUNSTATUS = False
             return None
 
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
         return motor_instance
     
     except Exception as e:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
         MOTORAPP_RUNSTATUS = False
         return None
     
@@ -151,7 +151,7 @@ def motorapp_terminate(motor_instance):
     global MOTORAPP_RUNSTATUS
 
     MOTORAPP_RUNSTATUS = False
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Terminating motorapp")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Terminating motorapp")
     # Termination Process Comes Here
 
     # Terminate each motor
@@ -168,11 +168,11 @@ def motorapp_terminate(motor_instance):
         container_motor.terminate_MG996R(motor_instance)
 
     for thread_name in thread_dict:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name}")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name}")
         thread_dict[thread_name].join()
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name} Complete")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name} Complete")
 
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Terminating motorapp complete")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Terminating motorapp complete")
     return
 
 ######################################################
@@ -180,27 +180,27 @@ def motorapp_terminate(motor_instance):
 ######################################################
 
 def activatepayloadreleasemotor(motor_instance):
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Activating Payload Release Motor")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Payload Release Motor")
     container_motor.container_release(motor_instance)
     return
 
 def standbypayloadreleasemotor(motor_instance):
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Standby Payload Release Motor")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Standby Payload Release Motor")
     container_motor.container_initial(motor_instance)
     return
 
 def freepayloadreleasemotor(motor_instance):
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Free Payload Release Motor")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Free Payload Release Motor")
     container_motor.container_free(motor_instance)
     return
 
 def activateeggmotor(motor_instance):
     """Activate payload-egg ejection motor."""
-    events.LogEvent(appargs.motorAppArg.AppName, events.EventType.info, "Activating Payload-Egg Ejection Motor")
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Payload-Egg Ejection Motor")
     if isinstance(motor_instance, dict):
         payload_egg_motor.egg_motor_release(motor_instance['egg_motor'])
     else:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, "Motor instance type error for egg motor")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Motor instance type error for egg motor")
     return
 
 ######################################################
@@ -218,7 +218,7 @@ def motorapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     
     # Check if initialization failed (motor_instance can be None or dict)
     if motor_instance is None:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, "Motor initialization failed, terminating motorapp")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Motor initialization failed, terminating motorapp")
         MOTORAPP_RUNSTATUS = False
         return
 
@@ -237,15 +237,15 @@ def motorapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
             if msgstructure.unpack_msg(recv_msg, message) == False:
                 continue
 
-            if recv_msg.receiver_app == appargs.motorAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:
+            if recv_msg.receiver_app == appargs.MotorAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:
                 # Handle Command According to Message ID
                 command_handler(recv_msg, motor_instance)
             else:
-                events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, "Receiver MID does not match with motorapp MID")
+                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Receiver MID does not match with motorapp MID")
 
     # If error occurs, terminate app
     except Exception as e:
-        events.LogEvent(appargs.motorAppArg.AppName, events.EventType.error, f"motorapp error : {e}")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"motorapp error : {e}")
         MOTORAPP_RUNSTATUS = False
 
     # Termination Process after runloop
