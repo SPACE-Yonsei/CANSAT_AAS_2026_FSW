@@ -2,6 +2,7 @@ import time
 import math
 from datetime import datetime
 import os
+from lib import config  # YAW_OFFSET 사용을 위해 상단에서 import
 
 # Variables for moving window filter
 angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
@@ -89,7 +90,6 @@ def read_sensor_data(sensor):
             yaw_deg = yaw_deg + 90
         
         # config.txt에서 설정한 YAW_OFFSET 적용 (현장에서 0점 조절용)
-        from lib import config
         yaw_deg = yaw_deg + config.YAW_OFFSET
 
         # 쿼터니언으로부터 pitch 계산 (라디안 단위)

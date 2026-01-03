@@ -258,6 +258,10 @@ BAROMETER_EGG_DROP_COUNTER = 0
 EGG_MOTOR_ACTIVATED = False
 TARGET_REACHED = False  # Flag to track if target GPS location has been reached
 
+# Target GPS coordinates (initialized from prevstate)
+Target_lat = 0.0
+Target_lon = 0.0
+
 recent_alt = []
 
 def barometer_logic(Main_Queue:Queue, altitude:float):

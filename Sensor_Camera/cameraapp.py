@@ -144,6 +144,7 @@ def picam_record_thread(picam_instance, picamencoder_instance):
 
     if picam_instance == None:
         events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.error, f"Picam not initialized! Terminating thread")
+        return  # Early return to prevent using None instance
 
     while CAMERAAPP_RUNSTATUS:
         if PICAM_RECORDING == True:

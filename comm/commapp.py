@@ -477,6 +477,11 @@ def read_cmd(Main_Queue:Queue, serial_instance):
             if not isinstance(rcv_cmd, str):
                 continue
             
+            # Ignore XBEE responses like "OK", empty lines, etc.
+            rcv_cmd = rcv_cmd.strip()
+            if rcv_cmd in ("OK", "", "\r", "\n", "\r\n"):
+                continue
+            
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, f"Received Command : {rcv_cmd}")
             
             # Validate commmand using regex
