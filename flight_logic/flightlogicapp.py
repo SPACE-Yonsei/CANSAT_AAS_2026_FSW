@@ -106,29 +106,29 @@ def command_handler (recv_msg : msgstructure.MsgStructure, Main_Queue:Queue):
         # When received Set State command
         recv_state = int(recv_msg.data)
 
-        # LAUNCHPAD
+        # LAUNCHPAD (force=True for SS command)
         if recv_state == 0:
-            launchpad_state_transition(Main_Queue)
+            launchpad_state_transition(Main_Queue, force=True)
 
         # ASCENT
         elif recv_state == 1:
-            ascent_state_transition(Main_Queue)
+            ascent_state_transition(Main_Queue, force=True)
 
         # APOGEE
         elif recv_state == 2:
-            apogee_state_transition(Main_Queue)
+            apogee_state_transition(Main_Queue, force=True)
 
         # DESCENT
         elif recv_state == 3:
-            descent_state_transition(Main_Queue)
+            descent_state_transition(Main_Queue, force=True)
 
         # PROBE RELEASE
         elif recv_state == 4:
-            probe_release_state_transition(Main_Queue)
+            probe_release_state_transition(Main_Queue, force=True)
 
         # LANDED
         elif recv_state == 5:
-            landed_state_transition(Main_Queue)
+            landed_state_transition(Main_Queue, force=True)
             
         # Received State out of state range
         else: 
@@ -180,19 +180,19 @@ def flightlogicapp_init(Main_Queue : Queue):
             CURRENT_STATE = int(prevstate.PREV_STATE)
             events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Using prev state: {CURRENT_STATE}")
 
-        # Perform state transition according to state
+        # Perform state transition according to state (force=True for initialization)
         if CURRENT_STATE == 0:
-            launchpad_state_transition(Main_Queue)
+            launchpad_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 1:
-            ascent_state_transition(Main_Queue)
+            ascent_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 2:
-            apogee_state_transition(Main_Queue)
+            apogee_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 3:
-            descent_state_transition(Main_Queue)
+            descent_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 4:
-            probe_release_state_transition(Main_Queue)
+            probe_release_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 5:
-            landed_state_transition(Main_Queue)
+            landed_state_transition(Main_Queue, force=True)
             
         # For recovery set the max altitude
         MAX_ALT = float(prevstate.PREV_MAX_ALT)
@@ -602,10 +602,15 @@ def gps_logic(Main_Queue:Queue, recent_lat:float, recent_lon:float):
     
     return
 
-def launchpad_state_transition(Main_Queue : Queue):
+def launchpad_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     global MAX_ALT
     global recent_alt
+
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
 
     # Set the Current State to 0 ; Standby
     CURRENT_STATE = 0
@@ -625,9 +630,14 @@ def launchpad_state_transition(Main_Queue : Queue):
 
     return
 
-def ascent_state_transition(Main_Queue : Queue):
+def ascent_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
+
     # Set the Current State to 1 ; Ascent
     CURRENT_STATE = 1
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO ASCENT")
@@ -642,8 +652,13 @@ def ascent_state_transition(Main_Queue : Queue):
 
     return
 
-def apogee_state_transition(Main_Queue : Queue):
+def apogee_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
+
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
 
     # Set the Current State to 2 ; Apogee
     CURRENT_STATE = 2
@@ -652,9 +667,14 @@ def apogee_state_transition(Main_Queue : Queue):
     prevstate.update_prevstate(CURRENT_STATE)
 
 
-def descent_state_transition(Main_Queue:Queue):
+def descent_state_transition(Main_Queue:Queue, force: bool = False):
     global CURRENT_STATE
     
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
+
     # Set the Current State to 3 ; Deploy
     CURRENT_STATE = 3
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO DESCENT")
@@ -670,9 +690,14 @@ def descent_state_transition(Main_Queue:Queue):
 
     return
 
-def probe_release_state_transition(Main_Queue:Queue):
+def probe_release_state_transition(Main_Queue:Queue, force: bool = False):
     global CURRENT_STATE
     
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
+
     # Set the Current State to 4 ; Payload Sep
     CURRENT_STATE = 4
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO PROBE RELEASE")
@@ -692,9 +717,14 @@ def probe_release_state_transition(Main_Queue:Queue):
 
     return
 
-def landed_state_transition(Main_Queue : Queue):
+def landed_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     
+    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
+    if config.STATE_OVERRIDE is not None and not force:
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.debug, "State transition blocked by STATE_OVERRIDE")
+        return
+
     # Set the Current State to 5 ; Landing
     CURRENT_STATE = 5
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO LANDED")
