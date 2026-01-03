@@ -7,6 +7,13 @@ import os
 angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
 window_size = 5
 
+# BNO055 장착 방향 보정
+# BNO055 Y축 = 캔위성 앞쪽, X축 = 캔위성 왼쪽, 바닥에 장착 (Z축 아래)
+# 표준 yaw는 X축 기준이므로 Y축 기준으로 변환 필요 (+90°)
+# Z축이 뒤집혀서 yaw 회전 방향 반전 필요
+IMU_MOUNTED_ON_BOTTOM = True  # True = Z축이 아래로 향함
+IMU_FORWARD_AXIS = 'Y'        # 'X' 또는 'Y' (캔위성 앞쪽 방향)
+
 log_dir = './sensorlogs'
 if not os.path.exists(log_dir): 
     os.makedirs(log_dir)
@@ -71,6 +78,15 @@ def read_sensor_data(sensor):
         # 쿼터니언으로부터 yaw (heading) 계산 (라디안 단위)
         yaw = math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2))
         yaw_deg = math.degrees(yaw)
+        
+        # BNO055 장착 방향 보정
+        if IMU_MOUNTED_ON_BOTTOM:
+            # Z축이 아래로 향하면 yaw 회전 방향 반전
+            yaw_deg = -yaw_deg
+        
+        if IMU_FORWARD_AXIS == 'Y':
+            # Y축이 앞쪽이면 90° 오프셋 적용 (X축 기준 → Y축 기준)
+            yaw_deg = yaw_deg + 90
 
         # 쿼터니언으로부터 pitch 계산 (라디안 단위)
         try: # arcsin 함수의 정의역 문제

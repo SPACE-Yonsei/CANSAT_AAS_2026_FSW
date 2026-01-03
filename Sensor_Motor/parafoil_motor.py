@@ -19,9 +19,9 @@ PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 MOTOR_UP = 500     # 줄 당김 (올림)
 MOTOR_DOWN = 1500  # 줄 풀림 (내림)
 
-# Hardware-safe pulse boundaries
+# Hardware-safe pulse boundaries (절대 1500 초과 금지!)
 PULSE_MIN = 500
-PULSE_MAX = 1500
+PULSE_MAX = 1500  # 12, 13번 모터 모두 1500 초과 펄스 금지
 
 def init_parafoil_motor():
     import pigpio
@@ -41,8 +41,12 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 def _clamp_pulse(pulse: int) -> int:
-    """Clamp servo pulsewidth to the safe range."""
-    return max(PULSE_MIN, min(PULSE_MAX, pulse))
+    """Clamp servo pulsewidth to safe range (500-1500). 절대 1500 초과 금지!"""
+    if pulse > 1500:
+        pulse = 1500
+    if pulse < 500:
+        pulse = 500
+    return pulse
 
 def rotate_parafoil_motor(pi, turn: float):
     """
