@@ -19,7 +19,7 @@ vl53.timing_budget = 100
 # 거리 측정을 시작한다
 vl53.start_ranging()
 
-print(측정을 시작한다. 종료하려면 Ctrl+C를 누른다.)
+print("측정을 시작한다. 종료하려면 Ctrl+C를 누른다.")
 
 try:
     while True:
@@ -30,7 +30,7 @@ try:
             distance = vl53.distance
             
             if distance is not None:
-                print(f측정 거리: {distance} mm)
+                print(f"측정 거리: {distance} mm")
             
             # 다음 측정을 위해 데이터 준비 상태를 초기화한다
             # 이 명령어가 없으면 데이터가 갱신되지 않는다
