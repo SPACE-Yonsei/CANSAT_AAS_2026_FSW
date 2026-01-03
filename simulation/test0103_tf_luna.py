@@ -1,22 +1,17 @@
-import serial
+import smbus
 import time
 
-ser = serial.Serial('/dev/serial0', 115200, timeout=1)
+I2C_ADDR = 0x10
+bus = smbus.SMBus(1)
 
-# I2C 모드로 변경 명령
-cmd_set_i2c = bytes([
-    0x5A, 0x05, 0x0B, 0x01, 0x00
-])
+def read_distance_cm():
+    data = bus.read_i2c_block_data(I2C_ADDR, 0x00, 2)
+    return data[0] + (data[1] << 8)
 
-ser.write(cmd_set_i2c)
-time.sleep(0.1)
-
-# 설정 저장
-cmd_save = bytes([
-    0x5A, 0x04, 0x11, 0x6F
-])
-
-ser.write(cmd_save)
-ser.close()
-
-print("TF-Luna set to I2C mode")
+while True:
+    try:
+        d = read_distance_cm()
+        print(f"Distance: {d} cm")
+    except Exception as e:
+        print("I2C error:", e)
+    time.sleep(0.1)
