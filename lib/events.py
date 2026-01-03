@@ -10,6 +10,7 @@ class EventType:
     error = 0
     info = 1
     debug = 2
+    warning = 3
 
 
 def init_events_main_process():
@@ -60,5 +61,7 @@ def LogEvent(app_name: str, event_type: int, event_msg: str, print_event=True):
         logger.info(event_msg)
     elif event_type == EventType.debug:
         logger.debug(event_msg)
+    elif event_type == EventType.warning:
+        logger.warning(event_msg)
     else:
         logger.info(event_msg)
