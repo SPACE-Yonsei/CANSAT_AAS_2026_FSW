@@ -1,283 +1,231 @@
-# Python FSW V2 motor App
-# Author : Hyeon Lee
-
-from lib import appargs
-from lib import msgstructure
-from lib import logging
-from lib import events
-from lib import types
-from lib import config
+"""
+Motor App - 파라포일 제어, 번와이어, 솔레노이드 관리
+Author: Hyeon Lee
+"""
 
 import signal
-from multiprocessing import Queue, connection
 import threading
 import time
+from multiprocessing import Queue, connection
 
-# Import Motor Libraries
-from Sensor_Motor import parafoil_motor
-from Sensor_Motor import Motor_Release
-from Sensor_Motor import Motor_Egg
-from Sensor_Motor import parafoil_control
+from lib import appargs, msgstructure, events
 
-MOTORAPP_RUNSTATUS = True
-PAYLOAD_MOTOR_ENABLE = True
+from Sensor_Motor import parafoil_motor, Motor_Release, Motor_Egg, parafoil_control
 
-# Current sensor data for motor control
-CURRENT_YAW = 0.0
-CURRENT_LAT = 0.0
-CURRENT_LON = 0.0
-CURRENT_STATE = 0  # Flight state (0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED)
+# =============================================================================
+# 상태 변수
+# =============================================================================
 
-######################################################
-## FUNDAMENTAL METHODS                              ##
-######################################################
+_running = True
+_motor_enabled = True
+_pi = None  # pigpio instance
 
-# Handles received message
-def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
-    global MOTORAPP_RUNSTATUS
-    global PAYLOAD_MOTOR_ENABLE
+# 센서 데이터
+_yaw = 0.0
+_lat = 0.0
+_lon = 0.0
+_state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
 
-    if recv_msg.MsgID == appargs.MainAppArg.MID_TerminateProcess:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MOTORAPP TERMINATION DETECTED")
-        MOTORAPP_RUNSTATUS = False
+_threads: dict[str, threading.Thread] = {}
 
-    # On receiving GPS data for motor control
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendGpsMotorData:
-        global CURRENT_LAT, CURRENT_LON
-        sep_data = recv_msg.data.split(",")
-        if len(sep_data) == 2:
-            CURRENT_LAT = float(sep_data[0])
-            CURRENT_LON = float(sep_data[1])
-            # Update motor control when GPS data is received
-            update_motor_control(motor_instance)
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"ERROR receiving GPS motor data, expected 2 fields")
-    
-    # On receiving IMU data for motor control
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendImuMotorData:
-        global CURRENT_YAW
-        CURRENT_YAW = float(recv_msg.data)
-        # Update motor control when IMU data is received (100Hz)
-        update_motor_control(motor_instance)
-    
-    # On receiving target coordinates
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SetTargetCoordinates:
-        sep_data = recv_msg.data.split(",")
-        if len(sep_data) == 2:
-            target_lat = float(sep_data[0])
-            target_lon = float(sep_data[1])
-            parafoil_control.set_target_coordinates(target_lat, target_lon)
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Target coordinates set: Lat={target_lat:.6f}, Lon={target_lon:.6f}")
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"ERROR receiving target coordinates, expected 2 fields")
-    
-    # On receiving flight state
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendFlightStateToMotor:
-        global CURRENT_STATE
-        CURRENT_STATE = int(recv_msg.data)
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Flight state updated to: {CURRENT_STATE}")
-    
-    # On Container-Payload release activation command (burnwire)
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_Motor_Release_Activate:
-        activate_burnwire_release()
+APP = appargs.MotorAppArg.AppName
 
-    # On Payload-Egg drop activation command (solenoid)
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate:
-        activate_egg_drop_solenoid()
 
-    # On Payload Motor Stop command (for LANDED state)
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadMotorStop:
-        stop_payload_motor(motor_instance)
+def _log(msg: str, level=events.EventType.info):
+    events.LogEvent(APP, level, msg)
 
-    elif recv_msg.MsgID == appargs.CommAppArg.MID_RouteCmd_MEC:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current Option : {recv_msg.data}")
-        if recv_msg.data == "ON":
-            PAYLOAD_MOTOR_ENABLE = True
-        elif recv_msg.data == "OFF":
-            PAYLOAD_MOTOR_ENABLE = False
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error setting motor enable, invalid option : {recv_msg.data}")
-            
+
+# =============================================================================
+# 메시지 핸들러
+# =============================================================================
+
+def _handle_terminate(data: str):
+    global _running
+    _log("Termination detected")
+    _running = False
+
+
+def _handle_gps_data(data: str):
+    global _lat, _lon
+    parts = data.split(",")
+    if len(parts) == 2:
+        _lat, _lon = float(parts[0]), float(parts[1])
+        _update_parafoil()
     else:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
-    return
+        _log("GPS data format error", events.EventType.error)
 
-def send_hk(Main_Queue : Queue):
-    global MOTORAPP_RUNSTATUS
-    while MOTORAPP_RUNSTATUS:
-        motorHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, motorHK, appargs.MotorAppArg.AppID, appargs.HkAppArg.AppID, appargs.MotorAppArg.MID_SendHK, str(MOTORAPP_RUNSTATUS))
-        time.sleep(1)
-    return
 
-######################################################
-## INITIALIZATION, TERMINATION                      ##
-######################################################
+def _handle_imu_data(data: str):
+    global _yaw
+    _yaw = float(data)
+    _update_parafoil()
 
-# Initialization
-def motorapp_init():
-    global MOTORAPP_RUNSTATUS
-    try:
-        # Disable Keyboardinterrupt since Termination is handled by parent process
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Initializating motorapp")
-        ## User Defined Initialization goes HERE
-        motor_instance = None
-
-        # Initialize parafoil control module (load target coordinates from prevstate)
-        parafoil_control.init_parafoil_control()
-        # Initialize parafoil motor (GPIO 12, 13)
-        parafoil_instance = parafoil_motor.init_parafoil_motor()
-        # Initialize burnwire for container-payload release (GPIO 6)
-        Motor_Release.init_burnwire()
-        # Initialize solenoid for egg drop (GPIO 5)
-        Motor_Egg.init_solenoid()
-        # Store parafoil motor in a dictionary
-        motor_instance = {
-            'parafoil': parafoil_instance
-        }
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Payload motors (parafoil), burnwire, and solenoid standby")
-
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
-        return motor_instance
-    
-    except Exception as e:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
-        MOTORAPP_RUNSTATUS = False
-        return None
-    
-# Termination
-def motorapp_terminate(motor_instance):
-    global MOTORAPP_RUNSTATUS
-
-    MOTORAPP_RUNSTATUS = False
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Terminating motorapp")
-    # Termination Process Comes Here
-
-    # Terminate each motor
-    if isinstance(motor_instance, dict):
-        parafoil_motor.terminate_parafoil_motor(motor_instance['parafoil'])
-        # Stop pigpio instance (shared between motors)
-        if motor_instance['parafoil'] is not None:
-            motor_instance['parafoil'].stop()
-        # Terminate release mechanisms
-        Motor_Release.terminate_burnwire()
-        Motor_Egg.terminate_solenoid()
+def _handle_target_coords(data: str):
+    parts = data.split(",")
+    if len(parts) == 2:
+        lat, lon = float(parts[0]), float(parts[1])
+        parafoil_control.set_target_coordinates(lat, lon)
+        _log(f"Target set: ({lat:.6f}, {lon:.6f})")
     else:
-        parafoil_motor.terminate_parafoil_motor(motor_instance)
+        _log("Target coords format error", events.EventType.error)
 
-    for thread_name in thread_dict:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name}")
-        thread_dict[thread_name].join()
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name} Complete")
 
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Terminating motorapp complete")
-    return
+def _handle_flight_state(data: str):
+    global _state
+    _state = int(data)
+    _log(f"Flight state: {_state}")
 
-######################################################
-## USER METHOD                                      ##
-######################################################
 
-def activate_burnwire_release():
-    """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Burnwire (container-payload release)")
+def _handle_release():
+    _log("Activating burnwire")
     Motor_Release.activate_burnwire()
-    return
 
-def activate_egg_drop_solenoid():
-    """Activate solenoid to drop payload-egg (솔레노이드로 계란 사출)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Solenoid (payload-egg drop)")
+
+def _handle_egg_drop():
+    _log("Activating solenoid")
     Motor_Egg.activate_solenoid()
-    return
 
-def stop_payload_motor(motor_instance):
-    """Stop all payload motors (parafoil motors)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Stopping all payload motors")
-    if isinstance(motor_instance, dict):
-        # Stop parafoil motors by sending turn=0
-        parafoil_motor.rotate_parafoil_motor(motor_instance['parafoil'], 0.0)
+
+def _handle_motor_stop():
+    _log("Stopping motors")
+    parafoil_motor.rotate_parafoil_motor(_pi, 0.0)
+
+
+def _handle_mec(data: str):
+    global _motor_enabled
+    _log(f"MEC command: {data}")
+    if data == "ON":
+        _motor_enabled = True
+    elif data == "OFF":
+        _motor_enabled = False
     else:
-        parafoil_motor.rotate_parafoil_motor(motor_instance, 0.0)
-    return
+        _log(f"Invalid MEC option: {data}", events.EventType.error)
 
-def update_motor_control(motor_instance):
-    """
-    Calculate motor control direction based on current GPS/IMU data and control motors.
-    Motor control is only activated in DESCENT(3) or EGG_RELEASE(4) states.
-    """
-    global CURRENT_STATE, CURRENT_YAW, CURRENT_LAT, CURRENT_LON, PAYLOAD_MOTOR_ENABLE
-    
-    # Parafoil motor control is only activated in DESCENT(3) or EGG_RELEASE(4) states
-    # In APOGEE(2) state, parafoil algorithm starts but motors do not operate
-    if CURRENT_STATE < 3:  # No motor control before DESCENT state (LAUNCHPAD, ASCENT, APOGEE)
-        return
-    
-    # Motor is disabled
-    if not PAYLOAD_MOTOR_ENABLE:
-        return
-    
-    # Calculate motor control direction (turn angle)
-    turn_angle = parafoil_control.calculate_motor_control(
-        current_yaw=CURRENT_YAW,
-        current_lat=CURRENT_LAT,
-        current_lon=CURRENT_LON
-    )
-    
-    # Execute motor control
-    if isinstance(motor_instance, dict):
-        parafoil_motor.rotate_parafoil_motor(motor_instance['parafoil'], turn_angle)
+
+# 메시지 ID → 핸들러 매핑
+_MSG_HANDLERS = {
+    appargs.MainAppArg.MID_TerminateProcess: _handle_terminate,
+    appargs.FlightlogicAppArg.MID_SendGpsMotorData: _handle_gps_data,
+    appargs.FlightlogicAppArg.MID_SendImuMotorData: _handle_imu_data,
+    appargs.FlightlogicAppArg.MID_SetTargetCoordinates: _handle_target_coords,
+    appargs.FlightlogicAppArg.MID_SendFlightStateToMotor: _handle_flight_state,
+    appargs.FlightlogicAppArg.MID_Motor_Release_Activate: lambda d: _handle_release(),
+    appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate: lambda d: _handle_egg_drop(),
+    appargs.FlightlogicAppArg.MID_PayloadMotorStop: lambda d: _handle_motor_stop(),
+    appargs.CommAppArg.MID_RouteCmd_MEC: _handle_mec,
+}
+
+
+def _dispatch(msg: msgstructure.MsgStructure):
+    handler = _MSG_HANDLERS.get(msg.MsgID)
+    if handler:
+        handler(msg.data)
     else:
-        parafoil_motor.rotate_parafoil_motor(motor_instance, turn_angle)
-    
-    return
+        _log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
-######################################################
-## MAIN METHOD                                      ##
-######################################################
 
-thread_dict = dict[str, threading.Thread]()
+# =============================================================================
+# 파라포일 제어
+# =============================================================================
 
-def motorapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
-    global MOTORAPP_RUNSTATUS
-    MOTORAPP_RUNSTATUS = True
-
-    # Initialization Process
-    motor_instance = motorapp_init()
-    
-    # Check if initialization failed (motor_instance can be None or dict)
-    if motor_instance is None:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Motor initialization failed, terminating motorapp")
-        MOTORAPP_RUNSTATUS = False
+def _update_parafoil():
+    """GPS/IMU 데이터 기반 파라포일 모터 제어 (DESCENT 이후만 동작)"""
+    if _state < 3 or not _motor_enabled:
         return
+    
+    turn = parafoil_control.calculate_motor_control(_yaw, _lat, _lon)
+    parafoil_motor.rotate_parafoil_motor(_pi, turn)
 
-    # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
 
-    # Spawn Each Threads
-    for thread_name in thread_dict:
-        thread_dict[thread_name].start()
+# =============================================================================
+# HK 전송
+# =============================================================================
 
+def _send_hk(queue: Queue):
+    while _running:
+        msg = msgstructure.MsgStructure()
+        msgstructure.send_msg(
+            queue, msg,
+            appargs.MotorAppArg.AppID,
+            appargs.HkAppArg.AppID,
+            appargs.MotorAppArg.MID_SendHK,
+            str(_running)
+        )
+        time.sleep(1)
+
+
+# =============================================================================
+# 초기화 / 종료
+# =============================================================================
+
+def _init() -> bool:
+    global _pi, _running
+    
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _log("Initializing motorapp")
+    
     try:
-        while MOTORAPP_RUNSTATUS:
-            message = Main_Pipe.recv()
-            recv_msg = msgstructure.MsgStructure()
-
-            if msgstructure.unpack_msg(recv_msg, message) == False:
-                continue
-
-            if recv_msg.receiver_app == appargs.MotorAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:
-                # Handle Command According to Message ID
-                command_handler(recv_msg, motor_instance)
-            else:
-                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Receiver MID does not match with motorapp MID")
-
-    # If error occurs, terminate app
+        parafoil_control.init_parafoil_control()
+        _pi = parafoil_motor.init_parafoil_motor()
+        Motor_Release.init_burnwire()
+        Motor_Egg.init_solenoid()
+        _log("Motors initialized (parafoil, burnwire, solenoid)")
+        return True
     except Exception as e:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"motorapp error : {e}")
-        MOTORAPP_RUNSTATUS = False
+        _log(f"Init failed: {e}", events.EventType.error)
+        _running = False
+        return False
 
-    # Termination Process after runloop
-    motorapp_terminate(motor_instance)
 
-    return
+def _terminate():
+    global _running
+    _running = False
+    _log("Terminating motorapp")
+    
+    # 모터 종료
+    if _pi:
+        parafoil_motor.terminate_parafoil_motor(_pi)
+        _pi.stop()
+    Motor_Release.terminate_burnwire()
+    Motor_Egg.terminate_solenoid()
+    
+    # 스레드 종료
+    for name, thread in _threads.items():
+        _log(f"Joining thread: {name}")
+        thread.join()
+    
+    _log("Motorapp terminated")
+
+
+# =============================================================================
+# 메인 루프
+# =============================================================================
+
+def motorapp_main(main_queue: Queue, main_pipe: connection.Connection):
+    global _running
+    _running = True
+    
+    if not _init():
+        return
+    
+    # HK 스레드 시작
+    _threads["HK"] = threading.Thread(target=_send_hk, args=(main_queue,), daemon=True)
+    _threads["HK"].start()
+    
+    try:
+        while _running:
+            raw = main_pipe.recv()
+            msg = msgstructure.MsgStructure()
+            
+            if not msgstructure.unpack_msg(msg, raw):
+                continue
+            
+            if msg.receiver_app in (appargs.MotorAppArg.AppID, appargs.MainAppArg.AppID):
+                _dispatch(msg)
+    
+    except Exception as e:
+        _log(f"Error: {e}", events.EventType.error)
+    
+    finally:
+        _terminate()

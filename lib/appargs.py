@@ -77,14 +77,15 @@ class FlightlogicAppArg:
     MID_SendSimulationStatustoTlm : types.MID = 1407
     MID_SendCameraActivateToCam : types.MID = 1408
 
-    MID_Motor_Payload_LaunchPad : types.MID = 1405  # 모든 모터 정지
+    MID_Motor_Payload_LaunchPad : types.MID = 1405
+    MID_SetTargetCoordinates : types.MID = 1406
+    MID_SendFlightStateToMotor : types.MID = 1407
     MID_Motor_Parafoil_Activate : types.MID = 1409
-    MID_Motor_Release_Activate : types.MID = 1410  # 번와이어로 컨테이너-페이로드 사출
-    MID_Motor_Egg_Drop_Activate : types.MID = 1411  # 솔레노이드로 계란 사출
-    MID_PayloadMotorStop : types.MID = 1412  # 모든 모터 정지
-    MID_SendGpsMotorData: types.MID = 1413
-    MID_SendImuMotorData: types.MID = 1414
-    MID_SendFlightLogicMotorData: types.MID = 1415
+    MID_Motor_Release_Activate : types.MID = 1410  # 번와이어
+    MID_Motor_Egg_Drop_Activate : types.MID = 1411  # 솔레노이드
+    MID_PayloadMotorStop : types.MID = 1412
+    MID_SendGpsMotorData : types.MID = 1413
+    MID_SendImuMotorData : types.MID = 1414
 
 
 

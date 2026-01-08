@@ -6,11 +6,11 @@ CONF_NONE = 0
 CONF_PAYLOAD = 1
 
 STATE_NAME_TO_ID = {
-    "LAUNCHPAD": 0,
+    "LAUNCH_PAD": 0,
     "ASCENT": 1,
-    "APOGEE": 2,        # 컨테이너-페이로드 사출
-    "DESCENT": 3,       # 파라포일 모터 제어 시작
-    "EGG_RELEASE": 4,   # 상공 2m에서 계란 사출
+    "APOGEE": 2,
+    "RELEASE": 3,   # 번와이어로 컨테이너-페이로드 사출
+    "EGG": 4,       # 솔레노이드로 계란 사출
     "LANDED": 5,
 }
 
@@ -28,7 +28,7 @@ if not os.path.exists(config_file_path):
 # SELECTED=PAYLOAD
 #
 # Optional: Force the initial flight-logic state
-# (LAUNCHPAD, ASCENT, APOGEE, DESCENT, PROBE_RELEASE, LANDED, or NONE)
+# (LAUNCH_PAD, ASCENT, APOGEE, RELEASE, EGG, LANDED, or NONE)
 # STATE_OVERRIDE=NONE
 #
 # Optional: IMU yaw offset in degrees (현장에서 캔위성 앞쪽 방향을 0도로 맞추기)
