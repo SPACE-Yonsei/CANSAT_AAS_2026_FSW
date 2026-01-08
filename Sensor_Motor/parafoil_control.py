@@ -161,6 +161,7 @@ def calculate_motor_control(current_yaw: float, current_lat: float, current_lon:
         # current_yaw - gps_bearing: positive = right turn needed, negative = left turn needed
         angle_diff = current_yaw - gps_angle_deg
         
+        # Normalize angle difference to -180 ~ +180 range (shortest path)
         while angle_diff > 180:
             angle_diff -= 360
         while angle_diff < -180:
