@@ -10,6 +10,9 @@ from lib import prevstate
 from lib import config
 import math
 
+# Import parafoil_control for GPS/IMU logic
+from Sensor_Motor import parafoil_control
+
 import signal
 from multiprocessing import Queue, connection
 import threading
@@ -89,18 +92,28 @@ def command_handler (recv_msg : msgstructure.MsgStructure, Main_Queue:Queue):
         recv_lat = float(sep_data[0])
         recv_lon = float(sep_data[1])
 
-        # Perform GPS logic
-        gps_logic(Main_Queue, recv_lat, recv_lon)
+        # Send GPS data to motorapp
+        SendGpsMotorDataMsg = msgstructure.MsgStructure()
+        msgstructure.send_msg(Main_Queue, SendGpsMotorDataMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendGpsMotorData, f"{recv_lat},{recv_lon}")
+        
+        # GPS logic for target reached check (using parafoil_control)
+        global Target_lat, Target_lon, TARGET_REACHED, TARGET_REACHED_RADIUS
+        if Target_lat != 0.0 or Target_lon != 0.0:
+            if parafoil_control.is_gps_valid(recv_lat, recv_lon):
+                distance_to_target = parafoil_control.calculate_distance_haversine(recv_lat, recv_lon, Target_lat, Target_lon)
+                if not TARGET_REACHED and distance_to_target <= TARGET_REACHED_RADIUS:
+                    TARGET_REACHED = True
+                    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Target reached! Distance: {distance_to_target:.2f}m (within {TARGET_REACHED_RADIUS}m radius)")    
     
     elif recv_msg.MsgID == appargs.ImuAppArg.MID_SendImuFlightLogicData:
         # Ignore the IMU data when simulation is activated
         if SIMULATION_ENABLE and SIMULATION_ACTIVATE:
             return
+        events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Received IMU data: {recv_msg.data}")
         
         recv_yaw = float(recv_msg.data)
-
-        # Perform IMU logic
-        imu_logic(Main_Queue, recv_yaw)
+        SendImuMotorDataMsg = msgstructure.MsgStructure()
+        msgstructure.send_msg(Main_Queue, SendImuMotorDataMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendImuMotorData, f"{recv_yaw}")
 
     elif recv_msg.MsgID == appargs.CommAppArg.MID_RouteCmd_SS:
         # When received Set State command
@@ -112,19 +125,19 @@ def command_handler (recv_msg : msgstructure.MsgStructure, Main_Queue:Queue):
 
         # ASCENT
         elif recv_state == 1:
-            ascent_state_transition(Main_Queue, force=True)
+            Ascent_state_transition(Main_Queue, force=True)
 
         # APOGEE
         elif recv_state == 2:
-            apogee_state_transition(Main_Queue, force=True)
+            Apogee_state_transition(Main_Queue, force=True)
 
         # DESCENT
         elif recv_state == 3:
-            descent_state_transition(Main_Queue, force=True)
+            Release_state_transition(Main_Queue, force=True)
 
         # PROBE RELEASE
         elif recv_state == 4:
-            probe_release_state_transition(Main_Queue, force=True)
+            Egg_state_transition(Main_Queue, force=True)
 
         # LANDED
         elif recv_state == 5:
@@ -184,13 +197,13 @@ def flightlogicapp_init(Main_Queue : Queue):
         if CURRENT_STATE == 0:
             launchpad_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 1:
-            ascent_state_transition(Main_Queue, force=True)
+            Ascent_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 2:
-            apogee_state_transition(Main_Queue, force=True)
+            Apogee_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 3:
-            descent_state_transition(Main_Queue, force=True)
+            Release_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 4:
-            probe_release_state_transition(Main_Queue, force=True)
+            Egg_state_transition(Main_Queue, force=True)
         elif CURRENT_STATE == 5:
             landed_state_transition(Main_Queue, force=True)
             
@@ -198,6 +211,12 @@ def flightlogicapp_init(Main_Queue : Queue):
         MAX_ALT = float(prevstate.PREV_MAX_ALT)
         Target_lat = float(prevstate.Target_lat)
         Target_lon = float(prevstate.Target_lon)
+        
+        # Set target coordinates to motorapp
+        if Target_lat != 0.0 or Target_lon != 0.0:
+            SetTargetCoordsMsg = msgstructure.MsgStructure()
+            target_coords_data = f"{Target_lat},{Target_lon}"
+            msgstructure.send_msg(Main_Queue, SetTargetCoordsMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SetTargetCoordinates, target_coords_data)
 
         events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Setting Current state to {CURRENT_STATE}")
 
@@ -231,8 +250,8 @@ def flightlogicapp_terminate():
 STATE_LIST = ["LAUNCH_PAD",
               "ASCENT",
               "APOGEE",
-              "DESCENT",
-              "PROBE_RELEASE",
+              "RELEASE",
+              "EGG",
               "LANDED"]
 
 CURRENT_STATE = 0
@@ -245,6 +264,8 @@ SIMULATION_ACTIVATE = False
 MAX_ALT = 0
 PAYLOAD_SEP_ALT_THRESHOLD = 0
 EGG_DROP_ALT_THRESHOLD = 2.0  # Drop egg at 2m above ground
+SOLENOID_SAFETY_ALT_MIN = 3.0  # Start solenoid safety activation at 3m
+SOLENOID_SAFETY_ALT_MAX = 4.0  # End solenoid safety activation at 4m
 TARGET_REACHED_RADIUS = 50.0  # Target reached radius in meters
 
 BAROMETER_ASCENT_COUNTER = 0
@@ -256,6 +277,8 @@ BAROMETER_EGG_DROP_COUNTER = 0
 
 # Flag to track if egg motor has been activated (prevent multiple activations)
 EGG_MOTOR_ACTIVATED = False
+SOLENOID_ACTIVATION_COUNT = 0  # Count of solenoid activations for safety (3-4m)
+SOLENOID_SAFETY_COMPLETE = False  # Flag to track if safety solenoid activation is complete
 TARGET_REACHED = False  # Flag to track if target GPS location has been reached
 
 # Target GPS coordinates (initialized from prevstate)
@@ -288,10 +311,9 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
             MAX_ALT = second_max
             prevstate.update_maxalt(second_max)
 
-    PAYLOAD_SEP_ALT_THRESHOLD = MAX_ALT * 0.75
+    PAYLOAD_SEP_ALT_THRESHOLD = MAX_ALT * 0.80
     
     if len(recent_alt) < 3:
-        # Do not perform any logic before filter is enabled
         return
 
     if BAROMETER_ASCENT_COUNTER <= 0 :
@@ -309,24 +331,19 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
     if BAROMETER_LANDED_COUNTER <= 0 :
         BAROMETER_LANDED_COUNTER = 0
         
-    # At Standby State
+    # At LaunchPad State 
     if CURRENT_STATE == 0:
-
-        # When Altitude is higher than 75 meters
-        if (altitude > 75):
+        if (altitude > 50):
             BAROMETER_ASCENT_COUNTER += 1
         else:
             BAROMETER_ASCENT_COUNTER -= 2
         
-        # When the counter is larger than 3 ; when the altitude is higher than 50 meter 3 times in a row
+        # When the counter is larger than 3 ; when the altitude is higher than 150 meter 3 times in a row
         if BAROMETER_ASCENT_COUNTER >= 3:
-            ascent_state_transition(Main_Queue)
+            Ascent_state_transition(Main_Queue)
     
-    # At Ascent State
+    # At Fly State
     if CURRENT_STATE == 1:
-
-        # When Altitude is 20 meter lower than max altitude
-
         if (altitude <= MAX_ALT - 20):
             BAROMETER_DESCENT_COUNTER += 1
         else:
@@ -340,15 +357,13 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
 
         # When the counter is larger than 2; When the altitude is 2 meter lower than max altitude 2 times in a row
         if BAROMETER_DESCENT_COUNTER >= 2:
-            descent_state_transition(Main_Queue)
+            Release_state_transition(Main_Queue)
 
         if BAROMETER_APOGEE_COUNTER >= 2:
-            apogee_state_transition(Main_Queue)
+            Apogee_state_transition(Main_Queue)
 
     # At Apogee State
     if CURRENT_STATE == 2:
-        
-        # Check for descent
         if (altitude <= MAX_ALT - 20):
             BAROMETER_DESCENT_COUNTER += 1
         else:
@@ -356,20 +371,18 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
 
         # When the counter is larger than 3; When the altitude is 2 meter lower than max altitude 3 times in a row
         if BAROMETER_DESCENT_COUNTER >= 2:
-            descent_state_transition(Main_Queue)
+            Release_state_transition(Main_Queue)
 
     # At Descent State
     if CURRENT_STATE == 3:
-        # When Altitude is 75% of max altitude
-
-        if (altitude <= MAX_ALT * 0.75):
+        if (altitude <= MAX_ALT * 0.80):
             BAROMETER_PROBE_RELEASE_COUNTER += 1
         else:
             BAROMETER_PROBE_RELEASE_COUNTER -= 2
 
         # When the counter is larger than 3; When the altitude is 75% of max altitude 2 times in a row
         if BAROMETER_PROBE_RELEASE_COUNTER >= 2:
-            probe_release_state_transition(Main_Queue)
+            Egg_state_transition(Main_Queue)
     
     # At Probe Release State
 
@@ -377,6 +390,19 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
         global EGG_MOTOR_ACTIVATED
         global BAROMETER_EGG_DROP_COUNTER
         global TARGET_REACHED
+        global SOLENOID_ACTIVATION_COUNT
+        global SOLENOID_SAFETY_COMPLETE
+        
+        # Safety solenoid activation: 3-4m altitude, activate 5-6 times repeatedly
+        if not SOLENOID_SAFETY_COMPLETE and SOLENOID_SAFETY_ALT_MIN <= altitude <= SOLENOID_SAFETY_ALT_MAX:
+            if SOLENOID_ACTIVATION_COUNT < 6:  # Activate up to 6 times
+                events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Safety solenoid activation ({SOLENOID_ACTIVATION_COUNT + 1}/6) at altitude {altitude:.2f}m")
+                SolenoidActivateMsg = msgstructure.MsgStructure()
+                msgstructure.send_msg(Main_Queue, SolenoidActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SolenoidActivate, "")
+                SOLENOID_ACTIVATION_COUNT += 1
+                if SOLENOID_ACTIVATION_COUNT >= 5:  # Complete after 5-6 activations
+                    SOLENOID_SAFETY_COMPLETE = True
+                    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Safety solenoid activation complete ({SOLENOID_ACTIVATION_COUNT} times)")
         
         # Only activate egg motor if target has been reached AND altitude is 2m above ground
         # Mission: Reach target GPS location, then drop egg at 2m altitude
@@ -406,206 +432,6 @@ def barometer_logic(Main_Queue:Queue, altitude:float):
         
     return
 
-Target_Yaw = 0
-Recent_lat = 0.0
-Recent_lon = 0.0
-GPS_VALID = False
-Last_Valid_GPS_Angle = None  # 마지막 유효한 GPS 방위각 (GPS 손실 시 사용)
-
-def imu_logic(Main_Queue:Queue, recent_yaw:float):
-    global Target_Yaw
-    global Recent_lat
-    global Recent_lon
-    global GPS_VALID
-    global Last_Valid_GPS_Angle
-    global CURRENT_STATE
-
-    Target_Yaw = recent_yaw
-    
-    # 파라포일 모터 제어는 DESCENT(3) 또는 PROBE_RELEASE(4) 상태에서만 활성화
-    # simulation과 동일하게 동작하도록 모든 상태에서 모터 제어 가능하도록 설정
-    # (필요시 특정 상태에서만 제어하려면 아래 주석 해제)
-    # if CURRENT_STATE < 3:  # DESCENT 이전 상태에서는 모터 제어 안 함
-    #     return
-    
-    # IMU 데이터가 올 때마다 (100Hz) 최신 GPS 좌표로 모터 제어
-    # GPS 유효성 검사 후 처리
-    if GPS_VALID and is_gps_valid(Recent_lat, Recent_lon):
-        # GPS가 유효한 경우: GPS 기반 모터 제어 (simulation과 동일)
-        control_motor_with_gps(Main_Queue, Recent_lat, Recent_lon)
-    elif Last_Valid_GPS_Angle is not None:
-        # GPS가 유효하지 않지만 이전에 유효한 GPS 방위각이 있는 경우
-        # 마지막 유효한 방위각을 유지하도록 모터 제어
-        control_motor_with_heading(Main_Queue, Last_Valid_GPS_Angle)
-    else:
-        # GPS가 없고 이전 유효한 방위각도 없는 경우: 모터 정지
-        control_motor_stop(Main_Queue)
-    
-    return
-
-def is_gps_valid(lat: float, lon: float) -> bool:
-    """
-    Check if GPS coordinates are valid.
-    Returns True if GPS data is valid (not 0.0, 0.0 and within reasonable ranges).
-    """
-    # Check if coordinates are not zero (invalid GPS reading)
-    if lat == 0.0 and lon == 0.0:
-        return False
-    
-    if abs(lat) > 90.0 or abs(lon) > 180.0:
-        return False
-    
-    return True
-
-def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """
-    Calculate distance between two GPS coordinates using Haversine formula.
-    Returns distance in meters.
-    """
-    # Earth radius in meters
-    R = 6371000  # meters
-    
-    # Convert latitude and longitude from degrees to radians
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-    
-    # Haversine formula
-    a = math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    
-    distance = R * c
-    return distance
-
-def control_motor_with_gps(Main_Queue:Queue, recent_lat:float, recent_lon:float):
-    global Target_lat
-    global Target_lon
-    global Target_Yaw
-    global TARGET_REACHED
-    global TARGET_REACHED_RADIUS
-    global Last_Valid_GPS_Angle
-
-    # Skip motor control if target coordinates are not set (0, 0)
-    if Target_lat == 0.0 and Target_lon == 0.0:
-        return
-
-    # Calculate bearing angle to target (simulation의 calculate_bearing_angle과 동일)
-    # atan2(y, x) returns angle from x-axis, so we use (lat_diff, lon_diff)
-    # Convert to degrees and normalize to 0-360 range
-    gps_angle_rad = math.atan2(Target_lat - recent_lat, Target_lon - recent_lon)
-    gps_angle_deg = math.degrees(gps_angle_rad)  # Convert radians to degrees
-    
-    # Normalize gps_angle to 0-360 degrees
-    if gps_angle_deg < 0:
-        gps_angle_deg += 360
-    
-    Last_Valid_GPS_Angle = gps_angle_deg
-    
-    # Calculate turn angle (simulation의 calculate_turn_angle과 동일)
-    # current_yaw - gps_bearing: positive = turn right, negative = turn left
-    angle_diff = Target_Yaw - gps_angle_deg
-    
-    # Normalize angle difference to -180 to +180 range (shortest path)
-    while angle_diff > 180:
-        angle_diff -= 360
-    while angle_diff < -180:
-        angle_diff += 360
-    
-    # turn > 0 means need to turn right (use right motor)
-    # turn < 0 means need to turn left (use left motor)
-    turn = angle_diff
-
-    # Convert turn value to string (send_msg requires str, not list)
-    turn_data = str(turn)
-
-    # Send motor control command (simulation과 동일하게 모터 제어)
-    SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
-    return
-
-def control_motor_with_heading(Main_Queue:Queue, target_heading:float):
-    """
-    GPS가 없을 때 마지막 유효한 방위각을 유지하도록 모터 제어.
-    도심 등 GPS 수신 불가 상황에서 사용.
-    """
-    global Target_Yaw
-    
-    # 현재 yaw와 목표 방위각의 차이 계산
-    angle_diff = Target_Yaw - target_heading
-    
-    # Normalize angle difference to -180 to +180 range (shortest path)
-    while angle_diff > 180:
-        angle_diff -= 360
-    while angle_diff < -180:
-        angle_diff += 360
-    
-    turn = angle_diff
-    
-    # Convert turn value to string
-    turn_data = str(turn)
-    
-    SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
-    return
-
-def control_motor_stop(Main_Queue:Queue):
-    """
-    GPS가 없고 이전 유효한 방위각도 없을 때 모터 정지.
-    안전을 위해 모터를 정지시킴.
-    """
-    # turn = 0 means stop motors
-    turn_data = "0.0"
-    
-    SendPayloadMotorRotation = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, SendPayloadMotorRotation, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendPayloadMotorRatation, turn_data)
-    return
-
-def gps_logic(Main_Queue:Queue, recent_lat:float, recent_lon:float):
-    global Target_lat
-    global Target_lon
-    global Target_Yaw
-    global TARGET_REACHED
-    global TARGET_REACHED_RADIUS
-    global Recent_lat
-    global Recent_lon
-    global GPS_VALID
-
-    # GPS 데이터 유효성 검사
-    gps_valid = is_gps_valid(recent_lat, recent_lon)
-    
-    # GPS 유효성 상태 변경 시 로그 출력
-    if gps_valid != GPS_VALID:
-        if gps_valid:
-            events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"GPS signal acquired: Lat={recent_lat:.6f}, Lon={recent_lon:.6f}")
-        else:
-            events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.warning, f"GPS signal lost or invalid: Lat={recent_lat:.6f}, Lon={recent_lon:.6f} (도심 등 GPS 수신 불가)")
-    
-    GPS_VALID = gps_valid
-    
-    # 최신 GPS 좌표 저장 (IMU 기반 모터 제어용)
-    # 유효하지 않은 GPS도 저장하되, 유효성 플래그로 구분
-    Recent_lat = recent_lat
-    Recent_lon = recent_lon
-
-    # Skip GPS logic if target coordinates are not set (0, 0)
-    if Target_lat == 0.0 and Target_lon == 0.0:
-        return
-
-    # GPS가 유효한 경우에만 거리 계산 및 목표 도달 체크
-    if GPS_VALID:
-        # Calculate distance to target using Haversine formula (in meters)
-        distance_to_target = calculate_distance_haversine(recent_lat, recent_lon, Target_lat, Target_lon)
-        
-        # Check if target has been reached (within target radius)
-        if not TARGET_REACHED and distance_to_target <= TARGET_REACHED_RADIUS:
-            TARGET_REACHED = True
-            events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, f"Target reached! Distance: {distance_to_target:.2f}m (within {TARGET_REACHED_RADIUS}m radius)")
-        
-        control_motor_with_gps(Main_Queue, recent_lat, recent_lon)
-    
-    return
-
 def launchpad_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     global MAX_ALT
@@ -625,112 +451,113 @@ def launchpad_state_transition(Main_Queue : Queue, force: bool = False):
     
     # Store the current state to prev state file
     prevstate.update_prevstate(CURRENT_STATE)
+    
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
 
     # Reset the mechanism depending on the FSW config
     if config.FSW_CONF == config.CONF_CONTAINER:
-        PayloadReleaseMotorStandbyMsg = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, PayloadReleaseMotorStandbyMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorStandby, "")
+        MotorPayloadLaunchPadMsg = msgstructure.MsgStructure()
+        msgstructure.send_msg(Main_Queue, MotorPayloadLaunchPadMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Payload_LaunchPad, "")
 
     return
 
-def ascent_state_transition(Main_Queue : Queue, force: bool = False):
+def Ascent_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     
-    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
         return
 
-    # Set the Current State to 1 ; Ascent
     CURRENT_STATE = 1
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO ASCENT")
 
     # Store the current state to prev state file
     prevstate.update_prevstate(CURRENT_STATE)
-
-    # Perform Action for Ascent State
-
+    
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
     ActivateCameraToCamappMsg = msgstructure.MsgStructure()
     msgstructure.send_msg(Main_Queue, ActivateCameraToCamappMsg, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
 
     return
 
-def apogee_state_transition(Main_Queue : Queue, force: bool = False):
+def Apogee_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
 
-    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
         return
-
-    # Set the Current State to 2 ; Apogee
     CURRENT_STATE = 2
+    prevstate.update_prevstate(CURRENT_STATE)
 
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO APOGEE")
-    prevstate.update_prevstate(CURRENT_STATE)
+    
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
+    MotorParafoilActivateMsg = msgstructure.MsgStructure()
+    msgstructure.send_msg(Main_Queue, MotorParafoilActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Parafoil_Activate, "")
+    
 
 
-def descent_state_transition(Main_Queue:Queue, force: bool = False):
+def Release_state_transition(Main_Queue:Queue, force: bool = False):
+    # 이때 번와이어로 컨테이너-페이로드 사출
+    # 파라포일 모터 전개 시작작
     global CURRENT_STATE
     
-    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
         return
 
-    # Set the Current State to 3 ; Deploy
     CURRENT_STATE = 3
-    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO DESCENT")
-
-    # Store the current state to prev state file
     prevstate.update_prevstate(CURRENT_STATE)
+    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO RELEASE")
+    
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
 
-    # Perform Action for Deploy State
 
-    ActivateCameraToCamappMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, ActivateCameraToCamappMsg, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
+    MotorReleaseActivateMsg = msgstructure.MsgStructure()
+    msgstructure.send_msg(Main_Queue, MotorReleaseActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Release_Activate, "")
 
 
     return
 
-def probe_release_state_transition(Main_Queue:Queue, force: bool = False):
+def Egg_state_transition(Main_Queue:Queue, force: bool = False):
+    # 상공 2m에서 계란 사출
     global CURRENT_STATE
     
-    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
         return
-
-    # Set the Current State to 4 ; Payload Sep
     CURRENT_STATE = 4
-    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO PROBE RELEASE")
-
-    # Store the current state to prev state file
     prevstate.update_prevstate(CURRENT_STATE)
 
-    # Perform Action for Payload Separation State
-
-    ActivateCameraToCamappMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, ActivateCameraToCamappMsg, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
-
-    PayloadReleaseMotorActivateMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, PayloadReleaseMotorActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadReleaseMotorActivate, "")
+    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO EGG DROP")
     
-    # Container -> Activate Motor to release payload
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
+    MotorEggDropActivateMsg = msgstructure.MsgStructure()
+    msgstructure.send_msg(Main_Queue, MotorEggDropActivateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
 
     return
 
 def landed_state_transition(Main_Queue : Queue, force: bool = False):
     global CURRENT_STATE
     
-    # STATE_OVERRIDE가 설정되어 있으면 강제 호출이 아닌 경우 상태 변화 차단
     if config.STATE_OVERRIDE is not None and not force:
         return
-
-    # Set the Current State to 5 ; Landing
+    
     CURRENT_STATE = 5
     events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "CHANGED STATE TO LANDED")
 
     # Store the current state to prev state file
     prevstate.update_prevstate(CURRENT_STATE)
+    
+    # Send state to motorapp
+    send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
 
     # Perform Action for Landing State
+    # 모든 모터 정지
+    PayloadMotorStopMsg = msgstructure.MsgStructure()
+    msgstructure.send_msg(Main_Queue, PayloadMotorStopMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadMotorStop, "")
+    events.LogEvent(appargs.FlightlogicAppArg.AppName, events.EventType.info, "All motors stopped (LANDED state)")
 
     return
 
@@ -754,6 +581,14 @@ def send_current_state(Main_Queue:Queue):
         msgstructure.send_msg(Main_Queue, SendCurrentStateMsg, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCurrentStateToTlm, STATE_LIST[CURRENT_STATE])
         time.sleep(1)
     
+    return
+
+def send_flight_state_to_motor(Main_Queue:Queue, state:int):
+    """
+    비행 상태를 motorapp으로 전달합니다.
+    """
+    SendFlightStateMsg = msgstructure.MsgStructure()
+    msgstructure.send_msg(Main_Queue, SendFlightStateMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(state))
     return
 ######################################################
 ## MAIN METHOD                                      ##

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Payload-Egg ejection motor control (MG92B, angle control)
-# GPIO 6: Payload-Egg ejection motor
+"""
+Payload-Egg ejection motor control (MG92B, angle control)
+GPIO 5: Payload-Egg ejection motor
+"""
 
 import time
 

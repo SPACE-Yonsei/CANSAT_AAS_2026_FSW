@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+Solenoid control for egg drop safety
+GPIO 5: Solenoid pin
+"""
 
 import time
 import RPi.GPIO as GPIO 
@@ -9,10 +13,12 @@ SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
 SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
 
 def init_solenoid():
+    """Initialize solenoid (GPIO setup)."""
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
 
 def unlock_solenoid():
+    """Unlock solenoid (activate for 0.5 seconds then deactivate)."""
     try:
         GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)        
         time.sleep(0.5) 
@@ -22,6 +28,7 @@ def unlock_solenoid():
         pass
 
 def terminate_solenoid():
+    """Terminate solenoid (cleanup GPIO)."""
     GPIO.cleanup()
 
 if __name__ == "__main__":
