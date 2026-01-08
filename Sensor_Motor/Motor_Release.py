@@ -1,52 +1,50 @@
 #!/usr/bin/env python3
 """
-Solenoid control for egg drop safety
-GPIO 5: Solenoid pin
+Burnwire control for Container-Payload release
+GPIO 6: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
 """
 
 import time
 import RPi.GPIO as GPIO 
 
-SOLENOID_PIN = 5
+BURNWIRE_PIN = 6
+BURNWIRE_ACTIVATE_LEVEL = GPIO.HIGH
+BURNWIRE_DEACTIVATE_LEVEL = GPIO.LOW
+BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)
 
-SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
-SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
-
-def init_solenoid():
-    """Initialize solenoid (GPIO setup)."""
+def init_burnwire():
+    """Initialize burnwire for container-payload release (GPIO setup)."""
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
+    GPIO.setup(BURNWIRE_PIN, GPIO.OUT, initial=BURNWIRE_DEACTIVATE_LEVEL)
 
-def unlock_solenoid():
-    """Unlock solenoid (activate for 0.5 seconds then deactivate)."""
+def activate_burnwire():
+    """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
     try:
-        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)        
-        time.sleep(0.5) 
-        GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
-        
+        GPIO.output(BURNWIRE_PIN, BURNWIRE_ACTIVATE_LEVEL)        
+        time.sleep(BURNWIRE_DURATION) 
+        GPIO.output(BURNWIRE_PIN, BURNWIRE_DEACTIVATE_LEVEL)
     except Exception as e:
         pass
 
-def terminate_solenoid():
-    """Terminate solenoid (cleanup GPIO)."""
-    GPIO.cleanup()
+def terminate_burnwire():
+    """Terminate burnwire (cleanup GPIO)."""
+    try:
+        GPIO.cleanup(BURNWIRE_PIN)
+    except Exception as e:
+        pass
 
 if __name__ == "__main__":
-    init_solenoid()
+    init_burnwire()
     try:
-        while True:
-
-            print("\n--- 1. 잠금 해제 상태 ---")
-            unlock_solenoid()
-            input("Enter를 눌러 순간 잠금 해제 상태로 전환")
-            
-            print("\n--- 2. 순간 잠금 해제 (100ms) 상태 ---")
-            unlock_solenoid()
-            input("Enter를 눌러 종료")
-            break
+        print("\n=== Burnwire Test (Container-Payload Release) ===")
+        input("Enter를 눌러 번와이어 작동 (3초)")
+        activate_burnwire()
+        print("번와이어 작동 완료")
+        
+        input("Enter를 눌러 종료")
 
     except KeyboardInterrupt:
         print("\n프로그램 종료 요청 (Ctrl+C)")
 
     finally:
-        terminate_solenoid()
+        terminate_burnwire()

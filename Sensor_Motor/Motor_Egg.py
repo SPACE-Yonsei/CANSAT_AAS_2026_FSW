@@ -1,52 +1,50 @@
 #!/usr/bin/env python3
 """
-Payload-Egg ejection motor control (MG92B, angle control)
-GPIO 5: Payload-Egg ejection motor
+Solenoid control for Payload-Egg drop
+GPIO 5: Solenoid (솔레노이드로 계란 사출)
 """
 
 import time
+import RPi.GPIO as GPIO 
 
-PAYLOAD_EGG_MOTOR_PIN = 5
-PAYLOAD_EGG_INITIAL_DEGREE = 0
-PAYLOAD_EGG_RELEASE_DEGREE = 90
-PAYLOAD_EGG_MOTOR_MIN_PULSE = 500
-PAYLOAD_EGG_MOTOR_MAX_PULSE = 2500
+SOLENOID_PIN = 5
+SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
+SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
+SOLENOID_DURATION = 0.5  # 솔레노이드 작동 시간 (초)
 
-def angle_to_pulse(angle) -> int:
-    if angle < 0:
-        angle = 0
-    elif angle > 180:
-        angle = 180
-    
-    return int(PAYLOAD_EGG_MOTOR_MIN_PULSE + ((angle/180)*(PAYLOAD_EGG_MOTOR_MAX_PULSE - PAYLOAD_EGG_MOTOR_MIN_PULSE)))
+def init_solenoid():
+    """Initialize solenoid for egg drop (GPIO setup)."""
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
 
-def init_MG92B():
-    import pigpio
-    pi = pigpio.pi()
-    if pi is None:
-        raise RuntimeError("Failed to initialize pigpio")
-    pi.set_servo_pulsewidth(PAYLOAD_EGG_MOTOR_PIN, angle_to_pulse(PAYLOAD_EGG_INITIAL_DEGREE))
-    return pi
+def activate_solenoid():
+    """Activate solenoid to drop egg (솔레노이드로 계란 사출)."""
+    try:
+        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)        
+        time.sleep(SOLENOID_DURATION) 
+        GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
+    except Exception as e:
+        pass
 
-def egg_motor_initial(pi):
-    """Set egg motor to initial position (holding egg)."""
-    if pi is None:
-        return
-    pi.set_servo_pulsewidth(PAYLOAD_EGG_MOTOR_PIN, angle_to_pulse(PAYLOAD_EGG_INITIAL_DEGREE))
-    return
+def terminate_solenoid():
+    """Terminate solenoid (cleanup GPIO)."""
+    try:
+        GPIO.cleanup(SOLENOID_PIN)
+    except Exception as e:
+        pass
 
-def egg_motor_release(pi):
-    """Set egg motor to release position (dropping egg)."""
-    if pi is None:
-        return
-    pi.set_servo_pulsewidth(PAYLOAD_EGG_MOTOR_PIN, angle_to_pulse(PAYLOAD_EGG_RELEASE_DEGREE))
-    return
+if __name__ == "__main__":
+    init_solenoid()
+    try:
+        print("\n=== Solenoid Test (Egg Drop) ===")
+        input("Enter를 눌러 솔레노이드 작동 (0.5초)")
+        activate_solenoid()
+        print("솔레노이드 작동 완료")
+        
+        input("Enter를 눌러 종료")
 
-def terminate_MG92B(pi):
-    """Terminate egg motor (stop PWM)."""
-    if pi is None:
-        return
-    pi.set_servo_pulsewidth(PAYLOAD_EGG_MOTOR_PIN, 0)
-    # Note: pi.stop() should be called by the caller to clean up all motors
-    return
+    except KeyboardInterrupt:
+        print("\n프로그램 종료 요청 (Ctrl+C)")
 
+    finally:
+        terminate_solenoid()

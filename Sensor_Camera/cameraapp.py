@@ -174,11 +174,6 @@ from lib import config
 
 # This method is called from main app. Initialization, runloop process
 def cameraapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
-
-    # Camera app is not used in Container
-    if config.FSW_CONF == config.CONF_CONTAINER:
-        events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"Camera is only used in payload. Terminating")
-        return
     
     global CAMERAAPP_RUNSTATUS
     CAMERAAPP_RUNSTATUS = True

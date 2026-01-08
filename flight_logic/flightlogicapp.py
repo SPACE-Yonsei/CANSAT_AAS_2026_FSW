@@ -455,11 +455,6 @@ def launchpad_state_transition(Main_Queue : Queue, force: bool = False):
     # Send state to motorapp
     send_flight_state_to_motor(Main_Queue, CURRENT_STATE)
 
-    # Reset the mechanism depending on the FSW config
-    if config.FSW_CONF == config.CONF_CONTAINER:
-        MotorPayloadLaunchPadMsg = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, MotorPayloadLaunchPadMsg, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Payload_LaunchPad, "")
-
     return
 
 def Ascent_state_transition(Main_Queue : Queue, force: bool = False):

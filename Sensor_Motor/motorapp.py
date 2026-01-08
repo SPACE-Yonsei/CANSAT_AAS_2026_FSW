@@ -15,19 +15,18 @@ import time
 
 # Import Motor Libraries
 from Sensor_Motor import parafoil_motor
-from Sensor_Motor import container_motor
-from Sensor_Motor import payload_egg_motor
+from Sensor_Motor import Motor_Release
+from Sensor_Motor import Motor_Egg
 from Sensor_Motor import parafoil_control
 
 MOTORAPP_RUNSTATUS = True
 PAYLOAD_MOTOR_ENABLE = True
-PAYLOAD_MODES = (config.CONF_PAYLOAD, config.CONF_PAYLOAD_DESCENT)
 
 # Current sensor data for motor control
 CURRENT_YAW = 0.0
 CURRENT_LAT = 0.0
 CURRENT_LON = 0.0
-CURRENT_STATE = 0  # Flight state (0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=PROBE_RELEASE, 5=LANDED)
+CURRENT_STATE = 0  # Flight state (0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED)
 
 ######################################################
 ## FUNDAMENTAL METHODS                              ##
@@ -78,61 +77,26 @@ def command_handler (recv_msg : msgstructure.MsgStructure, motor_instance):
         CURRENT_STATE = int(recv_msg.data)
         events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Flight state updated to: {CURRENT_STATE}")
     
-    # On Payload-Egg motor activation command
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadEggMotorActivate:
-        if config.FSW_CONF in PAYLOAD_MODES:
-            activate_egg_motor(motor_instance)
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload-Egg Motor Activation, current conf : {config.FSW_CONF}")    
+    # On Container-Payload release activation command (burnwire)
+    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_Motor_Release_Activate:
+        activate_burnwire_release()
 
-    # On Payload Release motor activation command
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadReleaseMotorActivate:
-
-        if config.FSW_CONF == config.CONF_CONTAINER:
-            activate_payload_release_motor(motor_instance)
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Activation, current conf : {config.FSW_CONF}")
-
-    # On Payload Release motor standby command
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadReleaseMotorStandby:
-
-        if config.FSW_CONF == config.CONF_CONTAINER:
-            standby_payload_release_motor(motor_instance)
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload Release Motor Standby, current conf : {config.FSW_CONF}")
-
-    # On Solenoid activation command (for egg drop safety)
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SolenoidActivate:
-        if config.FSW_CONF in PAYLOAD_MODES:
-            activate_solenoid()
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Solenoid Activation, current conf : {config.FSW_CONF}")
+    # On Payload-Egg drop activation command (solenoid)
+    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate:
+        activate_egg_drop_solenoid()
 
     # On Payload Motor Stop command (for LANDED state)
     elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_PayloadMotorStop:
-        if config.FSW_CONF in PAYLOAD_MODES:
-            stop_payload_motor(motor_instance)
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Not Performing Payload Motor Stop, current conf : {config.FSW_CONF}")
+        stop_payload_motor(motor_instance)
 
     elif recv_msg.MsgID == appargs.CommAppArg.MID_RouteCmd_MEC:
-        if config.FSW_CONF == config.CONF_CONTAINER:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current conf : container, Current Option : {recv_msg.data}...")
-            if recv_msg.data == "ON":
-                activate_payload_release_motor(motor_instance)
-            elif recv_msg.data == "OFF":
-                free_payload_release_motor(motor_instance)
-            else:
-                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error Activating container motor, invalid option : {recv_msg.data}")
-
-        elif config.FSW_CONF in PAYLOAD_MODES:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current conf : payload, Current Option : {recv_msg.data}")
-            if recv_msg.data == "ON":
-                PAYLOAD_MOTOR_ENABLE = True
-            elif recv_msg.data == "OFF":
-                PAYLOAD_MOTOR_ENABLE = False
-            else:
-                events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error Activating payload motor, invalid option : {recv_msg.data}")
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"MEC : Current Option : {recv_msg.data}")
+        if recv_msg.data == "ON":
+            PAYLOAD_MOTOR_ENABLE = True
+        elif recv_msg.data == "OFF":
+            PAYLOAD_MOTOR_ENABLE = False
+        else:
+            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"Error setting motor enable, invalid option : {recv_msg.data}")
             
     else:
         events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
@@ -161,31 +125,19 @@ def motorapp_init():
         ## User Defined Initialization goes HERE
         motor_instance = None
 
-        if config.FSW_CONF in PAYLOAD_MODES:
-            # Initialize parafoil control module (load target coordinates from prevstate)
-            parafoil_control.init_parafoil_control()
-            # Initialize parafoil motor (GPIO 12, 13)
-            parafoil_instance = parafoil_motor.init_parafoil_motor()
-            # Initialize payload-egg ejection motor (GPIO 6)
-            egg_motor_instance = payload_egg_motor.init_MG92B()
-            # Initialize solenoid (GPIO 5) for egg drop safety
-            container_motor.init_solenoid()
-            # Store both motors in a dictionary
-            motor_instance = {
-                'parafoil': parafoil_instance,
-                'egg_motor': egg_motor_instance
-            }
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Payload motors (parafoil + egg) and solenoid standby")
-
-        elif config.FSW_CONF == config.CONF_CONTAINER:
-            motor_instance = container_motor.init_MG996R()
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Container motor standby")
-            standby_payload_release_motor(motor_instance)
-
-        else:
-            events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "No Valid configuration!")
-            MOTORAPP_RUNSTATUS = False
-            return None
+        # Initialize parafoil control module (load target coordinates from prevstate)
+        parafoil_control.init_parafoil_control()
+        # Initialize parafoil motor (GPIO 12, 13)
+        parafoil_instance = parafoil_motor.init_parafoil_motor()
+        # Initialize burnwire for container-payload release (GPIO 6)
+        Motor_Release.init_burnwire()
+        # Initialize solenoid for egg drop (GPIO 5)
+        Motor_Egg.init_solenoid()
+        # Store parafoil motor in a dictionary
+        motor_instance = {
+            'parafoil': parafoil_instance
+        }
+        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Payload motors (parafoil), burnwire, and solenoid standby")
 
         events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "motorapp Initialization Complete")
         return motor_instance
@@ -204,17 +156,16 @@ def motorapp_terminate(motor_instance):
     # Termination Process Comes Here
 
     # Terminate each motor
-    if config.FSW_CONF in PAYLOAD_MODES:
-        if isinstance(motor_instance, dict):
-            parafoil_motor.terminate_parafoil_motor(motor_instance['parafoil'])
-            payload_egg_motor.terminate_MG92B(motor_instance['egg_motor'])
-            # Stop pigpio instance (shared between motors)
-            if motor_instance['parafoil'] is not None:
-                motor_instance['parafoil'].stop()
-        else:
-            parafoil_motor.terminate_parafoil_motor(motor_instance)
-    elif config.FSW_CONF == config.CONF_CONTAINER:
-        container_motor.terminate_MG996R(motor_instance)
+    if isinstance(motor_instance, dict):
+        parafoil_motor.terminate_parafoil_motor(motor_instance['parafoil'])
+        # Stop pigpio instance (shared between motors)
+        if motor_instance['parafoil'] is not None:
+            motor_instance['parafoil'].stop()
+        # Terminate release mechanisms
+        Motor_Release.terminate_burnwire()
+        Motor_Egg.terminate_solenoid()
+    else:
+        parafoil_motor.terminate_parafoil_motor(motor_instance)
 
     for thread_name in thread_dict:
         events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, f"Terminating thread {thread_name}")
@@ -228,37 +179,16 @@ def motorapp_terminate(motor_instance):
 ## USER METHOD                                      ##
 ######################################################
 
-def activate_payload_release_motor(motor_instance):
-    """Activate payload release motor (container release)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Payload Release Motor")
-    container_motor.container_release(motor_instance)
+def activate_burnwire_release():
+    """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Burnwire (container-payload release)")
+    Motor_Release.activate_burnwire()
     return
 
-def standby_payload_release_motor(motor_instance):
-    """Set payload release motor to standby position (container initial)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Standby Payload Release Motor")
-    container_motor.container_initial(motor_instance)
-    return
-
-def free_payload_release_motor(motor_instance):
-    """Free payload release motor (container free)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Free Payload Release Motor")
-    container_motor.container_free(motor_instance)
-    return
-
-def activate_egg_motor(motor_instance):
-    """Activate payload-egg ejection motor."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Payload-Egg Ejection Motor")
-    if isinstance(motor_instance, dict):
-        payload_egg_motor.egg_motor_release(motor_instance['egg_motor'])
-    else:
-        events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.error, "Motor instance type error for egg motor")
-    return
-
-def activate_solenoid():
-    """Activate solenoid for egg drop safety (3-4m altitude)."""
-    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Solenoid (egg drop safety)")
-    container_motor.unlock_solenoid()
+def activate_egg_drop_solenoid():
+    """Activate solenoid to drop payload-egg (솔레노이드로 계란 사출)."""
+    events.LogEvent(appargs.MotorAppArg.AppName, events.EventType.info, "Activating Solenoid (payload-egg drop)")
+    Motor_Egg.activate_solenoid()
     return
 
 def stop_payload_motor(motor_instance):
@@ -274,21 +204,17 @@ def stop_payload_motor(motor_instance):
 def update_motor_control(motor_instance):
     """
     Calculate motor control direction based on current GPS/IMU data and control motors.
-    Motor control is only activated in DESCENT(3) or PROBE_RELEASE(4) states.
+    Motor control is only activated in DESCENT(3) or EGG_RELEASE(4) states.
     """
     global CURRENT_STATE, CURRENT_YAW, CURRENT_LAT, CURRENT_LON, PAYLOAD_MOTOR_ENABLE
     
-    # Parafoil motor control is only activated in DESCENT(3) or PROBE_RELEASE(4) states
+    # Parafoil motor control is only activated in DESCENT(3) or EGG_RELEASE(4) states
     # In APOGEE(2) state, parafoil algorithm starts but motors do not operate
     if CURRENT_STATE < 3:  # No motor control before DESCENT state (LAUNCHPAD, ASCENT, APOGEE)
         return
     
     # Motor is disabled
     if not PAYLOAD_MOTOR_ENABLE:
-        return
-    
-    # Not in PAYLOAD mode
-    if config.FSW_CONF not in PAYLOAD_MODES:
         return
     
     # Calculate motor control direction (turn angle)

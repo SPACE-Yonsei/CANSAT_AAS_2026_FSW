@@ -4,8 +4,6 @@ import os
 
 CONF_NONE = 0
 CONF_PAYLOAD = 1
-CONF_CONTAINER = 2  # Container mode (for compatibility)
-CONF_PAYLOAD_DESCENT = 3  # Payload descent mode (for motor control)
 
 STATE_NAME_TO_ID = {
     "LAUNCHPAD": 0,
