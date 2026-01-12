@@ -1,4 +1,4 @@
-# Python FSW V2 Distance App (VL53L1CX ToF Sensor)
+# Python FSW V2 Distance App (TF-Luna I2C Sensor)
 # Author : Hyeon Lee
 
 from lib import appargs
@@ -9,6 +9,8 @@ import signal
 from multiprocessing import Queue, connection
 import threading
 import time
+
+from Sensor_Distance import Distance
 
 # Runstatus of application. Application is terminated when false
 DISTANCEAPP_RUNSTATUS = True
@@ -54,9 +56,9 @@ def distanceapp_init():
 
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.info, "Initializing distanceapp")
 
-        # Initialize VL53L1CX sensor
-        from Sensor_Distance import VL53L1X
-        tof_sensor = VL53L1X.init_VL53L1X()
+        # Initialize TF-Luna I2C sensor
+        from Sensor_Distance import Distance
+        tof_sensor = Distance.init_VL53L1X()
 
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.info, "Distanceapp Initialization Complete")
         return tof_sensor
@@ -75,8 +77,8 @@ def distanceapp_terminate(tof_sensor):
 
     # Terminate sensor
     if tof_sensor is not None:
-        from Sensor_Distance import VL53L1X
-        VL53L1X.terminate_VL53L1X(tof_sensor)
+        from Sensor_Distance import Distance
+        Distance.terminate_VL53L1X(tof_sensor)
 
     # Join threads
     for thread_name in thread_dict:
@@ -96,7 +98,7 @@ DISTANCE_MM: int = 0
 
 
 def read_distance_data(tof_sensor):
-    """Read distance from VL53L1CX sensor."""
+    """Read distance from TF-Luna I2C sensor."""
     global DISTANCE_MM
     global DISTANCEAPP_RUNSTATUS
 
@@ -106,8 +108,8 @@ def read_distance_data(tof_sensor):
             continue
 
         try:
-            from Sensor_Distance import VL53L1X
-            DISTANCE_MM = VL53L1X.read_distance(tof_sensor)
+            from Sensor_Distance import Distance
+            DISTANCE_MM = Distance.read_distance(tof_sensor)
         except Exception as e:
             if not DISTANCEAPP_RUNSTATUS:
                 break
@@ -166,17 +168,17 @@ def distanceapp_main(Main_Queue: Queue, Main_Pipe: connection.Connection):
     DISTANCEAPP_RUNSTATUS = True
 
     # Initialization Process
-    tof_sensor = distanceapp_init()
+    distance_sensor = distanceapp_init()
 
     # Check if initialization failed
-    if tof_sensor is None:
+    if distance_sensor is None:
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.error, "Distance sensor initialization failed, terminating distanceapp")
         DISTANCEAPP_RUNSTATUS = False
         return
 
     # Spawn threads
     thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue,), name="HKSender_Thread")
-    thread_dict["DistanceReader_Thread"] = threading.Thread(target=read_distance_data, args=(tof_sensor,), name="DistanceReader_Thread")
+    thread_dict["DistanceReader_Thread"] = threading.Thread(target=read_distance_data, args=(distance_sensor,), name="DistanceReader_Thread")
     thread_dict["DistanceSender_Thread"] = threading.Thread(target=send_distance_data, args=(Main_Queue,), name="DistanceSender_Thread")
 
     # Start threads
@@ -201,7 +203,7 @@ def distanceapp_main(Main_Queue: Queue, Main_Pipe: connection.Connection):
         DISTANCEAPP_RUNSTATUS = False
 
     # Termination Process
-    distanceapp_terminate(tof_sensor)
+    distanceapp_terminate(distance_sensor)
 
     return
 

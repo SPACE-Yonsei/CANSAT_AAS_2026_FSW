@@ -108,15 +108,15 @@ class CommAppArg:
     MID_RouteCmd_SS : types.MID = 1608
     MID_RouteCmd_CAM : types.MID = 1609
 
-class VoltageAppArg:
+class ElectroAppArg:
     # AppID should be unique
     AppID : types.AppID = 17
     # Application name used in log
-    AppName : str = "Voltage"
+    AppName : str = "Electro"
 
     # Message ID
     MID_SendHK : types.MID = 1701
-    MID_SendVoltageTlmData : types.MID = 1702
+    MID_SendElectroTlmData : types.MID = 1702
 
 class MotorAppArg:
     # AppID should be unique

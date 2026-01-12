@@ -91,11 +91,11 @@ def commapp_launcher(queue, pipe, log_queue):
     from comm import commapp
     commapp.commapp_main(queue, pipe)
 
-def voltageapp_launcher(queue, pipe, log_queue):
+def electroapp_launcher(queue, pipe, log_queue):
     from lib import events
     events.init_events_subprocess(log_queue)
-    from Sensor_Voltage import voltageapp
-    voltageapp.voltageapp_main(queue, pipe)
+    from Sensor_Electro import electroapp
+    electroapp.electroapp_main(queue, pipe)
 
 def flightlogicapp_launcher(queue, pipe, log_queue):
     from lib import events
@@ -170,13 +170,13 @@ commapp_elements.pipe = parent_pipe
 app_dict[appargs.CommAppArg.AppID] = commapp_elements
 
 #########################################################
-# VoltageApp                                            #
+# ElectroApp                                            #
 #########################################################
 parent_pipe, child_pipe = Pipe()
-voltageapp_elements = app_elements()
-voltageapp_elements.process = Process(target=voltageapp_launcher, args=(main_queue, child_pipe, log_queue))
-voltageapp_elements.pipe = parent_pipe
-app_dict[appargs.VoltageAppArg.AppID] = voltageapp_elements
+electroapp_elements = app_elements()
+electroapp_elements.process = Process(target=electroapp_launcher, args=(main_queue, child_pipe, log_queue))
+electroapp_elements.pipe = parent_pipe
+app_dict[appargs.ElectroAppArg.AppID] = electroapp_elements
 
 #########################################################
 # FlightlogicApp                                        #

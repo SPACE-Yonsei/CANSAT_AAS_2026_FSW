@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""
+TF-Luna I2C Distance Sensor Driver
+TF-Luna - Time-of-Flight LiDAR sensor (0.2m ~ 8m)
+
+I2C Address: 0x10 (default)
+Range: 0.2m ~ 8m
+Resolution: 1cm
+"""
+
+import time
+
+# I2C Address
+TFLUNA_I2C_ADDR = 0x10
+
+# Register addresses (from TF-Luna datasheet)
+REG_DISTANCE_LOW = 0x00   # Distance low byte
+REG_DISTANCE_HIGH = 0x01  # Distance high byte
+REG_FLUX_LOW = 0x02       # Signal strength low byte
+REG_FLUX_HIGH = 0x03      # Signal strength high byte
+REG_TEMP_LOW = 0x04       # Temperature low byte
+REG_TEMP_HIGH = 0x05      # Temperature high byte
+
+# Global sensor instance holder
+_sensor = None
+
+
+def init_TFLuna(address=TFLUNA_I2C_ADDR):
+    """
+    Initialize TF-Luna I2C sensor.
+    
+    Args:
+        address: I2C address (default 0x10)
+    
+    Returns:
+        I2C device object for TF-Luna
+    """
+    global _sensor
+    
+    try:
+        import board
+        import busio
+        
+        i2c = busio.I2C(board.SCL, board.SDA)
+        
+        class TFLuna:
+            def __init__(self, i2c, address):
+                self.i2c = i2c
+                self.address = address
+                # Lock I2C bus
+                while not self.i2c.try_lock():
+                    pass
+            
+            def _read_register(self, register, length=1):
+                """Read register from TF-Luna"""
+                result = bytearray(length)
+                self.i2c.writeto_then_readfrom(
+                    self.address, bytes([register]), result
+                )
+                return result
+            
+            def read_distance_cm(self):
+                """Read distance in cm"""
+                # Read distance register (0x00 = low, 0x01 = high)
+                buf = self._read_register(REG_DISTANCE_LOW, 2)
+                distance_cm = buf[0] | (buf[1] << 8)
+                return distance_cm
+            
+            def read_distance_mm(self):
+                """Read distance in mm"""
+                distance_cm = self.read_distance_cm()
+                return distance_cm * 10
+            
+            def read_flux(self):
+                """Read signal strength"""
+                buf = self._read_register(REG_FLUX_LOW, 2)
+                flux = buf[0] | (buf[1] << 8)
+                return flux
+            
+            def read_temperature(self):
+                """Read temperature in degrees Celsius"""
+                buf = self._read_register(REG_TEMP_LOW, 2)
+                temp_raw = buf[0] | (buf[1] << 8)
+                # Temperature is in 0.01°C units
+                return temp_raw / 100.0
+            
+            def unlock(self):
+                """Unlock I2C bus"""
+                try:
+                    self.i2c.unlock()
+                except:
+                    pass
+        
+        _sensor = TFLuna(i2c, address)
+        
+        # Wait a bit for sensor to stabilize
+        time.sleep(0.1)
+        
+        return _sensor
+        
+    except Exception as e:
+        print(f"TF-Luna init error: {e}")
+        return None
+
+
+def read_distance(sensor=None) -> int:
+    """
+    Read distance from TF-Luna sensor.
+    
+    Args:
+        sensor: TF-Luna sensor object (optional, uses global if None)
+    
+    Returns:
+        Distance in mm (0 if error or out of range)
+    """
+    global _sensor
+    
+    if sensor is None:
+        sensor = _sensor
+    
+    if sensor is None:
+        return 0
+    
+    try:
+        distance_mm = sensor.read_distance_mm()
+        
+        # TF-Luna range: 0.2m (200mm) to 8m (8000mm)
+        if distance_mm < 200 or distance_mm > 8000:
+            return 0
+        
+        return int(distance_mm)
+        
+    except Exception as e:
+        print(f"TF-Luna read error: {e}")
+        return 0
+
+
+def terminate_TFLuna(sensor=None):
+    """
+    Stop sensor and cleanup.
+    
+    Args:
+        sensor: TF-Luna sensor object (optional, uses global if None)
+    """
+    global _sensor
+    
+    if sensor is None:
+        sensor = _sensor
+    
+    if sensor is not None:
+        try:
+            sensor.unlock()
+        except:
+            pass
+    
+    _sensor = None
+
+
+# Test function
+if __name__ == "__main__":
+    print("TF-Luna I2C Sensor Test")
+    print("=" * 30)
+    
+    sensor = init_TFLuna()
+    
+    if sensor is None:
+        print("Failed to initialize sensor!")
+        exit(1)
+    
+    print("Sensor initialized. Reading distances...")
+    print("Press Ctrl+C to stop\n")
+    
+    try:
+        while True:
+            distance_mm = read_distance(sensor)
+            distance_cm = distance_mm / 10
+            distance_m = distance_mm / 1000
+            
+            if distance_mm > 0:
+                flux = sensor.read_flux()
+                temp = sensor.read_temperature()
+                print(f"Distance: {distance_mm:4d} mm | {distance_cm:6.1f} cm | {distance_m:.2f} m | Flux: {flux} | Temp: {temp:.1f}°C")
+            else:
+                print("Distance: Out of range")
+            
+            time.sleep(0.1)
+            
+    except KeyboardInterrupt:
+        print("\nStopping...")
+    
+    finally:
+        terminate_TFLuna(sensor)
+        print("Done.")
