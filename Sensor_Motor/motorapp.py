@@ -34,7 +34,6 @@ APP = appargs.MotorAppArg.AppName
 def _log(msg: str, level=events.EventType.info):
     events.LogEvent(APP, level, msg)
 
-
 # =============================================================================
 # 메시지 핸들러
 # =============================================================================
@@ -43,7 +42,6 @@ def _handle_terminate(data: str):
     global _running
     _log("Termination detected")
     _running = False
-
 
 def _handle_gps_data(data: str):
     global _lat, _lon
@@ -54,12 +52,10 @@ def _handle_gps_data(data: str):
     else:
         _log("GPS data format error", events.EventType.error)
 
-
 def _handle_imu_data(data: str):
     global _yaw
     _yaw = float(data)
     _update_parafoil()
-
 
 def _handle_target_coords(data: str):
     parts = data.split(",")
@@ -70,17 +66,14 @@ def _handle_target_coords(data: str):
     else:
         _log("Target coords format error", events.EventType.error)
 
-
 def _handle_flight_state(data: str):
     global _state
     _state = int(data)
     _log(f"Flight state: {_state}")
 
-
 def _handle_release():
     _log("Activating burnwire")
     Motor_Release.activate_burnwire()
-
 
 def _handle_egg_drop():
     _log("Activating solenoid")
@@ -90,7 +83,6 @@ def _handle_egg_drop():
 def _handle_motor_stop():
     _log("Stopping motors")
     parafoil_motor.rotate_parafoil_motor(_pi, 0.0)
-
 
 def _handle_mec(data: str):
     global _motor_enabled
@@ -102,8 +94,6 @@ def _handle_mec(data: str):
     else:
         _log(f"Invalid MEC option: {data}", events.EventType.error)
 
-
-# 메시지 ID → 핸들러 매핑
 _MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: _handle_terminate,
     appargs.FlightlogicAppArg.MID_SendGpsMotorData: _handle_gps_data,
@@ -124,24 +114,20 @@ def _dispatch(msg: msgstructure.MsgStructure):
     else:
         _log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
-
 # =============================================================================
 # 파라포일 제어
 # =============================================================================
 
 def _update_parafoil():
-    """GPS/IMU 데이터 기반 파라포일 모터 제어 (DESCENT 이후만 동작)"""
     if _state < 3 or not _motor_enabled:
         return
     
     turn = parafoil_control.calculate_motor_control(_yaw, _lat, _lon)
     parafoil_motor.rotate_parafoil_motor(_pi, turn)
 
-
 # =============================================================================
 # HK 전송
 # =============================================================================
-
 def _send_hk(queue: Queue):
     while _running:
         msg = msgstructure.MsgStructure()
@@ -153,7 +139,6 @@ def _send_hk(queue: Queue):
             str(_running)
         )
         time.sleep(1)
-
 
 # =============================================================================
 # 초기화 / 종료
@@ -177,7 +162,6 @@ def _init() -> bool:
         _running = False
         return False
 
-
 def _terminate():
     global _running
     _running = False
@@ -196,7 +180,6 @@ def _terminate():
         thread.join()
     
     _log("Motorapp terminated")
-
 
 # =============================================================================
 # 메인 루프

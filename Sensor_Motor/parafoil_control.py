@@ -14,9 +14,7 @@ _target_lat = 0.0
 _target_lon = 0.0
 _last_bearing = None  # GPS 무효 시 사용할 마지막 유효 방위각
 
-
 def init_parafoil_control():
-    """prevstate에서 목표 좌표 로드"""
     global _target_lat, _target_lon
     try:
         _target_lat = prevstate.Target_lat
@@ -29,7 +27,6 @@ def init_parafoil_control():
 # =============================================================================
 
 def is_gps_valid(lat: float, lon: float) -> bool:
-    """GPS 좌표 유효성 검사"""
     return not (lat == 0.0 and lon == 0.0) and abs(lat) <= 90.0 and abs(lon) <= 180.0
 
 
@@ -48,7 +45,6 @@ def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: fl
 # =============================================================================
 
 def set_target_coordinates(lat: float, lon: float):
-    """목표 GPS 좌표 설정 (prevstate에도 저장)"""
     global _target_lat, _target_lon
     _target_lat, _target_lon = lat, lon
     try:
@@ -58,7 +54,6 @@ def set_target_coordinates(lat: float, lon: float):
 
 
 def get_target_coordinates() -> tuple[float, float]:
-    """목표 좌표 반환"""
     return _target_lat, _target_lon
 
 
@@ -67,7 +62,6 @@ def get_target_coordinates() -> tuple[float, float]:
 # =============================================================================
 
 def _normalize_angle(angle: float) -> float:
-    """각도를 -180 ~ +180 범위로 정규화"""
     while angle > 180:
         angle -= 360
     while angle < -180:
@@ -76,27 +70,12 @@ def _normalize_angle(angle: float) -> float:
 
 
 def calculate_motor_control(yaw: float, lat: float, lon: float) -> float:
-    """
-    현재 위치/자세 기반 모터 제어 각도 계산
-    
-    Args:
-        yaw: 현재 yaw 각도 (0-360)
-        lat: 현재 위도
-        lon: 현재 경도
-    
-    Returns:
-        turn angle (-180 ~ +180)
-        - 양수: 우회전
-        - 음수: 좌회전
-        - 0: 직진
-    """
     global _last_bearing
     
-    # 목표 미설정 → 직진
     if _target_lat == 0.0 and _target_lon == 0.0:
         return 0.0
     
-    # GPS 유효 → 방위각 계산
+    # GPS 유효 → 방위각 계
     if is_gps_valid(lat, lon):
         bearing = math.degrees(math.atan2(_target_lat - lat, _target_lon - lon))
         if bearing < 0:

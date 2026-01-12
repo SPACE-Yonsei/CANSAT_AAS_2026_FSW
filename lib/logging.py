@@ -40,29 +40,38 @@ def setup_logging_main_process() -> Queue:
     if not os.path.exists(LOG_DIR):
         os.makedirs(LOG_DIR)
     
-    # Create the queue
-    _log_queue = Queue()
+    # Create the queue with maxsize to prevent unbounded memory growth
+    # 500 log messages should be sufficient buffer (logs are processed quickly)
+    _log_queue = Queue(maxsize=500)
     
     # Create file handlers for different log levels
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Info handler - INFO level and above
-    info_handler = logging.FileHandler(
+    # Use RotatingFileHandler to prevent log files from growing indefinitely
+    # Max 10MB per file, keep 5 backup files (50MB total per log type)
+    info_handler = logging.handlers.RotatingFileHandler(
         os.path.join(LOG_DIR, f'info_{timestamp}.log'),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
         encoding='utf-8'
     )
     info_handler.setLevel(logging.INFO)
     
     # Error handler - ERROR level only
-    error_handler = logging.FileHandler(
+    error_handler = logging.handlers.RotatingFileHandler(
         os.path.join(LOG_DIR, f'error_{timestamp}.log'),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
         encoding='utf-8'
     )
     error_handler.setLevel(logging.ERROR)
     
     # Debug handler - all levels
-    debug_handler = logging.FileHandler(
+    debug_handler = logging.handlers.RotatingFileHandler(
         os.path.join(LOG_DIR, f'debug_{timestamp}.log'),
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
         encoding='utf-8'
     )
     debug_handler.setLevel(logging.DEBUG)

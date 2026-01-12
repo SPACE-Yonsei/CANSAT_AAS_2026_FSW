@@ -34,7 +34,8 @@ prevstate.init_prevstate()
 # Define the multiprocessing queue structure
 # Every runloop should take this queue as an argument
 # for message routing
-main_queue = Queue()
+# Set maxsize to prevent unbounded memory growth (1000 messages ~ few MB)
+main_queue = Queue(maxsize=1000)
 
 # When the main app receives the message entry from the queue
 # It checks the message ID and destination application then routes the message
