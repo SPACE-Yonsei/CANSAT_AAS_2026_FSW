@@ -2,76 +2,54 @@
 from lib import types
 
 class MainAppArg:
-    # AppID should be unique
     AppID : types.AppID = 1
-    # Application name used in log
     AppName : str = "Main"
 
-    # Message ID used in Main App
     MID_TerminateProcess : types.MID = 100
     MID_SendHK : types.MID = 101
 
 class HkAppArg:
-    # AppID should be unique
     AppID : types.AppID = 2
-    # Application name used in log
     AppName : str = "HK"
 
-    # Message ID
     MID_ReceiveHK : types.MID = 201
-
     MID_SendCombinedHK : types.MID = 202
 
 class BarometerAppArg:
-    # AppID should be unique
     AppID : types.AppID = 10
-    # Application name used in log
     AppName : str = "Barometer"
 
-    # Message ID
     MID_SendHK : types.MID = 1001
-    # Send Barometer Data to comms app for tememetry
     MID_SendBarometerTlmData : types.MID = 1002
     MID_SendBarometerFlightLogicData : types.MID = 1003
     MID_ResetBarometerMaxAlt : types.MID = 1004
 
 class CameraAppArg:
-    # AppID should be unique
     AppID : types.AppID = 11
-    # Application name used in log
     AppName : str = "Camera"
 
-    # Message ID
     MID_SendHK : types.MID = 1101
 
 class GpsAppArg:
-    # AppID should be unique
     AppID : types.AppID = 12
-    # Application name used in log
     AppName : str = "GPS"
 
-    # Message ID
     MID_SendHK : types.MID = 1201
     MID_SendGpsTlmData : types.MID = 1202
     MID_SendGpsFlightLogicData : types.MID = 1203
 
 class ImuAppArg:
-    # AppID should be unique
     AppID : types.AppID = 13
-    # Application name used in log
     AppName : str = "Imu"
-    # Message ID
+
     MID_SendHK : types.MID = 1301
     MID_SendImuTlmData : types.MID = 1302
     MID_SendImuFlightLogicData : types.MID = 1304
 
 class FlightlogicAppArg:
-    # AppID should be unique
     AppID : types.AppID = 14
-    # Application name used in log
     AppName : str = "Flight Logic"
 
-    # Message ID
     MID_SendHK : types.MID = 1401
     MID_SendCurrentStateToTlm : types.MID = 1404
     MID_SendSimulationStatustoTlm : types.MID = 1407
@@ -87,16 +65,10 @@ class FlightlogicAppArg:
     MID_SendGpsMotorData : types.MID = 1413
     MID_SendImuMotorData : types.MID = 1414
 
-
-
-
 class CommAppArg:
-    # AppID should be unique
     AppID : types.AppID = 16
-    # Application name used in log
     AppName : str = "Communication"
 
-    # Message ID
     MID_SendHK : types.MID = 1601
 
     MID_RouteCmd_CX : types.MID = 1602
@@ -109,34 +81,22 @@ class CommAppArg:
     MID_RouteCmd_CAM : types.MID = 1609
 
 class ElectroAppArg:
-    # AppID should be unique
     AppID : types.AppID = 17
-    # Application name used in log
     AppName : str = "Electro"
 
-    # Message ID
     MID_SendHK : types.MID = 1701
     MID_SendElectroTlmData : types.MID = 1702
 
 class MotorAppArg:
-    # AppID should be unique
     AppID : types.AppID = 18
-    # Application name used in log
     AppName : str = "Motor"
 
-    # Message ID
     MID_SendHK : types.MID = 1801
 
-
 class DistanceAppArg:
-    # AppID should be unique
     AppID : types.AppID = 19
-    # Application name used in log
     AppName : str = "Distance"
 
-    # Message ID
     MID_SendHK : types.MID = 1901
-    # Send distance data to flight logic for egg release trigger
     MID_SendDistanceFlightLogicData : types.MID = 1902
-    # Send distance data to telemetry
     MID_SendDistanceTlmData : types.MID = 1903

@@ -223,8 +223,6 @@ def gps_readdata(pi):
     return None
 
 
-
-
 if __name__ == "__main__":
     pi = init_gps()
     try:
