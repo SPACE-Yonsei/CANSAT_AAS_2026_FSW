@@ -328,7 +328,7 @@ def _barometer_logic(queue: Queue, alt: float):
             _egg_activated = True
         
         # 착륙 감지
-        if alt <= 15:
+        if alt <= 5:
             _cnt_landed += 1
         else:
             _cnt_landed -= 2
