@@ -168,9 +168,9 @@ _MSG_HANDLERS = {
 
 
 def _dispatch(msg: msgstructure.MsgStructure, queue: Queue):
-    handler = _MSG_HANDLERS.get(msg.MsgID)
-    if handler:
-        handler(msg.data, queue)
+    Handler = _MSG_HANDLERS.get(msg.MsgID)
+    if Handler:
+        Handler(msg.data, queue)
     else:
         _log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
