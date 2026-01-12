@@ -26,9 +26,6 @@ _sensor = None
 
 
 def init_TFLuna(address=TFLUNA_I2C_ADDR):
-    """
-    Initialize TF-Luna I2C sensor.
-    """
     global _sensor
     
     try:
@@ -98,15 +95,6 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
 
 
 def read_distance(sensor=None) -> int:
-    """
-    Read distance from TF-Luna sensor.
-    
-    Args:
-        sensor: TF-Luna sensor object (optional, uses global if None)
-    
-    Returns:
-        Distance in mm (0 if error or out of range)
-    """
     global _sensor
     
     if sensor is None:
@@ -130,16 +118,10 @@ def read_distance(sensor=None) -> int:
 
 
 def read_distance_data(sensor=None) -> int:
-    """
-    Alias for read_distance() for backward compatibility.
-    """
     return read_distance(sensor)
 
 
 def terminate_TFLuna(sensor=None):
-    """
-    Stop sensor and cleanup.
-    """
     global _sensor
     
     if sensor is None:

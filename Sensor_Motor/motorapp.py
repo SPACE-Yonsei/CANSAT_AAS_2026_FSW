@@ -1,8 +1,3 @@
-"""
-Motor App - 파라포일 제어, 번와이어, 솔레노이드 관리
-Author: Hyeon Lee
-"""
-
 import signal
 import threading
 import time
@@ -29,7 +24,6 @@ _state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDE
 _threads: dict[str, threading.Thread] = {}
 
 APP = appargs.MotorAppArg.AppName
-
 
 def _log(msg: str, level=events.EventType.info):
     events.LogEvent(APP, level, msg)
