@@ -1,6 +1,3 @@
-# Python FSW V2 Voltage App
-# Author : Hyeon Lee
-
 from lib import appargs
 from lib import msgstructure
 from lib import logging
@@ -20,9 +17,6 @@ ELECTROAPP_RUNSTATUS = True
 ######################################################
 ## FUNDEMENTAL METHODS                              ##
 ######################################################
-
-# SB Methods
-# Methods for sending/receiving/handling SB messages
 
 # Handles received message
 def command_handler (recv_msg : msgstructure.MsgStructure):
@@ -124,7 +118,7 @@ def read_electro_data(electro_reader):
     
     return
 
-def send_voltage_data(Main_Queue : Queue):
+def send_electro_data(Main_Queue : Queue):
     global ELECTRO_VOLTAGE
     global ELECTRO_CURRENT
     global ELECTRO_POWER
@@ -153,7 +147,7 @@ def send_voltage_data(Main_Queue : Queue):
 thread_dict = dict[str, threading.Thread]()
 
 # This method is called from main app. Initialization, runloop process
-def voltageapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
+def electroapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     global ELECTROAPP_RUNSTATUS
     ELECTROAPP_RUNSTATUS = True
 
