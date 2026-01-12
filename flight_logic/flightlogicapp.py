@@ -28,10 +28,12 @@ STATE = {
 STATE_NAMES = ["LAUNCH_PAD", "ASCENT", "APOGEE", "RELEASE", "EGG", "LANDED"]
 
 # 고도 임계값
-EGG_DROP_ALT = 2.0          # 계란 사출 고도 (m)
-SOLENOID_ALT_MIN = 3.0      # 솔레노이드 안전 작동 시작 고도
-SOLENOID_ALT_MAX = 4.0      # 솔레노이드 안전 작동 종료 고도
-TARGET_RADIUS = 50.0        # 목표 도달 반경 (m)
+EGG_DROP_ALT = 2.0          # 계란 사출 고도 (m, barometer)
+RELEASE_TO_EGG_ALT = 50.0   # RELEASE → EGG 전환 고도 (m, barometer)
+
+# TF-Luna 거리 센서 임계값 (mm 단위)
+SOLENOID_DISTANCE_TARGET = 2500  # 솔레노이드 작동 목표 거리 (250cm = 2500mm)
+SOLENOID_COUNT_MAX = 3      # 솔레노이드 작동 횟수 (3번)
 
 APP = appargs.FlightlogicAppArg.AppName
 
@@ -60,7 +62,10 @@ _cnt_egg_drop = 0
 _egg_activated = False
 _solenoid_count = 0
 _solenoid_done = False
-_target_reached = False
+
+# TF-Luna 거리 센서 데이터
+_distance_mm = 0
+_recent_distance = []
 
 # 목표 좌표
 _target_lat = 0.0
@@ -108,7 +113,6 @@ def _handle_barometer(data: str, queue: Queue):
 
 
 def _handle_gps(data: str, queue: Queue):
-    global _target_reached
     if _sim_enable and _sim_active:
         return
     
@@ -121,13 +125,6 @@ def _handle_gps(data: str, queue: Queue):
     
     # motorapp으로 전달
     _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendGpsMotorData, f"{lat},{lon}")
-    
-    # 목표 도달 체크
-    if (_target_lat != 0.0 or _target_lon != 0.0) and parafoil_control.is_gps_valid(lat, lon):
-        dist = parafoil_control.calculate_distance_haversine(lat, lon, _target_lat, _target_lon)
-        if not _target_reached and dist <= TARGET_RADIUS:
-            _target_reached = True
-            _log(f"Target reached! Distance: {dist:.2f}m")
 
 
 def _handle_imu(data: str, queue: Queue):
@@ -135,6 +132,30 @@ def _handle_imu(data: str, queue: Queue):
         return
     yaw = float(data)
     _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendImuMotorData, str(yaw))
+
+
+def _handle_distance(data: str, queue: Queue):
+    """TF-Luna 거리 센서 데이터 처리"""
+    global _distance_mm, _recent_distance, _state, _solenoid_done
+    
+    if _sim_enable and _sim_active:
+        return
+    
+    try:
+        distance_mm = int(float(data))
+        _distance_mm = distance_mm
+        
+        # 최근 거리 기록 (3회)
+        _recent_distance.append(distance_mm)
+        if len(_recent_distance) > 3:
+            _recent_distance.pop(0)
+        
+        # EGG 상태에서 솔레노이드 작동 로직
+        if _state == STATE["EGG"] and not _solenoid_done:
+            _solenoid_logic(queue, distance_mm)
+            
+    except (ValueError, TypeError) as e:
+        _log(f"Distance data parse error: {e}", events.EventType.error)
 
 
 def _handle_ss(data: str, queue: Queue):
@@ -162,6 +183,7 @@ _MSG_HANDLERS = {
     appargs.BarometerAppArg.MID_SendBarometerFlightLogicData: _handle_barometer,
     appargs.GpsAppArg.MID_SendGpsFlightLogicData: _handle_gps,
     appargs.ImuAppArg.MID_SendImuFlightLogicData: _handle_imu,
+    appargs.DistanceAppArg.MID_SendDistanceFlightLogicData: _handle_distance,
     appargs.CommAppArg.MID_RouteCmd_SS: _handle_ss,
     appargs.BarometerAppArg.MID_ResetBarometerMaxAlt: _handle_reset_alt,
 }
@@ -192,6 +214,28 @@ def _send_sim_status(queue: Queue):
     status = "S" if (_sim_enable and _sim_active) else "F"
     _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendSimulationStatustoTlm, status)
 
+
+# =============================================================================
+# 솔레노이드 로직 (TF-Luna 거리 센서 기반)
+# =============================================================================
+
+def _solenoid_logic(queue: Queue, distance_mm: int):
+    global _solenoid_count, _solenoid_done
+    
+    if _solenoid_done:
+        return
+    
+    # 거리가 250cm (2500mm) 이하일 때 작동
+    if distance_mm <= SOLENOID_DISTANCE_TARGET and distance_mm > 0:
+        if _solenoid_count < SOLENOID_COUNT_MAX:
+            _solenoid_count += 1
+            distance_cm = distance_mm / 10.0
+            _log(f"Solenoid activation ({_solenoid_count}/{SOLENOID_COUNT_MAX}) at {distance_cm:.1f}cm (TF-Luna)")
+            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
+            
+            if _solenoid_count >= SOLENOID_COUNT_MAX:
+                _solenoid_done = True
+                _log(f"Solenoid complete ({_solenoid_count} times)")
 
 # =============================================================================
 # 기압계 로직
@@ -261,37 +305,28 @@ def _barometer_logic(queue: Queue, alt: float):
     
     # === RELEASE (3) ===
     elif _state == STATE["RELEASE"]:
-        if alt <= _max_alt * 0.80:
+        if alt <= RELEASE_TO_EGG_ALT:
             _cnt_release += 1
         else:
-            _cnt_release -= 2
-        if _cnt_release >= 2:
+            _cnt_release = max(0, _cnt_release - 2)
+        if _cnt_release >= 3:
             _to_egg(queue)
     
     # === EGG (4) ===
     elif _state == STATE["EGG"]:
-        # 솔레노이드 안전 작동 (3~4m)
-        if not _solenoid_done and SOLENOID_ALT_MIN <= alt <= SOLENOID_ALT_MAX:
-            if _solenoid_count < 6:
-                _log(f"Safety solenoid ({_solenoid_count + 1}/6) at {alt:.2f}m")
-                _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
-                _solenoid_count += 1
-                if _solenoid_count >= 5:
-                    _solenoid_done = True
-                    _log(f"Safety solenoid complete ({_solenoid_count} times)")
+        # 솔레노이드 작동은 TF-Luna 거리 센서로 판별 (_handle_distance에서 처리)
+        # 여기서는 barometer 기반 계란 사출 및 착륙 감지만 처리
         
-        # 계란 사출 (목표 도달 + 2m 이하)
-        if not _egg_activated and _target_reached and alt <= EGG_DROP_ALT:
+        # 계란 사출 (2m 이하, barometer)
+        if not _egg_activated and alt <= EGG_DROP_ALT:
             _cnt_egg_drop += 1
         else:
             _cnt_egg_drop = max(0, _cnt_egg_drop - 2)
         
-        if not _egg_activated and _target_reached and _cnt_egg_drop >= 2:
+        if not _egg_activated and _cnt_egg_drop >= 2:
             _log(f"Egg drop at {alt:.2f}m")
             _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
             _egg_activated = True
-        elif not _target_reached and alt <= EGG_DROP_ALT:
-            _log(f"At drop altitude ({alt:.2f}m) but target not reached")
         
         # 착륙 감지
         if alt <= 15:
@@ -356,11 +391,15 @@ def _to_release(queue: Queue, force: bool = False):
 
 
 def _to_egg(queue: Queue, force: bool = False):
-    global _state
+    global _state, _solenoid_count, _solenoid_done, _recent_distance
     if not _can_transition(force):
         return
     _state = STATE["EGG"]
-    _log("STATE → EGG")
+    # 솔레노이드 관련 변수 초기화
+    _solenoid_count = 0
+    _solenoid_done = False
+    _recent_distance.clear()
+    _log("STATE → EGG (TF-Luna distance sensor ready for solenoid)")
     prevstate.update_prevstate(_state)
     _send_state_to_motor(queue, _state)
 

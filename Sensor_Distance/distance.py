@@ -25,18 +25,9 @@ REG_TEMP_HIGH = 0x05      # Temperature high byte
 _sensor = None
 
 
-def init_distance_sensor(address=TFLUNA_I2C_ADDR):
+def init_TFLuna(address=TFLUNA_I2C_ADDR):
     """
     Initialize TF-Luna I2C sensor.
-    Alias for init_VL53L1X() for backward compatibility.
-    """
-    return init_VL53L1X(address)
-
-
-def init_VL53L1X(address=TFLUNA_I2C_ADDR):
-    """
-    Initialize TF-Luna I2C sensor.
-    Function name kept for backward compatibility with distanceapp.py
     """
     global _sensor
     
@@ -145,10 +136,9 @@ def read_distance_data(sensor=None) -> int:
     return read_distance(sensor)
 
 
-def terminate_VL53L1X(sensor=None):
+def terminate_TFLuna(sensor=None):
     """
     Stop sensor and cleanup.
-    Function name kept for backward compatibility with distanceapp.py
     """
     global _sensor
     
@@ -164,27 +154,19 @@ def terminate_VL53L1X(sensor=None):
     _sensor = None
 
 
-def terminate_distance_sensor(sensor=None):
-    """
-    Alias for terminate_VL53L1X() for backward compatibility.
-    """
-    terminate_VL53L1X(sensor)
-
-
-def init_TFLuna(address=TFLUNA_I2C_ADDR):
+def init_distance_sensor(address=TFLUNA_I2C_ADDR):
     """
     Initialize TF-Luna I2C sensor.
-    Alias for init_VL53L1X() for consistency.
+    Alias for init_TFLuna() for backward compatibility.
     """
-    return init_VL53L1X(address)
+    return init_TFLuna(address)
 
 
-def terminate_TFLuna(sensor=None):
+def terminate_distance_sensor(sensor=None):
     """
-    Stop sensor and cleanup.
-    Alias for terminate_VL53L1X() for consistency.
+    Alias for terminate_TFLuna() for backward compatibility.
     """
-    terminate_VL53L1X(sensor)
+    terminate_TFLuna(sensor)
 
 
 # Test function
@@ -192,7 +174,7 @@ if __name__ == "__main__":
     print("TF-Luna I2C Distance Sensor Test")
     print("=" * 30)
     
-    sensor = init_VL53L1X()
+    sensor = init_TFLuna()
     
     if sensor is None:
         print("Failed to initialize sensor!")
@@ -220,6 +202,6 @@ if __name__ == "__main__":
         print("\nStopping...")
     
     finally:
-        terminate_VL53L1X(sensor)
+        terminate_TFLuna(sensor)
         print("Done.")
 

@@ -58,7 +58,7 @@ def distanceapp_init():
 
         # Initialize TF-Luna I2C sensor
         from Sensor_Distance import Distance
-        tof_sensor = Distance.init_VL53L1X()
+        tof_sensor = Distance.init_TFLuna()
 
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.info, "Distanceapp Initialization Complete")
         return tof_sensor
@@ -78,7 +78,7 @@ def distanceapp_terminate(tof_sensor):
     # Terminate sensor
     if tof_sensor is not None:
         from Sensor_Distance import Distance
-        Distance.terminate_VL53L1X(tof_sensor)
+        Distance.terminate_TFLuna(tof_sensor)
 
     # Join threads
     for thread_name in thread_dict:
