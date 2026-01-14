@@ -60,7 +60,8 @@ def read_barometer(bmp, offset:float):
     return ( pressure, temperature, altitude )
 
 def terminate_barometer(i2c):
-    i2c.deinit()
+    if i2c is not None:
+        i2c.deinit()
     return
 
 if __name__ == "__main__":
