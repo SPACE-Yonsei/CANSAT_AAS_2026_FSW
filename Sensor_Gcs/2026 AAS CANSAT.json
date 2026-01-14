@@ -560,23 +560,6 @@
                     "units": "degree",
                     "value": "--.--",
                     "widget": ""
-                },
-                {
-                    "alarm": 0,
-                    "fft": false,
-                    "fftSamples": 256,
-                    "fftSamplingRate": 100,
-                    "graph": true,
-                    "index": 20,
-                    "led": false,
-                    "ledHigh": 1,
-                    "log": false,
-                    "max": 0,
-                    "min": 0,
-                    "title": "Rotation Rate Plot",
-                    "units": "deg/s",
-                    "value": "",
-                    "widget": ""
                 }
             ],
             "title": "Multiple Plot",
