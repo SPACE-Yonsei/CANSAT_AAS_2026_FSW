@@ -247,7 +247,6 @@ class _tlm_data_format:
     mag_roll : float = 0.0
     mag_pitch : float = 0.0
     mag_yaw : float = 0.0
-    rot_rate : float = 0.0
     gps_lat : float = 0.0
     gps_lon : float = 0.0
     gps_alt : float = 0.0
@@ -295,7 +294,6 @@ def send_tlm(serial_instance):
                     f"{0.01 * tlm_data.mag_roll:.4f}", # from microT to G
                     f"{0.01 * tlm_data.mag_pitch:.4f}",
                     f"{0.01 * tlm_data.mag_yaw:.4f}",
-                    f"{tlm_data.rot_rate:.2f}",
                     str(tlm_data.gps_time),
                     f"{tlm_data.gps_alt:.2f}",
                     f"{tlm_data.gps_lat:.2f}",
