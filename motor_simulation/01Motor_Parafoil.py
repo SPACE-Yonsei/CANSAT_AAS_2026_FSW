@@ -51,12 +51,12 @@ def rotate_parafoil_motor(pi, error: float):
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, right_pulse)
     
-    if angle <-90:
-        angle=-90
-    elif angle >90:
-        angle=90
-    error_purse = abs(angle * 10.7778)
-    if angle > 5:
+    if error <-90:
+        error=-90
+    elif error >90:
+        error=90
+    error_purse = abs(error * 10.7778)
+    if error > 5:
         # 우회전 -> 오른쪽 당김 (1500에서 뺌)
         left_pulse = left_neutral
         right_pulse = int(right_neutral - error_purse)
@@ -64,7 +64,7 @@ def rotate_parafoil_motor(pi, error: float):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
 
-    elif angle < -5:
+    elif error < -5:
         # 좌회전 -> 왼쪽 당김 (1500에서 더함)
         left_pulse = int(left_neutral + error_purse)
         right_pulse = right_neutral
