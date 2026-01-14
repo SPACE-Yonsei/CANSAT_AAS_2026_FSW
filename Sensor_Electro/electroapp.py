@@ -61,7 +61,7 @@ def electroapp_init():
         return electro_reader
     
     except Exception as e:
-        events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
+        #events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.error, f"Error during initialization: {e}")
         ELECTROAPP_RUNSTATUS = False
         return None
 
