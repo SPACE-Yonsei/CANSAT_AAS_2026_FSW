@@ -138,16 +138,10 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         except (ValueError, IndexError) as e:
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR parsing voltage data: {e}, data: {recv_msg.data}")
             return
+    
     elif recv_msg.MsgID == appargs.DistanceAppArg.MID_SendDistanceTlmData:
-        sep_data = recv_msg.data.split(",")
-        
-        # Check the length of separated data
-        if (len(sep_data) != 1):
-            events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR receiving distance, expected 1 field, got {len(sep_data)}")
-            return
-        
         try:
-            tlm_data.distance = float(sep_data[0])
+            tlm_data.distance = float(recv_msg.data)
         except (ValueError) as e:
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR parsing distance data: {e}, data: {recv_msg.data}")
             return
