@@ -275,7 +275,7 @@ def send_tlm(serial_instance):
         if TELEMETRY_ENABLE:
             tlm_data.packet_count += 1
 
-        tlm_to_send = ",".join([str(tlm_data.team_id),
+        tlm_to_send = "$" + ",".join([str(tlm_data.team_id),
                     tlm_data.mission_time,
                     str(tlm_data.packet_count),
                     tlm_data.mode,
