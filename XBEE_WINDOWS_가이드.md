@@ -4,14 +4,15 @@
 1. [개요](#개요)
 2. [Raspberry Pi 실행 방법](#raspberry-pi-실행-방법)
 3. [필수 준비물](#필수-준비물)
-4. [1단계: 하드웨어 연결](#1단계-하드웨어-연결)
-5. [2단계: 소프트웨어 설치](#2단계-소프트웨어-설치)
-6. [3단계: XBee 포트 확인](#3단계-xbee-포트-확인)
-7. [4단계: Python 스크립트 실행](#4단계-python-스크립트-실행)
-8. [5단계: Serial Studio 설정](#5단계-serial-studio-설정)
-9. [6단계: 통신 테스트](#6단계-통신-테스트)
-10. [명령어 사용법](#명령어-사용법)
-11. [문제 해결](#문제-해결)
+4. [XBee 페어링 (X-CTU 사용)](#xbee-페어링-x-ctu-사용)
+5. [1단계: 하드웨어 연결](#1단계-하드웨어-연결)
+6. [2단계: 소프트웨어 설치](#2단계-소프트웨어-설치)
+7. [3단계: XBee 포트 확인](#3단계-xbee-포트-확인)
+8. [4단계: Python 스크립트 실행](#4단계-python-스크립트-실행)
+9. [5단계: Serial Studio 설정](#5단계-serial-studio-설정)
+10. [6단계: 통신 테스트](#6단계-통신-테스트)
+11. [명령어 사용법](#명령어-사용법)
+12. [문제 해결](#문제-해결)
 
 ---
 
@@ -128,6 +129,95 @@ sudo journalctl -u cansat-fsw.service -f
 - ✅ Python 3.7 이상
 - ✅ pyserial 라이브러리
 - ✅ Serial Studio (https://serial-studio.github.io/)
+- ✅ X-CTU (XBee 설정 도구, https://www.digi.com/support/product-detection-tools/xctu)
+
+---
+
+## XBee 페어링 (X-CTU 사용)
+
+### X-CTU 설치
+1. Digi 공식 사이트에서 X-CTU 다운로드: https://www.digi.com/support/product-detection-tools/xctu
+2. 설치 파일 실행하여 설치
+
+### XBee 페어링 절차
+
+#### 1단계: 첫 번째 XBee 설정 (Payload용 - Router 모드)
+
+1. **XBee를 USB 어댑터에 연결하고 PC에 연결**
+2. **X-CTU 실행**
+3. **포트 선택**
+   - 상단에서 XBee가 연결된 COM 포트 선택
+   - Baud Rate: `9600` 선택
+   - **"Test/Query" 버튼 클릭**하여 연결 확인
+   - 연결 성공 시 "OK" 메시지 표시
+4. **"Modem Configuration" 탭 클릭**
+5. **"Read" 버튼 클릭**하여 현재 설정 읽기
+6. **중요 설정 변경:**
+   - **CE (Coordinator Enable)**: `0` (Router 모드)
+   - **ID (PAN ID)**: 원하는 값 입력 (예: `2026` 또는 `3139`)
+   - **DL (Destination Address Low)**: 나중에 설정 (Coordinator의 MY 주소)
+   - **MY (16-bit Source Address)**: 고유 주소 (예: `1`)
+   - **BD (Interface Data Rate)**: `3` (9600 baud)
+7. **"Write" 버튼 클릭**하여 설정 저장
+8. **SH (Serial Number High)와 SL (Serial Number Low) 기록** (다른 XBee 설정에 필요)
+
+#### 2단계: 두 번째 XBee 설정 (Ground Station용 - Coordinator 모드)
+
+1. **다른 XBee를 USB 어댑터에 연결하고 PC에 연결**
+2. **X-CTU에서 새로운 포트 선택**
+3. **"Test/Query" 버튼 클릭**하여 연결 확인
+4. **"Read" 버튼 클릭**
+5. **중요 설정 변경:**
+   - **CE (Coordinator Enable)**: `1` (Coordinator 모드)
+   - **ID (PAN ID)**: 첫 번째 XBee와 **동일한 값** (예: `2026`)
+   - **DL (Destination Address Low)**: 첫 번째 XBee의 MY 주소 (예: `1`)
+   - **MY (16-bit Source Address)**: 고유 주소 (예: `2`)
+   - **BD (Interface Data Rate)**: `3` (9600 baud)
+6. **"Write" 버튼 클릭**하여 설정 저장
+
+#### 3단계: Router XBee의 DL 설정 업데이트
+
+1. **첫 번째 XBee (Router)로 다시 전환**
+2. **"Read" 버튼 클릭**
+3. **DL (Destination Address Low)**: Coordinator의 MY 주소 (예: `2`)로 변경
+4. **"Write" 버튼 클릭**하여 설정 저장
+
+#### 4단계: 페어링 확인
+
+1. **두 XBee 모두 연결 상태 유지**
+2. **X-CTU의 "Terminal" 탭에서 테스트:**
+   - 한쪽 XBee에서 "Hello" 입력 후 전송
+   - 다른 쪽 XBee에서 수신되는지 확인
+3. **LED 확인:**
+   - 데이터 전송 시 XBee LED가 깜빡여야 함
+
+### XBee 설정 요약
+
+| 설정 항목 | Payload (Router) | Ground Station (Coordinator) |
+|-----------|------------------|------------------------------|
+| **CE** | `0` (Router) | `1` (Coordinator) |
+| **ID (PAN ID)** | 동일한 값 (예: `2026`) | 동일한 값 (예: `2026`) |
+| **MY** | `1` | `2` |
+| **DL** | `2` (Coordinator의 MY) | `1` (Router의 MY) |
+| **BD** | `3` (9600) | `3` (9600) |
+
+### 주의사항
+- ⚠️ **PAN ID는 반드시 동일해야 함** (가장 중요!)
+- ⚠️ **DL (Destination Address)는 상대방의 MY 주소**
+- ⚠️ 설정 변경 후 **Write 버튼을 반드시 클릭**해야 저장됨
+- ⚠️ XBee를 재부팅하면 설정이 적용됨
+- ⚠️ 두 XBee의 BD (Baud Rate)가 동일해야 함
+
+### 대안: 자동 페어링 (AT 모드)
+일부 XBee 모듈은 자동으로 네트워크를 형성할 수 있습니다:
+- Coordinator: CE = 1, ID = 동일
+- Router: CE = 0, ID = 동일
+- DL을 설정하지 않으면 브로드캐스트로 통신 (모든 XBee가 수신)
+
+### 문제 해결
+- **연결이 안 될 때**: Test/Query 버튼으로 연결 확인
+- **설정이 저장되지 않을 때**: Write 버튼 클릭 후 XBee 재부팅
+- **통신이 안 될 때**: PAN ID가 동일한지 확인
 
 ---
 
@@ -421,24 +511,31 @@ SerialException: could not open port 'COM6': [Error 2] The system cannot find th
 
 ---
 
-### ❌ 문제 3: 데이터가 수신되지 않음
+### ❌ 문제 3: 데이터가 수신되지 않음 (XBee 페어링 문제)
 
-**증상:** Serial Studio에 데이터가 표시되지 않음
+**증상:** Serial Studio에 데이터가 표시되지 않음, XBee LED가 깜빡이지 않음
 
-**해결 방법:**
-1. **XBee 페어링 확인**
-   - 두 XBee가 같은 PAN ID를 사용하는지 확인
-   - Coordinator와 Router가 올바르게 설정되었는지 확인
+**원인:** 두 XBee 모듈이 페어링되지 않았거나 설정이 일치하지 않음
 
-2. **Payload 확인**
+**해결 방법: X-CTU로 XBee 페어링**
+
+👉 **상세한 페어링 절차는 위의 [XBee 페어링 (X-CTU 사용)](#xbee-페어링-x-ctu-사용) 섹션을 참고하세요.**
+
+**빠른 체크리스트:**
+1. 두 XBee의 **PAN ID가 동일한지** 확인 (가장 중요!)
+2. Coordinator: CE = 1, Router: CE = 0
+3. DL은 상대방의 MY 주소로 설정
+4. X-CTU의 Terminal 탭에서 통신 테스트
+
+**4. Payload 확인**
    - Payload에서 데이터를 전송 중인지 확인
    - Payload의 XBee LED가 깜빡이는지 확인 (데이터 전송 시)
 
-3. **Ground.py 콘솔 확인**
+**5. Ground.py 콘솔 확인**
    - 에러 메시지가 있는지 확인
    - `[Sensor Thread] Error:` 메시지 확인
 
-4. **연결 순서 확인**
+**6. 연결 순서 확인**
    - 올바른 순서: `Ground.py` 실행 → Serial Studio 연결
 
 ---

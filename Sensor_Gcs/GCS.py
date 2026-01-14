@@ -22,7 +22,7 @@ class MainWindow(QtWidgets.QMainWindow, GCS_Script.Ui_MainWindow):
         # Set status Bar
         self.statusbar.showMessage("Idle...")
         
-        self.deviceID = 3139
+        self.deviceID = 1070
 
         self.logstr = ""
         self.textEdit_Logs.setText(self.logstr)
