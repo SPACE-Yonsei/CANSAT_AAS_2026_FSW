@@ -135,11 +135,13 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
                 # GPS 값이 유효한 경우에만 이벤트 로그 출력
+                """
                 if GPS_LAT != 0.0 or GPS_LON != 0.0 or GPS_SATS > 0:
                     events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPS data read: Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}")
                 # GPS fix가 없는 경우 (좌표가 0이지만 시간은 있는 경우) 주기적으로 로그 출력
                 elif GPS_TIME != "00:00:00" and send_counter % 100 == 0:  # 10초마다
                     events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.warning, f"GPS reading but no fix: Time={GPS_TIME}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY} (waiting for GPS fix...)")
+                """
             except (ValueError, IndexError, TypeError) as e:
                 # 파싱 에러 시 이전 값을 유지하고 로그만 남김
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"Error parsing GPS data: {e}, rcv_data={rcv_data}")

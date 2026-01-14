@@ -9,6 +9,7 @@ Resolution: 1cm
 """
 
 import time
+from lib import events, appargs
 
 # I2C Address
 TFLUNA_I2C_ADDR = 0x10
@@ -90,7 +91,8 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
         return _sensor
         
     except Exception as e:
-        print(f"TF-Luna init error: {e}")
+        # print(f"TF-Luna init error: {e}")
+        events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.warning, f"TF-Luna init error: {e}")
         return None
 
 
@@ -113,8 +115,9 @@ def read_distance(sensor=None) -> int:
         return int(distance_mm)
         
     except Exception as e:
-        print(f"TF-Luna read error: {e}")
-        return 0
+        #print(f"TF-Luna read error: {e}")
+        events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.warning, f"TF-Luna read error: {e}")
+        return 0    
 
 
 def read_distance_data(sensor=None) -> int:
