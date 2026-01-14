@@ -116,7 +116,6 @@ def read_distance(sensor=None) -> int:
         
     except Exception as e:
         #print(f"TF-Luna read error: {e}")
-        events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.warning, f"TF-Luna read error: {e}")
         return 0    
 
 
