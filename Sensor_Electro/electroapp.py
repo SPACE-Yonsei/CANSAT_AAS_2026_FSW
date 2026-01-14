@@ -9,7 +9,7 @@ from multiprocessing import Queue, connection
 import threading
 import time
 
-from Sensor_Electro import Electro
+from Sensor_Electro import electro
 
 # Runstatus of application. Application is terminated when false
 ELECTROAPP_RUNSTATUS = True
@@ -54,7 +54,7 @@ def electroapp_init():
         ## User Defined Initialization goes HERE
 
         # Initialize voltage sensor
-        electro_reader = Electro.init_INA228()
+        electro_reader = electro.init_INA228()
         
         events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.info, "Electroapp Initialization Complete")
         
@@ -104,9 +104,9 @@ def read_electro_data(electro_reader):
             continue
         
         try:
-            ELECTRO_VOLTAGE = Electro.read_voltage(electro_reader)
-            ELECTRO_CURRENT = Electro.read_current(electro_reader)
-            ELECTRO_POWER = Electro.read_power(electro_reader)
+            ELECTRO_VOLTAGE = electro.read_voltage(electro_reader)
+            ELECTRO_CURRENT = electro.read_current(electro_reader)
+            ELECTRO_POWER = electro.read_power(electro_reader)
         except (AttributeError, OSError, RuntimeError) as e:
             if not ELECTROAPP_RUNSTATUS:
                 break

@@ -10,7 +10,7 @@ from multiprocessing import Queue, connection
 import threading
 import time
 
-from Sensor_Distance import Distance
+from Sensor_Distance import distance
 
 # Runstatus of application. Application is terminated when false
 DISTANCEAPP_RUNSTATUS = True
@@ -57,8 +57,7 @@ def distanceapp_init():
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.info, "Initializing distanceapp")
 
         # Initialize TF-Luna I2C sensor
-        from Sensor_Distance import Distance
-        tof_sensor = Distance.init_TFLuna()
+        tof_sensor = distance.init_TFLuna()
 
         events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.info, "Distanceapp Initialization Complete")
         return tof_sensor
@@ -77,8 +76,7 @@ def distanceapp_terminate(tof_sensor):
 
     # Terminate sensor
     if tof_sensor is not None:
-        from Sensor_Distance import Distance
-        Distance.terminate_TFLuna(tof_sensor)
+        distance.terminate_TFLuna(tof_sensor)
 
     # Join threads
     for thread_name in thread_dict:
@@ -108,8 +106,7 @@ def read_distance_data(tof_sensor):
             continue
 
         try:
-            from Sensor_Distance import Distance
-            DISTANCE_MM = Distance.read_distance(tof_sensor)
+            DISTANCE_MM = distance.read_distance(tof_sensor)
         except Exception as e:
             if not DISTANCEAPP_RUNSTATUS:
                 break

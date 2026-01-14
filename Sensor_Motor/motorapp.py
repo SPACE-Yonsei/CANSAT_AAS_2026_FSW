@@ -5,7 +5,7 @@ from multiprocessing import Queue, connection
 
 from lib import appargs, msgstructure, events
 
-from Sensor_Motor import parafoil_motor, Motor_Release, Motor_Egg, parafoil_control
+from Sensor_Motor import Motor_Parafoil, Motor_Release, Motor_Egg, parafoil_control
 
 # =============================================================================
 # 상태 변수
@@ -76,7 +76,7 @@ def _handle_egg_drop():
 
 def _handle_motor_stop():
     _log("Stopping motors")
-    parafoil_motor.rotate_parafoil_motor(_pi, 0.0)
+    Motor_Parafoil.rotate_parafoil_motor(_pi, 0.0)
 
 def _handle_mec(data: str):
     global _motor_enabled
@@ -117,7 +117,7 @@ def _update_parafoil():
         return
     
     turn = parafoil_control.calculate_motor_control(_yaw, _lat, _lon)
-    parafoil_motor.rotate_parafoil_motor(_pi, turn)
+    Motor_Parafoil.rotate_parafoil_motor(_pi, turn)
 
 # =============================================================================
 # HK 전송
@@ -146,7 +146,7 @@ def _init() -> bool:
     
     try:
         parafoil_control.init_parafoil_control()
-        _pi = parafoil_motor.init_parafoil_motor()
+        _pi = Motor_Parafoil.init_parafoil_motor()
         Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()
         _log("Motors initialized (parafoil, burnwire, solenoid)")
@@ -163,7 +163,7 @@ def _terminate():
     
     # 모터 종료
     if _pi:
-        parafoil_motor.terminate_parafoil_motor(_pi)
+        Motor_Parafoil.terminate_parafoil_motor(_pi)
         _pi.stop()
     Motor_Release.terminate_burnwire()
     Motor_Egg.terminate_solenoid()
