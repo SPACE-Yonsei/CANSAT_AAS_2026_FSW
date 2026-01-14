@@ -3,8 +3,8 @@
     ],
     "decoder": 0,
     "frameDetection": 0,
-    "frameEnd": "\\n",
-    "frameParser": "/**\n * Splits a data frame into an array of elements using a comma separator.\n *\n * Use this function to break a string (like \"value1,value2,value3\") into\n * individual pieces, which can then be displayed or processed in your project.\n *\n * @param[in]  frame   A string containing the data frame.\n *                     Example: \"value1,value2,value3\"\n *\n * @return     An array of strings with the split elements.\n *             Example: [\"value1\", \"value2\", \"value3\"]\n *\n * @note You can declare global variables outside this function if needed\n *       for storing settings or keeping state between calls.\n */\nfunction parse(frame) {\n    return frame.split(',');\n}\n",
+    "frameEnd": "\n",
+    "frameParser": "/**\n * Splits a data frame into an array of elements using a comma separator.\n * Handles empty fields and trims whitespace.\n *\n * @param[in]  frame   A string containing the data frame.\n *                     Example: \"value1,value2,value3\"\n *\n * @return     An array of strings with the split elements.\n *             Example: [\"value1\", \"value2\", \"value3\"]\n *\n * @note Empty fields are preserved as empty strings.\n */\nfunction parse(frame) {\n    // Remove trailing newline if present\n    frame = frame.replace(/\\r?\\n$/, '');\n    // Split by comma and return array\n    var result = frame.split(',');\n    // Trim whitespace from each element\n    for (var i = 0; i < result.length; i++) {\n        result[i] = result[i].trim();\n    }\n    return result;\n}\n",
     "frameStart": "",
     "groups": [
         {
