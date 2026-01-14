@@ -9,13 +9,34 @@ import Command_function
 
 ports = serial.tools.list_ports.comports()
 port_list = [f"{port.device}" for port in ports]
-print("port_list: " + str(port_list))
-port_num = int(input("Choose Index of port_number (starting from 0): "))
-print(f"port:{port_list[port_num]}")
 
+# 포트가 없으면 종료
+if len(port_list) == 0:
+    print("Error: No serial ports found. Please connect XBee and try again.")
+    exit(1)
+
+# 포트 목록 출력
+print("\n사용 가능한 포트 목록:")
+for i, port in enumerate(port_list):
+    print(f"  {i}: {port}")
+
+# 유효한 포트 번호 입력 받기
+while True:
+    try:
+        port_num = int(input(f"\n포트 번호를 선택하세요 (0-{len(port_list)-1}): "))
+        if 0 <= port_num < len(port_list):
+            break
+        else:
+            print(f"Error: 잘못된 번호입니다. 0부터 {len(port_list)-1} 사이의 숫자를 입력하세요.")
+    except ValueError:
+        print("Error: 숫자를 입력하세요.")
+    except KeyboardInterrupt:
+        print("\n프로그램을 종료합니다.")
+        exit(0)
 
 XBEE_PORT = port_list[port_num]
 XBEE_BAUDRATE = 9600
+print(f"\n선택된 포트: {XBEE_PORT}")
 
 # TCP 서버 설정 (Serial Studio는 기본적으로 TCP Client)
 TCP_IP = '127.0.0.1'
