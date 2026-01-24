@@ -32,28 +32,46 @@ def init_imu():
     import adafruit_bno08x
     from adafruit_bno08x.i2c import BNO08X_I2C
     
+    max_retries = 3
+    last_error = None
     i2c = board.I2C()
-    
-    # 디버그 출력 억제
-    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-        sensor = BNO08X_I2C(i2c, debug=False)
-    
-    # 디버그 속성 비활성화
-    if hasattr(sensor, '_debug'):
-        sensor._debug = False
-    
-    # 필수 기능 활성화 (디버그 출력 억제)
-    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-        #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-        #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
-    
-    time.sleep(0.5)
-    print("BNO08x initialized")
-    return i2c, sensor
+
+    for attempt in range(max_retries):
+        try:
+            # 디버그 출력 억제
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                sensor = BNO08X_I2C(i2c, debug=False)
+
+            # 디버그 속성 비활성화
+            if hasattr(sensor, '_debug'):
+                sensor._debug = False
+
+            # 필수 기능 활성화 (디버그 출력 억제)
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+                #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+                #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+
+            time.sleep(0.5)
+            print("BNO08x initialized")
+            return i2c, sensor
+
+        except (KeyError, OSError, RuntimeError, ValueError) as e:
+            last_error = e
+            try:
+                i2c.deinit()
+            except Exception:
+                pass
+            if attempt < max_retries - 1:
+                time.sleep(0.5)
+                i2c = board.I2C()
+                continue
+            break
+
+    raise RuntimeError(f"IMU initialization failed after {max_retries} attempts: {last_error}")
 
 
 def read_sensor_data(sensor):
