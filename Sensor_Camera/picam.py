@@ -15,22 +15,49 @@ def init_cam():
     from picamera2 import Picamera2
     from picamera2.encoders import H264Encoder
 
-    cam = Picamera2()
+    # Check if any cameras are available before initializing
+    try:
+        cam = Picamera2()
+        
+        # Verify camera is actually available
+        if not cam.camera_properties:
+            print("No camera detected (camera_properties empty)")
+            cam.close()
+            return None, None
+            
+    except IndexError:
+        # "list index out of range" means no cameras found
+        print("No camera detected (IndexError)")
+        return None, None
+    except Exception as e:
+        print(f"Camera initialization failed: {e}")
+        return None, None
 
-    cfg = cam.create_video_configuration(
-        main={"size": (WIDTH, HEIGHT), "format": "RGB888"},
-        controls={"FrameDurationLimits": (FRAME_US, FRAME_US)}
-    )
-    cam.configure(cfg)
-    
-    if not cam.camera_config:
-        return None
-    
-    cam.start()
+    try:
+        cfg = cam.create_video_configuration(
+            main={"size": (WIDTH, HEIGHT), "format": "RGB888"},
+            controls={"FrameDurationLimits": (FRAME_US, FRAME_US)}
+        )
+        cam.configure(cfg)
+        
+        if not cam.camera_config:
+            print("Camera configuration failed")
+            cam.close()
+            return None, None
+        
+        cam.start()
 
-    enc = H264Encoder()
+        enc = H264Encoder()
 
-    return cam, enc
+        return cam, enc
+        
+    except Exception as e:
+        print(f"Camera setup failed: {e}")
+        try:
+            cam.close()
+        except:
+            pass
+        return None, None
 
 def record(cam, enc, sec: int):
     from picamera2.outputs import FileOutput

@@ -44,40 +44,73 @@ def init_imu():
     from adafruit_bno08x.i2c import BNO08X_I2C
     import time
     
-    # Initialize I2C interface
-    i2c = board.I2C()  # board.SCL과 board.SDA 사용
-    sensor = BNO08X_I2C(i2c)
+    MAX_RETRIES = 3
     
-    # 센서 초기화
-    sensor.initialize()
-    time.sleep(1)  # 센서 초기화 대기
-    
-    # Feature 활성화 (try-except로 오류 처리)
-    try:
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-        time.sleep(0.2)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-        time.sleep(0.2)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-        time.sleep(0.2)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-        time.sleep(0.2)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-        time.sleep(0.2)
-        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
-        time.sleep(0.2)
-    except Exception as e:
-        print(f"Warning: Failed to enable some features: {e}")
-    
-    time.sleep(1)  # 최종 안정화 대기
-    
-    return i2c, sensor
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Initialize I2C interface
+            i2c = board.I2C()  # board.SCL과 board.SDA 사용
+            
+            # BNO08x 초기화 - 재시도 로직 포함
+            sensor = BNO08X_I2C(i2c, address=0x4a)  # 명시적 주소 지정
+            
+            # 센서 소프트 리셋
+            sensor.initialize()
+            time.sleep(1.5)  # 센서 초기화 대기 (더 길게)
+            
+            # Feature 활성화 (개별 try-except로 오류 처리)
+            features = [
+                (adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, "Rotation Vector"),
+                (adafruit_bno08x.BNO_REPORT_ACCELEROMETER, "Accelerometer"),
+                (adafruit_bno08x.BNO_REPORT_GYROSCOPE, "Gyroscope"),
+                (adafruit_bno08x.BNO_REPORT_MAGNETOMETER, "Magnetometer"),
+                (adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION, "Linear Acceleration"),
+                (adafruit_bno08x.BNO_REPORT_GRAVITY, "Gravity"),
+            ]
+            
+            enabled_count = 0
+            for feature, name in features:
+                try:
+                    sensor.enable_feature(feature)
+                    enabled_count += 1
+                    time.sleep(0.3)  # 더 긴 대기 시간
+                except Exception as e:
+                    print(f"Warning: Failed to enable {name}: {e}")
+            
+            if enabled_count == 0:
+                raise RuntimeError("No features could be enabled")
+            
+            print(f"BNO08x initialized: {enabled_count}/{len(features)} features enabled")
+            time.sleep(1)  # 최종 안정화 대기
+            
+            return i2c, sensor
+            
+        except Exception as e:
+            print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(2)  # 재시도 전 대기
+                try:
+                    i2c.deinit()  # I2C 해제 후 재시도
+                except:
+                    pass
+            else:
+                raise RuntimeError(f"Failed to initialize BNO08x after {MAX_RETRIES} attempts: {e}")
 
 def read_sensor_data(sensor):
     global angle_window
 
     # BNO085는 quaternion 직접 접근이 아닌 update를 통해 데이터 읽음
-    quat_info = sensor.quaternion
+    try:
+        quat_info = sensor.quaternion
+    except KeyError as e:
+        # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
+        # Return False to indicate data read failure, let caller handle retry
+        print(f"IMU KeyError (possible I2C bus noise): {e}")
+        return False
+    except (OSError, RuntimeError) as e:
+        # I2C communication error
+        print(f"IMU communication error: {e}")
+        return False
     
     if quat_info is None:
         # 쿼터니언 데이터 없음

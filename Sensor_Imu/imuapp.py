@@ -156,14 +156,15 @@ def read_imu_data(imu_instance):
                 IMU_GRAVITY_X       = rcv_data[14]  # 중력 벡터 X
                 IMU_GRAVITY_Y       = rcv_data[15]  # 중력 벡터 Y
                 IMU_GRAVITY_Z       = rcv_data[16]  # 중력 벡터 Z
-        except (AttributeError, OSError, RuntimeError) as e:
+        except (AttributeError, OSError, RuntimeError, KeyError) as e:
             # Handle I2C errors during shutdown or communication issues
+            # KeyError: BNO08x receives unknown report type (I2C bus noise/conflict)
             if not IMUAPP_RUNSTATUS:
                 # Normal shutdown, exit gracefully
                 break
             # Log error but continue if still running
             events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, f"Error reading IMU data: {e}")
-            time.sleep(0.1)
+            time.sleep(0.2)  # Wait a bit longer before retry
             continue
 
         # The imu runs on 100Hz
