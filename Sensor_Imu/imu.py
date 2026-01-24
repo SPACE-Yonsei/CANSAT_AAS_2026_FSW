@@ -415,7 +415,7 @@ def imu_terminate(i2c):
 
 if __name__ == "__main__":
     i2c, sensor = init_imu()
-    print(f'Offset : {sensor.offsets_magnetometer}')
+    #print(f'Offset : {sensor.offsets_magnetometer}')
     error_count = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
