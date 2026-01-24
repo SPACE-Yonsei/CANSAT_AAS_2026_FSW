@@ -73,11 +73,6 @@ def _handle_egg_drop():
     _log("Activating solenoid")
     Motor_Egg.activate_solenoid()
 
-
-def _handle_motor_stop():
-    _log("Stopping motors")
-    Motor_Parafoil.rotate_parafoil_motor(_pi, 0.0)
-
 def _handle_mec(data: str):
     global _motor_enabled
     _log(f"MEC command: {data}")
@@ -96,8 +91,7 @@ _MSG_HANDLERS = {
     appargs.FlightlogicAppArg.MID_motor_state: _handle_flight_state,
     appargs.FlightlogicAppArg.MID_motor_burnwire: lambda d: _handle_release(),
     appargs.FlightlogicAppArg.MID_motor_EggDrop: lambda d: _handle_egg_drop(),
-    appargs.FlightlogicAppArg.MID_PayloadMotorStop: lambda d: _handle_motor_stop(),
-    appargs.CommAppArg.MID_RouteCmd_MEC: _handle_mec,
+    appargs.CommAppArg.MID_RouteCmd_MEC: _handle_mec
 }
 
 
@@ -119,6 +113,9 @@ def _update_parafoil():
     turn = parafoil_control.calculate_motor_control(_yaw, _lat, _lon)
     Motor_Parafoil.rotate_parafoil_motor(_pi, turn)
 
+    if _state == 5:
+        _log("Stopping motors")
+        Motor_Parafoil.rotate_parafoil_motor(_pi, 0.0)
 
 # =============================================================================
 # 초기화 / 종료
