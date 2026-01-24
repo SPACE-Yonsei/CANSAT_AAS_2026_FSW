@@ -167,8 +167,8 @@ def read_imu_data(imu_instance):
             time.sleep(0.2)  # Wait a bit longer before retry
             continue
 
-        # The imu runs on 100Hz
-        time.sleep(0.01)
+        # The imu runs on 50Hz
+        time.sleep(0.02)
 
     return
 
