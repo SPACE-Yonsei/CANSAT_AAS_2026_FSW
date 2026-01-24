@@ -120,7 +120,7 @@ def send_electro_data(Main_Queue : Queue):
         status = msgstructure.send_msg(Main_Queue,
                                        appargs.ElectroAppArg.AppID,
                                        appargs.CommAppArg.AppID,
-                                       appargs.ElectroAppArg.MID_SendElectroTlmData,
+                                       appargs.ElectroAppArg.MID_comm_volt,
                                        f"{ELECTRO_VOLTAGE:.2f},{ELECTRO_CURRENT:.2f},{ELECTRO_POWER:.2f}")
         if status == False:
             events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.error, "Error when sending electro telemetry data")

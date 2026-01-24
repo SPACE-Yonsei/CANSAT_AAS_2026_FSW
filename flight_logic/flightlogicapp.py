@@ -179,9 +179,9 @@ _MSG_HANDLERS = {
     appargs.CommAppArg.MID_RouteCmd_SIM: _handle_sim,
     appargs.CommAppArg.MID_RouteCmd_SIMP: _handle_simp,
     appargs.BarometerAppArg.MID_flight_alt: _handle_barometer,
-    appargs.GpsAppArg.MID_SendGpsFlightLogicData: _handle_gps,
-    appargs.ImuAppArg.MID_SendImuFlightLogicData: _handle_imu,
-    appargs.DistanceAppArg.MID_SendDistanceFlightLogicData: _handle_distance,
+    appargs.GpsAppArg.MID_flight_MyCor: _handle_gps,
+    appargs.ImuAppArg.MID_flight_yaw: _handle_imu,
+    appargs.DistanceAppArg.MID_flight_dis: _handle_distance,
     appargs.CommAppArg.MID_RouteCmd_SS: _handle_ss,
     appargs.BarometerAppArg.MID_flight_ResetMaxAlt: _handle_reset_alt,
 }

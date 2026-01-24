@@ -25,6 +25,7 @@ class CommAppArg:
     AppID : int = 12
     AppName : str = "Communication"
 
+    
     MID_RouteCmd_CX : int = 1602
     MID_RouteCmd_ST : int = 1603
     MID_RouteCmd_SIM : int = 1604
@@ -48,41 +49,38 @@ class ImuAppArg:
     AppName : str = "Imu"
 
     MID_comm_euler : int = 1401201
-    MID_SendImuFlightLogicData : int = 1304
+    MID_flight_yaw : int = 1401101
+
     # flightlogic 거치지 않고 motor로 바로 imu
 class GpsAppArg:
-    AppID : int = 12
+    AppID : int = 15
     AppName : str = "GPS"
 
-    MID_SendHK : int = 1201
-    MID_SendGpsTlmData : int = 1202
-    MID_SendGpsFlightLogicData : int = 1203
-    #flightlogic 거치지 않고 motor로 바로
+    MID_comm_gga : int = 1501201
+
+    MID_flight_MyCor : int = 1501101
+
+    MID_motor_MyCor : int = 1501901 #flightlogic 거치지 않고 motor로 바로
 
 class DistanceAppArg:
-    AppID : int = 19
+    AppID : int = 16
     AppName : str = "Distance"
 
-    MID_SendHK : int = 1901
-    MID_SendDistanceFlightLogicData : int = 1902
-    MID_SendDistanceTlmData : int = 1903
+    MID_flight_dis : int = 1601101
+
+    MID_comm_dis : int = 1601201
 
 class ElectroAppArg:
     AppID : int = 17
     AppName : str = "Electro"
 
-    MID_SendHK : int = 1701
-    MID_SendElectroTlmData : int = 1702
+    MID_comm_volt : int = 1701201
 
 
 class CameraAppArg:
-    AppID : int = 11
+    AppID : int = 18
     AppName : str = "Camera"
 
-    MID_SendHK : int = 1101
-
 class MotorAppArg:
-    AppID : int = 18
+    AppID : int = 19
     AppName : str = "Motor"
-
-    MID_SendHK : int = 1801

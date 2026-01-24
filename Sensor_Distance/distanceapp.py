@@ -123,7 +123,7 @@ def send_distance_data(Main_Queue: Queue):
             Main_Queue,
             appargs.DistanceAppArg.AppID,
             appargs.FlightlogicAppArg.AppID,
-            appargs.DistanceAppArg.MID_SendDistanceFlightLogicData,
+            appargs.DistanceAppArg.MID_flight_dis,
             str(DISTANCE_MM)
         )
 
@@ -132,7 +132,7 @@ def send_distance_data(Main_Queue: Queue):
             Main_Queue,
             appargs.DistanceAppArg.AppID,
             appargs.CommAppArg.AppID,
-            appargs.DistanceAppArg.MID_SendDistanceTlmData,
+            appargs.DistanceAppArg.MID_comm_dis,
             str(DISTANCE_MM)
         )
 

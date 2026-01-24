@@ -143,7 +143,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             msgstructure.send_msg(
                 Main_Queue,
                 appargs.GpsAppArg.AppID, appargs.FlightlogicAppArg.AppID,
-                appargs.GpsAppArg.MID_SendGpsFlightLogicData,
+                appargs.GpsAppArg.MID_flight_MyCor,
                 f"{GPS_LAT},{GPS_LON}"
             )
 
@@ -156,7 +156,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 Main_Queue,
                 appargs.GpsAppArg.AppID,
                 appargs.CommAppArg.AppID,
-                appargs.GpsAppArg.MID_SendGpsTlmData,
+                appargs.GpsAppArg.MID_comm_gga,
                 f"{GPS_TIME},{GPS_ALT},{GPS_LAT},{GPS_LON},{GPS_SATS}"
             )
             if status == False:
