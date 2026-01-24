@@ -16,6 +16,9 @@ echo "Starting pigpiod..."
 sudo pigpiod
 sleep 1
 
+echo "Cleaning up camera..."
+bash /home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh
+
 echo "Path > ${python_path}"
 echo "venv > ${venv_path}/activate"
 . ${venv_path}/activate;

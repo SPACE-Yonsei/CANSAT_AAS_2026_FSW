@@ -24,6 +24,8 @@ def send_reset_pulse():
     # Enough pulse has been given, set the line to floating again
 
     pi.set_mode(XBEE_RESET_PIN, pigpio.INPUT)
+    
+    pi.stop()
 
     return
     

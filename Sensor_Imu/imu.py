@@ -42,9 +42,16 @@ def log_imu(text):
     imulogfile.flush()
 
 def init_imu():
-    import board
-    import adafruit_bno08x
-    from adafruit_bno08x.i2c import BNO08X_I2C
+    print("Attempting to import board and adafruit_bno08x...")
+    try:
+        import board
+        import adafruit_bno08x
+        from adafruit_bno08x.i2c import BNO08X_I2C
+        print("Libraries imported successfully.")
+    except ImportError as e:
+        print(f"Import failed: {e}")
+        raise e
+
     import time
     
     MAX_RETRIES = 3
