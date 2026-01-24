@@ -175,8 +175,18 @@ def read_sensor_data(sensor):
                 # 첫 읽기 실패 시에만 에러 출력
                 return False
             # 이전 값 사용 - quat_info는 None으로 유지
-        except (OSError, RuntimeError) as e:
-            # I2C communication error (Unprocessable Batch bytes 포함)
+        except (OSError, RuntimeError, IndexError) as e:
+            # I2C communication error, IndexError (sequence_number list out of range), etc.
+            if retry < max_retries - 1:
+                time.sleep(0.01)  # 짧은 대기 후 재시도
+                continue
+            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
+            if len(angle_window[0]) == 0:
+                # 첫 읽기 실패 시에만 에러 출력
+                return False
+            # 이전 값 사용 - quat_info는 None으로 유지
+        except Exception as e:
+            # 기타 예상치 못한 예외 처리
             if retry < max_retries - 1:
                 time.sleep(0.01)  # 짧은 대기 후 재시도
                 continue
@@ -285,22 +295,22 @@ def read_sensor_data(sensor):
     avg_pitch = round(avg_pitch, 4)
 
     # BNO085는 linear_acceleration, gravity 등을 직접 제공
-    # KeyError can occur on any sensor access due to I2C bus noise
+    # KeyError, IndexError can occur on any sensor access due to I2C bus noise or internal errors
     # 디버그 출력 억제를 위해 모든 센서 읽기를 리다이렉트 안에서 수행
     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
         try:
             accX, accY, accZ = sensor.linear_acceleration
-        except (KeyError, OSError, RuntimeError, TypeError):
+        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             accX = accY = accZ = None
         
         try:
             magX, magY, magZ = sensor.magnetic
-        except (KeyError, OSError, RuntimeError, TypeError):
+        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             magX = magY = magZ = None
         
         try:
             gyrX, gyrY, gyrZ = sensor.gyro
-        except (KeyError, OSError, RuntimeError, TypeError):
+        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             gyrX = gyrY = gyrZ = None
 
     # Error Checking, if None is contained, set the value to 0
@@ -335,7 +345,7 @@ def read_sensor_data(sensor):
     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
         try:
             graX, graY, graZ = sensor.gravity
-        except (KeyError, OSError, RuntimeError, TypeError):
+        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             graX = graY = graZ = None
     
     # Calculate tilt angle from gravity vector
