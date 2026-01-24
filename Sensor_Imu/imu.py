@@ -2,6 +2,9 @@ import time
 import math
 from datetime import datetime
 import os
+import sys
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
 
 # Variables for moving window filter
 angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
@@ -59,7 +62,12 @@ def init_imu():
             used_address = None
             for addr in POSSIBLE_ADDRESSES:
                 try:
-                    sensor = BNO08X_I2C(i2c, address=addr, debug=False)  # debug=False로 패킷 출력 비활성화
+                    # 디버그 출력 억제를 위해 stdout/stderr 리다이렉트
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        sensor = BNO08X_I2C(i2c, address=addr, debug=False)
+                    # 추가로 _debug 속성도 False로 설정
+                    if hasattr(sensor, '_debug'):
+                        sensor._debug = False
                     used_address = addr
                     print(f"BNO08x found at address 0x{addr:02x}")
                     break
@@ -133,7 +141,9 @@ def read_sensor_data(sensor):
 
     # BNO085는 quaternion 직접 접근이 아닌 update를 통해 데이터 읽음
     try:
-        quat_info = sensor.quaternion
+        # 디버그 출력 억제
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            quat_info = sensor.quaternion
     except KeyError as e:
         # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
         # Return False to indicate data read failure, let caller handle retry
@@ -244,20 +254,22 @@ def read_sensor_data(sensor):
 
     # BNO085는 linear_acceleration, gravity 등을 직접 제공
     # KeyError can occur on any sensor access due to I2C bus noise
-    try:
-        accX, accY, accZ = sensor.linear_acceleration
-    except (KeyError, OSError, RuntimeError, TypeError):
-        accX = accY = accZ = None
-    
-    try:
-        magX, magY, magZ = sensor.magnetic
-    except (KeyError, OSError, RuntimeError, TypeError):
-        magX = magY = magZ = None
-    
-    try:
-        gyrX, gyrY, gyrZ = sensor.gyro
-    except (KeyError, OSError, RuntimeError, TypeError):
-        gyrX = gyrY = gyrZ = None
+    # 디버그 출력 억제를 위해 모든 센서 읽기를 리다이렉트 안에서 수행
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        try:
+            accX, accY, accZ = sensor.linear_acceleration
+        except (KeyError, OSError, RuntimeError, TypeError):
+            accX = accY = accZ = None
+        
+        try:
+            magX, magY, magZ = sensor.magnetic
+        except (KeyError, OSError, RuntimeError, TypeError):
+            magX = magY = magZ = None
+        
+        try:
+            gyrX, gyrY, gyrZ = sensor.gyro
+        except (KeyError, OSError, RuntimeError, TypeError):
+            gyrX = gyrY = gyrZ = None
 
     # Error Checking, if None is contained, set the value to 0
     if accX is None or accY is None or accZ is None:
@@ -288,10 +300,11 @@ def read_sensor_data(sensor):
         gyrZ = round(gyrZ, 4)
 
     # Read Gravity vector
-    try:
-        graX, graY, graZ = sensor.gravity
-    except (KeyError, OSError, RuntimeError, TypeError):
-        graX = graY = graZ = None
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        try:
+            graX, graY, graZ = sensor.gravity
+        except (KeyError, OSError, RuntimeError, TypeError):
+            graX = graY = graZ = None
     
     # Calculate tilt angle from gravity vector
     tilt_angle = 0.0
