@@ -45,7 +45,7 @@ class app_elements:
     process : Process = None
     pipe : connection.Connection = None
 # The app dictionary has key as AppID, app elements as Value
-app_dict = dict[types.AppID, app_elements]()
+app_dict = dict[app_elements]()
 
 #########################################################
 # Lazy Import Wrapper Functions                         #
@@ -198,9 +198,9 @@ app_dict[appargs.DistanceAppArg.AppID] = distanceapp_elements
 # Application Management                                #
 # Functions for (re)starting, terminating applications  # 
 #########################################################
-def run_app(AppID : types.AppID) :
+def run_app(AppID: int):
     if AppID in app_dict:
-        app_process : Process = app_dict[AppID][0]
+        app_process : Process = app_dict[AppID].process
         app_process.start()
     else:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, f"AppID {AppID} not in app dictionary")
@@ -215,13 +215,13 @@ def terminate_FSW():
     # Set all Runstatus to false
     MAINAPP_RUNSTATUS = False
 
-    msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
-    termination_message_to_send = msgstructure.pack_msg(termination_message)
+    msg=msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
+    packed_msg = msgstructure.pack_msg(msg)
 
     # Send termination message to kill every process
     for appID in app_dict:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID}")
-        app_dict[appID].pipe.send(termination_message_to_send)
+        app_dict[appID].pipe.send(packed_msg)
 
     # Join all processes with timeout, force kill if not responding
     for appID in app_dict:
