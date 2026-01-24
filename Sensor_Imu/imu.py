@@ -150,19 +150,28 @@ def read_sensor_data(sensor):
     global angle_window
 
     # BNO085는 quaternion 직접 접근이 아닌 update를 통해 데이터 읽음
+    quat_info = None
+    quat_read_success = False
+    
     try:
         # 디버그 출력 억제
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             quat_info = sensor.quaternion
+            quat_read_success = True
     except KeyError as e:
         # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
-        # Return False to indicate data read failure, let caller handle retry
-        print("IMU KeyError (possible I2C bus noise)")
-        return False
+        # 이전 값이 있으면 계속 사용, 없으면 False 반환
+        if len(angle_window[0]) == 0:
+            # 첫 읽기 실패 시에만 에러 출력
+            return False
+        # 이전 값 사용 - quat_info는 None으로 유지 (에러 메시지 출력 안 함)
     except (OSError, RuntimeError) as e:
-        # I2C communication error
-        print(f"IMU communication error: {e}")
-        return False
+        # I2C communication error (Unprocessable Batch bytes 포함)
+        # 이전 값이 있으면 계속 사용, 없으면 False 반환
+        if len(angle_window[0]) == 0:
+            # 첫 읽기 실패 시에만 에러 출력
+            return False
+        # 이전 값 사용 - quat_info는 None으로 유지 (에러 메시지 출력 안 함)
     
     if quat_info is None:
         # 쿼터니언 데이터 없음
