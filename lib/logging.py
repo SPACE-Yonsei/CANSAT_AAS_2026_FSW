@@ -41,8 +41,8 @@ def setup_logging_main_process() -> Queue:
         os.makedirs(LOG_DIR)
     
     # Create the queue with maxsize to prevent unbounded memory growth
-    # 500 log messages should be sufficient buffer (logs are processed quickly)
-    _log_queue = Queue(maxsize=500)
+    # 5000 log messages buffer (supports high-frequency debug logging)
+    _log_queue = Queue(maxsize=5000)
     
     # Create file handlers for different log levels
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
