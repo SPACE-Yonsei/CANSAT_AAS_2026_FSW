@@ -5,7 +5,7 @@ I2C Stretch 필요함
 
 ### Library
 pip3 install adafruit-circuitpython-bno055
-
+pip install adafruit-circuitpython-bno08x
 
 ### Function
 imu.py
