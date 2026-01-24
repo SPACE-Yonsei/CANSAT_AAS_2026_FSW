@@ -297,23 +297,34 @@ def read_sensor_data(sensor):
     # BNO085는 linear_acceleration, gravity 등을 직접 제공
     # KeyError, IndexError can occur on any sensor access due to I2C bus noise or internal errors
     # 디버그 출력 억제를 위해 모든 센서 읽기를 리다이렉트 안에서 수행
+    sensor_read_failed = False
     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
         try:
             accX, accY, accZ = sensor.linear_acceleration
         except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             accX = accY = accZ = None
+            sensor_read_failed = True
         
         try:
             magX, magY, magZ = sensor.magnetic
         except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             magX = magY = magZ = None
+            sensor_read_failed = True
         
         try:
             gyrX, gyrY, gyrZ = sensor.gyro
         except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             gyrX = gyrY = gyrZ = None
+            sensor_read_failed = True
+    
+    # quaternion과 모든 센서 읽기가 실패한 경우 False 반환
+    if quat_info is None and sensor_read_failed and len(angle_window[0]) > 0:
+        # 이전 값이 있지만 새로운 읽기가 모두 실패한 경우
+        # (센서가 완전히 응답하지 않는 상태일 수 있음)
+        return False
 
     # Error Checking, if None is contained, set the value to 0
+    # 단, quaternion이 성공했으면 다른 센서 실패 시에도 0으로 설정하여 계속 진행
     if accX is None or accY is None or accZ is None:
         accX = 0
         accY = 0
@@ -347,6 +358,7 @@ def read_sensor_data(sensor):
             graX, graY, graZ = sensor.gravity
         except (KeyError, OSError, RuntimeError, TypeError, IndexError):
             graX = graY = graZ = None
+            sensor_read_failed = True
     
     # Calculate tilt angle from gravity vector
     tilt_angle = 0.0
