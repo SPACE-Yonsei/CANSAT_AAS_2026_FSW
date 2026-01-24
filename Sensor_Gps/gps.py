@@ -1,10 +1,39 @@
 import time
 import os
+try:
+    import fcntl
+except Exception:
+    fcntl = None
 from datetime import datetime
 
 I2C_BUS_NUM = 1
 GNSS_ADDR   = 0x42
 READ_SIZE   = 32
+
+I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+
+
+class I2CLock:
+    def __init__(self, path=I2C_LOCK_PATH):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        if fcntl is None:
+            return self
+        self.fd = open(self.path, "w")
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if fcntl is None:
+            return False
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            self.fd.close()
+        except Exception:
+            pass
+        return False
 
 ############################################################
 # log 데이터 수신
@@ -33,9 +62,11 @@ def init_gps():
 
 def _i2c_read_block(bus):
     try:
-        data = bus.read_i2c_block_data(GNSS_ADDR, 0xFF, READ_SIZE)
+        with I2CLock():
+            data = bus.read_i2c_block_data(GNSS_ADDR, 0xFF, READ_SIZE)
     except OSError:
-        data = bus.read_i2c_block_data(GNSS_ADDR, 0x00, READ_SIZE)
+        with I2CLock():
+            data = bus.read_i2c_block_data(GNSS_ADDR, 0x00, READ_SIZE)
     return bytes(data)
 
 

@@ -1,5 +1,9 @@
 import time
 import os
+try:
+    import fcntl
+except Exception:
+    fcntl = None
 from datetime import datetime
 
 ############################################################
@@ -11,6 +15,31 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
 Electrologfile = open(os.path.join(log_dir, 'electro_ina228.txt'), 'a')
+
+I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+
+
+class I2CLock:
+    def __init__(self, path=I2C_LOCK_PATH):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        if fcntl is None:
+            return self
+        self.fd = open(self.path, "w")
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if fcntl is None:
+            return False
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            self.fd.close()
+        except Exception:
+            pass
+        return False
 
 def log_Electro(text: str):
     t = datetime.now().isoformat(sep=' ', timespec='milliseconds')
@@ -46,16 +75,17 @@ def init_INA228(address=0x40):
             
         def _read_register(self, register, length=2):
             """Read register from INA228"""
-            while not self.i2c.try_lock():
-                pass
-            try:
-                result = bytearray(length)
-                self.i2c.writeto_then_readfrom(
-                    self.address, bytes([register]), result
-                )
-                return int.from_bytes(result, 'big', signed=False)
-            finally:
-                self.i2c.unlock()
+            with I2CLock():
+                while not self.i2c.try_lock():
+                    pass
+                try:
+                    result = bytearray(length)
+                    self.i2c.writeto_then_readfrom(
+                        self.address, bytes([register]), result
+                    )
+                    return int.from_bytes(result, 'big', signed=False)
+                finally:
+                    self.i2c.unlock()
         
         @property
         def bus_voltage(self):
