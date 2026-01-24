@@ -10,9 +10,6 @@ from io import StringIO
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
 WINDOW_SIZE = 5
 
-# 이전 값 저장 (초기화 중에도 출력하기 위함)
-last_valid_data = None
-
 # BNO085 장착 방향 보정
 IMU_MOUNTED_ON_BOTTOM = True  # Z축이 아래로 향함
 IMU_FORWARD_AXIS = 'Y'        # 캔위성 앞쪽 방향
@@ -60,21 +57,15 @@ def init_imu():
 
 
 def read_sensor_data(sensor):
-    global angle_window, last_valid_data
+    global angle_window
     
     # 쿼터니언 읽기 (디버그 출력 억제)
     try:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             quat = sensor.quaternion
         if quat is None:
-            # 이전 값이 있으면 반환
-            if last_valid_data is not None:
-                return last_valid_data
             return False
     except Exception:
-        # 이전 값이 있으면 반환
-        if last_valid_data is not None:
-            return last_valid_data
         return False
     
     x, y, z, w = quat
@@ -151,10 +142,7 @@ def read_sensor_data(sensor):
     
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ},{tilt_angle},{tilt_direction},{graX},{graY},{graZ}")
     
-    # 이전 값 저장
-    result = (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ, tilt_angle, tilt_direction, graX, graY, graZ)
-    last_valid_data = result
-    return result
+    return (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ, tilt_angle, tilt_direction, graX, graY, graZ)
 
 
 def imu_terminate(i2c):
@@ -163,9 +151,8 @@ def imu_terminate(i2c):
 
 
 def reset_angle_window():
-    global angle_window, last_valid_data
+    global angle_window
     angle_window = [[], [], []]
-    # last_valid_data는 유지 (초기화 중에도 이전 값 출력)
 
 
 def reinit_imu(i2c, sensor):
