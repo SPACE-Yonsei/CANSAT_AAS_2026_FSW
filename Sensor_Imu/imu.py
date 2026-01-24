@@ -22,6 +22,11 @@ LAST_VALID_SENSORS = {
     "mag": (0.0, 0.0, 0.0),
     "gyr": (0.0, 0.0, 0.0),
 }
+MAG_FILTER_ALPHA = float(os.getenv("IMU_MAG_FILTER_ALPHA", "0.2"))
+MAG_FIELD_MIN = float(os.getenv("IMU_MAG_FIELD_MIN", "1.0"))
+MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "200.0"))
+YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
+MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False}
 
 
 class I2CLock:
@@ -62,6 +67,29 @@ def log_imu(text):
     imulogfile.write(f'{t},{text}\n')
     imulogfile.flush()
 
+def _wrap_angle_deg(angle):
+    return angle % 360
+
+def _angle_diff_deg(target, current):
+    diff = (target - current + 180) % 360 - 180
+    return diff
+
+def _mag_is_valid(mx, my, mz):
+    mag_norm = math.sqrt(mx * mx + my * my + mz * mz)
+    return MAG_FIELD_MIN <= mag_norm <= MAG_FIELD_MAX
+
+def _filter_mag(mx, my, mz):
+    if not MAG_FILTER_STATE["init"]:
+        MAG_FILTER_STATE["x"] = mx
+        MAG_FILTER_STATE["y"] = my
+        MAG_FILTER_STATE["z"] = mz
+        MAG_FILTER_STATE["init"] = True
+        return mx, my, mz
+    a = MAG_FILTER_ALPHA
+    MAG_FILTER_STATE["x"] = a * mx + (1 - a) * MAG_FILTER_STATE["x"]
+    MAG_FILTER_STATE["y"] = a * my + (1 - a) * MAG_FILTER_STATE["y"]
+    MAG_FILTER_STATE["z"] = a * mz + (1 - a) * MAG_FILTER_STATE["z"]
+    return MAG_FILTER_STATE["x"], MAG_FILTER_STATE["y"], MAG_FILTER_STATE["z"]
 
 def init_imu(i2c=None):
     import board
@@ -190,8 +218,14 @@ def read_sensor_data(sensor):
         magX, magY, magZ = mag
         gyrX, gyrY, gyrZ = gyr
         accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
-        magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
         gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
+
+        if _mag_is_valid(magX, magY, magZ):
+            magX, magY, magZ = _filter_mag(magX, magY, magZ)
+        else:
+            magX, magY, magZ = LAST_VALID_SENSORS["mag"]
+        magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
+
         LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
         LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
         LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
@@ -199,6 +233,23 @@ def read_sensor_data(sensor):
         accX, accY, accZ = LAST_VALID_SENSORS["acc"]
         magX, magY, magZ = LAST_VALID_SENSORS["mag"]
         gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
+
+    # Yaw drift 보정 (자기장 기반 천천히 보정)
+    try:
+        mag_heading = math.degrees(math.atan2(magY, magX))
+        if IMU_MOUNTED_ON_BOTTOM:
+            mag_heading = -mag_heading
+        if IMU_FORWARD_AXIS == 'Y':
+            mag_heading += 90
+        try:
+            from lib import config
+            mag_heading += config.YAW_OFFSET
+        except Exception:
+            pass
+        mag_heading = _wrap_angle_deg(mag_heading)
+        yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
+    except Exception:
+        pass
     
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ}")
     
