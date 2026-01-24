@@ -114,7 +114,7 @@ def _update_parafoil():
     Motor_Parafoil.rotate_parafoil_motor(_pi, turn)
 
     if _state == 5:
-        _log("Stopping motors")
+        _log("Stopping motors", events.EventType.warning)
         Motor_Parafoil.rotate_parafoil_motor(_pi, 0.0)
 
 # =============================================================================
