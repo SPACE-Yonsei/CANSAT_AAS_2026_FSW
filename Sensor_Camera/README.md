@@ -15,6 +15,18 @@ sudo nano /boot/firmware/config.txt
 camera_auto_detect=0
 dtoverlay=ov5647
 
+
+
+점유하는 카메라 프로세스 확인
+sudo fuser -v /dev/video0 /dev/media0 /dev/media1
+
+ps -fp <PID>
+
+sudo kill <PID>
+
+
+
+
 h264->mp4 변환
 ffmpeg -framerate 30 -i test.h264 -c copy test.mp4
 
