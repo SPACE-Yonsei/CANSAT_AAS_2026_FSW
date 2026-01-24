@@ -1,6 +1,5 @@
 from lib import events
 from multiprocessing import Queue
-from lib import types
 
 class MsgStructure:
     sender_app: int = None # AppID of sender
