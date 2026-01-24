@@ -48,26 +48,28 @@ def init_imu():
     i2c = board.I2C()  # board.SCL과 board.SDA 사용
     sensor = BNO08X_I2C(i2c)
     
-    time.sleep(0.5)  # 초기 안정화
+    # 센서 초기화
+    sensor.initialize()
+    time.sleep(1)  # 센서 초기화 대기
     
-    # 쿼터니언 (회전 벡터) 보고서 활성화
-    # BNO_REPORT_ROTATION_VECTOR = 쿼터니언 데이터
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-    time.sleep(0.1)
+    # Feature 활성화 (try-except로 오류 처리)
+    try:
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+        time.sleep(0.2)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+        time.sleep(0.2)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+        time.sleep(0.2)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+        time.sleep(0.2)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+        time.sleep(0.2)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+        time.sleep(0.2)
+    except Exception as e:
+        print(f"Warning: Failed to enable some features: {e}")
     
-    # 다른 필요한 센서 활성화
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-    time.sleep(0.1)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-    time.sleep(0.1)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-    time.sleep(0.1)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-    time.sleep(0.1)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
-    time.sleep(0.1)
-    
-    time.sleep(1)  # 센서 안정화 대기
+    time.sleep(1)  # 최종 안정화 대기
     
     return i2c, sensor
 
