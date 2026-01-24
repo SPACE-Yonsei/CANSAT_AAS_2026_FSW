@@ -49,8 +49,11 @@ def init_imu():
             # 필수 기능 활성화 (디버그 출력 억제)
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                 sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+                time.sleep(0.05)
                 sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+                time.sleep(0.05)
                 sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+                time.sleep(0.05)
                 sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
                 #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
                 #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
@@ -59,7 +62,7 @@ def init_imu():
             print("BNO08x initialized")
             return i2c, sensor
 
-        except (KeyError, OSError, RuntimeError, ValueError) as e:
+        except (KeyError, IndexError, OSError, RuntimeError, ValueError) as e:
             last_error = e
             try:
                 i2c.deinit()
