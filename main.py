@@ -45,7 +45,7 @@ class app_elements:
     process : Process = None
     pipe : connection.Connection = None
 # The app dictionary has key as AppID, app elements as Value
-app_dict = dict[app_elements]()
+app_dict = dict()
 
 #########################################################
 # Lazy Import Wrapper Functions                         #

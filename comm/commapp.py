@@ -5,7 +5,6 @@ from lib import appargs
 from lib import msgstructure
 from lib import logging
 from lib import events
-from lib import types
 from lib import config
 
 import signal

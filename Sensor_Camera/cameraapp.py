@@ -8,7 +8,6 @@ from lib import appargs
 from lib import msgstructure
 from lib import logging
 from lib import events
-from lib import types
 
 import signal
 from multiprocessing import Queue, connection
