@@ -3,9 +3,9 @@ from multiprocessing import Queue
 from lib import types
 
 class MsgStructure:
-    sender_app: types.AppID = None # AppID of sender
-    receiver_app: types.AppID = None # AppID of receiver
-    MsgID: types.MID = None # Message ID should be unique for identification
+    sender_app: int = None # AppID of sender
+    receiver_app: int = None # AppID of receiver
+    MsgID: int = None # Message ID should be unique for identification
     data: str = None # Data
 
 def fill_msg(_sender : int, _receiver : int, _MsgID : int, _data: str):
@@ -54,7 +54,7 @@ def unpack_msg (msg: str) -> bool:
         return False
     
 # Send message for SB Methods to route
-def send_msg (Main_Queue : Queue, _sender : types.AppID, _receiver : types.AppID, _MsgID : types.MID, _data: str):
+def send_msg (Main_Queue : Queue, _sender, _receiver, _MsgID, _data: str):
     try:
         # Fill Message
         target = fill_msg(_sender, _receiver, _MsgID, _data)
