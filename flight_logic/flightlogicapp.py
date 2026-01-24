@@ -178,12 +178,12 @@ _MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: _handle_terminate,
     appargs.CommAppArg.MID_RouteCmd_SIM: _handle_sim,
     appargs.CommAppArg.MID_RouteCmd_SIMP: _handle_simp,
-    appargs.BarometerAppArg.MID_SendBarometerFlightLogicData: _handle_barometer,
+    appargs.BarometerAppArg.MID_flight_alt: _handle_barometer,
     appargs.GpsAppArg.MID_SendGpsFlightLogicData: _handle_gps,
     appargs.ImuAppArg.MID_SendImuFlightLogicData: _handle_imu,
     appargs.DistanceAppArg.MID_SendDistanceFlightLogicData: _handle_distance,
     appargs.CommAppArg.MID_RouteCmd_SS: _handle_ss,
-    appargs.BarometerAppArg.MID_ResetBarometerMaxAlt: _handle_reset_alt,
+    appargs.BarometerAppArg.MID_flight_ResetMaxAlt: _handle_reset_alt,
 }
 
 
@@ -204,7 +204,7 @@ def _send_msg(queue: Queue, receiver: int, mid: int, data: str = ""):
 
 
 def _send_state_to_motor(queue: Queue, state: int):
-    _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(state))
+    _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
 
 
 def _send_sim_status(queue: Queue): # 한번 실행되어서 지웠다.
@@ -228,7 +228,7 @@ def _solenoid_logic(queue: Queue, distance_mm: int):
             _solenoid_count += 1
             distance_cm = distance_mm / 10.0
             _log(f"Solenoid activation ({_solenoid_count}/{SOLENOID_COUNT_MAX}) at {distance_cm:.1f}cm (TF-Luna)")
-            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
+            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "")
             
             if _solenoid_count >= SOLENOID_COUNT_MAX:
                 _solenoid_done = True
@@ -323,7 +323,7 @@ def _barometer_logic(queue: Queue, alt: float):
         
         if not _egg_activated and _cnt_egg_drop >= 2:
             _log(f"Egg drop at {alt:.2f}m")
-            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
+            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "")
             _egg_activated = True
         
         # 착륙 감지
@@ -385,7 +385,7 @@ def _to_release(queue: Queue, force: bool = False):
     _log("STATE → RELEASE (burnwire activate)")
     prevstate.update_prevstate(_state)
     _send_state_to_motor(queue, _state)
-    _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Release_Activate, "")
+    _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_burnwire, "")
 
 
 def _to_egg(queue: Queue, force: bool = False):

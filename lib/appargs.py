@@ -2,34 +2,29 @@
 from lib import types
 
 class MainAppArg:
-    AppID : types.AppID = 11
+    AppID : types.AppID = 10
     AppName : str = "Main"
 
-    MID_TerminateProcess : types.MID = 10101 #sender0receiver0order
+    MID_TerminateProcess : types.MID = 1001001 #sender0receiver0order
 
 class FlightlogicAppArg:
-    AppID : types.AppID = 2
+    AppID : types.AppID = 11
     AppName : str = "Flight Logic"
 
-    MID_comm_state : types.MID = 20301
-    MID_comm_sim : types.MID = 20302
+    MID_comm_state : types.MID = 1101201
+    MID_comm_sim : types.MID = 1101202
 
-    MID_cam_activate : types.MID = 201601
+    MID_cam_activate : types.MID = 1101801
 
-    MID_motor_TargetCor : types.MID = 201701
-    MID_SendFlightStateToMotor : types.MID = 1407
-    MID_Motor_Parafoil_Activate : types.MID = 1409
-    MID_Motor_Release_Activate : types.MID = 1410  # 번와이어
-    MID_Motor_Egg_Drop_Activate : types.MID = 1411  # 솔레노이드
-    MID_PayloadMotorStop : types.MID = 1412
-    MID_SendImuMotorData : types.MID = 1414
+    MID_motor_TargetCor : types.MID = 1101901
+    MID_motor_state : types.MID = 1101902
+    MID_motor_burnwire : types.MID = 1101903  # 번와이어
+    MID_motor_EggDrop : types.MID = 1101904  # 솔레노이드
 
 
 class CommAppArg:
-    AppID : types.AppID = 16
+    AppID : types.AppID = 12
     AppName : str = "Communication"
-
-    MID_SendHK : types.MID = 1601
 
     MID_RouteCmd_CX : types.MID = 1602
     MID_RouteCmd_ST : types.MID = 1603
@@ -41,22 +36,21 @@ class CommAppArg:
     MID_RouteCmd_CAM : types.MID = 1609
 
 class BarometerAppArg:
-    AppID : types.AppID = 10
+    AppID : types.AppID = 13
     AppName : str = "Barometer"
 
-    MID_SendHK : types.MID = 1001
-    MID_SendBarometerTlmData : types.MID = 1002
-    MID_SendBarometerFlightLogicData : types.MID = 1003
-    MID_ResetBarometerMaxAlt : types.MID = 1004
+    MID_comm_alt : types.MID = 1301201
+
+    MID_flight_alt : types.MID = 1301101
+    MID_flight_ResetMaxAlt : types.MID = 1301102
 
 class ImuAppArg:
     AppID : types.AppID = 13
     AppName : str = "Imu"
 
-    MID_SendHK : types.MID = 1301
     MID_SendImuTlmData : types.MID = 1302
     MID_SendImuFlightLogicData : types.MID = 1304
-
+    # flightlogic 거치지 않고 motor로 바로 imu
 class GpsAppArg:
     AppID : types.AppID = 12
     AppName : str = "GPS"

@@ -54,7 +54,7 @@ def command_handler (Main_Queue:Queue, recv_msg : msgstructure.MsgStructure, bar
 
         # Use mutex to prevent the barometer process sending the wrong maxalt
         with MAXALT_RESET_MUTEX:
-            msgstructure.send_msg(Main_Queue, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
+            msgstructure.send_msg(Main_Queue, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_flight_ResetMaxAlt, "")
 
             # sleep for 0.5 seconds to ensure the max alt reset. Since the mutex is holding, no barometer data can be sent to flightlogic
             time.sleep(0.5)
@@ -178,7 +178,7 @@ def send_barometer_data(Main_Queue : Queue):
             status = msgstructure.send_msg(Main_Queue,
                                             appargs.BarometerAppArg.AppID,
                                             appargs.FlightlogicAppArg.AppID,
-                                            appargs.BarometerAppArg.MID_SendBarometerFlightLogicData,
+                                            appargs.BarometerAppArg.MID_flight_alt,
                                             f"{ALTITUDE}")
             if status == False:
                 events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Flight Logic Message")
@@ -188,7 +188,7 @@ def send_barometer_data(Main_Queue : Queue):
             status = msgstructure.send_msg(Main_Queue,
                                         appargs.BarometerAppArg.AppID,
                                         appargs.CommAppArg.AppID,
-                                        appargs.BarometerAppArg.MID_SendBarometerTlmData,
+                                        appargs.BarometerAppArg.MID_comm_alt,
                                         f"{PRESSURE},{TEMPERATURE},{ALTITUDE}")
             if status == False:
                 events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Tlm Message")

@@ -80,7 +80,7 @@ def test_fill_msg():
     msg = fill_msg(
         appargs.BarometerAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
-        appargs.BarometerAppArg.MID_SendBarometerFlightLogicData,
+        appargs.BarometerAppArg.MID_flight_alt,
         "1013.25,25.5,100.5"
     )
 
@@ -97,7 +97,7 @@ def test_fill_msg():
     invalid_msg = fill_msg(
         appargs.BarometerAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
-        appargs.BarometerAppArg.MID_SendBarometerFlightLogicData,
+        appargs.BarometerAppArg.MID_flight_alt,
         "invalid|data"
     )
 
@@ -193,7 +193,7 @@ def test_message_flow():
             "name": "Barometer",
             "sender": appargs.BarometerAppArg.AppID,
             "receiver": appargs.CommAppArg.AppID,
-            "mid": appargs.BarometerAppArg.MID_SendBarometerTlmData,
+            "mid": appargs.BarometerAppArg.MID_comm_alt,
             "data": "1013.25,25.5,100.5"
         },
         {
@@ -214,7 +214,7 @@ def test_message_flow():
             "name": "Flight Logic State",
             "sender": appargs.FlightlogicAppArg.AppID,
             "receiver": appargs.MotorAppArg.AppID,
-            "mid": appargs.FlightlogicAppArg.MID_SendFlightStateToMotor,
+            "mid": appargs.FlightlogicAppArg.MID_motor_state,
             "data": "3"
         }
     ]

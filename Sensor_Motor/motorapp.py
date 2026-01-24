@@ -93,9 +93,9 @@ _MSG_HANDLERS = {
     appargs.FlightlogicAppArg.MID_SendGpsMotorData: _handle_gps_data,
     appargs.FlightlogicAppArg.MID_SendImuMotorData: _handle_imu_data,
     appargs.FlightlogicAppArg.MID_motor_TargetCor: _handle_target_coords,
-    appargs.FlightlogicAppArg.MID_SendFlightStateToMotor: _handle_flight_state,
-    appargs.FlightlogicAppArg.MID_Motor_Release_Activate: lambda d: _handle_release(),
-    appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate: lambda d: _handle_egg_drop(),
+    appargs.FlightlogicAppArg.MID_motor_state: _handle_flight_state,
+    appargs.FlightlogicAppArg.MID_motor_burnwire: lambda d: _handle_release(),
+    appargs.FlightlogicAppArg.MID_motor_EggDrop: lambda d: _handle_egg_drop(),
     appargs.FlightlogicAppArg.MID_PayloadMotorStop: lambda d: _handle_motor_stop(),
     appargs.CommAppArg.MID_RouteCmd_MEC: _handle_mec,
 }

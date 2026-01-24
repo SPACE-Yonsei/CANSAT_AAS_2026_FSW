@@ -49,7 +49,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
     # Receive Telemetry Data from Apps
 
     # Receive Barometer Data
-    elif recv_msg.MsgID == appargs.BarometerAppArg.MID_SendBarometerTlmData:
+    elif recv_msg.MsgID == appargs.BarometerAppArg.MID_comm_alt:
         sep_data = recv_msg.data.split(",")
         
         # Check the length of separated data
@@ -377,7 +377,7 @@ def cmd_cal(option:str, Main_Queue:Queue):
     # If simulation mode
     if tlm_data.mode == "S":
         SIMP_OFFSET = tlm_data.altitude
-        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
+        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_flight_ResetMaxAlt, "")
 
     return
 
