@@ -207,7 +207,7 @@ def _send_state_to_motor(queue: Queue, state: int):
     _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(state))
 
 
-def _send_sim_status(queue: Queue):
+def _send_sim_status(queue: Queue): # 한번 실행되어서 지웠다.
     status = "S" if (_sim_enable and _sim_active) else "F"
     _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, status)
 

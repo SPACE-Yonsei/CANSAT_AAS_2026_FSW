@@ -168,7 +168,6 @@ def distanceapp_main(Main_Queue: Queue, Main_Pipe: connection.Connection):
     # Start threads
     for thread_name in thread_dict:
         thread_dict[thread_name].start()
-
     try:
         while DISTANCEAPP_RUNSTATUS:
             message = Main_Pipe.recv()
