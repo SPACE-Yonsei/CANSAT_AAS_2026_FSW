@@ -10,7 +10,6 @@ MAINAPP_RUNSTATUS = True
 from lib import appargs
 from lib import msgstructure
 from lib import events
-from lib import types
 
 # Multiprocessing Library is used on Python FSW V2
 # Each application should have its own runloop
