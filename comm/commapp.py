@@ -69,7 +69,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             return
 
     # Receive IMU Data
-    elif recv_msg.MsgID == appargs.ImuAppArg.MID_SendImuTlmData:
+    elif recv_msg.MsgID == appargs.ImuAppArg.MID_comm_euler:
         sep_data = recv_msg.data.split(",")
 
         # Check the length of separated data

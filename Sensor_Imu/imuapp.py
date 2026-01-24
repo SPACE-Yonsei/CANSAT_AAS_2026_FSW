@@ -211,7 +211,7 @@ def send_imu_data(Main_Queue : Queue):
             status = msgstructure.send_msg(Main_Queue,
                                         appargs.ImuAppArg.AppID,
                                         appargs.CommAppArg.AppID,
-                                        appargs.ImuAppArg.MID_SendImuTlmData,
+                                        appargs.ImuAppArg.MID_comm_euler,
                                         f"{IMU_ROLL:.2f},{IMU_PITCH:.2f},{IMU_YAW:.2f},{IMU_ACCX:.2f},{IMU_ACCY:.2f},{IMU_ACCZ:.2f},{IMU_MAGX:.2f},{IMU_MAGY:.2f},{IMU_MAGZ:.2f},{IMU_GYRX:.2f},{IMU_GYRY:.2f},{IMU_GYRZ:.2f}")
             if status == False:
                 events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, "Error When sending Imu Tlm Message")

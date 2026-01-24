@@ -44,10 +44,10 @@ class BarometerAppArg:
     MID_flight_ResetMaxAlt : int = 1301102
 
 class ImuAppArg:
-    AppID : int = 13
+    AppID : int = 14
     AppName : str = "Imu"
 
-    MID_SendImuTlmData : int = 1302
+    MID_comm_euler : int = 1401201
     MID_SendImuFlightLogicData : int = 1304
     # flightlogic 거치지 않고 motor로 바로 imu
 class GpsAppArg:
