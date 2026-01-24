@@ -144,13 +144,13 @@ def init_imu():
                 except Exception as e:
                     continue
             
-            #print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
+            print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
             time.sleep(1)  # 최종 안정화 대기
             
             return i2c, sensor
             
         except Exception as e:
-            #print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+            print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
             if i2c is not None:
                 try:
                     i2c.deinit()  # I2C 해제 후 재시도
@@ -415,7 +415,7 @@ def imu_terminate(i2c):
 
 if __name__ == "__main__":
     i2c, sensor = init_imu()
-    #print(f'Offset : {sensor.offsets_magnetometer}')
+    print(f'Offset : {sensor.offsets_magnetometer}')
     error_count = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
@@ -424,7 +424,7 @@ if __name__ == "__main__":
             data = read_sensor_data(sensor)
             if data == False:
                 error_count += 1
-                #print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
+                print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
                 if error_count >= MAX_CONSECUTIVE_ERRORS:
                     try:
                         imu_terminate(i2c)
