@@ -215,13 +215,13 @@ def terminate_FSW():
     # Set all Runstatus to false
     MAINAPP_RUNSTATUS = False
 
-    msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
-    termination_message_to_send = msgstructure.pack_msg(termination_message)
+    msg=msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
+    packed_msg = msgstructure.pack_msg(msg)
 
     # Send termination message to kill every process
     for appID in app_dict:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID}")
-        app_dict[appID].pipe.send(termination_message_to_send)
+        app_dict[appID].pipe.send(packed_msg)
 
     # Join all processes with timeout, force kill if not responding
     for appID in app_dict:
