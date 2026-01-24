@@ -165,11 +165,11 @@ _MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: _handle_terminate,
     appargs.CommAppArg.MID_RouteCmd_SIM: _handle_sim,
     appargs.CommAppArg.MID_RouteCmd_SIMP: _handle_simp,
-    appargs.BarometerAppArg.MID_SendBarometerFlightLogicData: _handle_barometer,
+    appargs.BarometerAppArg.MID_flight_alt: _handle_barometer,
     appargs.GpsAppArg.MID_SendGpsFlightLogicData: _handle_gps,
     appargs.ImuAppArg.MID_SendImuFlightLogicData: _handle_imu,
     appargs.CommAppArg.MID_RouteCmd_SS: _handle_ss,
-    appargs.BarometerAppArg.MID_ResetBarometerMaxAlt: _handle_reset_alt,
+    appargs.BarometerAppArg.MID_flight_ResetMaxAlt: _handle_reset_alt,
 }
 
 
@@ -262,7 +262,7 @@ def _barometer_logic(alt: float):
         if not _solenoid_done and SOLENOID_ALT_MIN <= alt <= SOLENOID_ALT_MAX:
             if _solenoid_count < 6:
                 _log(f"Safety solenoid ({_solenoid_count + 1}/6) at {alt:.2f}m")
-                msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
+                msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "")
                 _solenoid_count += 1
                 if _solenoid_count >= 5:
                     _solenoid_done = True
@@ -276,7 +276,7 @@ def _barometer_logic(alt: float):
         
         if not _egg_activated and _target_reached and _cnt_egg_drop >= 2:
             _log(f"Egg drop at {alt:.2f}m")
-            msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate, "")
+            msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "")
             _egg_activated = True
         elif not _target_reached and alt <= EGG_DROP_ALT:
             _log(f"At drop altitude ({alt:.2f}m) but target not reached")
@@ -307,7 +307,7 @@ def _to_launch_pad(force: bool = False):
     _recent_alt.clear()
     _log("STATE → LAUNCH_PAD")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
 
 
 def _to_ascent(force: bool = False):
@@ -317,7 +317,7 @@ def _to_ascent(force: bool = False):
     _state = STATE["ASCENT"]
     _log("STATE → ASCENT")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
     msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_cam_activate, "")
 
 
@@ -328,7 +328,7 @@ def _to_apogee(force: bool = False):
     _state = STATE["APOGEE"]
     _log("STATE → APOGEE")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
     msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Parafoil_Activate, "")
 
 
@@ -339,8 +339,8 @@ def _to_release(force: bool = False):
     _state = STATE["RELEASE"]
     _log("STATE → RELEASE (burnwire activate)")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_Motor_Release_Activate, "")
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_burnwire, "")
 
 
 def _to_egg(force: bool = False):
@@ -350,7 +350,7 @@ def _to_egg(force: bool = False):
     _state = STATE["EGG"]
     _log("STATE → EGG")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
 
 
 def _to_landed(force: bool = False):
@@ -360,7 +360,7 @@ def _to_landed(force: bool = False):
     _state = STATE["LANDED"]
     _log("STATE → LANDED (motors stop)")
     prevstate.update_prevstate(_state)
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(_state))
     msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadMotorStop, "")
 
 
