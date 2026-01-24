@@ -4,11 +4,41 @@ import os
 import sys
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+try:
+    import fcntl
+except Exception:
+    fcntl = None
 from io import StringIO
 
 # 이동평균 필터 윈도우
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
 WINDOW_SIZE = 5
+READ_FAIL_REINIT_THRESHOLD = 5
+I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000"))
+I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+
+
+class I2CLock:
+    def __init__(self, path=I2C_LOCK_PATH):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        if fcntl is None:
+            return self
+        self.fd = open(self.path, "w")
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if fcntl is None:
+            return False
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            self.fd.close()
+        except Exception:
+            pass
+        return False
 
 # BNO085 장착 방향 보정
 IMU_MOUNTED_ON_BOTTOM = True  # Z축이 아래로 향함
@@ -27,50 +57,66 @@ def log_imu(text):
     imulogfile.flush()
 
 
-def init_imu():
+def init_imu(i2c=None):
     import board
+    import busio
     import adafruit_bno08x
     from adafruit_bno08x.i2c import BNO08X_I2C
     
-    max_retries = 3
+    max_retries = 5
     last_error = None
-    i2c = board.I2C()
+    if i2c is None:
+        i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 
     for attempt in range(max_retries):
         try:
-            # 디버그 출력 억제
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                sensor = BNO08X_I2C(i2c, debug=False)
+            # 버스 잠금 + 스캔으로 주소 존재 확인
+            with I2CLock():
+                t0 = time.time()
+                while not i2c.try_lock():
+                    time.sleep(0.01)
+                    if time.time() - t0 > 1.0:
+                        raise RuntimeError("I2C lock timeout")
 
-            # 디버그 속성 비활성화
-            if hasattr(sensor, '_debug'):
-                sensor._debug = False
+                try:
+                    addrs = i2c.scan()
+                finally:
+                    i2c.unlock()
 
-            # 필수 기능 활성화 (디버그 출력 억제)
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-                time.sleep(0.05)
-                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-                time.sleep(0.05)
-                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-                time.sleep(0.05)
-                sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-                #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-                #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+            if 0x4A not in addrs and 0x4B not in addrs:
+                last_error = RuntimeError(f"BNO08X not found on I2C bus. scan={addrs}")
+                time.sleep(0.5)
+                continue
 
+            addr = 0x4A if 0x4A in addrs else 0x4B
+
+            with I2CLock():
+                # 디버그 출력 억제
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    sensor = BNO08X_I2C(i2c, address=addr, debug=False)
+
+                # 디버그 속성 비활성화
+                if hasattr(sensor, '_debug'):
+                    sensor._debug = False
+                time.sleep(0.2)
+
+                # 필수 기능 활성화 (디버그 출력 억제)
+                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+                    time.sleep(0.05)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+                    time.sleep(0.05)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+                    time.sleep(0.05)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
             time.sleep(0.5)
-            print("BNO08x initialized")
+            print(f"BNO08x initialized at 0x{addr:02x}")
             return i2c, sensor
 
         except (KeyError, IndexError, OSError, RuntimeError, ValueError) as e:
             last_error = e
-            try:
-                i2c.deinit()
-            except Exception:
-                pass
             if attempt < max_retries - 1:
                 time.sleep(0.5)
-                i2c = board.I2C()
                 continue
             break
 
@@ -82,8 +128,9 @@ def read_sensor_data(sensor):
     
     # 쿼터니언 읽기 (디버그 출력 억제)
     try:
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            quat = sensor.quaternion
+        with I2CLock():
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                quat = sensor.quaternion
         if quat is None:
             return False
     except Exception:
@@ -130,36 +177,32 @@ def read_sensor_data(sensor):
     
     # 가속도, 자이로, 자기장 읽기 (디버그 출력 억제)
     try:
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            accX, accY, accZ = sensor.linear_acceleration
+        with I2CLock():
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                accX, accY, accZ = sensor.acceleration
         accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
-    except:
+    except Exception:
         accX = accY = accZ = 0
     
     try:
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            magX, magY, magZ = sensor.magnetic
+        with I2CLock():
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                magX, magY, magZ = sensor.magnetic
         magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
     except:
         magX = magY = magZ = 0
     
     try:
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            gyrX, gyrY, gyrZ = sensor.gyro
+        with I2CLock():
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                gyrX, gyrY, gyrZ = sensor.gyro
         gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
     except:
         gyrX = gyrY = gyrZ = 0
     
-    # 중력 벡터 → 기울기 계산 (디버그 출력 억제)
-    try:
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            graX, graY, graZ = sensor.gravity
-        graX, graY, graZ = round(graX, 4), round(graY, 4), round(graZ, 4)
-        tilt_angle = round(math.degrees(math.atan2(math.sqrt(graX**2 + graY**2), abs(graZ))), 4)
-        tilt_direction = round(math.degrees(math.atan2(graY, graX)) % 360, 4)
-    except:
-        graX = graY = graZ = 0
-        tilt_angle = tilt_direction = 0
+    # 중력 벡터/기울기 계산은 사용하지 않음 (안정성 위해 읽지 않음)
+    graX = graY = graZ = 0
+    tilt_angle = tilt_direction = 0
     
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ},{tilt_angle},{tilt_direction},{graX},{graY},{graZ}")
     
@@ -178,21 +221,12 @@ def reset_angle_window():
 
 def reinit_imu(i2c, sensor):
     """에러 발생 시 IMU 재초기화"""
-    # I2C 버스 완전히 해제
-    try:
-        if i2c is not None:
-            i2c.deinit()
-    except:
-        pass
-    
-    # 센서 객체 정리
     try:
         if sensor is not None:
             del sensor
-    except:
+    except Exception:
         pass
     
-    # 충분한 대기 시간 (I2C 버스 안정화)
     time.sleep(2)
     
     # 윈도우 리셋
@@ -200,26 +234,35 @@ def reinit_imu(i2c, sensor):
     
     # 재시도 로직 (최대 3회)
     max_retries = 3
+    last_error = None
     for attempt in range(max_retries):
         try:
-            return init_imu()
+            i2c, sensor = init_imu(i2c)
+            return i2c, sensor
         except Exception as e:
+            last_error = e
             if attempt < max_retries - 1:
                 print(f"Reinit attempt {attempt + 1}/{max_retries} failed: {e}")
                 time.sleep(1)
                 continue
-            else:
-                raise RuntimeError(f"Failed to reinitialize IMU after {max_retries} attempts: {e}")
+            break
+    raise RuntimeError(f"Failed to reinitialize IMU after {max_retries} attempts: {last_error}")
 
 
 if __name__ == "__main__":
     i2c, sensor = init_imu()
     
     try:
+        consecutive_failures = 0
         while True:
             data = read_sensor_data(sensor)
             if data == False:
-                # 에러 발생 시 재초기화
+                consecutive_failures += 1
+                if consecutive_failures < READ_FAIL_REINIT_THRESHOLD:
+                    time.sleep(0.1)
+                    continue
+                consecutive_failures = 0
+                # 연속 실패 시 재초기화
                 #print("Read error - Reinitializing...")
                 try:
                     i2c, sensor = reinit_imu(i2c, sensor)
@@ -237,7 +280,7 @@ if __name__ == "__main__":
                         break  # 재초기화 실패 시 루프 종료
                 continue
             
-            error_count = 0
+            consecutive_failures = 0
             print(data)
             time.sleep(0.1)
     
