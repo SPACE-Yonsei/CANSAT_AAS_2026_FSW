@@ -31,13 +31,6 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
     return
 
-def send_hk(Main_Queue : Queue):
-    global ELECTROAPP_RUNSTATUS
-    while ELECTROAPP_RUNSTATUS:
-        electroHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, electroHK, appargs.ElectroAppArg.AppID, appargs.HkAppArg.AppID, appargs.ElectroAppArg.MID_SendHK, str(ELECTROAPP_RUNSTATUS))
-        time.sleep(1)
-    return
 
 ######################################################
 ## INITIALIZATION, TERMINATION                      ##
@@ -124,10 +117,8 @@ def send_electro_data(Main_Queue : Queue):
     global ELECTRO_POWER
     global ELECTROAPP_RUNSTATUS
 
-    ElectroDataToTlmMsg = msgstructure.MsgStructure()
     while ELECTROAPP_RUNSTATUS:
         status = msgstructure.send_msg(Main_Queue,
-                                       ElectroDataToTlmMsg,
                                        appargs.ElectroAppArg.AppID,
                                        appargs.CommAppArg.AppID,
                                        appargs.ElectroAppArg.MID_SendElectroTlmData,
@@ -135,7 +126,7 @@ def send_electro_data(Main_Queue : Queue):
         if status == False:
             events.LogEvent(appargs.ElectroAppArg.AppName, events.EventType.error, "Error when sending electro telemetry data")
         time.sleep(1)
-    
+
     return
 
 # Put user-defined methods here!
@@ -161,7 +152,6 @@ def electroapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
         return
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["ElectroReader_Thread"] = threading.Thread(target=read_electro_data, args=(electro_reader, ), name="ElectroReader_Thread")
     thread_dict["ElectroSender_Thread"] = threading.Thread(target=send_electro_data, args=(Main_Queue, ), name="ElectroSender_Thread")
 

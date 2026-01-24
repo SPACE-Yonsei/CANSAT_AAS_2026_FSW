@@ -146,23 +146,15 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR parsing distance data: {e}, data: {recv_msg.data}")
             return
     
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendCurrentStateToTlm:
+    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_comm_state:
         tlm_data.state = recv_msg.data
 
     # Receive Simulation Status Data
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendSimulationStatustoTlm:
+    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_comm_sim:
         tlm_data.mode = recv_msg.data
 
     else:
         events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
-    return
-
-def send_hk(Main_Queue : Queue):
-    global COMMAPP_RUNSTATUS
-    while COMMAPP_RUNSTATUS:
-        commHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, commHK, appargs.CommAppArg.AppID, appargs.HkAppArg.AppID, appargs.CommAppArg.MID_SendHK, str(COMMAPP_RUNSTATUS))
-        time.sleep(1)
     return
 
 ######################################################
@@ -352,18 +344,14 @@ def cmd_st(option:str, Main_Queue:Queue):
     return
 
 def cmd_sim(option:str, Main_Queue:Queue):
-    RouteSimCmdMsg = msgstructure.MsgStructure()
-
     # Route the simulation command to flightlogic app
-    msgstructure.send_msg(Main_Queue, RouteSimCmdMsg, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIM, option)
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIM, option)
     return
 
 def cmd_simp(option:str, Main_Queue:Queue):
     global tlm_data
     global SIMP_OFFSET
 
-    RouteSimpCmdMsg = msgstructure.MsgStructure()
-    
     sea_level_pressure = 1013.25
 
     recv_simp = float(option) / 100
@@ -373,8 +361,8 @@ def cmd_simp(option:str, Main_Queue:Queue):
     tlm_data.altitude = recv_alt - SIMP_OFFSET
 
     # Route the simulation pressure value to flightlogic app
-    msgstructure.send_msg(Main_Queue, RouteSimpCmdMsg, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIMP, str(tlm_data.altitude))
-    
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIMP, str(tlm_data.altitude))
+
     return
 
 def cmd_cal(option:str, Main_Queue:Queue):
@@ -383,31 +371,24 @@ def cmd_cal(option:str, Main_Queue:Queue):
 
     # If flight mod
     if tlm_data.mode == "F":
-        RouteCalCmdMsg = msgstructure.MsgStructure()
-
         # Route The Calibration command to Baromter app
-        msgstructure.send_msg(Main_Queue, RouteCalCmdMsg, appargs.CommAppArg.AppID, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, "")
-    
+        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, "")
+
     # If simulation mode
     if tlm_data.mode == "S":
         SIMP_OFFSET = tlm_data.altitude
-        ResetBarometerMaxAltCmd = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, ResetBarometerMaxAltCmd, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
+        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
 
     return
 
 def cmd_mec(option:str, Main_Queue:Queue):
-    RouteMecCmdMsg = msgstructure.MsgStructure()
-
     # Route the mechanism activation command to motor app
-    msgstructure.send_msg(Main_Queue, RouteMecCmdMsg, appargs.CommAppArg.AppID, appargs.motorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option)
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.motorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option)
 
     return
 
 def cmd_ss(option:str, Main_Queue:Queue):
-
-    RouteSsCmdMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, RouteSsCmdMsg, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SS, option)
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SS, option)
 
     return
 
@@ -418,9 +399,7 @@ def cmd_rbt(option:str, Main_Queue:Queue):
     return
 
 def cmd_cam(option:str, Main_Queue:Queue):
-
-    RouteCamCmdMsg = msgstructure.MsgStructure()
-    msgstructure.send_msg(Main_Queue, RouteCamCmdMsg, appargs.CommAppArg.AppID, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, option)
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, option)
     return
 
 # This fuction reads command from Ground Station
@@ -686,7 +665,6 @@ def commapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     serial_instance = commapp_init()
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["TlmSender_Thread"] = threading.Thread(target=send_tlm, args=(serial_instance, ), name="TlmSender_Thread")
     thread_dict["CmdReader_Thread"] = threading.Thread(target=read_cmd, args=(Main_Queue, serial_instance), name="CmdReader_Thread")
 

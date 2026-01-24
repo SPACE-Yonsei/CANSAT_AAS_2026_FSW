@@ -100,7 +100,7 @@ def _handle_sim(data: str):
         _log("Simulation disabled")
     # 시뮬레이션 상태 전송
     status = "S" if (_sim_enable and _sim_active) else "F"
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendSimulationStatustoTlm, status)
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, status)
 
 
 def _handle_simp(data: str):
@@ -318,7 +318,7 @@ def _to_ascent(force: bool = False):
     _log("STATE → ASCENT")
     prevstate.update_prevstate(_state)
     msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendFlightStateToMotor, str(_state))
-    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
+    msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_cam_activate, "")
 
 
 def _to_apogee(force: bool = False):
@@ -376,7 +376,7 @@ def _send_hk():
 
 def _send_current_state():
     while _running:
-        msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCurrentStateToTlm, STATE_NAMES[_state])
+        msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_state, STATE_NAMES[_state])
         time.sleep(1)
 
 
@@ -411,7 +411,7 @@ def _init():
         
         # 목표 좌표 전송
         if _target_lat != 0.0 or _target_lon != 0.0:
-            msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SetTargetCoordinates, f"{_target_lat},{_target_lon}")
+            msgstructure.send_msg(_main_queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{_target_lat},{_target_lon}")
         
         _log(f"Initialized with state={_state}")
         

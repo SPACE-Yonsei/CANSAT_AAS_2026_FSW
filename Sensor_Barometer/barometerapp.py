@@ -54,8 +54,7 @@ def command_handler (Main_Queue:Queue, recv_msg : msgstructure.MsgStructure, bar
 
         # Use mutex to prevent the barometer process sending the wrong maxalt
         with MAXALT_RESET_MUTEX:
-            ResetBarometerMaxAltCmd = msgstructure.MsgStructure()
-            msgstructure.send_msg(Main_Queue, ResetBarometerMaxAltCmd, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
+            msgstructure.send_msg(Main_Queue, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_ResetBarometerMaxAlt, "")
 
             # sleep for 0.5 seconds to ensure the max alt reset. Since the mutex is holding, no barometer data can be sent to flightlogic
             time.sleep(0.5)
@@ -68,14 +67,6 @@ def command_handler (Main_Queue:Queue, recv_msg : msgstructure.MsgStructure, bar
         # Don't log error for termination message (MID 100) as it's already handled above
         if recv_msg.MsgID != appargs.MainAppArg.MID_TerminateProcess:
             events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
-    return
-
-def send_hk(Main_Queue : Queue):
-    global BAROMETERAPP_RUNSTATUS
-    while BAROMETERAPP_RUNSTATUS:
-        barometerHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, barometerHK, appargs.BarometerAppArg.AppID, appargs.HkAppArg.AppID, appargs.BarometerAppArg.MID_SendHK, str(BAROMETERAPP_RUNSTATUS))
-        time.sleep(1)
     return
 
 ######################################################
@@ -178,18 +169,13 @@ def send_barometer_data(Main_Queue : Queue):
     # Do not forget to use runstatus variable on a global scope
     global BAROMETERAPP_RUNSTATUS
 
-    # Create Message structure
-    BarometerDataToTlmMsg = msgstructure.MsgStructure()
-    BarometerDataToFlightLogicMsg = msgstructure.MsgStructure()
-
     msg_send_count = 0
 
     while BAROMETERAPP_RUNSTATUS:
-        
+
         with MAXALT_RESET_MUTEX:
             # Send Message to Flight Logic in 10Hz
             status = msgstructure.send_msg(Main_Queue,
-                                            BarometerDataToFlightLogicMsg,
                                             appargs.BarometerAppArg.AppID,
                                             appargs.FlightlogicAppArg.AppID,
                                             appargs.BarometerAppArg.MID_SendBarometerFlightLogicData,
@@ -197,10 +183,9 @@ def send_barometer_data(Main_Queue : Queue):
             if status == False:
                 events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Flight Logic Message")
 
-        if msg_send_count > 10 : 
+        if msg_send_count > 10 :
             # Send telemetry message to COMM app in 1Hz
-            status = msgstructure.send_msg(Main_Queue, 
-                                        BarometerDataToTlmMsg, 
+            status = msgstructure.send_msg(Main_Queue,
                                         appargs.BarometerAppArg.AppID,
                                         appargs.CommAppArg.AppID,
                                         appargs.BarometerAppArg.MID_SendBarometerTlmData,
@@ -209,7 +194,7 @@ def send_barometer_data(Main_Queue : Queue):
                 events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Tlm Message")
 
             msg_send_count = 0
-        
+
         # Increment message send counter, Sleep 1 second
         msg_send_count += 1
         time.sleep(0.1)
@@ -232,7 +217,6 @@ def barometerapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     i2c_instance, barometer_instance = barometerapp_init()
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["SendBarometerData_Thread"] = threading.Thread(target=send_barometer_data, args=(Main_Queue, ), name="SendBarometerData_Thread")
     thread_dict["ReadBarometerData_Thread"] = threading.Thread(target=read_barometer_data, args=(barometer_instance, ), name="ReadBarometerData_Thread")
 

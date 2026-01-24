@@ -42,7 +42,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         elif recv_msg.data == "OFF":
             picam_stop_recording()
     
-    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_SendCameraActivateToCam:
+    elif recv_msg.MsgID == appargs.FlightlogicAppArg.MID_cam_activate:
         # events.LogEvent(appargs.CameraAppArg.AppName, events.EventType.info, f"CAMERA ACTIVATION BY LOGIC")
         picam_start_recording()
 
@@ -51,13 +51,6 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         
     return
 
-def send_hk(Main_Queue : Queue):
-    global CAMERAAPP_RUNSTATUS
-    while CAMERAAPP_RUNSTATUS:
-        cameraHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, cameraHK, appargs.CameraAppArg.AppID, appargs.HkAppArg.AppID, appargs.CameraAppArg.MID_SendHK, str(CAMERAAPP_RUNSTATUS))
-        time.sleep(1)
-    return
 
 ######################################################
 ## INITIALIZATION, TERMINATION                      ##
@@ -182,7 +175,6 @@ def cameraapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     picam_instance, picamencoder_instance = cameraapp_init()
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["PicamRecorder_Thread"]  = threading.Thread(target=picam_record_thread, args=(picam_instance, picamencoder_instance), name="PicamRecorder_Thread")
 
     # Spawn Each Threads

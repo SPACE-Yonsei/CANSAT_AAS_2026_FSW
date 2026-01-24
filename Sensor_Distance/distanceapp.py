@@ -35,13 +35,6 @@ def command_handler(recv_msg: msgstructure.MsgStructure):
     return
 
 
-def send_hk(Main_Queue: Queue):
-    global DISTANCEAPP_RUNSTATUS
-    while DISTANCEAPP_RUNSTATUS:
-        distanceHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, distanceHK, appargs.DistanceAppArg.AppID, appargs.HkAppArg.AppID, appargs.DistanceAppArg.MID_SendHK, str(DISTANCEAPP_RUNSTATUS))
-        time.sleep(1)
-    return
 
 
 ######################################################
@@ -124,14 +117,10 @@ def send_distance_data(Main_Queue: Queue):
     global DISTANCE_MM
     global DISTANCEAPP_RUNSTATUS
 
-    DistanceToFlightLogicMsg = msgstructure.MsgStructure()
-    DistanceToTlmMsg = msgstructure.MsgStructure()
-
     while DISTANCEAPP_RUNSTATUS:
         # Send to flight logic (for EGG_RELEASE trigger)
         msgstructure.send_msg(
             Main_Queue,
-            DistanceToFlightLogicMsg,
             appargs.DistanceAppArg.AppID,
             appargs.FlightlogicAppArg.AppID,
             appargs.DistanceAppArg.MID_SendDistanceFlightLogicData,
@@ -141,7 +130,6 @@ def send_distance_data(Main_Queue: Queue):
         # Send to telemetry
         msgstructure.send_msg(
             Main_Queue,
-            DistanceToTlmMsg,
             appargs.DistanceAppArg.AppID,
             appargs.CommAppArg.AppID,
             appargs.DistanceAppArg.MID_SendDistanceTlmData,
@@ -174,7 +162,6 @@ def distanceapp_main(Main_Queue: Queue, Main_Pipe: connection.Connection):
         return
 
     # Spawn threads
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue,), name="HKSender_Thread")
     thread_dict["DistanceReader_Thread"] = threading.Thread(target=read_distance_data, args=(distance_sensor,), name="DistanceReader_Thread")
     thread_dict["DistanceSender_Thread"] = threading.Thread(target=send_distance_data, args=(Main_Queue,), name="DistanceSender_Thread")
 

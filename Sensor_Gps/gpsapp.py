@@ -36,14 +36,6 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
     return
 
-def send_hk(Main_Queue : Queue):
-    global GPSAPP_RUNSTATUS
-    while GPSAPP_RUNSTATUS:
-        gpsHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, gpsHK, appargs.GpsAppArg.AppID, appargs.HkAppArg.AppID, appargs.GpsAppArg.MID_SendHK, str(GPSAPP_RUNSTATUS))
-        time.sleep(1)
-    return
-
 ######################################################
 ## INITIALIZATION, TERMINATION                      ##
 ######################################################
@@ -103,9 +95,6 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
     GPS_SATS = 0
     GPS_FIX_QUALITY = 0
 
-    SendGPSTlmDataMsg = msgstructure.MsgStructure()
-    Send_Gps_FlightLogic_Data_msg = msgstructure.MsgStructure()
-
     send_counter = 0
 
     while GPSAPP_RUNSTATUS:
@@ -153,12 +142,12 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         # FlightLogic으로 데이터 전송 (매 루프마다)
         if GPS_LAT != 0.0 or GPS_LON != 0.0:
             msgstructure.send_msg(
-                Main_Queue, Send_Gps_FlightLogic_Data_msg,
+                Main_Queue,
                 appargs.GpsAppArg.AppID, appargs.FlightlogicAppArg.AppID,
                 appargs.GpsAppArg.MID_SendGpsFlightLogicData,
                 f"{GPS_LAT},{GPS_LON}"
             )
-        
+
         send_counter += 1
         if send_counter >= 10:
             # Send telemetry message to COMM app
@@ -166,7 +155,6 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
             status = msgstructure.send_msg(
                 Main_Queue,
-                SendGPSTlmDataMsg,
                 appargs.GpsAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.GpsAppArg.MID_SendGpsTlmData,
@@ -202,7 +190,6 @@ def gpsapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
         return
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["ReadAndSendGpsData_Thread"] = threading.Thread(target=read_and_send_gps_data, args=(Main_Queue, gps_instance,  ), name="ReadAndSendGpsData_Thread")
 
     # Spawn Each Threads

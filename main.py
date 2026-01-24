@@ -55,12 +55,6 @@ app_dict = dict[types.AppID, app_elements]()
 # log_queue is passed for multiprocessing-safe logging  #
 #########################################################
 
-def hkapp_launcher(queue, pipe, log_queue):
-    from lib import events
-    events.init_events_subprocess(log_queue)
-    from hk import hkapp
-    hkapp.hkapp_main(queue, pipe)
-
 def barometerapp_launcher(queue, pipe, log_queue):
     from lib import events
     events.init_events_subprocess(log_queue)
@@ -114,15 +108,6 @@ def distanceapp_launcher(queue, pipe, log_queue):
     events.init_events_subprocess(log_queue)
     from Sensor_Distance import distanceapp
     distanceapp.distanceapp_main(queue, pipe)
-
-#########################################################
-# HK APP                                                #
-#########################################################
-parent_pipe, child_pipe = Pipe()
-hkapp_elements = app_elements()
-hkapp_elements.process = Process(target=hkapp_launcher, args=(main_queue, child_pipe, log_queue))
-hkapp_elements.pipe = parent_pipe
-app_dict[appargs.HkAppArg.AppID] = hkapp_elements
 
 #########################################################
 # BarometerApp                                          #
@@ -231,8 +216,7 @@ def terminate_FSW():
     # Set all Runstatus to false
     MAINAPP_RUNSTATUS = False
 
-    termination_message = msgstructure.MsgStructure()
-    msgstructure.fill_msg(termination_message, appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
+    msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
     termination_message_to_send = msgstructure.pack_msg(termination_message)
 
     # Send termination message to kill every process

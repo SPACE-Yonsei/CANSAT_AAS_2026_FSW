@@ -92,7 +92,7 @@ _MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: _handle_terminate,
     appargs.FlightlogicAppArg.MID_SendGpsMotorData: _handle_gps_data,
     appargs.FlightlogicAppArg.MID_SendImuMotorData: _handle_imu_data,
-    appargs.FlightlogicAppArg.MID_SetTargetCoordinates: _handle_target_coords,
+    appargs.FlightlogicAppArg.MID_motor_TargetCor: _handle_target_coords,
     appargs.FlightlogicAppArg.MID_SendFlightStateToMotor: _handle_flight_state,
     appargs.FlightlogicAppArg.MID_Motor_Release_Activate: lambda d: _handle_release(),
     appargs.FlightlogicAppArg.MID_Motor_Egg_Drop_Activate: lambda d: _handle_egg_drop(),
@@ -119,20 +119,6 @@ def _update_parafoil():
     turn = parafoil_control.calculate_motor_control(_yaw, _lat, _lon)
     Motor_Parafoil.rotate_parafoil_motor(_pi, turn)
 
-# =============================================================================
-# HK 전송
-# =============================================================================
-def _send_hk(queue: Queue):
-    while _running:
-        msg = msgstructure.MsgStructure()
-        msgstructure.send_msg(
-            queue, msg,
-            appargs.MotorAppArg.AppID,
-            appargs.HkAppArg.AppID,
-            appargs.MotorAppArg.MID_SendHK,
-            str(_running)
-        )
-        time.sleep(1)
 
 # =============================================================================
 # 초기화 / 종료
@@ -185,11 +171,7 @@ def motorapp_main(main_queue: Queue, main_pipe: connection.Connection):
     
     if not _init():
         return
-    
-    # HK 스레드 시작
-    _threads["HK"] = threading.Thread(target=_send_hk, args=(main_queue,), daemon=True)
-    _threads["HK"].start()
-    
+
     try:
         while _running:
             raw = main_pipe.recv()

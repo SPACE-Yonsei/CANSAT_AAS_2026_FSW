@@ -200,8 +200,7 @@ def _dispatch(msg: msgstructure.MsgStructure, queue: Queue):
 # =============================================================================
 
 def _send_msg(queue: Queue, receiver: int, mid: int, data: str = ""):
-    msg = msgstructure.MsgStructure()
-    msgstructure.send_msg(queue, msg, appargs.FlightlogicAppArg.AppID, receiver, mid, data)
+    msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, receiver, mid, data)
 
 
 def _send_state_to_motor(queue: Queue, state: int):
@@ -210,7 +209,7 @@ def _send_state_to_motor(queue: Queue, state: int):
 
 def _send_sim_status(queue: Queue):
     status = "S" if (_sim_enable and _sim_active) else "F"
-    _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendSimulationStatustoTlm, status)
+    _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, status)
 
 
 # =============================================================================
@@ -364,7 +363,7 @@ def _to_ascent(queue: Queue, force: bool = False):
     _log("STATE → ASCENT")
     prevstate.update_prevstate(_state)
     _send_state_to_motor(queue, _state)
-    _send_msg(queue, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCameraActivateToCam, "")
+    _send_msg(queue, appargs.CameraAppArg.AppID, appargs.FlightlogicAppArg.MID_cam_activate, "")
 
 
 def _to_apogee(queue: Queue, force: bool = False):
@@ -418,15 +417,9 @@ def _to_landed(queue: Queue, force: bool = False):
 # 주기적 전송
 # =============================================================================
 
-def _send_hk(queue: Queue):
-    while _running:
-        _send_msg(queue, appargs.HkAppArg.AppID, appargs.FlightlogicAppArg.MID_SendHK, str(_running))
-        time.sleep(1)
-
-
 def _send_current_state(queue: Queue):
     while _running:
-        _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_SendCurrentStateToTlm, STATE_NAMES[_state])
+        _send_msg(queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_state, STATE_NAMES[_state])
         time.sleep(1)
 
 
@@ -461,7 +454,7 @@ def _init(queue: Queue):
         
         # 목표 좌표 전송
         if _target_lat != 0.0 or _target_lon != 0.0:
-            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SetTargetCoordinates, f"{_target_lat},{_target_lon}")
+            _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{_target_lat},{_target_lon}")
         
         _log(f"Initialized with state={_state}")
         
@@ -492,7 +485,6 @@ def flightlogicapp_main(main_queue: Queue, main_pipe: connection.Connection):
     _init(main_queue)
     
     # 스레드 시작
-    _threads["HK"] = threading.Thread(target=_send_hk, args=(main_queue,), daemon=True)
     _threads["State"] = threading.Thread(target=_send_current_state, args=(main_queue,), daemon=True)
     for t in _threads.values():
         t.start()

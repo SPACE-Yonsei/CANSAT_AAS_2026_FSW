@@ -36,13 +36,6 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
     return
 
-def send_hk(Main_Queue : Queue):
-    global IMUAPP_RUNSTATUS
-    while IMUAPP_RUNSTATUS:
-        imuHK = msgstructure.MsgStructure()
-        msgstructure.send_msg(Main_Queue, imuHK, appargs.ImuAppArg.AppID, appargs.HkAppArg.AppID, appargs.ImuAppArg.MID_SendHK, str(IMUAPP_RUNSTATUS))
-        time.sleep(1)
-    return
 
 ######################################################
 ## INITIALIZATION, TERMINATION                      ##
@@ -197,21 +190,17 @@ def send_imu_data(Main_Queue : Queue):
     global IMU_GRAVITY_X
     global IMU_GRAVITY_Y
     global IMU_GRAVITY_Z
-    
+
     global IMUAPP_RUNSTATUS
 
-    ImuDataToTlmMsg = msgstructure.MsgStructure()
-    YawData_To_FlightLogic_Msg = msgstructure.MsgStructure()
-    
     send_counter = 0
 
     while IMUAPP_RUNSTATUS:
-        
+
         send_counter += 1
 
         # Send Yaw data to FlightLogic
-        status = msgstructure.send_msg(Main_Queue, 
-                                       YawData_To_FlightLogic_Msg,
+        status = msgstructure.send_msg(Main_Queue,
                                        appargs.ImuAppArg.AppID,
                                        appargs.FlightlogicAppArg.AppID,
                                        appargs.ImuAppArg.MID_SendImuFlightLogicData,
@@ -219,8 +208,7 @@ def send_imu_data(Main_Queue : Queue):
 
         if send_counter >= 10 :
             # Send telemetry message to COMM app
-            status = msgstructure.send_msg(Main_Queue, 
-                                        ImuDataToTlmMsg, 
+            status = msgstructure.send_msg(Main_Queue,
                                         appargs.ImuAppArg.AppID,
                                         appargs.CommAppArg.AppID,
                                         appargs.ImuAppArg.MID_SendImuTlmData,
@@ -228,7 +216,7 @@ def send_imu_data(Main_Queue : Queue):
             if status == False:
                 events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, "Error When sending Imu Tlm Message")
             send_counter = 0
-            
+
         # Sleep 1 second
         time.sleep(0.1)
 
@@ -255,7 +243,6 @@ def imuapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
         return
 
     # Spawn SB Message Listner Thread
-    thread_dict["HKSender_Thread"] = threading.Thread(target=send_hk, args=(Main_Queue, ), name="HKSender_Thread")
     thread_dict["ReadImuData_Thread"] = threading.Thread(target=read_imu_data, args=(imu_instance, ), name="ReadImuData_Thread")
     thread_dict["SendImuData_Thread"] = threading.Thread(target=send_imu_data, args=(Main_Queue, ), name="SendImuData_Thread")
 
