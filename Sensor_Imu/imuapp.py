@@ -182,6 +182,8 @@ def read_imu_data(imu_instance):
 
             # Continue if Quaternion data is empty
             if rcv_data == False:
+                if not IMUAPP_RUNSTATUS:
+                    break
                 IMU_ERROR_COUNT += 1
                 events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, 
                                f"IMU read error ({IMU_ERROR_COUNT}/{MAX_CONSECUTIVE_ERRORS})")

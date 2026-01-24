@@ -232,6 +232,9 @@ def reinit_imu(i2c, sensor):
     last_error = None
     for attempt in range(max_retries):
         try:
+            # busio.I2C 객체가 깨졌거나 deinit된 경우 새로 생성
+            if i2c is not None and not hasattr(i2c, "_i2c"):
+                i2c = None
             i2c, sensor = init_imu(i2c)
             return i2c, sensor
         except Exception as e:
