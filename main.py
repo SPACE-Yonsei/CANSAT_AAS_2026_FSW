@@ -222,7 +222,10 @@ def terminate_FSW():
     # Send termination message to kill every process
     for appID in app_dict:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID}")
-        app_dict[appID].pipe.send(packed_msg)
+        try:
+            app_dict[appID].pipe.send(packed_msg)
+        except (OSError, BrokenPipeError):
+             events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, f"Pipe broken for AppID {appID}, process may have already exited")
 
     # Join all processes with timeout, force kill if not responding
     for appID in app_dict:

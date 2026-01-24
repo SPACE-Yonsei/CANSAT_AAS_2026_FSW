@@ -56,7 +56,7 @@ rm -f raspi-blinka.py  # Clean up downloaded file
 echo ""
 echo "Installing Adafruit sensor libraries"
 pip3 install adafruit-circuitpython-bmp3xx
-pip3 install adafruit-circuitpython-bno055
+pip3 install adafruit-circuitpython-bno08x
 pip3 install adafruit-circuitpython-motor
 pip3 install adafruit-circuitpython-ina23x
 

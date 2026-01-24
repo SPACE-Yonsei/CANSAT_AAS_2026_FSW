@@ -12,6 +12,10 @@ if [ "${python_path}" == "not_configured" ]; then
 echo "Startup Script is not Configured! Please Edit the file"
 
 else
+echo "Starting pigpiod..."
+sudo pigpiod
+sleep 1
+
 echo "Path > ${python_path}"
 echo "venv > ${venv_path}/activate"
 . ${venv_path}/activate;

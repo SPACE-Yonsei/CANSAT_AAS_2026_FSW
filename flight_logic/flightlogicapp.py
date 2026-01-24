@@ -388,17 +388,10 @@ def to_landed(queue: Queue, force: bool = False):
     global state
     if not can_transition(force):
         return
-<<<<<<< HEAD
     state = STATE["LANDED"]
     log("STATE → LANDED (motors stop)")
     prevstate.update_prevstate(state)
     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
-=======
-    _state = STATE["LANDED"]
-    _log("STATE → LANDED (motors stop)")
-    prevstate.update_prevstate(_state)
-    _send_state_to_motor(queue, _state)  # state=5로 모터 정지
->>>>>>> daaaf3ef5e67c0c3fcb630b9be034f798f09f7c8
 
 
 # =============================================================================
