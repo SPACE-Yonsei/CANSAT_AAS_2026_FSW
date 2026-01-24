@@ -225,11 +225,12 @@ def read_imu_data(imu_instance):
             IMU_GYRZ        = rcv_data[11]
             
             # 중력 벡터로부터 계산된 기울기 정보
-            IMU_TILT_ANGLE      = rcv_data[12]  # 기울기 각도 (0-90도)
-            IMU_TILT_DIRECTION  = rcv_data[13]  # 기울기 방향 (0-360도)
-            IMU_GRAVITY_X       = rcv_data[14]  # 중력 벡터 X
-            IMU_GRAVITY_Y       = rcv_data[15]  # 중력 벡터 Y
-            IMU_GRAVITY_Z       = rcv_data[16]  # 중력 벡터 Z
+            # tilt/gravity outputs removed in imu.read_sensor_data
+            IMU_TILT_ANGLE      = 0.0
+            IMU_TILT_DIRECTION  = 0.0
+            IMU_GRAVITY_X       = 0.0
+            IMU_GRAVITY_Y       = 0.0
+            IMU_GRAVITY_Z       = 0.0
 
             # Write latest IMU data for IPC consumers
             write_imu_ipc()

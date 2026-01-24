@@ -110,7 +110,6 @@ def init_imu(i2c=None):
                     time.sleep(0.05)
                     sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
             time.sleep(0.5)
-            print(f"BNO08x initialized at 0x{addr:02x}")
             return i2c, sensor
 
         except (KeyError, IndexError, OSError, RuntimeError, ValueError) as e:
@@ -200,13 +199,9 @@ def read_sensor_data(sensor):
     except:
         gyrX = gyrY = gyrZ = 0
     
-    # 중력 벡터/기울기 계산은 사용하지 않음 (안정성 위해 읽지 않음)
-    graX = graY = graZ = 0
-    tilt_angle = tilt_direction = 0
+    log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ}")
     
-    log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ},{tilt_angle},{tilt_direction},{graX},{graY},{graZ}")
-    
-    return (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ, tilt_angle, tilt_direction, graX, graY, graZ)
+    return (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ)
 
 
 def imu_terminate(i2c):
@@ -242,7 +237,6 @@ def reinit_imu(i2c, sensor):
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
-                print(f"Reinit attempt {attempt + 1}/{max_retries} failed: {e}")
                 time.sleep(1)
                 continue
             break
@@ -262,21 +256,14 @@ if __name__ == "__main__":
                     time.sleep(0.1)
                     continue
                 consecutive_failures = 0
-                # 연속 실패 시 재초기화
-                #print("Read error - Reinitializing...")
                 try:
                     i2c, sensor = reinit_imu(i2c, sensor)
-                    #print("Reinitialization successful")
                     time.sleep(0.5)  # 재초기화 후 안정화 대기
                 except Exception as e:
-                    #print(f"Reinitialization failed: {e}")
-                    #print("Retrying in 2 seconds...")
-                    time.sleep(2)
+                    time.sleep(0.5)
                     try:
-                        i2c, sensor = reinit_imu(i2c, sensor)
-                        #print("Reinitialization successful after retry")
+                        i2c, sensor = reinit_imu(i2c, sensor)     
                     except Exception as e2:
-                        #print(f"Reinitialization failed again: {e2}")
                         break  # 재초기화 실패 시 루프 종료
                 continue
             
