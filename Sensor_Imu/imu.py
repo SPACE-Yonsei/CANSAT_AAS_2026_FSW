@@ -157,13 +157,38 @@ def reset_angle_window():
 
 def reinit_imu(i2c, sensor):
     """에러 발생 시 IMU 재초기화"""
+    # I2C 버스 완전히 해제
     try:
-        imu_terminate(i2c)
+        if i2c is not None:
+            i2c.deinit()
     except:
         pass
-    time.sleep(1)
+    
+    # 센서 객체 정리
+    try:
+        if sensor is not None:
+            del sensor
+    except:
+        pass
+    
+    # 충분한 대기 시간 (I2C 버스 안정화)
+    time.sleep(2)
+    
+    # 윈도우 리셋
     reset_angle_window()
-    return init_imu()
+    
+    # 재시도 로직 (최대 3회)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return init_imu()
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Reinit attempt {attempt + 1}/{max_retries} failed: {e}")
+                time.sleep(1)
+                continue
+            else:
+                raise RuntimeError(f"Failed to reinitialize IMU after {max_retries} attempts: {e}")
 
 
 if __name__ == "__main__":
@@ -173,10 +198,22 @@ if __name__ == "__main__":
         while True:
             data = read_sensor_data(sensor)
             if data == False:
-                # 에러 발생 시 즉시 재초기화
+                # 에러 발생 시 재초기화
                 print("Read error - Reinitializing...")
-                i2c, sensor = reinit_imu(i2c, sensor)
-                time.sleep(0.1)
+                try:
+                    i2c, sensor = reinit_imu(i2c, sensor)
+                    print("Reinitialization successful")
+                    time.sleep(0.5)  # 재초기화 후 안정화 대기
+                except Exception as e:
+                    print(f"Reinitialization failed: {e}")
+                    print("Retrying in 2 seconds...")
+                    time.sleep(2)
+                    try:
+                        i2c, sensor = reinit_imu(i2c, sensor)
+                        print("Reinitialization successful after retry")
+                    except Exception as e2:
+                        print(f"Reinitialization failed again: {e2}")
+                        break  # 재초기화 실패 시 루프 종료
                 continue
             
             error_count = 0
