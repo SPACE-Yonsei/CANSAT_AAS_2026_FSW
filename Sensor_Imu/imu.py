@@ -42,18 +42,24 @@ def init_imu():
     import board
     import adafruit_bno08x
     from adafruit_bno08x.i2c import BNO08X_I2C
+    import time
     
     # Initialize I2C interface
     i2c = board.I2C()  # board.SCL과 board.SDA 사용
     sensor = BNO08X_I2C(i2c)
 
-    # BNO085는 초기화 시 자동으로 기본 보고서 활성화됨
-    # 필요시 set_report_period()로 보고 주기 설정 가능
-    import time
+    # 쿼터니언 (회전 벡터) 보고서 활성화
+    # BNO_REPORT_ROTATION_VECTOR = 쿼터니언 데이터
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+    
+    # 다른 필요한 센서 활성화
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+    
     time.sleep(1)  # 센서 안정화 대기
-
-    # BNO085는 자동 보정 기능이 있어서 수동 offset 설정은 불필요
-    # 하지만 호환성을 위해 유지
     
     return i2c, sensor
 
