@@ -137,7 +137,7 @@ def read_sensor_data(sensor):
     except KeyError as e:
         # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
         # Return False to indicate data read failure, let caller handle retry
-        print(f"IMU KeyError (possible I2C bus noise): {e}")
+        print("IMU KeyError (possible I2C bus noise)")
         return False
     except (OSError, RuntimeError) as e:
         # I2C communication error
@@ -347,7 +347,6 @@ if __name__ == "__main__":
                 error_count += 1
                 print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
                 if error_count >= MAX_CONSECUTIVE_ERRORS:
-                    print("Too many consecutive errors, reinitializing IMU...")
                     try:
                         imu_terminate(i2c)
                     except:
