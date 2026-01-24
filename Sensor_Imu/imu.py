@@ -37,8 +37,8 @@ def init_imu():
     sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
     sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
     sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+    #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+    #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
     
     time.sleep(0.5)
     print("BNO08x initialized")
