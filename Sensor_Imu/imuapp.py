@@ -10,6 +10,8 @@ import signal
 from multiprocessing import Queue, connection
 import threading
 import time
+import json
+import os
 
 # Import IMU sensor library
 from Sensor_Imu import imu
@@ -108,6 +110,36 @@ IMU_GRAVITY_X: float = 0.0
 IMU_GRAVITY_Y: float = 0.0
 IMU_GRAVITY_Z: float = 0.0
 
+IMU_IPC_PATH = os.getenv("IMU_IPC_PATH", "/tmp/imu_latest.json")
+
+def write_imu_ipc():
+    if not IMU_IPC_PATH:
+        return
+    payload = {
+        "ts": time.time(),
+        "roll": IMU_ROLL,
+        "pitch": IMU_PITCH,
+        "yaw": IMU_YAW,
+        "acc": [IMU_ACCX, IMU_ACCY, IMU_ACCZ],
+        "mag": [IMU_MAGX, IMU_MAGY, IMU_MAGZ],
+        "gyro": [IMU_GYRX, IMU_GYRY, IMU_GYRZ],
+        "tilt_angle": IMU_TILT_ANGLE,
+        "tilt_direction": IMU_TILT_DIRECTION,
+        "gravity": [IMU_GRAVITY_X, IMU_GRAVITY_Y, IMU_GRAVITY_Z],
+    }
+    tmp_path = f"{IMU_IPC_PATH}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        os.replace(tmp_path, IMU_IPC_PATH)
+    except Exception:
+        # IPC write failures should not kill the IMU loop
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
 # IMU error tracking for reinit
 IMU_ERROR_COUNT: int = 0
 MAX_CONSECUTIVE_ERRORS: int = 3  # 3회 연속 에러 시 재초기화
@@ -198,6 +230,9 @@ def read_imu_data(imu_instance):
             IMU_GRAVITY_X       = rcv_data[14]  # 중력 벡터 X
             IMU_GRAVITY_Y       = rcv_data[15]  # 중력 벡터 Y
             IMU_GRAVITY_Z       = rcv_data[16]  # 중력 벡터 Z
+
+            # Write latest IMU data for IPC consumers
+            write_imu_ipc()
                 
         except (AttributeError, OSError, RuntimeError, KeyError) as e:
             # Handle I2C errors during shutdown or communication issues
