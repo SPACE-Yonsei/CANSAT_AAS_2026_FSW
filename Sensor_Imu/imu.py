@@ -23,10 +23,12 @@ LAST_VALID_SENSORS = {
     "gyr": (0.0, 0.0, 0.0),
 }
 MAG_FILTER_ALPHA = float(os.getenv("IMU_MAG_FILTER_ALPHA", "0.2"))
-MAG_FIELD_MIN = float(os.getenv("IMU_MAG_FIELD_MIN", "1.0"))
-MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "200.0"))
+MAG_FIELD_MIN = float(os.getenv("IMU_MAG_FIELD_MIN", "5.0"))
+MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
+MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
-MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False}
+MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
+REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
 
 
 class I2CLock:
@@ -74,9 +76,16 @@ def _angle_diff_deg(target, current):
     diff = (target - current + 180) % 360 - 180
     return diff
 
-def _mag_is_valid(mx, my, mz):
-    mag_norm = math.sqrt(mx * mx + my * my + mz * mz)
-    return MAG_FIELD_MIN <= mag_norm <= MAG_FIELD_MAX
+def _mag_norm_is_valid(mag_norm):
+    if not (MAG_FIELD_MIN <= mag_norm <= MAG_FIELD_MAX):
+        return False
+    prev_norm = MAG_FILTER_STATE.get("norm")
+    if prev_norm is not None and prev_norm > 0:
+        if mag_norm > prev_norm * MAG_NORM_SPIKE_RATIO:
+            return False
+        if mag_norm < prev_norm / MAG_NORM_SPIKE_RATIO:
+            return False
+    return True
 
 def _filter_mag(mx, my, mz):
     if not MAG_FILTER_STATE["init"]:
@@ -136,13 +145,13 @@ def init_imu(i2c=None):
 
                 # 필수 기능 활성화 (디버그 출력 억제)
                 with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, REPORT_INTERVAL_US)
                     time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER, REPORT_INTERVAL_US)
                     time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE, REPORT_INTERVAL_US)
                     time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER, REPORT_INTERVAL_US)
             time.sleep(0.5)
             return i2c, sensor
 
@@ -199,35 +208,21 @@ def read_sensor_data(sensor):
     yaw = yaw % 360
     roll = roll % 360
     
-    # 이동평균 필터
-    angle_window[0].append(yaw)
-    angle_window[1].append(roll)
-    angle_window[2].append(pitch)
-    
-    for i in range(3):
-        if len(angle_window[i]) > WINDOW_SIZE:
-            angle_window[i].pop(0)
-    
-    avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
-    avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
-    avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
-    
     # 가속도, 자이로, 자기장 읽기 (동일 락 내에서 읽음)
     try:
         accX, accY, accZ = acc
         magX, magY, magZ = mag
         gyrX, gyrY, gyrZ = gyr
-        accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
-        gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
 
-        if _mag_is_valid(magX, magY, magZ):
+        mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
+        if _mag_norm_is_valid(mag_norm):
             magX, magY, magZ = _filter_mag(magX, magY, magZ)
+            MAG_FILTER_STATE["norm"] = mag_norm
+            LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
         else:
             magX, magY, magZ = LAST_VALID_SENSORS["mag"]
-        magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
 
         LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
-        LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
         LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
     except Exception:
         accX, accY, accZ = LAST_VALID_SENSORS["acc"]
@@ -250,6 +245,23 @@ def read_sensor_data(sensor):
         yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
     except Exception:
         pass
+    
+    # 이동평균 필터 (보정된 yaw 사용)
+    angle_window[0].append(yaw)
+    angle_window[1].append(roll)
+    angle_window[2].append(pitch)
+    
+    for i in range(3):
+        if len(angle_window[i]) > WINDOW_SIZE:
+            angle_window[i].pop(0)
+    
+    avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
+    avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
+    avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
+    
+    accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
+    gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
+    magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
     
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ}")
     
@@ -284,9 +296,6 @@ def reinit_imu(i2c, sensor):
     last_error = None
     for attempt in range(max_retries):
         try:
-            # busio.I2C 객체가 깨졌거나 deinit된 경우 새로 생성
-            if i2c is not None and not hasattr(i2c, "_i2c"):
-                i2c = None
             i2c, sensor = init_imu(i2c)
             return i2c, sensor
         except Exception as e:
