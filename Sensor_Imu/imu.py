@@ -4,14 +4,7 @@ from datetime import datetime
 import os
 import sys
 from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO, DEVNULL
-
-# DBG 출력 억제를 위한 더미 출력 스트림
-class NullWriter:
-    def write(self, s):
-        pass
-    def flush(self):
-        pass
+from io import StringIO
 
 # Variables for moving window filter
 angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
