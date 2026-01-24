@@ -59,7 +59,7 @@ def init_imu():
             used_address = None
             for addr in POSSIBLE_ADDRESSES:
                 try:
-                    sensor = BNO08X_I2C(i2c, address=addr)
+                    sensor = BNO08X_I2C(i2c, address=addr, debug=False)  # debug=False로 패킷 출력 비활성화
                     used_address = addr
                     print(f"BNO08x found at address 0x{addr:02x}")
                     break
