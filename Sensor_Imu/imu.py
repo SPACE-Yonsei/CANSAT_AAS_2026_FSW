@@ -83,14 +83,10 @@ def init_imu():
                             except:
                                 pass
                     used_address = addr
-                    print(f"BNO08x found at address 0x{addr:02x}")
                     break
                 except ValueError as e:
-                    # "No I2C device at address" error
+                    
                     continue
-            
-            if sensor is None:
-                raise RuntimeError(f"No BNO08x found at addresses {[hex(a) for a in POSSIBLE_ADDRESSES]}")
             
             # 센서 소프트 리셋 (디버그 출력 억제)
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
@@ -121,7 +117,7 @@ def init_imu():
                     enabled_count += 1
                     time.sleep(0.5)  # 더 긴 대기 시간
                 except Exception as e:
-                    print(f"Warning: Failed to enable {name}: {e}")
+                    continue
             
             if enabled_count == 0:
                 raise RuntimeError("Failed to enable Rotation Vector - cannot proceed")
@@ -134,15 +130,15 @@ def init_imu():
                     enabled_count += 1
                     time.sleep(0.3)
                 except Exception as e:
-                    print(f"Warning: Failed to enable {name}: {e}")
+                    continue
             
-            print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
+            #print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
             time.sleep(1)  # 최종 안정화 대기
             
             return i2c, sensor
             
         except Exception as e:
-            print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+            #print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
             if i2c is not None:
                 try:
                     i2c.deinit()  # I2C 해제 후 재시도
@@ -160,34 +156,44 @@ def read_sensor_data(sensor):
     quat_info = None
     quat_read_success = False
     
-    try:
-        # 디버그 출력 억제
-        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            quat_info = sensor.quaternion
-            quat_read_success = True
-    except KeyError as e:
-        # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
-        # 이전 값이 있으면 계속 사용, 없으면 False 반환
-        if len(angle_window[0]) == 0:
-            # 첫 읽기 실패 시에만 에러 출력
-            return False
-        # 이전 값 사용 - quat_info는 None으로 유지 (에러 메시지 출력 안 함)
-    except (OSError, RuntimeError) as e:
-        # I2C communication error (Unprocessable Batch bytes 포함)
-        # 이전 값이 있으면 계속 사용, 없으면 False 반환
-        if len(angle_window[0]) == 0:
-            # 첫 읽기 실패 시에만 에러 출력
-            return False
-        # 이전 값 사용 - quat_info는 None으로 유지 (에러 메시지 출력 안 함)
+    # 재시도 로직 추가 (최대 2회 재시도)
+    max_retries = 2
+    for retry in range(max_retries):
+        try:
+            # 디버그 출력 억제
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                quat_info = sensor.quaternion
+                quat_read_success = True
+                break  # 성공하면 재시도 루프 종료
+        except KeyError as e:
+            # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
+            if retry < max_retries - 1:
+                time.sleep(0.01)  # 짧은 대기 후 재시도
+                continue
+            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
+            if len(angle_window[0]) == 0:
+                # 첫 읽기 실패 시에만 에러 출력
+                return False
+            # 이전 값 사용 - quat_info는 None으로 유지
+        except (OSError, RuntimeError) as e:
+            # I2C communication error (Unprocessable Batch bytes 포함)
+            if retry < max_retries - 1:
+                time.sleep(0.01)  # 짧은 대기 후 재시도
+                continue
+            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
+            if len(angle_window[0]) == 0:
+                # 첫 읽기 실패 시에만 에러 출력
+                return False
+            # 이전 값 사용 - quat_info는 None으로 유지
     
     if quat_info is None:
-        # 쿼터니언 데이터 없음
+        # 쿼터니언 데이터 읽기 실패 - 이전 값이 없으면 0으로 초기화
         if len(angle_window[0]) == 0: 
             angle_window[0].append(0)
-        if len(angle_window[1]) == 0:
             angle_window[1].append(0)
-        if len(angle_window[2]) == 0:
             angle_window[2].append(0)
+        # 이전 값이 있으면 윈도우에 새 값을 추가하지 않음
+        # (다음 호출에서 새로운 읽기 시도 가능하도록)
     else:
         # BNO085 쿼터니언은 (x, y, z, w) 형식 (BNO055는 (w, x, y, z))
         x, y, z, w = quat_info
@@ -384,7 +390,7 @@ if __name__ == "__main__":
             data = read_sensor_data(sensor)
             if data == False:
                 error_count += 1
-                print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
+                #print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
                 if error_count >= MAX_CONSECUTIVE_ERRORS:
                     try:
                         imu_terminate(i2c)
