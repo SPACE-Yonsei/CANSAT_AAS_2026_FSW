@@ -409,8 +409,7 @@ def _to_landed(queue: Queue, force: bool = False):
     _state = STATE["LANDED"]
     _log("STATE → LANDED (motors stop)")
     prevstate.update_prevstate(_state)
-    _send_state_to_motor(queue, _state)
-    _send_msg(queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_PayloadMotorStop, "")
+    _send_state_to_motor(queue, _state)  # state=5로 모터 정지
 
 
 # =============================================================================

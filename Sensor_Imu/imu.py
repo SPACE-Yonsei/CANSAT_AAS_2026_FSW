@@ -45,22 +45,43 @@ def init_imu():
     import time
     
     MAX_RETRIES = 3
+    # BNO08x possible addresses: 0x4A (default), 0x4B (alternate)
+    POSSIBLE_ADDRESSES = [0x4a, 0x4b]
     
     for attempt in range(MAX_RETRIES):
+        i2c = None
         try:
             # Initialize I2C interface
             i2c = board.I2C()  # board.SCL과 board.SDA 사용
             
-            # BNO08x 초기화 - 재시도 로직 포함
-            sensor = BNO08X_I2C(i2c, address=0x4a)  # 명시적 주소 지정
+            # Try each possible address
+            sensor = None
+            used_address = None
+            for addr in POSSIBLE_ADDRESSES:
+                try:
+                    sensor = BNO08X_I2C(i2c, address=addr)
+                    used_address = addr
+                    print(f"BNO08x found at address 0x{addr:02x}")
+                    break
+                except ValueError as e:
+                    # "No I2C device at address" error
+                    continue
+            
+            if sensor is None:
+                raise RuntimeError(f"No BNO08x found at addresses {[hex(a) for a in POSSIBLE_ADDRESSES]}")
             
             # 센서 소프트 리셋
             sensor.initialize()
             time.sleep(1.5)  # 센서 초기화 대기 (더 길게)
             
             # Feature 활성화 (개별 try-except로 오류 처리)
+            # Only enable rotation vector first - most critical
             features = [
                 (adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, "Rotation Vector"),
+            ]
+            
+            # Try to enable additional features if possible
+            optional_features = [
                 (adafruit_bno08x.BNO_REPORT_ACCELEROMETER, "Accelerometer"),
                 (adafruit_bno08x.BNO_REPORT_GYROSCOPE, "Gyroscope"),
                 (adafruit_bno08x.BNO_REPORT_MAGNETOMETER, "Magnetometer"),
@@ -69,30 +90,41 @@ def init_imu():
             ]
             
             enabled_count = 0
+            # Enable rotation vector first (required)
             for feature, name in features:
                 try:
                     sensor.enable_feature(feature)
                     enabled_count += 1
-                    time.sleep(0.3)  # 더 긴 대기 시간
+                    time.sleep(0.5)  # 더 긴 대기 시간
                 except Exception as e:
                     print(f"Warning: Failed to enable {name}: {e}")
             
             if enabled_count == 0:
-                raise RuntimeError("No features could be enabled")
+                raise RuntimeError("Failed to enable Rotation Vector - cannot proceed")
             
-            print(f"BNO08x initialized: {enabled_count}/{len(features)} features enabled")
+            # Enable optional features
+            for feature, name in optional_features:
+                try:
+                    sensor.enable_feature(feature)
+                    enabled_count += 1
+                    time.sleep(0.3)
+                except Exception as e:
+                    print(f"Warning: Failed to enable {name}: {e}")
+            
+            print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
             time.sleep(1)  # 최종 안정화 대기
             
             return i2c, sensor
             
         except Exception as e:
             print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(2)  # 재시도 전 대기
+            if i2c is not None:
                 try:
                     i2c.deinit()  # I2C 해제 후 재시도
                 except:
                     pass
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(2)  # 재시도 전 대기
             else:
                 raise RuntimeError(f"Failed to initialize BNO08x after {MAX_RETRIES} attempts: {e}")
 
@@ -211,19 +243,20 @@ def read_sensor_data(sensor):
     avg_pitch = round(avg_pitch, 4)
 
     # BNO085는 linear_acceleration, gravity 등을 직접 제공
+    # KeyError can occur on any sensor access due to I2C bus noise
     try:
         accX, accY, accZ = sensor.linear_acceleration
-    except:
+    except (KeyError, OSError, RuntimeError, TypeError):
         accX = accY = accZ = None
     
     try:
         magX, magY, magZ = sensor.magnetic
-    except:
+    except (KeyError, OSError, RuntimeError, TypeError):
         magX = magY = magZ = None
     
     try:
         gyrX, gyrY, gyrZ = sensor.gyro
-    except:
+    except (KeyError, OSError, RuntimeError, TypeError):
         gyrX = gyrY = gyrZ = None
 
     # Error Checking, if None is contained, set the value to 0
@@ -257,7 +290,7 @@ def read_sensor_data(sensor):
     # Read Gravity vector
     try:
         graX, graY, graZ = sensor.gravity
-    except:
+    except (KeyError, OSError, RuntimeError, TypeError):
         graX = graY = graZ = None
     
     # Calculate tilt angle from gravity vector
@@ -304,9 +337,29 @@ def imu_terminate(i2c):
 if __name__ == "__main__":
     i2c, sensor = init_imu()
     #print(f'Offset : {sensor.offsets_magnetometer}')
+    error_count = 0
+    MAX_CONSECUTIVE_ERRORS = 10
+    
     try:
         while True:
             data = read_sensor_data(sensor)
+            if data == False:
+                error_count += 1
+                print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
+                if error_count >= MAX_CONSECUTIVE_ERRORS:
+                    print("Too many consecutive errors, reinitializing IMU...")
+                    try:
+                        imu_terminate(i2c)
+                    except:
+                        pass
+                    time.sleep(2)
+                    i2c, sensor = init_imu()
+                    error_count = 0
+                time.sleep(0.1)
+                continue
+            
+            # Reset error count on successful read
+            error_count = 0
             print(data)
             time.sleep(0.1)
     
