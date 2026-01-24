@@ -17,6 +17,12 @@ READ_FAIL_REINIT_THRESHOLD = 5
 I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000"))
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 
+LAST_VALID_SENSORS = {
+    "acc": (0.0, 0.0, 0.0),
+    "mag": (0.0, 0.0, 0.0),
+    "gyr": (0.0, 0.0, 0.0),
+}
+
 
 class I2CLock:
     def __init__(self, path=I2C_LOCK_PATH):
@@ -124,12 +130,16 @@ def init_imu(i2c=None):
 
 def read_sensor_data(sensor):
     global angle_window
+    global LAST_VALID_SENSORS
     
     # 쿼터니언 읽기 (디버그 출력 억제)
     try:
         with I2CLock():
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                 quat = sensor.quaternion
+                acc = sensor.acceleration
+                mag = sensor.magnetic
+                gyr = sensor.gyro
         if quat is None:
             return False
     except Exception:
@@ -174,30 +184,21 @@ def read_sensor_data(sensor):
     avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
     avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
     
-    # 가속도, 자이로, 자기장 읽기 (디버그 출력 억제)
+    # 가속도, 자이로, 자기장 읽기 (동일 락 내에서 읽음)
     try:
-        with I2CLock():
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                accX, accY, accZ = sensor.acceleration
+        accX, accY, accZ = acc
+        magX, magY, magZ = mag
+        gyrX, gyrY, gyrZ = gyr
         accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
-    except Exception:
-        accX = accY = accZ = 0
-    
-    try:
-        with I2CLock():
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                magX, magY, magZ = sensor.magnetic
         magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
-    except:
-        magX = magY = magZ = 0
-    
-    try:
-        with I2CLock():
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                gyrX, gyrY, gyrZ = sensor.gyro
         gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
-    except:
-        gyrX = gyrY = gyrZ = 0
+        LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
+        LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
+        LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
+    except Exception:
+        accX, accY, accZ = LAST_VALID_SENSORS["acc"]
+        magX, magY, magZ = LAST_VALID_SENSORS["mag"]
+        gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
     
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ}")
     
