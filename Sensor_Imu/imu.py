@@ -1,468 +1,176 @@
 import time
 import math
-from datetime import datetime
 import os
-import sys
-from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO
+from datetime import datetime
 
-# Variables for moving window filter
-angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
-window_size = 5
+# 이동평균 필터 윈도우
+angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
+WINDOW_SIZE = 5
 
 # BNO085 장착 방향 보정
-# BNO085 Y축 = 캔위성 앞쪽, X축 = 캔위성 왼쪽, 바닥에 장착 (Z축 아래)
-# 표준 yaw는 X축 기준이므로 Y축 기준으로 변환 필요 (+90°)
-# Z축이 뒤집혀서 yaw 회전 방향 반전 필요
-IMU_MOUNTED_ON_BOTTOM = True  # True = Z축이 아래로 향함
-IMU_FORWARD_AXIS = 'Y'        # 'X' 또는 'Y' (캔위성 앞쪽 방향)
-# INT 핀 미사용 시: None
-# INT 핀 사용 시: board.D5 (또는 연결된 GPIO 핀 번호)
-USE_INT_PIN = None  # None 또는 board.D5 등 GPIO 핀
+IMU_MOUNTED_ON_BOTTOM = True  # Z축이 아래로 향함
+IMU_FORWARD_AXIS = 'Y'        # 캔위성 앞쪽 방향
 
+# 로그 설정
 log_dir = './sensorlogs'
-if not os.path.exists(log_dir): 
+if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-## Create sensor log file
 imulogfile = open(os.path.join(log_dir, 'imu.txt'), 'a')
-
-try:
-    offsetfile = open(os.path.join('./imu/offset.txt'),mode='r')
-    magneto_offset = tuple(map(int,offsetfile.readline().strip().split(sep=',')))
-    gyro_offset = tuple(map(int,offsetfile.readline().strip().split(sep=',')))
-    accel_offset = tuple(map(int,offsetfile.readline().strip().split(sep=',')))
-    offsetfile.close()
-except: 
-    magneto_offset = (0,0,0)
-    gyro_offset = (0,0,0)
-    accel_offset = (0,0,0)
 
 def log_imu(text):
     t = datetime.now().isoformat(sep=' ', timespec='milliseconds')
-    string_to_write = f'{t},{text}\n'
-    imulogfile.write(string_to_write)
+    imulogfile.write(f'{t},{text}\n')
     imulogfile.flush()
 
-def init_imu():
-    #print("Attempting to import board and adafruit_bno08x...")
-    try:
-        import board
-        import busio
-        import adafruit_bno08x
-        from adafruit_bno08x.i2c import BNO08X_I2C
-        #print("Libraries imported successfully.")
-    except ImportError as e:
-        print(f"Import failed: {e}")
-        raise e
 
-    import time
+def init_imu():
+    import board
+    import adafruit_bno08x
+    from adafruit_bno08x.i2c import BNO08X_I2C
     
-    MAX_RETRIES = 3
-    # BNO08x possible addresses: 0x4A (default), 0x4B (alternate)
-    POSSIBLE_ADDRESSES = [0x4a, 0x4b]
+    i2c = board.I2C()
+    sensor = BNO08X_I2C(i2c)
     
-    I2C_FREQUENCY = 10000  # 10kHz (기본값: 100000 = 100kHz)
+    # 필수 기능 활성화
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
     
-    for attempt in range(MAX_RETRIES):
-        i2c = None
-        try:
-            # Initialize I2C interface with lower frequency for stability
-            # busio.I2C()를 사용하여 frequency를 명시적으로 설정
-            i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
-            
-            # Try each possible address
-            sensor = None
-            used_address = None
-            for addr in POSSIBLE_ADDRESSES:
-                try:
-                    # 디버그 출력 억제를 위해 stdout/stderr 리다이렉트
-                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                        # INT 핀 사용 옵션 (10초 주기 타임아웃 에러 방지)
-                        # INT 핀이 연결되어 있으면 interrupt 매개변수에 GPIO 핀 전달
-                        if USE_INT_PIN is not None:
-                            sensor = BNO08X_I2C(i2c, address=addr, interrupt=USE_INT_PIN, debug=False)
-                        else:
-                            sensor = BNO08X_I2C(i2c, address=addr, debug=False)
-                    # 추가로 모든 가능한 디버그 속성 비활성화
-                    if hasattr(sensor, '_debug'):
-                        sensor._debug = False
-                    # 라이브러리 내부의 다른 디버그 관련 속성도 비활성화
-                    for attr in dir(sensor):
-                        if 'debug' in attr.lower() and not attr.startswith('__'):
-                            try:
-                                setattr(sensor, attr, False)
-                            except:
-                                pass
-                    used_address = addr
-                    break
-                except ValueError as e:
-                    
-                    continue
-            
-            # 센서 소프트 리셋 (디버그 출력 억제)
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                sensor.initialize()
-            time.sleep(1.5)  # 센서 초기화 대기 (더 길게)
-            
-            # Feature 활성화 (개별 try-except로 오류 처리)
-            # Only enable rotation vector first - most critical
-            features = [
-                (adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, "Rotation Vector"),
-            ]
-            
-            # Try to enable additional features if possible
-            optional_features = [
-                (adafruit_bno08x.BNO_REPORT_ACCELEROMETER, "Accelerometer"),
-                (adafruit_bno08x.BNO_REPORT_GYROSCOPE, "Gyroscope"),
-                (adafruit_bno08x.BNO_REPORT_MAGNETOMETER, "Magnetometer"),
-                (adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION, "Linear Acceleration"),
-                (adafruit_bno08x.BNO_REPORT_GRAVITY, "Gravity"),
-            ]
-            
-            enabled_count = 0
-            # Enable rotation vector first (required) - 디버그 출력 억제
-            for feature, name in features:
-                try:
-                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                        sensor.enable_feature(feature)
-                    enabled_count += 1
-                    time.sleep(0.5)  # 더 긴 대기 시간
-                except Exception as e:
-                    continue
-            
-            if enabled_count == 0:
-                raise RuntimeError("Failed to enable Rotation Vector - cannot proceed")
-            
-            # Enable optional features - 디버그 출력 억제
-            for feature, name in optional_features:
-                try:
-                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                        sensor.enable_feature(feature)
-                    enabled_count += 1
-                    time.sleep(0.3)
-                except Exception as e:
-                    continue
-            
-            print(f"BNO08x initialized at 0x{used_address:02x}: {enabled_count}/{len(features) + len(optional_features)} features enabled")
-            time.sleep(1)  # 최종 안정화 대기
-            
-            return i2c, sensor
-            
-        except Exception as e:
-            print(f"IMU init attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
-            if i2c is not None:
-                try:
-                    i2c.deinit()  # I2C 해제 후 재시도
-                except:
-                    pass
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(2)  # 재시도 전 대기
-            else:
-                raise RuntimeError(f"Failed to initialize BNO08x after {MAX_RETRIES} attempts: {e}")
+    time.sleep(0.5)
+    print("BNO08x initialized")
+    return i2c, sensor
+
 
 def read_sensor_data(sensor):
     global angle_window
-
-    # BNO085는 quaternion 직접 접근이 아닌 update를 통해 데이터 읽음
-    quat_info = None
-    quat_read_success = False
     
-    # 재시도 로직 추가 (최대 2회 재시도)
-    max_retries = 2
-    for retry in range(max_retries):
-        try:
-            # 디버그 출력 억제
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                quat_info = sensor.quaternion
-                quat_read_success = True
-                break  # 성공하면 재시도 루프 종료
-        except KeyError as e:
-            # KeyError occurs when BNO08x receives unknown report type (e.g., 0x77 from I2C bus noise)
-            if retry < max_retries - 1:
-                time.sleep(0.01)  # 짧은 대기 후 재시도
-                continue
-            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
-            if len(angle_window[0]) == 0:
-                # 첫 읽기 실패 시에만 에러 출력
-                return False
-            # 이전 값 사용 - quat_info는 None으로 유지
-        except (OSError, RuntimeError, IndexError) as e:
-            # I2C communication error, IndexError (sequence_number list out of range), etc.
-            if retry < max_retries - 1:
-                time.sleep(0.01)  # 짧은 대기 후 재시도
-                continue
-            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
-            if len(angle_window[0]) == 0:
-                # 첫 읽기 실패 시에만 에러 출력
-                return False
-            # 이전 값 사용 - quat_info는 None으로 유지
-        except Exception as e:
-            # 기타 예상치 못한 예외 처리
-            if retry < max_retries - 1:
-                time.sleep(0.01)  # 짧은 대기 후 재시도
-                continue
-            # 재시도 실패 시 이전 값이 있으면 계속 사용, 없으면 False 반환
-            if len(angle_window[0]) == 0:
-                # 첫 읽기 실패 시에만 에러 출력
-                return False
-            # 이전 값 사용 - quat_info는 None으로 유지
-    
-    if quat_info is None:
-        # 쿼터니언 데이터 읽기 실패 - 이전 값이 없으면 0으로 초기화
-        if len(angle_window[0]) == 0: 
-            angle_window[0].append(0)
-            angle_window[1].append(0)
-            angle_window[2].append(0)
-        # 이전 값이 있으면 윈도우에 새 값을 추가하지 않음
-        # (다음 호출에서 새로운 읽기 시도 가능하도록)
-    else:
-        # BNO085 쿼터니언은 (x, y, z, w) 형식 (BNO055는 (w, x, y, z))
-        x, y, z, w = quat_info
-
-        w = round(w, 4)
-        x = round(x, 4)
-        y = round(y, 4)
-        z = round(z, 4)
-        
-        # 쿼터니언으로부터 yaw (heading) 계산 (라디안 단위)
-        yaw = math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2))
-        yaw_deg = math.degrees(yaw)
-        
-        # BNO085 장착 방향 보정
-        if IMU_MOUNTED_ON_BOTTOM:
-            # Z축이 아래로 향하면 yaw 회전 방향 반전
-            yaw_deg = -yaw_deg
-        
-        if IMU_FORWARD_AXIS == 'Y':
-            # Y축이 앞쪽이면 90° 오프셋 적용 (X축 기준 → Y축 기준)
-            yaw_deg = yaw_deg + 90
-        
-        # config.txt에서 설정한 YAW_OFFSET 적용 (현장에서 0점 조절용)
-        try:
-            from lib import config
-            yaw_deg = yaw_deg + config.YAW_OFFSET
-        except (ImportError, ModuleNotFoundError):
-            # config를 로드할 수 없으면 YAW_OFFSET 0으로 사용
-            pass
-
-        # 쿼터니언으로부터 pitch 계산 (라디안 단위)
-        try: # arcsin 함수의 정의역 문제
-            pitch_cal = 2*(w*y - z*x)
-            if pitch_cal < -1:
-                pitch_cal = -1.00
-            if pitch_cal > 1:
-                pitch_cal = 1.00
-            pitch_cal = round(pitch_cal, 4)
-            
-            pitch = math.asin(pitch_cal)
-            # 라디안을 도(degree)로 변환
-            pitch_deg = math.degrees(pitch)
-            
-        except ValueError:
-            # 정의역을 넘어버렸을 때 -> 직전 값을 가져와서 대체함.
-            pitch_deg = angle_window[2][-1]     
-            
-        # 쿼터니언으로부터 roll 계산 (라디안 단위)
-        roll = math.atan2(2*(w*x + y*z), 1 - 2*(x**2 + y**2))
-        
-        # 라디안을 도(degree)로 변환
-        roll_deg = math.degrees(roll)
-        
-        # 음수 각도를 0~360도로 변환 (YAW_OFFSET 적용 후)
-        if yaw_deg < 0:
-            yaw_deg += 360
-        elif yaw_deg >= 360:
-            yaw_deg -= 360
-        
-        if roll_deg < 0:
-            roll_deg += 360
-        ''' 
-        if pitch_deg < 0:
-            pitch_deg += 360
-        '''
-        angle_window[0].append(yaw_deg)
-        angle_window[1].append(roll_deg)
-        angle_window[2].append(pitch_deg)
-
-        # YAW 이동평균필터 리스트 최신화
-        if len(angle_window[0]) > window_size:
-            angle_window[0].pop(0)
-
-        # ROLL 이동평균필터 리스트 최신화
-        if len(angle_window[1]) > window_size:
-            angle_window[1].pop(0)
-
-        # PITCH 이동평균필터 리스트 최신화
-        if len(angle_window[2]) > window_size:
-            angle_window[2].pop(0)
-
-    # Accelerometer, Magnetometer, Gyroscope 데이터 읽기 (BNO085)
-    avg_yaw = sum(angle_window[0])/len(angle_window[0])
-    avg_roll = sum(angle_window[1])/len(angle_window[1])
-    avg_pitch = sum(angle_window[2])/len(angle_window[2])
-    
-    avg_yaw = round(avg_yaw, 4)
-    avg_roll = round(avg_roll, 4)
-    avg_pitch = round(avg_pitch, 4)
-
-    # BNO085는 linear_acceleration, gravity 등을 직접 제공
-    # KeyError, IndexError can occur on any sensor access due to I2C bus noise or internal errors
-    # 디버그 출력 억제를 위해 모든 센서 읽기를 리다이렉트 안에서 수행
-    sensor_read_failed = False
-    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-        try:
-            accX, accY, accZ = sensor.linear_acceleration
-        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
-            accX = accY = accZ = None
-            sensor_read_failed = True
-        
-        try:
-            magX, magY, magZ = sensor.magnetic
-        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
-            magX = magY = magZ = None
-            sensor_read_failed = True
-        
-        try:
-            gyrX, gyrY, gyrZ = sensor.gyro
-        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
-            gyrX = gyrY = gyrZ = None
-            sensor_read_failed = True
-    
-    # quaternion과 모든 센서 읽기가 실패한 경우 False 반환
-    if quat_info is None and sensor_read_failed and len(angle_window[0]) > 0:
-        # 이전 값이 있지만 새로운 읽기가 모두 실패한 경우
-        # (센서가 완전히 응답하지 않는 상태일 수 있음)
+    # 쿼터니언 읽기
+    try:
+        quat = sensor.quaternion
+        if quat is None:
+            return False
+    except Exception:
         return False
-
-    # Error Checking, if None is contained, set the value to 0
-    # 단, quaternion이 성공했으면 다른 센서 실패 시에도 0으로 설정하여 계속 진행
-    if accX is None or accY is None or accZ is None:
-        accX = 0
-        accY = 0
-        accZ = 0
-    else:
-        accX = round(accX, 4)
-        accY = round(accY, 4)
-        accZ = round(accZ, 4)
-
-    if magX is None or magY is None or magZ is None:
-        magX = 0
-        magY = 0
-        magZ = 0
-    else:
-        magX = round(magX, 4)
-        magY = round(magY, 4)
-        magZ = round(magZ, 4)
-
-    if gyrX is None or gyrY is None or gyrZ is None:
-        gyrX = 0
-        gyrY = 0
-        gyrZ = 0
-    else:
-        gyrX = round(gyrX, 4)
-        gyrY = round(gyrY, 4)
-        gyrZ = round(gyrZ, 4)
-
-    # Read Gravity vector
-    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-        try:
-            graX, graY, graZ = sensor.gravity
-        except (KeyError, OSError, RuntimeError, TypeError, IndexError):
-            graX = graY = graZ = None
-            sensor_read_failed = True
     
-    # Calculate tilt angle from gravity vector
-    tilt_angle = 0.0
-    tilt_direction = 0.0
+    x, y, z, w = quat
     
-    if graX is not None and graY is not None and graZ is not None:
-        # 중력 벡터의 크기
-        gravity_magnitude = math.sqrt(graX**2 + graY**2 + graZ**2)
-        
-        if gravity_magnitude > 0:
-            tilt_angle = math.degrees(math.atan2(math.sqrt(graX**2 + graY**2), abs(graZ)))
-            tilt_direction = math.degrees(math.atan2(graY, graX))
-            if tilt_direction < 0:
-                tilt_direction += 360
-            
-            tilt_angle = round(tilt_angle, 4)
-            tilt_direction = round(tilt_direction, 4)
-        else:
-            tilt_angle = 0.0
-            tilt_direction = 0.0
-    else:
-        tilt_angle = 0.0
-        tilt_direction = 0.0
+    # 쿼터니언 → 오일러각 변환
+    yaw = math.degrees(math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2)))
+    roll = math.degrees(math.atan2(2*(w*x + y*z), 1 - 2*(x**2 + y**2)))
+    
+    pitch_val = max(-1, min(1, 2*(w*y - z*x)))
+    pitch = math.degrees(math.asin(pitch_val))
+    
+    # 장착 방향 보정
+    if IMU_MOUNTED_ON_BOTTOM:
+        yaw = -yaw
+    if IMU_FORWARD_AXIS == 'Y':
+        yaw += 90
+    
+    # YAW_OFFSET 적용
+    try:
+        from lib import config
+        yaw += config.YAW_OFFSET
+    except:
+        pass
+    
+    # 0~360도 범위로 정규화
+    yaw = yaw % 360
+    roll = roll % 360
+    
+    # 이동평균 필터
+    angle_window[0].append(yaw)
+    angle_window[1].append(roll)
+    angle_window[2].append(pitch)
+    
+    for i in range(3):
+        if len(angle_window[i]) > WINDOW_SIZE:
+            angle_window[i].pop(0)
+    
+    avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
+    avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
+    avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
+    
+    # 가속도, 자이로, 자기장 읽기
+    try:
+        accX, accY, accZ = sensor.linear_acceleration
+        accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
+    except:
+        accX = accY = accZ = 0
+    
+    try:
+        magX, magY, magZ = sensor.magnetic
+        magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
+    except:
+        magX = magY = magZ = 0
+    
+    try:
+        gyrX, gyrY, gyrZ = sensor.gyro
+        gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
+    except:
+        gyrX = gyrY = gyrZ = 0
+    
+    # 중력 벡터 → 기울기 계산
+    try:
+        graX, graY, graZ = sensor.gravity
+        graX, graY, graZ = round(graX, 4), round(graY, 4), round(graZ, 4)
+        tilt_angle = round(math.degrees(math.atan2(math.sqrt(graX**2 + graY**2), abs(graZ))), 4)
+        tilt_direction = round(math.degrees(math.atan2(graY, graX)) % 360, 4)
+    except:
         graX = graY = graZ = 0
+        tilt_angle = tilt_direction = 0
     
-    # Gravity vector 처리
-    if graX is None or graY is None or graZ is None:
-        graX = 0
-        graY = 0
-        graZ = 0
-    else:
-        graX = round(graX, 4)
-        graY = round(graY, 4)
-        graZ = round(graZ, 4)
+    log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ},{tilt_angle},{tilt_direction},{graX},{graY},{graZ}")
     
-    log_imu(f"{avg_roll:.4f}, {avg_pitch:.4f}, {avg_yaw:.4f}, {accX:.2f}, {accY:.2f}, {accZ:.2f}, {magX:.2f}, {magY:.2f}, {magZ:.2f}, {gyrX:.2f}, {gyrY:.2f}, {gyrZ:.2f}, {tilt_angle:.4f}, {tilt_direction:.4f}, {graX:.2f}, {graY:.2f}, {graZ:.2f}")
     return (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ, tilt_angle, tilt_direction, graX, graY, graZ)
 
+
 def imu_terminate(i2c):
-    i2c.deinit()
-    return
+    if i2c is not None:
+        i2c.deinit()
+
 
 def reset_angle_window():
-    """Reset the angle window for fresh readings after reinit"""
     global angle_window
-    angle_window = [[], [], []]  # (ROLL, PITCH, YAW)
+    angle_window = [[], [], []]
+
 
 def reinit_imu(i2c, sensor):
-    """Reinitialize IMU sensor after errors"""
-    global angle_window
-    
-    # Terminate existing connection
+    """에러 발생 시 IMU 재초기화"""
     try:
         imu_terminate(i2c)
     except:
         pass
-    
-    # Wait for sensor to settle
-    import time
-    time.sleep(2)
-    
-    # Reset angle window
+    time.sleep(1)
     reset_angle_window()
-    
-    # Reinitialize
     return init_imu()
+
 
 if __name__ == "__main__":
     i2c, sensor = init_imu()
-    #print(f'Offset : {sensor.offsets_magnetometer}')
     error_count = 0
-    MAX_CONSECUTIVE_ERRORS = 3  # 3회 연속 에러 시 재초기화
+    MAX_ERRORS = 3
     
     try:
         while True:
             data = read_sensor_data(sensor)
             if data == False:
                 error_count += 1
-                print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
-                if error_count >= MAX_CONSECUTIVE_ERRORS:
-                    print("IMU reinitializing...")
+                print(f"Read error ({error_count}/{MAX_ERRORS})")
+                if error_count >= MAX_ERRORS:
+                    print("Reinitializing...")
                     i2c, sensor = reinit_imu(i2c, sensor)
                     error_count = 0
-                    print("IMU reinitialized successfully")
                 time.sleep(0.1)
                 continue
             
-            # Reset error count on successful read
             error_count = 0
             print(data)
             time.sleep(0.1)
     
     except KeyboardInterrupt:
         imu_terminate(i2c)
-
