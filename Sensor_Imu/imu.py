@@ -4,7 +4,14 @@ from datetime import datetime
 import os
 import sys
 from contextlib import redirect_stdout, redirect_stderr
-from io import StringIO
+from io import StringIO, DEVNULL
+
+# DBG 출력 억제를 위한 더미 출력 스트림
+class NullWriter:
+    def write(self, s):
+        pass
+    def flush(self):
+        pass
 
 # Variables for moving window filter
 angle_window = [[],[],[]] # (ROLL, PITCH, YAW)
@@ -65,9 +72,16 @@ def init_imu():
                     # 디버그 출력 억제를 위해 stdout/stderr 리다이렉트
                     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                         sensor = BNO08X_I2C(i2c, address=addr, debug=False)
-                    # 추가로 _debug 속성도 False로 설정
+                    # 추가로 모든 가능한 디버그 속성 비활성화
                     if hasattr(sensor, '_debug'):
                         sensor._debug = False
+                    # 라이브러리 내부의 다른 디버그 관련 속성도 비활성화
+                    for attr in dir(sensor):
+                        if 'debug' in attr.lower() and not attr.startswith('__'):
+                            try:
+                                setattr(sensor, attr, False)
+                            except:
+                                pass
                     used_address = addr
                     print(f"BNO08x found at address 0x{addr:02x}")
                     break
@@ -78,8 +92,9 @@ def init_imu():
             if sensor is None:
                 raise RuntimeError(f"No BNO08x found at addresses {[hex(a) for a in POSSIBLE_ADDRESSES]}")
             
-            # 센서 소프트 리셋
-            sensor.initialize()
+            # 센서 소프트 리셋 (디버그 출력 억제)
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                sensor.initialize()
             time.sleep(1.5)  # 센서 초기화 대기 (더 길게)
             
             # Feature 활성화 (개별 try-except로 오류 처리)
@@ -98,10 +113,11 @@ def init_imu():
             ]
             
             enabled_count = 0
-            # Enable rotation vector first (required)
+            # Enable rotation vector first (required) - 디버그 출력 억제
             for feature, name in features:
                 try:
-                    sensor.enable_feature(feature)
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        sensor.enable_feature(feature)
                     enabled_count += 1
                     time.sleep(0.5)  # 더 긴 대기 시간
                 except Exception as e:
@@ -110,10 +126,11 @@ def init_imu():
             if enabled_count == 0:
                 raise RuntimeError("Failed to enable Rotation Vector - cannot proceed")
             
-            # Enable optional features
+            # Enable optional features - 디버그 출력 억제
             for feature, name in optional_features:
                 try:
-                    sensor.enable_feature(feature)
+                    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                        sensor.enable_feature(feature)
                     enabled_count += 1
                     time.sleep(0.3)
                 except Exception as e:
