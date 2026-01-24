@@ -1,7 +1,10 @@
 import time
 import math
 import os
+import sys
 from datetime import datetime
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
 
 # 이동평균 필터 윈도우
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
@@ -30,15 +33,23 @@ def init_imu():
     from adafruit_bno08x.i2c import BNO08X_I2C
     
     i2c = board.I2C()
-    sensor = BNO08X_I2C(i2c)
     
-    # 필수 기능 활성화
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
-    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
-    #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
-    #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+    # 디버그 출력 억제
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        sensor = BNO08X_I2C(i2c, debug=False)
+    
+    # 디버그 속성 비활성화
+    if hasattr(sensor, '_debug'):
+        sensor._debug = False
+    
+    # 필수 기능 활성화 (디버그 출력 억제)
+    with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+        sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+        #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+        #sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
     
     time.sleep(0.5)
     print("BNO08x initialized")
@@ -48,9 +59,10 @@ def init_imu():
 def read_sensor_data(sensor):
     global angle_window
     
-    # 쿼터니언 읽기
+    # 쿼터니언 읽기 (디버그 출력 억제)
     try:
-        quat = sensor.quaternion
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            quat = sensor.quaternion
         if quat is None:
             return False
     except Exception:
@@ -95,28 +107,32 @@ def read_sensor_data(sensor):
     avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
     avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
     
-    # 가속도, 자이로, 자기장 읽기
+    # 가속도, 자이로, 자기장 읽기 (디버그 출력 억제)
     try:
-        accX, accY, accZ = sensor.linear_acceleration
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            accX, accY, accZ = sensor.linear_acceleration
         accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
     except:
         accX = accY = accZ = 0
     
     try:
-        magX, magY, magZ = sensor.magnetic
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            magX, magY, magZ = sensor.magnetic
         magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
     except:
         magX = magY = magZ = 0
     
     try:
-        gyrX, gyrY, gyrZ = sensor.gyro
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            gyrX, gyrY, gyrZ = sensor.gyro
         gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
     except:
         gyrX = gyrY = gyrZ = 0
     
-    # 중력 벡터 → 기울기 계산
+    # 중력 벡터 → 기울기 계산 (디버그 출력 억제)
     try:
-        graX, graY, graZ = sensor.gravity
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            graX, graY, graZ = sensor.gravity
         graX, graY, graZ = round(graX, 4), round(graY, 4), round(graZ, 4)
         tilt_angle = round(math.degrees(math.atan2(math.sqrt(graX**2 + graY**2), abs(graZ))), 4)
         tilt_direction = round(math.degrees(math.atan2(graY, graX)) % 360, 4)
@@ -152,19 +168,14 @@ def reinit_imu(i2c, sensor):
 
 if __name__ == "__main__":
     i2c, sensor = init_imu()
-    error_count = 0
-    MAX_ERRORS = 3
     
     try:
         while True:
             data = read_sensor_data(sensor)
             if data == False:
-                error_count += 1
-                print(f"Read error ({error_count}/{MAX_ERRORS})")
-                if error_count >= MAX_ERRORS:
-                    print("Reinitializing...")
-                    i2c, sensor = reinit_imu(i2c, sensor)
-                    error_count = 0
+                # 에러 발생 시 즉시 재초기화
+                print("Read error - Reinitializing...")
+                i2c, sensor = reinit_imu(i2c, sensor)
                 time.sleep(0.1)
                 continue
             
