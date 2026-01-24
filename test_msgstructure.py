@@ -159,7 +159,7 @@ def test_send_msg():
         test_queue,
         appargs.ImuAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
-        appargs.ImuAppArg.MID_SendImuFlightLogicData,
+        appargs.ImuAppArg.MID_flight_yaw,
         "45.2"
     )
 
@@ -207,7 +207,7 @@ def test_message_flow():
             "name": "GPS",
             "sender": appargs.GpsAppArg.AppID,
             "receiver": appargs.FlightlogicAppArg.AppID,
-            "mid": appargs.GpsAppArg.MID_SendGpsFlightLogicData,
+            "mid": appargs.GpsAppArg.MID_flight_MyCor,
             "data": "37.5665,126.9780,100.5"
         },
         {

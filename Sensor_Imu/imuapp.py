@@ -203,7 +203,7 @@ def send_imu_data(Main_Queue : Queue):
         status = msgstructure.send_msg(Main_Queue,
                                        appargs.ImuAppArg.AppID,
                                        appargs.FlightlogicAppArg.AppID,
-                                       appargs.ImuAppArg.MID_SendImuFlightLogicData,
+                                       appargs.ImuAppArg.MID_flight_yaw,
                                        f"{IMU_YAW:.2f}")
 
         if send_counter >= 10 :

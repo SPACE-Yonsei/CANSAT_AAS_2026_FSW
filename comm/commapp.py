@@ -98,7 +98,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             return
 
     # Receive GPS Data
-    elif recv_msg.MsgID == appargs.GpsAppArg.MID_SendGpsTlmData:
+    elif recv_msg.MsgID == appargs.GpsAppArg.MID_comm_gga:
         sep_data = recv_msg.data.split(",")
 
         # Check the length of separated data
@@ -123,7 +123,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             return
 
     # Receive Electro Sensor Data
-    elif recv_msg.MsgID == appargs.ElectroAppArg.MID_SendElectroTlmData:
+    elif recv_msg.MsgID == appargs.ElectroAppArg.MID_comm_volt:
         sep_data = recv_msg.data.split(",")
         
         # Check the length of separated data
@@ -139,7 +139,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"ERROR parsing voltage data: {e}, data: {recv_msg.data}")
             return
     
-    elif recv_msg.MsgID == appargs.DistanceAppArg.MID_SendDistanceTlmData:
+    elif recv_msg.MsgID == appargs.DistanceAppArg.MID_comm_dis:
         try:
             tlm_data.distance = float(recv_msg.data)
         except (ValueError) as e:
