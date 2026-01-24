@@ -413,11 +413,36 @@ def imu_terminate(i2c):
     i2c.deinit()
     return
 
+def reset_angle_window():
+    """Reset the angle window for fresh readings after reinit"""
+    global angle_window
+    angle_window = [[], [], []]  # (ROLL, PITCH, YAW)
+
+def reinit_imu(i2c, sensor):
+    """Reinitialize IMU sensor after errors"""
+    global angle_window
+    
+    # Terminate existing connection
+    try:
+        imu_terminate(i2c)
+    except:
+        pass
+    
+    # Wait for sensor to settle
+    import time
+    time.sleep(2)
+    
+    # Reset angle window
+    reset_angle_window()
+    
+    # Reinitialize
+    return init_imu()
+
 if __name__ == "__main__":
     i2c, sensor = init_imu()
     #print(f'Offset : {sensor.offsets_magnetometer}')
     error_count = 0
-    MAX_CONSECUTIVE_ERRORS = 10
+    MAX_CONSECUTIVE_ERRORS = 3  # 3회 연속 에러 시 재초기화
     
     try:
         while True:
@@ -426,13 +451,10 @@ if __name__ == "__main__":
                 error_count += 1
                 print(f"Read error ({error_count}/{MAX_CONSECUTIVE_ERRORS})")
                 if error_count >= MAX_CONSECUTIVE_ERRORS:
-                    try:
-                        imu_terminate(i2c)
-                    except:
-                        pass
-                    time.sleep(2)
-                    i2c, sensor = init_imu()
+                    print("IMU reinitializing...")
+                    i2c, sensor = reinit_imu(i2c, sensor)
                     error_count = 0
+                    print("IMU reinitialized successfully")
                 time.sleep(0.1)
                 continue
             
