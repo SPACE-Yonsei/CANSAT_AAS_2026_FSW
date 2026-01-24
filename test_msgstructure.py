@@ -200,7 +200,7 @@ def test_message_flow():
             "name": "IMU",
             "sender": appargs.ImuAppArg.AppID,
             "receiver": appargs.CommAppArg.AppID,
-            "mid": appargs.ImuAppArg.MID_SendImuTlmData,
+            "mid": appargs.ImuAppArg.MID_comm_euler,
             "data": "10.2,5.3,45.7,0.1,0.2,0.3,15.5,20.1,30.2,0.5,0.6,0.7"
         },
         {
