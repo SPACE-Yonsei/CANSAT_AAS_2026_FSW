@@ -48,6 +48,7 @@ def init_imu():
     #print("Attempting to import board and adafruit_bno08x...")
     try:
         import board
+        import busio
         import adafruit_bno08x
         from adafruit_bno08x.i2c import BNO08X_I2C
         #print("Libraries imported successfully.")
@@ -67,7 +68,8 @@ def init_imu():
         i2c = None
         try:
             # Initialize I2C interface with lower frequency for stability
-            i2c = board.I2C(frequency=I2C_FREQUENCY)  # board.SCL과 board.SDA 사용
+            # busio.I2C()를 사용하여 frequency를 명시적으로 설정
+            i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
             
             # Try each possible address
             sensor = None
