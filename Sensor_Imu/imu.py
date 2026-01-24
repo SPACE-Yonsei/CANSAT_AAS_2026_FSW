@@ -47,6 +47,14 @@ def init_imu():
     i2c = board.I2C()  # board.SCL과 board.SDA 사용
     sensor = BNO08X_I2C(i2c)
 
+    # BNO085 보고서 활성화 (쿼터니언, 가속도, 자이로, 자기장)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_QUATERNION)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_LINEAR_ACCELERATION)
+    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GRAVITY)
+
     # BNO085는 자동 보정 기능이 있어서 수동 offset 설정은 불필요
     # 하지만 호환성을 위해 유지
     
