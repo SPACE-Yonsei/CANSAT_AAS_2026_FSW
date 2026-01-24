@@ -16,6 +16,9 @@ window_size = 5
 # Z축이 뒤집혀서 yaw 회전 방향 반전 필요
 IMU_MOUNTED_ON_BOTTOM = True  # True = Z축이 아래로 향함
 IMU_FORWARD_AXIS = 'Y'        # 'X' 또는 'Y' (캔위성 앞쪽 방향)
+# INT 핀 미사용 시: None
+# INT 핀 사용 시: board.D5 (또는 연결된 GPIO 핀 번호)
+USE_INT_PIN = None  # None 또는 board.D5 등 GPIO 핀
 
 log_dir = './sensorlogs'
 if not os.path.exists(log_dir): 
@@ -42,12 +45,12 @@ def log_imu(text):
     imulogfile.flush()
 
 def init_imu():
-    print("Attempting to import board and adafruit_bno08x...")
+    #print("Attempting to import board and adafruit_bno08x...")
     try:
         import board
         import adafruit_bno08x
         from adafruit_bno08x.i2c import BNO08X_I2C
-        print("Libraries imported successfully.")
+        #print("Libraries imported successfully.")
     except ImportError as e:
         print(f"Import failed: {e}")
         raise e
@@ -58,11 +61,13 @@ def init_imu():
     # BNO08x possible addresses: 0x4A (default), 0x4B (alternate)
     POSSIBLE_ADDRESSES = [0x4a, 0x4b]
     
+    I2C_FREQUENCY = 10000  # 10kHz (기본값: 100000 = 100kHz)
+    
     for attempt in range(MAX_RETRIES):
         i2c = None
         try:
-            # Initialize I2C interface
-            i2c = board.I2C()  # board.SCL과 board.SDA 사용
+            # Initialize I2C interface with lower frequency for stability
+            i2c = board.I2C(frequency=I2C_FREQUENCY)  # board.SCL과 board.SDA 사용
             
             # Try each possible address
             sensor = None
@@ -71,7 +76,12 @@ def init_imu():
                 try:
                     # 디버그 출력 억제를 위해 stdout/stderr 리다이렉트
                     with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                        sensor = BNO08X_I2C(i2c, address=addr, debug=False)
+                        # INT 핀 사용 옵션 (10초 주기 타임아웃 에러 방지)
+                        # INT 핀이 연결되어 있으면 interrupt 매개변수에 GPIO 핀 전달
+                        if USE_INT_PIN is not None:
+                            sensor = BNO08X_I2C(i2c, address=addr, interrupt=USE_INT_PIN, debug=False)
+                        else:
+                            sensor = BNO08X_I2C(i2c, address=addr, debug=False)
                     # 추가로 모든 가능한 디버그 속성 비활성화
                     if hasattr(sensor, '_debug'):
                         sensor._debug = False
