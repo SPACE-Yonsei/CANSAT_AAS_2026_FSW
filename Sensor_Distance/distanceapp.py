@@ -171,9 +171,9 @@ def distanceapp_main(Main_Queue: Queue, Main_Pipe: connection.Connection):
     try:
         while DISTANCEAPP_RUNSTATUS:
             message = Main_Pipe.recv()
-            recv_msg = msgstructure.MsgStructure()
+            recv_msg = msgstructure.unpack_msg(message)
 
-            if msgstructure.unpack_msg(recv_msg, message) == False:
+            if recv_msg == False:
                 continue
 
             if recv_msg.receiver_app == appargs.DistanceAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:

@@ -7,11 +7,11 @@ class MsgStructure:
     MsgID: int = None # Message ID should be unique for identification
     data: str = None # Data
 
-def fill_msg(_sender : int, _receiver : int, _MsgID : int, _data: str):
+def fill_msg(_sender : int, _receiver : int, _MsgID : int, _data: str) -> MsgStructure:
     try:
         if '|' in _data:
             events.LogEvent("MsgStructure", events.EventType.error, f"Data should not contain '|' since it is used to divide fields")
-            return False
+            return None
         target = MsgStructure()
         target.sender_app = _sender
         target.receiver_app = _receiver
@@ -20,7 +20,7 @@ def fill_msg(_sender : int, _receiver : int, _MsgID : int, _data: str):
         return target
     except Exception as e:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when filling message : {e}")
-        return False
+        return None
 
 def pack_msg (target: MsgStructure) -> str:
     try:
@@ -35,18 +35,17 @@ def pack_msg (target: MsgStructure) -> str:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when packing message : {e}")
         return "ERROR"
     
-def unpack_msg (target: MsgStructure, msg: str) -> bool:
+def unpack_msg (msg: str) -> bool:
     try:
         msg_list = msg.split('|')
         if len(msg_list) != 4:
             events.LogEvent("MsgStructure", events.EventType.error, f"error when unpacking message : Expected length of msg_list of 4 but {len(msg_list)}")
             return False
         else:
-            target.sender_app = int(msg_list[0])
-            target.receiver_app = int(msg_list[1])
-            target.MsgID = int(msg_list[2])
-            target.data = msg_list[3]
-            return True
+            target = fill_msg(int(msg_list[0]), int(msg_list[1]), int(msg_list[2]), msg_list[3])
+            if target is None:
+                return False
+            return target
     except Exception as e:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when unpacking message : {e}")
         return False

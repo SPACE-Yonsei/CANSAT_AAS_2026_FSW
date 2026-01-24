@@ -36,18 +36,19 @@ def pack_msg (target: MsgStructure) -> str:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when packing message : {e}")
         return "ERROR"
     
-def unpack_msg (target : MsgStructure, msg: str) -> bool:
+def unpack_msg (msg: str) -> bool:
     try:
         msg_list = msg.split('|')
         if len(msg_list) != 4:
             events.LogEvent("MsgStructure", events.EventType.error, f"error when unpacking message : Expected length of msg_list of 4 but {len(msg_list)}")
             return False
         else:
+            target = MsgStructure()
             target.sender_app = int(msg_list[0])
             target.receiver_app = int(msg_list[1])
             target.MsgID = int(msg_list[2])
             target.data = msg_list[3]
-            return True
+            return target
     except Exception as e:
         events.LogEvent("MsgStructure", events.EventType.error, f"error when unpacking message : {e}")
         return False

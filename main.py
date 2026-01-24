@@ -210,12 +210,13 @@ def run_app(AppID: int):
 # Jobs need to be done when terminating process         # 
 #########################################################
 
+
 def terminate_FSW():
     global MAINAPP_RUNSTATUS
     # Set all Runstatus to false
     MAINAPP_RUNSTATUS = False
 
-    msg=msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
+    msg = msgstructure.fill_msg(appargs.MainAppArg.AppID, appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
     packed_msg = msgstructure.pack_msg(msg)
 
     # Send termination message to kill every process
@@ -260,9 +261,11 @@ def runloop(Main_Queue : Queue):
             recv_msg = Main_Queue.get()
 
             # Unpack the message to Check receiver
-            unpacked_msg = msgstructure.MsgStructure()
-            msgstructure.unpack_msg(unpacked_msg, recv_msg)
-            
+            unpacked_msg = msgstructure.unpack_msg(recv_msg)
+
+            if unpacked_msg == False:
+                continue
+
             if unpacked_msg.receiver_app in app_dict:
                 app_dict[unpacked_msg.receiver_app].pipe.send(recv_msg)
             else:

@@ -227,12 +227,12 @@ def barometerapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
         while BAROMETERAPP_RUNSTATUS:
             # Receive Message From Pipe
             message = Main_Pipe.recv()
-            recv_msg = msgstructure.MsgStructure()
+            recv_msg = msgstructure.unpack_msg(message)
 
             # Unpack Message, Skip this message if unpacked message is not valid
-            if msgstructure.unpack_msg(recv_msg, message) == False:
+            if recv_msg == False:
                 continue
-            
+
             # Validate Message, Skip this message if target AppID different from barometerapp's AppID
             # Exception when the message is from main app
             if recv_msg.receiver_app == appargs.BarometerAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:

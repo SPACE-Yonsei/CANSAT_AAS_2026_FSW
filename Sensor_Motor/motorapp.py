@@ -172,12 +172,11 @@ def motorapp_main(main_queue: Queue, main_pipe: connection.Connection):
     try:
         while _running:
             raw = main_pipe.recv()
-            msg = msgstructure.MsgStructure()
-            
-            if not msgstructure.unpack_msg(msg, raw):
-                msgstructure.unpack_msg(msg, raw)
+            msg = msgstructure.unpack_msg(raw)
+
+            if msg == False:
                 continue
-            
+
             if msg.receiver_app in (appargs.MotorAppArg.AppID, appargs.MainAppArg.AppID):
                 _dispatch(msg)
     

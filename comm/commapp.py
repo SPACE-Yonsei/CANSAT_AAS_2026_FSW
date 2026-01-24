@@ -382,7 +382,7 @@ def cmd_cal(option:str, Main_Queue:Queue):
 
 def cmd_mec(option:str, Main_Queue:Queue):
     # Route the mechanism activation command to motor app
-    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.motorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option)
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.MotorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option)
 
     return
 
@@ -675,12 +675,12 @@ def commapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
         while COMMAPP_RUNSTATUS:
             # Receive Message From Pipe
             message = Main_Pipe.recv()
-            recv_msg = msgstructure.MsgStructure()
+            recv_msg = msgstructure.unpack_msg(message)
 
             # Unpack Message, Skip this message if unpacked message is not valid
-            if msgstructure.unpack_msg(recv_msg, message) == False:
+            if recv_msg == False:
                 continue
-            
+
             # Validate Message, Skip this message if target AppID different from commapp's AppID
             # Exception when the message is from main app
             if recv_msg.receiver_app == appargs.CommAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:

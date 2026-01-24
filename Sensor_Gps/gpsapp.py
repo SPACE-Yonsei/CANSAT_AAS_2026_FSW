@@ -138,12 +138,12 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             # 로그 출력 비활성화
             pass
 
-        # FlightLogic으로 데이터 전송 (매 루프마다)
+        # gps->motor, MyCor
         if GPS_LAT != 0.0 or GPS_LON != 0.0:
             msgstructure.send_msg(
                 Main_Queue,
-                appargs.GpsAppArg.AppID, appargs.FlightlogicAppArg.AppID,
-                appargs.GpsAppArg.MID_flight_MyCor,
+                appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+                appargs.GpsAppArg.MID_motor_MyCor,
                 f"{GPS_LAT},{GPS_LON}"
             )
 
@@ -198,18 +198,17 @@ def gpsapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
     try:
         while GPSAPP_RUNSTATUS:
             # Receive Message From Pipe
-            message = Main_Pipe.recv()
-            recv_msg = msgstructure.MsgStructure()
-
+            raw = Main_Pipe.recv()
+            unpacked_msg = msgstructure.unpack_msg(raw)
             # Unpack Message, Skip this message if unpacked message is not valid
-            if msgstructure.unpack_msg(recv_msg, message) == False:
+            if  unpacked_msg == False:
                 continue
             
             # Validate Message, Skip this message if target AppID different from gpsapp's AppID
             # Exception when the message is from main app
-            if recv_msg.receiver_app == appargs.GpsAppArg.AppID or recv_msg.receiver_app == appargs.MainAppArg.AppID:
+            if unpacked_msg.receiver_app == appargs.GpsAppArg.AppID or unpacked_msg.receiver_app == appargs.MainAppArg.AppID:
                 # Handle Command According to Message ID
-                command_handler(recv_msg)
+                command_handler(unpacked_msg)
             else:
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, "Receiver MID does not match with gpsapp MID")
 

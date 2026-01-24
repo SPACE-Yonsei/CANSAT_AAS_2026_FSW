@@ -60,8 +60,6 @@ class GpsAppArg:
 
     MID_comm_gga : int = 1501201
 
-    MID_flight_MyCor : int = 1501101
-
     MID_motor_MyCor : int = 1501901 #flightlogic 거치지 않고 motor로 바로
 
 class DistanceAppArg:
