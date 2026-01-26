@@ -127,11 +127,11 @@ def handle_barometer(data: str, queue: Queue):
 #     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendGpsMotorData, f"{lat},{lon}")
 
 
-def handle_imu(data: str, queue: Queue):
-    if sim_enable and sim_active:
-        return
-    yaw = float(data)
-    msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendImuMotorData, str(yaw))
+# def handle_imu(data: str, queue: Queue):
+#     if sim_enable and sim_active:
+#         return
+#     yaw = float(data)
+#     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendImuMotorData, str(yaw))
 
 
 def handle_distance(data: str, queue: Queue):
@@ -181,7 +181,7 @@ MSG_HANDLERS = {
     appargs.CommAppArg.MID_RouteCmd_SIM: handle_sim,
     appargs.CommAppArg.MID_RouteCmd_SIMP: handle_simp,
     appargs.BarometerAppArg.MID_flight_alt: handle_barometer,
-    appargs.ImuAppArg.MID_flight_yaw: handle_imu,
+    #appargs.ImuAppArg.MID_flight_yaw: handle_imu,
     appargs.DistanceAppArg.MID_flight_dis: handle_distance,
     appargs.CommAppArg.MID_RouteCmd_SS: handle_ss,
     appargs.BarometerAppArg.MID_flight_ResetMaxAlt: handle_reset_alt,

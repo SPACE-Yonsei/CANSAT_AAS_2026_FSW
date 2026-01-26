@@ -19,8 +19,8 @@ class FlightlogicAppArg:
     MID_motor_state : int = 1101902
     MID_motor_burnwire : int = 1101903  # 번와이어
     MID_motor_EggDrop : int = 1101904  # 솔레노이드
-    MID_SendGpsMotorData : int = 1101905
-    MID_SendImuMotorData : int = 1101906
+    # MID_SendGpsMotorData : int = 1101905
+    # MID_SendImuMotorData : int = 1101906
 
 
 class CommAppArg:
@@ -51,9 +51,8 @@ class ImuAppArg:
     AppName : str = "Imu"
 
     MID_comm_euler : int = 1401201
-    MID_flight_yaw : int = 1401101
-
-    # flightlogic 거치지 않고 motor로 바로 imu
+    #MID_flight_yaw : int = 1401101
+    MID_motor_yaw : int = 1401901 # flightlogic 거치지 않고 motor로 바로 imu
 class GpsAppArg:
     AppID : int = 15
     AppName : str = "GPS"
