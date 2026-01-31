@@ -109,6 +109,9 @@ IMU_TILT_DIRECTION: float = 0.0  # 기울기 방향 (0-360도)
 IMU_GRAVITY_X: float = 0.0
 IMU_GRAVITY_Y: float = 0.0
 IMU_GRAVITY_Z: float = 0.0
+IMU_LAST_UPDATE_TS: float = 0.0
+IMU_LAST_FAILURE_TS: float = 0.0
+IMU_DATA_STALE: bool = True
 
 IMU_IPC_PATH = os.getenv("IMU_IPC_PATH", "/tmp/imu_latest.json")
 
@@ -117,6 +120,9 @@ def write_imu_ipc():
         return
     payload = {
         "ts": time.time(),
+        "last_update_ts": IMU_LAST_UPDATE_TS,
+        "last_failure_ts": IMU_LAST_FAILURE_TS,
+        "stale": IMU_DATA_STALE,
         "roll": IMU_ROLL,
         "pitch": IMU_PITCH,
         "yaw": IMU_YAW,
@@ -139,6 +145,12 @@ def write_imu_ipc():
                 os.remove(tmp_path)
         except Exception:
             pass
+
+def mark_imu_stale():
+    global IMU_DATA_STALE, IMU_LAST_FAILURE_TS
+    IMU_DATA_STALE = True
+    IMU_LAST_FAILURE_TS = time.time()
+    write_imu_ipc()
 
 # IMU error tracking for reinit
 IMU_ERROR_COUNT: int = 0
@@ -167,6 +179,8 @@ def read_imu_data(imu_instance):
     global IMU_GRAVITY_X
     global IMU_GRAVITY_Y
     global IMU_GRAVITY_Z
+    global IMU_LAST_UPDATE_TS
+    global IMU_DATA_STALE
     
     global IMUAPP_RUNSTATUS
     global IMU_ERROR_COUNT, MAX_CONSECUTIVE_ERRORS
@@ -184,6 +198,7 @@ def read_imu_data(imu_instance):
             if rcv_data == False:
                 if not IMUAPP_RUNSTATUS:
                     break
+                mark_imu_stale()
                 IMU_ERROR_COUNT += 1
                 events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, 
                                f"IMU read error ({IMU_ERROR_COUNT}/{MAX_CONSECUTIVE_ERRORS})")
@@ -208,6 +223,8 @@ def read_imu_data(imu_instance):
             
             # Reset error count on successful read
             IMU_ERROR_COUNT = 0
+            IMU_LAST_UPDATE_TS = time.time()
+            IMU_DATA_STALE = False
             
             #새로운 자세 정보 저장
             IMU_ROLL        = rcv_data[0]
@@ -244,6 +261,7 @@ def read_imu_data(imu_instance):
                 # Normal shutdown, exit gracefully
                 break
             
+            mark_imu_stale()
             IMU_ERROR_COUNT += 1
             events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, 
                            f"Error reading IMU data ({IMU_ERROR_COUNT}/{MAX_CONSECUTIVE_ERRORS}): {e}")
