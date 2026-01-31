@@ -298,6 +298,15 @@ def send_imu_data(Main_Queue : Queue):
 
         send_counter += 1
 
+        # Send yaw directly to motor app (10Hz)
+        msgstructure.send_msg(
+            Main_Queue,
+            appargs.ImuAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.ImuAppArg.MID_motor_yaw,
+            f"{IMU_YAW:.2f}"
+        )
+
 
         if send_counter >= 10 :
             # Send telemetry message to COMM app
