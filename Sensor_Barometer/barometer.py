@@ -25,6 +25,7 @@ except ValueError:
     SEA_LEVEL_PRESSURE_HPA = 1013.25
 
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 
 
 class I2CLock:
@@ -36,7 +37,15 @@ class I2CLock:
         if fcntl is None:
             return self
         self.fd = open(self.path, "w")
-        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        start = time.time()
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() - start > I2C_LOCK_TIMEOUT_SEC:
+                    raise TimeoutError("I2C lock timeout")
+                time.sleep(0.01)
         return self
 
     def __exit__(self, exc_type, exc, tb):

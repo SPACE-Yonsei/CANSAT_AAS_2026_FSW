@@ -17,6 +17,7 @@ if not os.path.exists(log_dir):
 Electrologfile = open(os.path.join(log_dir, 'electro_ina228.txt'), 'a')
 
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 
 
 class I2CLock:
@@ -28,7 +29,15 @@ class I2CLock:
         if fcntl is None:
             return self
         self.fd = open(self.path, "w")
-        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        start = time.time()
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() - start > I2C_LOCK_TIMEOUT_SEC:
+                    raise TimeoutError("I2C lock timeout")
+                time.sleep(0.01)
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -76,8 +85,11 @@ def init_INA228(address=0x40):
         def _read_register(self, register, length=2):
             """Read register from INA228"""
             with I2CLock():
+                start = time.time()
                 while not self.i2c.try_lock():
-                    pass
+                    if time.time() - start > I2C_LOCK_TIMEOUT_SEC:
+                        raise TimeoutError("I2C bus lock timeout")
+                    time.sleep(0.001)
                 try:
                     result = bytearray(length)
                     self.i2c.writeto_then_readfrom(
