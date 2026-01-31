@@ -29,6 +29,12 @@ class SensorLogFilter(logging.Filter):
         return record.name == self.app_name
 
 
+class ConsoleFilter(logging.Filter):
+    """Console handler filter to hide WARNING logs only."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno != logging.WARNING
+
+
 def setup_logging_main_process() -> Queue:
     """
     Main process에서 호출. 로그 큐와 리스너를 설정.
@@ -79,6 +85,7 @@ def setup_logging_main_process() -> Queue:
     # Console handler - DEBUG 레벨부터 모두 출력
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
+    console_handler.addFilter(ConsoleFilter())
     
     # Formatter
     formatter = logging.Formatter(
@@ -140,9 +147,6 @@ def setup_logging_subprocess(log_queue: Queue):
 
 
 def get_logger(name: str) -> logging.Logger:
-    """
-    지정된 이름의 logger를 반환.
-    """
     return logging.getLogger(name)
 
 

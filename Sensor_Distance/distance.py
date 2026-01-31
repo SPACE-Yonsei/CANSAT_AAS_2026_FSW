@@ -9,10 +9,40 @@ Resolution: 1cm
 """
 
 import time
+import os
+try:
+    import fcntl
+except Exception:
+    fcntl = None
 from lib import events, appargs
 
 # I2C Address
 TFLUNA_I2C_ADDR = 0x10
+
+I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+
+
+class I2CLock:
+    def __init__(self, path=I2C_LOCK_PATH):
+        self.path = path
+        self.fd = None
+
+    def __enter__(self):
+        if fcntl is None:
+            return self
+        self.fd = open(self.path, "w")
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if fcntl is None:
+            return False
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            self.fd.close()
+        except Exception:
+            pass
+        return False
 
 # Register addresses (from TF-Luna datasheet)
 REG_DISTANCE_LOW = 0x00   # Distance low byte
@@ -39,17 +69,20 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
             def __init__(self, i2c, address):
                 self.i2c = i2c
                 self.address = address
-                # Lock I2C bus
-                while not self.i2c.try_lock():
-                    pass
             
             def _read_register(self, register, length=1):
                 """Read register from TF-Luna"""
-                result = bytearray(length)
-                self.i2c.writeto_then_readfrom(
-                    self.address, bytes([register]), result
-                )
-                return result
+                with I2CLock():
+                    while not self.i2c.try_lock():
+                        pass
+                    try:
+                        result = bytearray(length)
+                        self.i2c.writeto_then_readfrom(
+                            self.address, bytes([register]), result
+                        )
+                        return result
+                    finally:
+                        self.i2c.unlock()
             
             def read_distance_cm(self):
                 """Read distance in cm"""
@@ -77,11 +110,8 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
                 return temp_raw / 100.0
             
             def unlock(self):
-                """Unlock I2C bus"""
-                try:
-                    self.i2c.unlock()
-                except:
-                    pass
+                """Compatibility (no persistent lock held)."""
+                return
         
         _sensor = TFLuna(i2c, address)
         

@@ -5,7 +5,7 @@ from multiprocessing import Queue, connection
 
 from lib import appargs, msgstructure, events
 
-from Sensor_Motor import Motor_Parafoil, Motor_Release, Motor_Egg, parafoil_control
+from Sensor_Motor import Motor_Parafoil, Motor_Release, Motor_Egg, Motor_Parafoil_Calculate
 
 # =============================================================================
 # 상태 변수
@@ -55,7 +55,7 @@ def handle_target_coords(data: str):
     parts = data.split(",")
     if len(parts) == 2:
         lat, lon = float(parts[0]), float(parts[1])
-        parafoil_control.set_target_coordinates(lat, lon)
+        Motor_Parafoil_Calculate.set_target_coordinates(lat, lon)
         log(f"Target set: ({lat:.6f}, {lon:.6f})")
     else:
         log("Target coords format error", events.EventType.error)
@@ -110,11 +110,11 @@ def update_parafoil():
     if state < 3 or not motor_enabled:
         return
     
-    turn = parafoil_control.calculate_motor_control(yaw, lat, lon)
+    turn = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
     Motor_Parafoil.rotate_parafoil_motor(pi, turn)
 
     if state == 5:
-        log("Stopping motors")
+        log("Stopping motors", events.EventType.warning)
         Motor_Parafoil.rotate_parafoil_motor(pi, 0.0)
 
 # =============================================================================
@@ -128,7 +128,7 @@ def init() -> bool:
     log("Initializing motorapp")
     
     try:
-        parafoil_control.init_parafoil_control()
+        Motor_Parafoil_Calculate.init_parafoil_control()
         pi = Motor_Parafoil.init_parafoil_motor()
         Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()

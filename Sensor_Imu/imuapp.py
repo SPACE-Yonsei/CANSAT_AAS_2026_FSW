@@ -10,6 +10,8 @@ import signal
 from multiprocessing import Queue, connection
 import threading
 import time
+import json
+import os
 
 # Import IMU sensor library
 from Sensor_Imu import imu
@@ -43,6 +45,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
 # Initialization
 def imuapp_init():
     global IMUAPP_RUNSTATUS
+    global g_i2c_instance, g_imu_instance
     try:
         # Disable Keyboardinterrupt since Termination is handled by parent process
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -52,6 +55,10 @@ def imuapp_init():
         
         #Initialize IMU Sensor
         i2c_instance, imu_instance = imu.init_imu()
+        
+        # Store in global variables for reinit
+        g_i2c_instance = i2c_instance
+        g_imu_instance = imu_instance
         
         events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.info, "Imuapp Initialization Complete")
         return i2c_instance, imu_instance
@@ -103,6 +110,44 @@ IMU_GRAVITY_X: float = 0.0
 IMU_GRAVITY_Y: float = 0.0
 IMU_GRAVITY_Z: float = 0.0
 
+IMU_IPC_PATH = os.getenv("IMU_IPC_PATH", "/tmp/imu_latest.json")
+
+def write_imu_ipc():
+    if not IMU_IPC_PATH:
+        return
+    payload = {
+        "ts": time.time(),
+        "roll": IMU_ROLL,
+        "pitch": IMU_PITCH,
+        "yaw": IMU_YAW,
+        "acc": [IMU_ACCX, IMU_ACCY, IMU_ACCZ],
+        "mag": [IMU_MAGX, IMU_MAGY, IMU_MAGZ],
+        "gyro": [IMU_GYRX, IMU_GYRY, IMU_GYRZ],
+        "tilt_angle": IMU_TILT_ANGLE,
+        "tilt_direction": IMU_TILT_DIRECTION,
+        "gravity": [IMU_GRAVITY_X, IMU_GRAVITY_Y, IMU_GRAVITY_Z],
+    }
+    tmp_path = f"{IMU_IPC_PATH}.tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        os.replace(tmp_path, IMU_IPC_PATH)
+    except Exception:
+        # IPC write failures should not kill the IMU loop
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+
+# IMU error tracking for reinit
+IMU_ERROR_COUNT: int = 0
+MAX_CONSECUTIVE_ERRORS: int = 3  # 3회 연속 에러 시 재초기화
+
+# Global i2c and sensor instances for reinit
+g_i2c_instance = None
+g_imu_instance = None
+
 def read_imu_data(imu_instance):
 
     global IMU_ROLL
@@ -124,51 +169,105 @@ def read_imu_data(imu_instance):
     global IMU_GRAVITY_Z
     
     global IMUAPP_RUNSTATUS
+    global IMU_ERROR_COUNT, MAX_CONSECUTIVE_ERRORS
+    global g_i2c_instance, g_imu_instance
+    
+    # Use global instances
+    current_imu = imu_instance
+    
     while IMUAPP_RUNSTATUS:
         try:
             # Read data from IMU
-            rcv_data = imu.read_sensor_data(imu_instance)
+            rcv_data = imu.read_sensor_data(current_imu)
 
             # Continue if Quaternion data is empty
             if rcv_data == False:
+                if not IMUAPP_RUNSTATUS:
+                    break
+                IMU_ERROR_COUNT += 1
+                events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, 
+                               f"IMU read error ({IMU_ERROR_COUNT}/{MAX_CONSECUTIVE_ERRORS})")
+                
+                # Reinitialize IMU after consecutive errors
+                if IMU_ERROR_COUNT >= MAX_CONSECUTIVE_ERRORS:
+                    events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, 
+                                   "IMU reinitializing due to consecutive errors...")
+                    try:
+                        g_i2c_instance, g_imu_instance = imu.reinit_imu(g_i2c_instance, current_imu)
+                        current_imu = g_imu_instance
+                        IMU_ERROR_COUNT = 0
+                        events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.info, 
+                                       "IMU reinitialized successfully")
+                    except Exception as reinit_e:
+                        events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, 
+                                       f"IMU reinit failed: {reinit_e}")
+                        IMU_ERROR_COUNT = 0  # Reset to try again later
+                
+                time.sleep(0.1)
                 continue
-            else:         
-                #새로운 자세 정보 저장
-                IMU_ROLL        = rcv_data[0]
-                IMU_PITCH       = rcv_data[1]
-                IMU_YAW         = rcv_data[2]
-                
-                IMU_ACCX        = rcv_data[3]
-                IMU_ACCY        = rcv_data[4]
-                IMU_ACCZ        = rcv_data[5]
+            
+            # Reset error count on successful read
+            IMU_ERROR_COUNT = 0
+            
+            #새로운 자세 정보 저장
+            IMU_ROLL        = rcv_data[0]
+            IMU_PITCH       = rcv_data[1]
+            IMU_YAW         = rcv_data[2]
+            
+            IMU_ACCX        = rcv_data[3]
+            IMU_ACCY        = rcv_data[4]
+            IMU_ACCZ        = rcv_data[5]
 
-                IMU_MAGX        = rcv_data[6]
-                IMU_MAGY        = rcv_data[7]
-                IMU_MAGZ        = rcv_data[8]
+            IMU_MAGX        = rcv_data[6]
+            IMU_MAGY        = rcv_data[7]
+            IMU_MAGZ        = rcv_data[8]
 
-                IMU_GYRX        = rcv_data[9]
-                IMU_GYRY        = rcv_data[10]
-                IMU_GYRZ        = rcv_data[11]
+            IMU_GYRX        = rcv_data[9]
+            IMU_GYRY        = rcv_data[10]
+            IMU_GYRZ        = rcv_data[11]
+            
+            # 중력 벡터로부터 계산된 기울기 정보
+            # tilt/gravity outputs removed in imu.read_sensor_data
+            IMU_TILT_ANGLE      = 0.0
+            IMU_TILT_DIRECTION  = 0.0
+            IMU_GRAVITY_X       = 0.0
+            IMU_GRAVITY_Y       = 0.0
+            IMU_GRAVITY_Z       = 0.0
+
+            # Write latest IMU data for IPC consumers
+            write_imu_ipc()
                 
-                # 중력 벡터로부터 계산된 기울기 정보
-                IMU_TILT_ANGLE      = rcv_data[12]  # 기울기 각도 (0-90도)
-                IMU_TILT_DIRECTION  = rcv_data[13]  # 기울기 방향 (0-360도)
-                IMU_GRAVITY_X       = rcv_data[14]  # 중력 벡터 X
-                IMU_GRAVITY_Y       = rcv_data[15]  # 중력 벡터 Y
-                IMU_GRAVITY_Z       = rcv_data[16]  # 중력 벡터 Z
         except (AttributeError, OSError, RuntimeError, KeyError) as e:
             # Handle I2C errors during shutdown or communication issues
             # KeyError: BNO08x receives unknown report type (I2C bus noise/conflict)
             if not IMUAPP_RUNSTATUS:
                 # Normal shutdown, exit gracefully
                 break
-            # Log error but continue if still running
-            events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, f"Error reading IMU data: {e}")
+            
+            IMU_ERROR_COUNT += 1
+            events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, 
+                           f"Error reading IMU data ({IMU_ERROR_COUNT}/{MAX_CONSECUTIVE_ERRORS}): {e}")
+            
+            # Reinitialize IMU after consecutive errors
+            if IMU_ERROR_COUNT >= MAX_CONSECUTIVE_ERRORS:
+                events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, 
+                               "IMU reinitializing due to consecutive errors...")
+                try:
+                    g_i2c_instance, g_imu_instance = imu.reinit_imu(g_i2c_instance, current_imu)
+                    current_imu = g_imu_instance
+                    IMU_ERROR_COUNT = 0
+                    events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.info, 
+                                   "IMU reinitialized successfully")
+                except Exception as reinit_e:
+                    events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.error, 
+                                   f"IMU reinit failed: {reinit_e}")
+                    IMU_ERROR_COUNT = 0  # Reset to try again later
+            
             time.sleep(0.2)  # Wait a bit longer before retry
             continue
 
-        # The imu runs on 50Hz
-        time.sleep(0.02)
+        # The imu runs on 10Hz
+        time.sleep(0.1)
 
     return
 

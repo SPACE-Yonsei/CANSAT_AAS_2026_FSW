@@ -16,6 +16,8 @@ from lib import events
 # Import the application and execute the runloop here.
 
 from multiprocessing import Process, Queue, Pipe, connection
+import threading
+import time
 
 # Initialize logging system FIRST (before any LogEvent calls)
 log_queue = events.init_events_main_process()
@@ -193,6 +195,21 @@ app_dict[appargs.DistanceAppArg.AppID] = distanceapp_elements
 # Add Apps HERE                                         #
 #########################################################
 
+#########################################################
+# Launcher function mapping for process restart         #
+#########################################################
+app_launchers = {
+    appargs.BarometerAppArg.AppID: barometerapp_launcher,
+    appargs.CameraAppArg.AppID: cameraapp_launcher,
+    appargs.GpsAppArg.AppID: gpsapp_launcher,
+    appargs.ImuAppArg.AppID: imuapp_launcher,
+    appargs.CommAppArg.AppID: commapp_launcher,
+    appargs.ElectroAppArg.AppID: electroapp_launcher,
+    appargs.FlightlogicAppArg.AppID: flightlogicapp_launcher,
+    appargs.MotorAppArg.AppID: motorapp_launcher,
+    appargs.DistanceAppArg.AppID: distanceapp_launcher,
+}
+
 
 #########################################################
 # Application Management                                #
@@ -250,10 +267,93 @@ def terminate_FSW():
     sys.exit()
     return
 
-# Check run status, restart correspoding app when run status is false
-# TBD
+#########################################################
+# Process Monitoring and Restart                        #
+#########################################################
+
+# 프로세스 재시작 함수
+def restart_app(appID: int):
+    """죽은 프로세스를 재시작합니다."""
+    global app_dict, app_launchers, main_queue, log_queue
+    
+    if appID not in app_dict or appID not in app_launchers:
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, 
+                       f"Cannot restart AppID {appID}: not in dictionary")
+        return False
+    
+    try:
+        # 기존 파이프 정리
+        old_pipe = app_dict[appID].pipe
+        try:
+            old_pipe.close()
+        except:
+            pass
+        
+        # 새 파이프 생성
+        parent_pipe, child_pipe = Pipe()
+        
+        # 새 프로세스 생성
+        launcher = app_launchers[appID]
+        new_process = Process(target=launcher, args=(main_queue, child_pipe, log_queue))
+        
+        # app_dict 업데이트
+        new_elements = app_elements()
+        new_elements.process = new_process
+        new_elements.pipe = parent_pipe
+        app_dict[appID] = new_elements
+        
+        # 새 프로세스 시작
+        new_process.start()
+        
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, 
+                       f"AppID {appID} restarted successfully")
+        return True
+        
+    except Exception as e:
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, 
+                       f"Failed to restart AppID {appID}: {e}")
+        return False
+
+# 프로세스 상태 확인 및 재시작 (주기적으로 호출)
 def checkrunstatus():
-    return
+    """모든 프로세스의 생존 여부를 확인하고, 죽은 프로세스를 재시작합니다."""
+    global MAINAPP_RUNSTATUS, app_dict
+    
+    for appID in list(app_dict.keys()):
+        process = app_dict[appID].process
+        
+        # 프로세스가 시작되었고, 더 이상 살아있지 않은 경우
+        if process.pid is not None and not process.is_alive():
+            exit_code = process.exitcode
+            events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, 
+                           f"AppID {appID} died (exit code: {exit_code}), attempting restart...")
+            
+            # 재시작 시도
+            success = restart_app(appID)
+            if not success:
+                events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, 
+                               f"AppID {appID} restart failed, will retry next cycle")
+
+# 프로세스 모니터링 스레드
+def process_monitor():
+    """백그라운드에서 프로세스 상태를 주기적으로 확인합니다."""
+    global MAINAPP_RUNSTATUS
+    
+    MONITOR_INTERVAL = 3  # 5초마다 확인
+    
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, 
+                   "Process monitor started")
+    
+    while MAINAPP_RUNSTATUS:
+        time.sleep(MONITOR_INTERVAL)
+        
+        if not MAINAPP_RUNSTATUS:
+            break
+            
+        checkrunstatus()
+    
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, 
+                   "Process monitor stopped")
 
 # Main Runloop
 def runloop(Main_Queue : Queue):
@@ -300,7 +400,12 @@ if __name__ == '__main__':
         app_dict[appID].process.start()
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Started AppID {appID}")
 
-    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "All processes started. Entering main runloop.")
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "All processes started.")
+    
+    # Start process monitor thread
+    monitor_thread = threading.Thread(target=process_monitor, name="ProcessMonitor", daemon=True)
+    monitor_thread.start()
+    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "Process monitor thread started. Entering main runloop.")
     
     # Main app runloop
     runloop(main_queue)
