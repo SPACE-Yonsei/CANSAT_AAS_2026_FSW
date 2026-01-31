@@ -298,12 +298,6 @@ def send_imu_data(Main_Queue : Queue):
 
         send_counter += 1
 
-        # Send Yaw data to FlightLogic
-        status = msgstructure.send_msg(Main_Queue,
-                                       appargs.ImuAppArg.AppID,
-                                       appargs.FlightlogicAppArg.AppID,
-                                       appargs.ImuAppArg.MID_flight_yaw,
-                                       f"{IMU_YAW:.2f}")
 
         if send_counter >= 10 :
             # Send telemetry message to COMM app
