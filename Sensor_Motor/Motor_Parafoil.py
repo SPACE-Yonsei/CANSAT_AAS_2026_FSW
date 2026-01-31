@@ -18,25 +18,21 @@ PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 left_neutral = 2500
 right_neutral = 500
 
-# Hardware-safe pulse boundaries (절대 1500 초과 금지!)
-PULSE_MIN = 500
-PULSE_MAX = 1500  # 12, 13번 모터 모두 1500 초과 펄스 금지
-
 def init_parafoil_motor():
     """Initialize parafoil motor (both motors set to release down - straight position)."""
     import pigpio
     pi = pigpio.pi()
     # Initialize: both motors release down (straight position)
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_neutral)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_neutral)
     return pi
 
 def terminate_parafoil_motor(pi):
     """Terminate parafoil motor (both motors set to release down, then stop PWM)."""
     if pi is not None:
         # On termination: both motors release down
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_neutral)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_neutral)
         time.sleep(0.1)
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
@@ -61,7 +57,11 @@ def rotate_parafoil_motor(pi, error: float):
     """
     THRESHOLD = 15  # Dead zone (±15 degrees)
     error_to_purse = 2000/180
-    purse = error*error_to_purse
+    purse = int(error*error_to_purse)
+    if purse >= 2000:
+        purse = 2000-100
+    elif purse <= -2000:
+        purse = -2000+100
     # Within dead zone: straight (both motors release down)
     
     

@@ -69,15 +69,15 @@ def quick_angle(angle: float) -> float:
     return angle
 
 
-def calculate_motor_control(yaw: float, lat: float, lon: float) -> float:
+def calculate_motor_control(yaw: float) -> float:
     global last_error
     
     if target_lat == 0.0 and target_lon == 0.0:
         return 0.0
     
     # GPS 유효 → 방위각 계
-    if is_gps_valid(lat, lon):
-        target_azimuth = math.degrees(math.atan2(target_lat - lat, target_lon - lon))
+    if is_gps_valid(1, 1):
+        target_azimuth = math.degrees(math.atan2(target_lat - 1, target_lon - 1))
         error=quick_angle(target_azimuth-yaw)
         last_error = error
         return error
