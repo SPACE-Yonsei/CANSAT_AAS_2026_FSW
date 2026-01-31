@@ -10,15 +10,15 @@ from lib import prevstate
 # 상태 변수
 # =============================================================================
 
-_target_lat = 0.0
-_target_lon = 0.0
-_last_bearing = None  # GPS 무효 시 사용할 마지막 유효 방위각
+target_lat = 0.0
+target_lon = 0.0
+last_error = None  # GPS 무효 시 사용할 마지막 유효 방위각
 
 def init_parafoil_control():
-    global _target_lat, _target_lon
+    global target_lat, target_lon
     try:
-        _target_lat = prevstate.Target_lat
-        _target_lon = prevstate.Target_lon
+        target_lat = prevstate.Target_lat
+        target_lon = prevstate.Target_lon
     except Exception:
         pass
 
@@ -45,8 +45,8 @@ def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: fl
 # =============================================================================
 
 def set_target_coordinates(lat: float, lon: float):
-    global _target_lat, _target_lon
-    _target_lat, _target_lon = lat, lon
+    global target_lat, target_lon
+    target_lat, target_lon = lat, lon
     try:
         prevstate.update_target_gps(lat, lon)
     except Exception:
@@ -54,14 +54,14 @@ def set_target_coordinates(lat: float, lon: float):
 
 
 def get_target_coordinates() -> tuple[float, float]:
-    return _target_lat, _target_lon
+    return target_lat, target_lon
 
 
 # =============================================================================
 # 모터 제어 계산
 # =============================================================================
 
-def _normalize_angle(angle: float) -> float:
+def quick_angle(angle: float) -> float:
     while angle > 180:
         angle -= 360
     while angle < -180:
@@ -70,22 +70,20 @@ def _normalize_angle(angle: float) -> float:
 
 
 def calculate_motor_control(yaw: float, lat: float, lon: float) -> float:
-    global _last_bearing
+    global last_error
     
-    if _target_lat == 0.0 and _target_lon == 0.0:
+    if target_lat == 0.0 and target_lon == 0.0:
         return 0.0
     
     # GPS 유효 → 방위각 계
     if is_gps_valid(lat, lon):
-        bearing = math.degrees(math.atan2(_target_lat - lat, _target_lon - lon))
-        if bearing < 0:
-            bearing += 360
-        _last_bearing = bearing
-        return _normalize_angle(yaw - bearing)
-    
+        target_azimuth = math.degrees(math.atan2(target_lat - lat, target_lon - lon))
+        error=quick_angle(target_azimuth-yaw)
+        last_error = error
+        return error
     # GPS 무효 but 이전 방위각 있음 → 유지
-    if _last_bearing is not None:
-        return _normalize_angle(yaw - _last_bearing)
+    if last_error is not None:
+        return quick_angle(yaw - last_error)
     
     # GPS 무효, 이전 방위각 없음 → 직진
     return 0.0
