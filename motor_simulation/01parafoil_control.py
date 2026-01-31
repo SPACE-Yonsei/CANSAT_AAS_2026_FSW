@@ -1,87 +1,89 @@
+#!/usr/bin/env python3
 """
-파라포일 모터 제어 모듈
-IMU/GPS 데이터 기반 turn angle 계산
+Parafoil motor control
+
+Left motor (GPIO 12): 500 = pull up, 1500 = release down
+Right motor (GPIO 13): 500 = pull up, 1500 = release down
+
+Turn left: left release down (1500) + right pull up (500)
+Turn right: left pull up (500) + right release down (1500)
+Straight: both release down (1500, 1500)
 """
 
-import math
-from lib import prevstate
+import time
 
-# =============================================================================
-# 상태 변수
-# =============================================================================
+PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
+PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 
-_target_lat = 0.0
-_target_lon = 0.0
-_last_error = None  # GPS 무효 시 사용할 마지막 유효 방위각
+# Motor pulse range
+MOTOR_UP = 500     # Pull up (line pull)
+MOTOR_DOWN = 1500  # Release down (line release)
 
+# Hardware-safe pulse boundaries (절대 1500 초과 금지!)
+PULSE_MIN = 500
+PULSE_MAX = 1500  # 12, 13번 모터 모두 1500 초과 펄스 금지
 
-def init_parafoil_control():
-    """prevstate에서 목표 좌표 로드"""
-    global _target_lat, _target_lon
+def init_parafoil_motor():
+    """Initialize parafoil motor (both motors set to release down - straight position)."""
+    import pigpio
+    pi = pigpio.pi()
+    # Initialize: both motors release down (straight position)
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+    return pi
+
+def terminate_parafoil_motor(pi):
+    """Terminate parafoil motor (both motors set to release down, then stop PWM)."""
+    if pi is not None:
+        # On termination: both motors release down
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+        time.sleep(0.1)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
+
+# def _clamp_pulse(pulse: int) -> int:
+#     """Clamp servo pulsewidth to safe range (500-1500). Never exceed 1500!"""
+#     if pulse > 1500:
+#         pulse = 1500
+#     if pulse < 500:
+#         pulse = 500
+#     return pulse
+
+def rotate_parafoil_motor(pi, turn: float):
+    """
+    Control parafoil motor (ON/OFF control).
+    
+    Args:
+        pi: pigpio instance
+        turn: Angle difference (-180 ~ +180 degrees)
+              - Negative: turn left (left release down + right pull up)
+              - Positive: turn right (left pull up + right release down)
+    """
+    TURN_THRESHOLD = 15  # Dead zone (±15 degrees)
+    
+    # Within dead zone: straight (both motors release down)
+    if abs(turn) <= TURN_THRESHOLD:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+        return
+    
+    if turn < 0:  # Turn left: left release down (1500), right pull up (500)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_UP)
+    else:  # Turn right: left pull up (500), right release down (1500)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_UP)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+    
+    return
+ if __name__ == "__main__":
+    pi = init_parafoil_motor()
     try:
-        _target_lat = prevstate.Target_lat
-        _target_lon = prevstate.Target_lon
-    except Exception:
-        pass
-
-# =============================================================================
-# GPS 유틸리티
-# =============================================================================
-
-def is_gps_valid(lat: float, lon: float) -> bool:
-    """GPS 좌표 유효성 검사"""
-    return not (lat == 0.0 and lon == 0.0) and abs(lat) <= 90.0 and abs(lon) <= 180.0
-
-
-def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Haversine 공식으로 두 좌표 간 거리 계산 (m)"""
-    R = 6371000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-# =============================================================================
-# 목표 좌표 관리
-# =============================================================================
-
-def set_target_coordinates(lat: float, lon: float):
-    """목표 GPS 좌표 설정 (prevstate에도 저장)"""
-    global _target_lat, _target_lon
-    _target_lat, _target_lon = lat, lon
-    try:
-        prevstate.update_target_gps(lat, lon)
-    except Exception:
-        pass
-
-# =============================================================================
-# 모터 제어 계산
-# =============================================================================
-
-def quick_angle(angle: float) -> float:
-    """각도를 -180 ~ +180 범위로 정규화"""
-    while angle > 180:
-        angle -= 360
-    while angle < -180:
-        angle += 360
-    return angle
-
-def calculate_error(yaw: float, lat: float, lon: float) -> float:
-
-    global _last_error
-    
-    # 목표 미설정 → 직진
-    if _target_lat == 0.0 and _target_lon == 0.0:
-        return 0.0
-    
-    # GPS 유효 → 방위각 계산
-    if is_gps_valid(lat, lon):
-        target_angle_based_north = math.degrees(math.atan2(_target_lon - lon, _target_lat - lat))
-        error=quick_angle(target_angle_based_north-yaw)
-        return error
-    
-    # GPS 무효, 이전 방위각 없음 → 직진
-    return 0.0
-
+        while True:
+            target_azimuth = math.degrees(math.atan2(target_lat - lat, target_lon - lon))
+            error=quick_angle(target_azimuth-yaw)
+            last_error = error    
+            
+            try:
+    finally:
+        terminate_parafoil_motor(pi)    

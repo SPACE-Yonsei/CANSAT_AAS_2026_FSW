@@ -15,9 +15,8 @@ import time
 PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
 PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 
-# Motor pulse range
-MOTOR_UP = 500     # Pull up (line pull)
-MOTOR_DOWN = 1500  # Release down (line release)
+left_neutral = 2500
+right_neutral = 500
 
 # Hardware-safe pulse boundaries (절대 1500 초과 금지!)
 PULSE_MIN = 500
@@ -42,15 +41,15 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
-def _clamp_pulse(pulse: int) -> int:
-    """Clamp servo pulsewidth to safe range (500-1500). Never exceed 1500!"""
-    if pulse > 1500:
-        pulse = 1500
-    if pulse < 500:
-        pulse = 500
-    return pulse
+# def _clamp_pulse(pulse: int) -> int:
+#     """Clamp servo pulsewidth to safe range (500-1500). Never exceed 1500!"""
+#     if pulse > 1500:
+#         pulse = 1500
+#     if pulse < 500:
+#         pulse = 500
+#     return pulse
 
-def rotate_parafoil_motor(pi, turn: float):
+def rotate_parafoil_motor(pi, error: float):
     """
     Control parafoil motor (ON/OFF control).
     
@@ -60,19 +59,22 @@ def rotate_parafoil_motor(pi, turn: float):
               - Negative: turn left (left release down + right pull up)
               - Positive: turn right (left pull up + right release down)
     """
-    TURN_THRESHOLD = 15  # Dead zone (±15 degrees)
-    
+    THRESHOLD = 15  # Dead zone (±15 degrees)
+    error_to_purse = 2000/180
+    purse = error*error_to_purse
     # Within dead zone: straight (both motors release down)
-    if abs(turn) <= TURN_THRESHOLD:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+    
+    
+    if error < -THRESHOLD:  # Turn left: left release down (1500), right pull up (500)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_neutral+purse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_neutral)
+    elif error > THRESHOLD: # Turn right
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_neutral + purse)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_neutral)
         return
     
-    if turn < 0:  # Turn left: left release down (1500), right pull up (500)
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_DOWN)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_UP)
     else:  # Turn right: left pull up (500), right release down (1500)
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, MOTOR_UP)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, MOTOR_DOWN)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_neutral)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_neutral)
     
     return
