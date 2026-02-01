@@ -70,7 +70,7 @@ def quick_angle(angle: float) -> float:
 
 
 def calculate_motor_control(yaw: float) -> float:
-    global last_error
+    global last_error   
     
 
     if yaw>180:
