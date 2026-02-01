@@ -94,30 +94,5 @@ def rotate_parafoil_motor(pi, error: float):
         
         target_left_pulse = left_neutral + pulse_to_rotate
         target_right_pulse = right_neutral
-
-    # Safety clamp targets
-    target_left_pulse = max(MIN_PULSE_WIDTH, min(MAX_PULSE_WIDTH, target_left_pulse))
-    target_right_pulse = max(MIN_PULSE_WIDTH, min(MAX_PULSE_WIDTH, target_right_pulse))
-
-    # Smooth transition: gradually move from current to target
-    # Left motor
-    if abs(current_left_pulse - target_left_pulse) > SMOOTH_STEP:
-        if current_left_pulse < target_left_pulse:
-            current_left_pulse += SMOOTH_STEP
-        else:
-            current_left_pulse -= SMOOTH_STEP
-    else:
-        current_left_pulse = target_left_pulse
-
-    # Right motor
-    if abs(current_right_pulse - target_right_pulse) > SMOOTH_STEP:
-        if current_right_pulse < target_right_pulse:
-            current_right_pulse += SMOOTH_STEP
-        else:
-            current_right_pulse -= SMOOTH_STEP
-    else:
-        current_right_pulse = target_right_pulse
-
-    # Apply smoothed pulses
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, current_left_pulse)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, current_right_pulse)
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, target_left_pulse)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, target_right_pulse)
