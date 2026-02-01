@@ -8,7 +8,7 @@ RIGHT_PIN = 13
 pulse_per_degree = 2000/180
 
 left_zero = 2500
-right_zero = 500
+right_zero = 600
 left_neutral = int(left_zero - 30 * pulse_per_degree)
 right_neutral = int(right_zero + 30 * pulse_per_degree)
 
@@ -20,7 +20,7 @@ if not pi.connected:
     print("❌ pigpio 연결 실패")
     exit()
 
-# print("LEFT 모터 0(2500) 이동...")
+# print("LEFT 모터 0(2500) 이동..
 # pi.set_servo_pulsewidth(LEFT_PIN, left_zero)
 # time.sleep(5)
 
