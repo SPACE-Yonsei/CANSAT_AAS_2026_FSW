@@ -9,8 +9,8 @@ PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 # 500 when right angle is 0 angle
 
 pulse_per_degree = 2000/180
-max_angle_scope = 120 # degrees
-max_pulse_scope = max_angle_scope * pulse_per_degree
+#max_angle_scope = 120 # degrees
+#max_pulse_scope = max_angle_scope * pulse_per_degree
 
 left_zero = 2500
 right_zero = 500

@@ -13,20 +13,13 @@ def angle_to_pulse(angle):
 # 테스트
 pi = pigpio.pi()
 
-pi.set_servo_pulsewidth(LEFT_PIN, 500)
-time.sleep(1)
-pi.set_servo_pulsewidth(LEFT_PIN, 1500)
+pi.set_servo_pulsewidth(LEFT_PIN, 1170)
 time.sleep(1)
 pi.set_servo_pulsewidth(LEFT_PIN, 2500)
 time.sleep(1)
-
-
-pi.set_servo_pulsewidth(RIGHT_PIN, 500)
-time.sleep(1)
-pi.set_servo_pulsewidth(RIGHT_PIN, 1500)
+pi.set_servo_pulsewidth(RIGHT_PIN, 1170)
 time.sleep(1)
 pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
-time.sleep(1)
 
 pi.set_servo_pulsewidth(LEFT_PIN, 0)
 pi.set_servo_pulsewidth(RIGHT_PIN, 0)
