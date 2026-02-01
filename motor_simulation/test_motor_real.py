@@ -28,8 +28,8 @@ for angle in test_angles:
     print(f"  왼쪽 모터 (GPIO {LEFT_PIN}): {pulse} us")
 
     # 오른쪽 모터
-    pi.set_servo_pulsewidth(RIGHT_PIN, pulse)
-    print(f"  오른쪽 모터 (GPIO {RIGHT_PIN}): {pulse} us")
+    ##pi.set_servo_pulsewidth(RIGHT_PIN, pulse)
+    ##print(f"  오른쪽 모터 (GPIO {RIGHT_PIN}): {pulse} us")
 
     time.sleep(2)
 

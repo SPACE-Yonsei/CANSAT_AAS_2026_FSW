@@ -48,7 +48,6 @@ def terminate_parafoil_motor(pi):
         time.sleep(0.1)
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
-
 def rotate_parafoil_motor(pi, error: float):
     """
     Control parafoil motor based on error (direction).
@@ -58,22 +57,16 @@ def rotate_parafoil_motor(pi, error: float):
     Right turn (error > 0): Right neutral, Left moves (1167 → 2500)
     Range: ±135° (±15° dead zone + ±120° control)
 
-    error가 ±135도를 넘으면 정지하고 현재 상태 유지
-    범위 안으로 들어오면 모터 동작 계속
+    error가 ±135도를 넘으면 neutral로 초기화
     """
     global current_left_pulse, current_right_pulse
 
-    # error가 ±135도를 넘으면 정지 (현재 상태 유지)
     real_max_angle_scope = max_angle_scope + THRESHOLD  # 135
-    if abs(error) >= real_max_angle_scope:
-        # 현재 위치 유지 (current_left_pulse, current_right_pulse 그대로)
-        return
 
-    # error가 범위 안이면 계속 움직임
-    if abs(error) < THRESHOLD:
-        # Dead zone: 직진
-        left_pulse = left_neutral   # 1167
-        right_pulse = right_neutral # 1833
+    # error가 ±135도를 넘거나, dead zone 안이면: neutral (직진)
+    if abs(error) >= real_max_angle_scope or abs(error) < THRESHOLD:
+        left_pulse = left_neutral
+        right_pulse = right_neutral
     elif error < 0:
         # 왼쪽 회전: 왼쪽 모터 neutral 유지, 오른쪽 모터 작동
         effective_error = error + THRESHOLD
@@ -96,4 +89,3 @@ def rotate_parafoil_motor(pi, error: float):
     # 모터에 적용
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-
