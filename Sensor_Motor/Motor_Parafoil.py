@@ -12,11 +12,11 @@ pulse_per_degree = 2000/180
 max_angle_scope = 120 # degrees
 max_pulse_scope = max_angle_scope * pulse_per_degree
 
-left_zero = 2500
-right_zero = 500
+left_zero = 500
+right_zero = 2500
 
-left_neutral = int(left_zero - max_pulse_scope)
-right_neutral = int(right_zero + max_pulse_scope)
+left_neutral = int(left_zero + max_pulse_scope)
+right_neutral = int(right_zero - max_pulse_scope)
 
 THRESHOLD = 15  # degrees
 
