@@ -12,11 +12,11 @@ pulse_per_degree = 2000/180
 max_angle_scope = 120 # degrees
 max_pulse_scope = max_angle_scope * pulse_per_degree
 
-left_zero = 500
-right_zero = 2500
+left_zero = 2500
+right_zero = 500
 
-left_neutral = int(left_zero + max_pulse_scope)
-right_neutral = int(right_zero - max_pulse_scope)
+left_neutral = int(left_zero - 30 * pulse_per_degree)
+right_neutral = int(right_zero + 30* pulse_per_degree)
 
 THRESHOLD = 15  # degrees
 
@@ -72,15 +72,15 @@ def rotate_parafoil_motor(pi, error: float):
         effective_error = error + THRESHOLD
         pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
-        left_pulse = left_neutral
-        right_pulse = right_neutral + pulse_to_rotate_motor
+        left_pulse = left_neutral + pulse_to_rotate_motor
+        right_pulse = right_neutral
     else:
         # 오른쪽 회전: 오른쪽 모터 neutral 유지, 왼쪽 모터 작동
         effective_error = error - THRESHOLD
         pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
-        left_pulse = left_neutral + pulse_to_rotate_motor
-        right_pulse = right_neutral
+        left_pulse = left_neutral
+        right_pulse = right_neutral + pulse_to_rotate_motor
 
     # 현재 상태 저장
     current_left_pulse = left_pulse
