@@ -64,16 +64,16 @@ def rotate_parafoil_motor(pi, error: float):
         effective_error = error + THRESHOLD
         purse_to_rotate_motor = int(effective_error * purse_per_degree)
 
-        left_pulse = left_neutral
-        right_pulse = right_neutral + purse_to_rotate_motor
+        left_pulse = left_neutral + purse_to_rotate_motor
+        right_pulse = right_neutral
 
     else:
         
         effective_error = error - THRESHOLD
         purse_to_rotate_motor = int(effective_error * purse_per_degree)
 
-        left_pulse = left_neutral + purse_to_rotate_motor
-        right_pulse = right_neutral
+        left_pulse = left_neutral
+        right_pulse = right_neutral + purse_to_rotate_motor
 
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
