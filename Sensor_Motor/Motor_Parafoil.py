@@ -13,7 +13,7 @@ pulse_per_degree = 2000/180
 #max_pulse_scope = max_angle_scope * pulse_per_degree
 
 left_zero = 2500
-right_zero = 500
+right_zero = 600
 
 left_neutral = int(left_zero - 30 * pulse_per_degree)
 right_neutral = int(right_zero + 30* pulse_per_degree)
