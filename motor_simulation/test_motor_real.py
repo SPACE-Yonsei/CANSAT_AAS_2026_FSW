@@ -6,20 +6,18 @@ import time
 LEFT_PIN = 12
 RIGHT_PIN = 13
 
-# 각도를 펄스로 변환 (MG92B: 0°=500us, 180°=2500us)
-def angle_to_pulse(angle):
-    return int(500 + (angle * 2000 / 180))
+pulse_per_degree = 2000/180
+
+left_neutral = int(left_zero - 30 * pulse_per_degree)
+right_neutral = int(right_zero + 30* pulse_per_degree)
 
 # 테스트
 pi = pigpio.pi()
 
-pi.set_servo_pulsewidth(LEFT_PIN, 1170)
-time.sleep(1)
-pi.set_servo_pulsewidth(LEFT_PIN, 2500)
+pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
 time.sleep(1)
 
-pi.set_servo_pulsewidth(RIGHT_PIN, 1170)
+pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 time.sleep(1)
-pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
 pi.stop()
 print("✓ 완료")
