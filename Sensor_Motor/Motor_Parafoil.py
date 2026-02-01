@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import time
-import pigpio
 
 PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
 PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
@@ -19,6 +18,9 @@ left_neutral = left_zero - max_purse_scope
 right_neutral = right_zero + max_purse_scope
 
 THRESHOLD = 15  # degrees
+
+right_pulse = right_neutral
+left_pulse = left_neutral
 
 def init_parafoil_motor():
     """Initialize parafoil motor (both motors set to release down - straight position)."""
@@ -41,14 +43,14 @@ def terminate_parafoil_motor(pi):
 
 def rotate_parafoil_motor(pi, error: float):
     """
-    Control parafoil motor with smooth transition.
+    Control parafoil motor with smooth transition.ㅇ
 
     Neutral (straight): Both motors at 120° (1167, 1833)
     Left turn: Left fixed, Right lowers (1833 → 500)
     Right turn: Right fixed, Left lowers (1167 → 2500)
     Range: ±135° input (±15° dead zone + ±120° control)
     """
-    
+    global left_pulse, right_pulse
     real_max_angle_scope = max_angle_scope + THRESHOLD
     if error > real_max_angle_scope:
         error = real_max_angle_scope
@@ -64,8 +66,10 @@ def rotate_parafoil_motor(pi, error: float):
         effective_error = error + THRESHOLD
         purse_to_rotate_motor = int(effective_error * purse_per_degree)
 
-        left_pulse = left_neutral
+        #left_pulse = left_neutral
         right_pulse = right_neutral + purse_to_rotate_motor
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
 
     else:
         
@@ -73,7 +77,7 @@ def rotate_parafoil_motor(pi, error: float):
         purse_to_rotate_motor = int(effective_error * purse_per_degree)
 
         left_pulse = left_neutral + purse_to_rotate_motor
-        right_pulse = right_neutral
+        #right_pulse = right_neutral
 
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
