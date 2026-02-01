@@ -88,8 +88,8 @@ def rotate_parafoil_motor(pi, error: float):
     # 현재 상태 저장
     current_left_pulse = left_pulse
     current_right_pulse = right_pulse
-
+    print(error)
     # 모터에 적용
-    print(f"Parafoil Motor Control - Left Pulse: {left_pulse}μs, Right Pulse: {right_pulse}μs")
+    #print(f"Parafoil Motor Control - Left Pulse: {left_pulse}μs, Right Pulse: {right_pulse}μs")
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
