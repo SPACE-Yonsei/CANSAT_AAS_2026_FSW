@@ -20,11 +20,19 @@ if not pi.connected:
     print("❌ pigpio 연결 실패")
     exit()
 
-print("LEFT 모터 이동...")
+print("LEFT 모터 0(2500) 이동...")
+pi.set_servo_pulsewidth(LEFT_PIN, left_zero)
+time.sleep(2)
+
+print("LEFT 모터 30 이동...")
 pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
 time.sleep(2)
 
-print("RIGHT 모터 이동...")
+print("RIGHT 모터 0(500) 이동...")
+pi.set_servo_pulsewidth(RIGHT_PIN, right_zero) 
+time.sleep(2)
+
+print("RIGHT 모터 30 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 time.sleep(2)
 
