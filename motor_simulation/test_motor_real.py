@@ -12,32 +12,20 @@ def angle_to_pulse(angle):
 
 # 테스트
 pi = pigpio.pi()
-test_angles = [0, 135, 180]
 
-print("=" * 60)
-print("MG92B 서보 모터 테스트 (GPIO 12: 왼쪽, GPIO 13: 오른쪽)")
-print("=" * 60)
+pi.set_servo_pulsewidth(LEFT_PIN, 0)
+time.sleep(1)
+pi.set_servo_pulsewidth(LEFT_PIN, 1500)
+time.sleep(1)
+pi.set_servo_pulsewidth(LEFT_PIN, 2500)
+time.sleep(1)
 
-for angle in test_angles:
-    pulse = angle_to_pulse(angle)
 
-    print(f"\n각도: {angle}° → 펄스: {pulse} us")
-
-    # 왼쪽 모터
-    pi.set_servo_pulsewidth(LEFT_PIN, pulse)
-    print(f"  왼쪽 모터 (GPIO {LEFT_PIN}): {pulse} us")
-
-    # 오른쪽 모터
-    ##pi.set_servo_pulsewidth(RIGHT_PIN, pulse)
-    ##print(f"  오른쪽 모터 (GPIO {RIGHT_PIN}): {pulse} us")
-
-    time.sleep(2)
-
-# 종료
-print("\n중립 위치(90°)로 복귀")
-neutral_pulse = angle_to_pulse(90)
-pi.set_servo_pulsewidth(LEFT_PIN, neutral_pulse)
-pi.set_servo_pulsewidth(RIGHT_PIN, neutral_pulse)
+pi.set_servo_pulsewidth(RIGHT_PIN, 0)
+time.sleep(1)
+pi.set_servo_pulsewidth(RIGHT_PIN, 1500)
+time.sleep(1)
+pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
 time.sleep(1)
 
 pi.set_servo_pulsewidth(LEFT_PIN, 0)
