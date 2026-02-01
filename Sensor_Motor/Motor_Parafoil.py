@@ -63,6 +63,7 @@ def rotate_parafoil_motor(pi, error: float):
         error=135
     elif error<=-135:
         error=-135
+
     global current_left_pulse, current_right_pulse
 
     # error가 ±135도를 넘거나, dead zone 안이면: neutral (직진)
@@ -72,14 +73,14 @@ def rotate_parafoil_motor(pi, error: float):
     elif error < 0:
         # 왼쪽 회전: 왼쪽 모터 neutral 유지, 오른쪽 모터 작동
         effective_error = error + THRESHOLD
-        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
+        pulse_to_rotate_motor = int(error * pulse_per_degree)
 
         left_pulse = left_neutral + pulse_to_rotate_motor
         right_pulse = right_neutral
     else:
         # 오른쪽 회전: 오른쪽 모터 neutral 유지, 왼쪽 모터 작동
         effective_error = error - THRESHOLD
-        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
+        pulse_to_rotate_motor = int(error * pulse_per_degree)
 
         left_pulse = left_neutral
         right_pulse = right_neutral + pulse_to_rotate_motor
