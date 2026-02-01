@@ -36,7 +36,7 @@ print("RIGHT 모터 30 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 time.sleep(5)
 print("right 0(500)")
-pi.set_servo_pulsewidth(RIGHT_PIN, 500)
+pi.set_servo_pulsewidth(RIGHT_PIN, right_zero)
 time.sleep(5)
 
 # print("right 1500")
