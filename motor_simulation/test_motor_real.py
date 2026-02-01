@@ -22,19 +22,19 @@ if not pi.connected:
 
 print("LEFT 모터 0(2500) 이동...")
 pi.set_servo_pulsewidth(LEFT_PIN, left_zero)
-time.sleep(2)
+time.sleep(5)
 
 print("LEFT 모터 30 이동...")
 pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
-time.sleep(2)
+time.sleep(5)
 
 print("RIGHT 모터 0(500) 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_zero) 
-time.sleep(2)
+time.sleep(5)
 
 print("RIGHT 모터 30 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
-time.sleep(2)
+time.sleep(5)
 
 # PWM 신호만 끄고 (모터 토크 해제)
 pi.set_servo_pulsewidth(LEFT_PIN, 0)
