@@ -36,7 +36,7 @@ if not pi.connected:
 # pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 # time.sleep(5)
 print("right 0")
-pi.set_servo_pulsewidth(RIGHT_PIN, 0)
+pi.set_servo_pulsewidth(RIGHT_PIN, 500)
 time.sleep(5)
 
 print("right 1500")
