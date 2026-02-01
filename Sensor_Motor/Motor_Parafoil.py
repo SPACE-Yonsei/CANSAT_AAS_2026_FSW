@@ -73,7 +73,7 @@ def terminate_parafoil_motor(pi):
 def rotate_parafoil_motor(pi, error: float):
     """Control parafoil motor with smooth transition."""
     global current_left_pulse, current_right_pulse
-    
+
     # Clamp error
     real_max_angle_scope = max_angle_scope + THRESHOLD
     error = max(-real_max_angle_scope, min(real_max_angle_scope, error))
@@ -85,14 +85,26 @@ def rotate_parafoil_motor(pi, error: float):
     elif error < 0:  # Left turn
         effective_error = error + THRESHOLD
         pulse_to_rotate = int(effective_error * pulse_per_degree)
-        
+
         target_left_pulse = left_neutral
         target_right_pulse = right_neutral + pulse_to_rotate
     else:  # Right turn
         effective_error = error - THRESHOLD
         pulse_to_rotate = int(effective_error * pulse_per_degree)
-        
+
         target_left_pulse = left_neutral + pulse_to_rotate
         target_right_pulse = right_neutral
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, target_left_pulse)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, target_right_pulse)
+
+    # Smooth transition to target pulse
+    if current_left_pulse < target_left_pulse:
+        current_left_pulse = min(current_left_pulse + SMOOTH_STEP, target_left_pulse)
+    elif current_left_pulse > target_left_pulse:
+        current_left_pulse = max(current_left_pulse - SMOOTH_STEP, target_left_pulse)
+
+    if current_right_pulse < target_right_pulse:
+        current_right_pulse = min(current_right_pulse + SMOOTH_STEP, target_right_pulse)
+    elif current_right_pulse > target_right_pulse:
+        current_right_pulse = max(current_right_pulse - SMOOTH_STEP, target_right_pulse)
+
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, current_left_pulse)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, current_right_pulse)
