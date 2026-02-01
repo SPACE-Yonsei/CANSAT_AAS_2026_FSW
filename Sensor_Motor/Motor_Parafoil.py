@@ -64,7 +64,7 @@ def rotate_parafoil_motor(pi, error: float):
     real_max_angle_scope = max_angle_scope + THRESHOLD  # 135
 
     # error가 ±135도를 넘거나, dead zone 안이면: neutral (직진)
-    if abs(error) >= real_max_angle_scope or abs(error) < THRESHOLD:
+    if abs(error) >= 135 or abs(error) < THRESHOLD:
         left_pulse = left_neutral
         right_pulse = right_neutral
     elif error < 0:
