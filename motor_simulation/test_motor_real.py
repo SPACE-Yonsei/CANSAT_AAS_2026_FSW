@@ -35,7 +35,7 @@ if not pi.connected:
 # print("RIGHT 모터 30 이동...")
 # pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 # time.sleep(5)
-print("right 0")
+print("right 500")
 pi.set_servo_pulsewidth(RIGHT_PIN, 500)
 time.sleep(5)
 
