@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import time
-import pigpio
 
 PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
 PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
@@ -59,12 +58,11 @@ def rotate_parafoil_motor(pi, error: float):
 
     error가 ±135도를 넘으면 neutral로 초기화
     """
-    """
+    
     if error>=135:
         error=135
     elif error<=-135:
         error=-135
-    """
     
     global current_left_pulse, current_right_pulse
 
@@ -73,16 +71,16 @@ def rotate_parafoil_motor(pi, error: float):
         left_pulse = left_neutral
         right_pulse = right_neutral
     elif error < 0:
-        # 왼쪽 회전: 왼쪽 모터 neutral 유지, 오른쪽 모터 작동
+        #work left motor
         effective_error = error + THRESHOLD
-        pulse_to_rotate_motor = int(error * pulse_per_degree)
+        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
         left_pulse = left_neutral + pulse_to_rotate_motor
         right_pulse = right_neutral
     else:
-        # 오른쪽 회전: 오른쪽 모터 neutral 유지, 왼쪽 모터 작동
+        #work right motor
         effective_error = error - THRESHOLD
-        pulse_to_rotate_motor = int(error * pulse_per_degree)
+        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
         left_pulse = left_neutral
         right_pulse = right_neutral + pulse_to_rotate_motor
