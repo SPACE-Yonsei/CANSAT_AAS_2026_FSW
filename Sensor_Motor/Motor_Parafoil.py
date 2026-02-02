@@ -59,11 +59,13 @@ def rotate_parafoil_motor(pi, error: float):
 
     error가 ±135도를 넘으면 neutral로 초기화
     """
+    """
     if error>=135:
         error=135
     elif error<=-135:
         error=-135
-
+    """
+    
     global current_left_pulse, current_right_pulse
 
     # error가 ±135도를 넘거나, dead zone 안이면: neutral (직진)
