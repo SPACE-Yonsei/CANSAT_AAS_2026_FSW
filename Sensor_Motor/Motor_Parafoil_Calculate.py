@@ -80,6 +80,7 @@ def calculate_motor_control(yaw: float) -> float:
         target_azimuth = quick_angle(target_azimuth)
         error = quick_angle(target_azimuth - yaw)
         last_error = error
+        print(f"\nclaculated yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
         return error
 
     # GPS 무효 + 목표 좌표 없음 → IMU 기반 기본 헤딩(0도) 유지
