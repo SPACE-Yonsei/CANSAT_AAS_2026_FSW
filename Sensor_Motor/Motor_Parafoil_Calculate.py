@@ -87,7 +87,7 @@ def calculate_motor_control(yaw: float) -> float:
         return quick_angle(0.0 - yaw)
     # GPS 무효 but 이전 방위각 있음 → 유지
     if last_error is not None:
-        return quick_angle(yaw - last_error)
+        return last_error
     
     # GPS 무효, 이전 방위각 없음 → 직진
     return 0.0
