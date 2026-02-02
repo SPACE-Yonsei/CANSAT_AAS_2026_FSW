@@ -71,13 +71,21 @@ def quick_angle(angle: float) -> float:
 last_yaw = None
 MAX_YAW_CHANGE = 25  # 한 사이클당 최대 변화량 (도)
 
-last_yaw
-
 def calculate_motor_control(yaw: float) -> float:
-    global last_error  
+    global last_error, last_yaw
 
-    if abs(yaw-last_yaw)>MAX_YAW_CHANGE:
-        yaw=last_yaw + (MAX_YAW_CHANGE if yaw>last_yaw else -MAX_YAW_CHANGE)
+    if last_yaw is None:
+        last_yaw = yaw
+    else:
+        # ★ 3. 각도 차이를 -180~180 범위로 계산
+        diff = quick_angle(yaw - last_yaw)
+        
+        # ★ 4. 급격한 변화 제한
+        if abs(diff) > MAX_YAW_CHANGE:
+            diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
+        
+        yaw = quick_angle(last_yaw + diff)
+        last_yaw = yaw
 
     # GPS 유효 → 방위각 계산
     if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
