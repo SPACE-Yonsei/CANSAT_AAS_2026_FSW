@@ -62,7 +62,7 @@ def get_target_coordinates() -> tuple[float, float]:
 # =============================================================================
 
 def quick_angle(angle: float) -> float:
-    while angle > 180:
+    while angle >= 180:
         angle -= 360
     while angle < -180:
         angle += 360
