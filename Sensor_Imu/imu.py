@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+from collections import deque
 try:
     import fcntl
 except Exception:
@@ -12,9 +13,9 @@ from io import StringIO
 
 # 이동평균 필터 윈도우
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
-WINDOW_SIZE = 5
+WINDOW_SIZE = 10
 READ_FAIL_REINIT_THRESHOLD = 5
-I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000"))
+I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "100000"))
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 
@@ -23,13 +24,63 @@ LAST_VALID_SENSORS = {
     "mag": (0.0, 0.0, 0.0),
     "gyr": (0.0, 0.0, 0.0),
 }
-MAG_FILTER_ALPHA = float(os.getenv("IMU_MAG_FILTER_ALPHA", "0.2"))
-MAG_FIELD_MIN = float(os.getenv("IMU_MAG_FIELD_MIN", "5.0"))
-MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
-MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
+MAG_FILTER_ALPHA = float(os.getenv("IMU_MAG_FILTER_ALPHA", "0.4"))
+MAG_FIELD_MIN = float(os.getenv("IMU_MAG_FIELD_MIN", "10.0"))
+MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "100.0"))
+MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "2.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
-REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
+REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "50000"))
+
+# 가속도계 및 자이로 저역통과 필터
+ACC_FILTER_ALPHA = float(os.getenv("IMU_ACC_FILTER_ALPHA", "0.3"))
+GYR_FILTER_ALPHA = float(os.getenv("IMU_GYR_FILTER_ALPHA", "0.3"))
+
+ACC_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False}
+GYR_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False}
+
+# 메디안 필터 윈도우 (스파이크 제거용)
+angle_median_window = [deque(maxlen=3), deque(maxlen=3), deque(maxlen=3)]
+
+def _filter_acc(ax, ay, az):
+    """가속도계 저역통과 필터 (1차 IIR)"""
+    if not ACC_FILTER_STATE["init"]:
+        ACC_FILTER_STATE["x"] = ax
+        ACC_FILTER_STATE["y"] = ay
+        ACC_FILTER_STATE["z"] = az
+        ACC_FILTER_STATE["init"] = True
+        return ax, ay, az
+    a = ACC_FILTER_ALPHA
+    ACC_FILTER_STATE["x"] = a * ax + (1 - a) * ACC_FILTER_STATE["x"]
+    ACC_FILTER_STATE["y"] = a * ay + (1 - a) * ACC_FILTER_STATE["y"]
+    ACC_FILTER_STATE["z"] = a * az + (1 - a) * ACC_FILTER_STATE["z"]
+    return ACC_FILTER_STATE["x"], ACC_FILTER_STATE["y"], ACC_FILTER_STATE["z"]
+
+def _filter_gyr(gx, gy, gz):
+    """자이로 저역통과 필터 (1차 IIR)"""
+    if not GYR_FILTER_STATE["init"]:
+        GYR_FILTER_STATE["x"] = gx
+        GYR_FILTER_STATE["y"] = gy
+        GYR_FILTER_STATE["z"] = gz
+        GYR_FILTER_STATE["init"] = True
+        return gx, gy, gz
+    a = GYR_FILTER_ALPHA
+    GYR_FILTER_STATE["x"] = a * gx + (1 - a) * GYR_FILTER_STATE["x"]
+    GYR_FILTER_STATE["y"] = a * gy + (1 - a) * GYR_FILTER_STATE["y"]
+    GYR_FILTER_STATE["z"] = a * gz + (1 - a) * GYR_FILTER_STATE["z"]
+    return GYR_FILTER_STATE["x"], GYR_FILTER_STATE["y"], GYR_FILTER_STATE["z"]
+
+def _median_filter_angle(yaw, roll, pitch):
+    """3-샘플 메디안 필터로 스파이크 제거"""
+    angle_median_window[0].append(yaw)
+    angle_median_window[1].append(roll)
+    angle_median_window[2].append(pitch)
+
+    yaw_filtered = sorted(angle_median_window[0])[len(angle_median_window[0]) // 2]
+    roll_filtered = sorted(angle_median_window[1])[len(angle_median_window[1]) // 2]
+    pitch_filtered = sorted(angle_median_window[2])[len(angle_median_window[2]) // 2]
+
+    return yaw_filtered, roll_filtered, pitch_filtered
 
 
 class I2CLock:
@@ -223,6 +274,12 @@ def read_sensor_data(sensor):
         magX, magY, magZ = mag
         gyrX, gyrY, gyrZ = gyr
 
+        # 가속도계 필터 적용
+        accX, accY, accZ = _filter_acc(accX, accY, accZ)
+
+        # 자이로 필터 적용
+        gyrX, gyrY, gyrZ = _filter_gyr(gyrX, gyrY, gyrZ)
+
         mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
         if _mag_norm_is_valid(mag_norm):
             magX, magY, magZ = _filter_mag(magX, magY, magZ)
@@ -255,15 +312,18 @@ def read_sensor_data(sensor):
     except Exception:
         pass
     
-    # 이동평균 필터 (보정된 yaw 사용)
+    # 1단계: 메디안 필터로 스파이크 제거
+    yaw, roll, pitch = _median_filter_angle(yaw, roll, pitch)
+
+    # 2단계: 이동평균 필터 (보정된 yaw 사용)
     angle_window[0].append(yaw)
     angle_window[1].append(roll)
     angle_window[2].append(pitch)
-    
+
     for i in range(3):
         if len(angle_window[i]) > WINDOW_SIZE:
             angle_window[i].pop(0)
-    
+
     avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
     avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
     avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
@@ -283,8 +343,14 @@ def imu_terminate(i2c):
 
 
 def reset_angle_window():
-    global angle_window
+    global angle_window, angle_median_window
+    global ACC_FILTER_STATE, GYR_FILTER_STATE, MAG_FILTER_STATE
     angle_window = [[], [], []]
+    angle_median_window = [deque(maxlen=3), deque(maxlen=3), deque(maxlen=3)]
+    # 필터 상태 초기화
+    ACC_FILTER_STATE["init"] = False
+    GYR_FILTER_STATE["init"] = False
+    MAG_FILTER_STATE["init"] = False
 
 
 def reinit_imu(i2c, sensor):

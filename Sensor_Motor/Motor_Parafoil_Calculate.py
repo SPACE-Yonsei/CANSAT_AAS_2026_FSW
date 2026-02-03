@@ -74,24 +74,26 @@ MAX_YAW_CHANGE = 25  # 한 사이클당 최대 변화량 (도)
 def calculate_motor_control(yaw: float) -> float:
     global last_error, last_yaw
 
-    if last_yaw is None:
-        last_yaw = yaw
-    else:
-        # ★ 3. 각도 차이를 -180~180 범위로 계산
-        diff = yaw - last_yaw
+    # if last_yaw is None:
+    #     last_yaw = yaw
+    # else:
+    #     diff = yaw - last_yaw
         
-        # ★ 4. 급격한 변화 제한
-        if abs(diff) > MAX_YAW_CHANGE:
-            diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
+    #     if abs(diff) > MAX_YAW_CHANGE:
+    #         diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
         
-        last_yaw = yaw
+    #     last_yaw = yaw
+    dx=target_lon - 1
+    dy=target_lat - 1
 
     # GPS 유효 → 방위각 계산
     if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
-        target_azimuth = math.degrees(math.atan2(target_lon - 1, target_lat - 1))
+        target_azimuth = math.degrees(math.atan2(dx, dy))
+        if target_azimuth<180:
+            target_azimuth=target_azimuth+360
         error=quick_angle(target_azimuth - yaw)
         last_error = error
-        print(f"\nclaculated yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
+        print(f"\nyaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
         return error
 
     # GPS 무효 + 목표 좌표 없음 → IMU 기반 기본 헤딩(0도) 유지

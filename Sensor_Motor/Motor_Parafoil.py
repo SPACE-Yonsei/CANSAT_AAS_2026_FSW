@@ -66,20 +66,19 @@ def rotate_parafoil_motor(pi, error: float):
     print(f"operate after error={error:.1f}")
 
     global current_left_pulse, current_right_pulse
-
-    # error가 ±135도를 넘거나, dead zone 안이면: neutral (직진)
+    #go straight
     if abs(error) < THRESHOLD:
         left_pulse = left_neutral
         right_pulse = right_neutral
     elif error < 0:
-        #work left motor
+        #turn left
         effective_error = error + THRESHOLD
         pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
         left_pulse = left_neutral + pulse_to_rotate_motor
         right_pulse = right_neutral
     else:
-        #work right motor
+        #turn right
         effective_error = error - THRESHOLD
         pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
 
