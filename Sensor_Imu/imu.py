@@ -14,7 +14,7 @@ from io import StringIO
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
 WINDOW_SIZE = 5
 READ_FAIL_REINIT_THRESHOLD = 5
-I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000")) # *1 : 400kHz -> 100kHz
+I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000"))
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 
@@ -29,7 +29,7 @@ MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
 MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
-REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "10000")) # *2 100ms - > 50ms
+REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
 
 
 class I2CLock:
