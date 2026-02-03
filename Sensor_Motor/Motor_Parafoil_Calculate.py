@@ -132,37 +132,37 @@ def calculate_motor_control(yaw: float) -> float:
     print(f"Raw: {raw_error:.1f} -> Filtered: {filtered_error:.1f}")
 
     return filtered_error
-# def calculate_motor_control(yaw: float) -> float:
-#     global last_error, last_yaw
+def calculate_motor_control(yaw: float) -> float:
+    global last_error, last_yaw
 
-#     # if last_yaw is None:
-#     #     last_yaw = yaw
-#     # else:
-#     #     diff = yaw - last_yaw
+    # if last_yaw is None:
+    #     last_yaw = yaw
+    # else:
+    #     diff = yaw - last_yaw
         
-#     #     if abs(diff) > MAX_YAW_CHANGE:
-#     #         diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
+    #     if abs(diff) > MAX_YAW_CHANGE:
+    #         diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
         
-#     #     last_yaw = yaw
-#     dx=target_lon - 1
-#     dy=target_lat - 1
+    #     last_yaw = yaw
+    dx=target_lon - 1
+    dy=target_lat - 1
 
-#     # GPS 유효 → 방위각 계산
-#     if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
-#         target_azimuth = math.degrees(math.atan2(dx, dy))
-#         if target_azimuth<180:
-#             target_azimuth=target_azimuth+360
-#         error=quick_angle(target_azimuth - yaw)
-#         last_error = error
-#         print(f"\nyaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
-#         return error
+    # GPS 유효 → 방위각 계산
+    if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
+        target_azimuth = math.degrees(math.atan2(dx, dy))
+        if target_azimuth<180:
+            target_azimuth=target_azimuth+360
+        error=quick_angle(target_azimuth - yaw)
+        last_error = error
+        print(f"\nyaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
+        return error
 
-#     # GPS 무효 + 목표 좌표 없음 → IMU 기반 기본 헤딩(0도) 유지
-#     if target_lat == 0.0 and target_lon == 0.0:
-#         return quick_angle(0.0 - yaw)
-#     # GPS 무효 but 이전 방위각 있음 → 유지
-#     if last_error is not None:
-#         return last_error
+    # GPS 무효 + 목표 좌표 없음 → IMU 기반 기본 헤딩(0도) 유지
+    if target_lat == 0.0 and target_lon == 0.0:
+        return quick_angle(0.0 - yaw)
+    # GPS 무효 but 이전 방위각 있음 → 유지
+    if last_error is not None:
+        return last_error
     
-#     # GPS 무효, 이전 방위각 없음 → 직진
-#     return 0.0
+    # GPS 무효, 이전 방위각 없음 → 직진
+    return 0.0
