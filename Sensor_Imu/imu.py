@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+from collections import deque
 try:
     import fcntl
 except Exception:
@@ -29,7 +30,7 @@ MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
 MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
-REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "50000")) # *2 100ms - > 50ms
+REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "10000"))  # 10ms (100Hz) for minimal latency
 
 
 class I2CLock:
@@ -84,6 +85,21 @@ def _wrap_angle_deg(angle):
 def _angle_diff_deg(target, current):
     diff = (target - current + 180) % 360 - 180
     return diff
+
+# Median filter for spike rejection (window size=3)
+angle_median_window = [deque(maxlen=3), deque(maxlen=3), deque(maxlen=3)]
+
+def _median_filter_angle(yaw, roll, pitch):
+    """3-sample median filter to reject outlier spikes without adding significant lag"""
+    angle_median_window[0].append(yaw)
+    angle_median_window[1].append(roll)
+    angle_median_window[2].append(pitch)
+
+    yaw_filtered = sorted(angle_median_window[0])[len(angle_median_window[0]) // 2]
+    roll_filtered = sorted(angle_median_window[1])[len(angle_median_window[1]) // 2]
+    pitch_filtered = sorted(angle_median_window[2])[len(angle_median_window[2]) // 2]
+
+    return yaw_filtered, roll_filtered, pitch_filtered
 
 def _mag_norm_is_valid(mag_norm):
     if not (MAG_FIELD_MIN <= mag_norm <= MAG_FIELD_MAX):
@@ -238,24 +254,10 @@ def read_sensor_data(sensor):
         magX, magY, magZ = LAST_VALID_SENSORS["mag"]
         gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
 
-    # Yaw drift 보정 (자기장 기반 천천히 보정)
-    try:
-        mag_heading = math.degrees(math.atan2(magY, magX))
-        if IMU_MOUNTED_ON_BOTTOM:
-            mag_heading = -mag_heading
-        if IMU_FORWARD_AXIS == 'Y':
-            mag_heading += 90
-        try:
-            from lib import config
-            mag_heading += config.YAW_OFFSET
-        except Exception:
-            pass
-        mag_heading = _wrap_angle_deg(mag_heading)
-        yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
-    except Exception:
-        pass
-    
-    # 이동평균 필터 (보정된 yaw 사용)
+    # 1단계: Median filter to reject spikes (BNO085 rotation vector is already sensor-fused)
+    yaw, roll, pitch = _median_filter_angle(yaw, roll, pitch)
+
+    # 2단계: Moving average filter for smoothing
     angle_window[0].append(yaw)
     angle_window[1].append(roll)
     angle_window[2].append(pitch)
@@ -283,8 +285,9 @@ def imu_terminate(i2c):
 
 
 def reset_angle_window():
-    global angle_window
+    global angle_window, angle_median_window
     angle_window = [[], [], []]
+    angle_median_window = [deque(maxlen=3), deque(maxlen=3), deque(maxlen=3)]
 
 
 def reinit_imu(i2c, sensor):
@@ -342,7 +345,7 @@ if __name__ == "__main__":
             
             consecutive_failures = 0
             print(data)
-            time.sleep(0.1)
+            # time.sleep(0.1) removed to eliminate artificial 10Hz rate limiting
     
     except KeyboardInterrupt:
         imu_terminate(i2c)
