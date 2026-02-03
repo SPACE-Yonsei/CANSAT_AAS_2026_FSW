@@ -12,7 +12,6 @@ from lib import prevstate
 
 target_lat = 0.0
 target_lon = 0.0
-last_error = None  # GPS 무효 시 사용할 마지막 유효 방위각
 
 def init_parafoil_control():
     global target_lat, target_lon
@@ -62,35 +61,7 @@ def get_target_coordinates() -> tuple[float, float]:
 # =============================================================================
 
 def quick_angle(angle: float) -> float:
-    while angle >= 180:
-        angle -= 360
-    while angle < -180:
-        angle += 360
-    return angle
-
-last_yaw = None
-MAX_YAW_CHANGE = 25  # 한 사이클당 최대 변화량 (도)
-# ==========================================
-# 전역 변수 (함수 밖에 선언하거나, 클래스 멤버변수로 사용)
-# ==========================================
-prev_filtered_error = 0.0  # 이전 필터링된 에러 값 저장
-is_first_run = True        # 첫 실행 여부 확인
-
-# ==========================================
-# 모터 제어 함수 내부 수정
-# ==========================================
-def calculate_motor_control(yaw: float) -> float:
-    global prev_filtered_error, is_first_run, last_error # 필요한 전역변수 호출
-    
-    # 1. [기존 로직] 목표 방위각 및 기본 에러 계산
-    dx = target_lon - 1
-    dy = target_lat - 1
-    target_azimuth = 0.0
-    # =============================================================================
-# 모터 제어 계산
-# =============================================================================
-
-def quick_angle(angle: float) -> float:
+    """각도를 -180 ~ +180 범위로 정규화"""
     while angle >= 180:
         angle -= 360
     while angle < -180:
@@ -99,20 +70,22 @@ def quick_angle(angle: float) -> float:
 
 # 전역 변수
 prev_filtered_error = 0.0
+prev_raw_error = 0.0
 is_first_run = True
 last_error = None
 
 # 설정값
-MAX_CHANGE = 15.0      # 한 루프당 최대 변화 (도)
-ALPHA = 0.3            # 스무딩 팩터 (0.1=부드러움, 1.0=즉각반응)
+MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
+ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
+
 
 def calculate_motor_control(yaw: float) -> float:
-    global prev_filtered_error, is_first_run, last_error
+    global prev_filtered_error, prev_raw_error, is_first_run, last_error
     
     dx = target_lon - 1
     dy = target_lat - 1
 
-    # GPS 무효 + 목표 좌표 없음 → 직진
+    # 목표 좌표 없음 → 직진 (yaw=0 유지)
     if target_lat == 0.0 and target_lon == 0.0:
         return quick_angle(0.0 - yaw)
     
@@ -122,30 +95,35 @@ def calculate_motor_control(yaw: float) -> float:
         if target_azimuth < 0:
             target_azimuth += 360
         
-        # 날것의 에러 계산
         raw_error = quick_angle(target_azimuth - yaw)
         
-        # ========== 필터링 시작 ==========
-        
-        # 첫 실행 시 초기화
+        # 첫 실행: 초기화
         if is_first_run:
             prev_filtered_error = raw_error
+            prev_raw_error = raw_error
             is_first_run = False
             last_error = raw_error
             print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f} (init)")
             return raw_error
         
-        # Rate Limiter: 급격한 변화 제한
-        diff = raw_error - prev_filtered_error
-        if diff > MAX_CHANGE:
-            raw_error = prev_filtered_error + MAX_CHANGE
-            print(f"⚠️ Clamped: +{MAX_CHANGE}")
-        elif diff < -MAX_CHANGE:
-            raw_error = prev_filtered_error - MAX_CHANGE
-            print(f"⚠️ Clamped: -{MAX_CHANGE}")
+        # raw_error 변화량 계산 (래핑 고려)
+        raw_diff = quick_angle(raw_error - prev_raw_error)
         
-        # Low Pass Filter: 부드럽게
-        filtered_error = (ALPHA * raw_error) + ((1 - ALPHA) * prev_filtered_error)
+        # 급변 감지 시에만 Rate Limit 적용
+        if abs(raw_diff) > MAX_CHANGE:
+            if raw_diff > 0:
+                limited_error = prev_filtered_error + MAX_CHANGE
+            else:
+                limited_error = prev_filtered_error - MAX_CHANGE
+            print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, clamped")
+        else:
+            limited_error = raw_error
+        
+        # Low Pass Filter
+        filtered_error = (ALPHA * limited_error) + ((1 - ALPHA) * prev_filtered_error)
+        
+        # 상태 업데이트
+        prev_raw_error = raw_error
         prev_filtered_error = filtered_error
         last_error = filtered_error
         
