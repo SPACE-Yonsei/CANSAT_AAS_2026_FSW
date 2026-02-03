@@ -12,6 +12,7 @@ from lib import prevstate
 
 target_lat = 0.0
 target_lon = 0.0
+last_error = None  # GPS 무효 시 사용할 마지막 유효 방위각
 
 def init_parafoil_control():
     global target_lat, target_lon
@@ -59,7 +60,6 @@ def get_target_coordinates() -> tuple[float, float]:
 # =============================================================================
 # 모터 제어 계산
 # =============================================================================
-
 def quick_angle(angle: float) -> float:
     """각도를 -180 ~ +180 범위로 정규화"""
     while angle >= 180:
