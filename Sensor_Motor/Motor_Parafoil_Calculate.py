@@ -115,7 +115,7 @@ def calculate_motor_control(yaw: float) -> float:
                 limited_error = prev_filtered_error + MAX_CHANGE
             else:
                 limited_error = prev_filtered_error - MAX_CHANGE
-            print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, clamped")
+            print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f}, clamped")
         else:
             limited_error = raw_error
         
@@ -127,7 +127,7 @@ def calculate_motor_control(yaw: float) -> float:
         prev_filtered_error = filtered_error
         last_error = filtered_error
         
-        print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
+        print(f"////yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
         return filtered_error
     
     # GPS 무효 but 이전 에러 있음 → 유지
