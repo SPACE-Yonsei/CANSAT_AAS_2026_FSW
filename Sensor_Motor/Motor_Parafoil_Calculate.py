@@ -86,83 +86,74 @@ def calculate_motor_control(yaw: float) -> float:
     dx = target_lon - 1
     dy = target_lat - 1
     target_azimuth = 0.0
-    
-    # GPS 유효성 체크 및 Azimuth 계산
-    if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
-        target_azimuth = math.degrees(math.atan2(dx, dy))
-        if target_azimuth < 0: # 0~360 보정 (코드 스타일에 맞춤)
-            target_azimuth += 360
-    
-    # 날것의 에러 값 계산 (튀는 값 포함됨)
-    raw_error = quick_angle(target_azimuth - yaw)
+    # =============================================================================
+# 모터 제어 계산
+# =============================================================================
 
-    # ---------------------------------------------------------
-    # ▼▼▼ [여기서부터 필터링 코드 추가] ▼▼▼
-    # ---------------------------------------------------------
+def quick_angle(angle: float) -> float:
+    while angle >= 180:
+        angle -= 360
+    while angle < -180:
+        angle += 360
+    return angle
 
-    # 설정값 (상황에 맞춰 조절하세요)
-    MAX_CHANGE_PER_LOOP = 10.0  # 한 번에 변할 수 있는 최대 각도 (이 이상 튀면 노이즈로 간주)
-    SMOOTHING_FACTOR = 0.3      # 0.1(아주 부드러움/느림) ~ 1.0(빠름/거침)
+# 전역 변수
+prev_filtered_error = 0.0
+is_first_run = True
+last_error = None
 
-    # 첫 실행 시 초기화
-    if is_first_run:
-        prev_filtered_error = raw_error
-        is_first_run = False
-        return raw_error
+# 설정값
+MAX_CHANGE = 15.0      # 한 루프당 최대 변화 (도)
+ALPHA = 0.3            # 스무딩 팩터 (0.1=부드러움, 1.0=즉각반응)
 
-    # 2. [안전장치 1] 급격한 변화 제한 (Rate Limiter)
-    # "갑자기 60도가 튀었다? 말도 안 돼. 10도만 움직인 걸로 칠게."
-    diff = raw_error - prev_filtered_error
-    
-    if diff > MAX_CHANGE_PER_LOOP:
-        raw_error = prev_filtered_error + MAX_CHANGE_PER_LOOP
-        print(f"⚠️ Spike ignored: clamped +{MAX_CHANGE_PER_LOOP}")
-    elif diff < -MAX_CHANGE_PER_LOOP:
-        raw_error = prev_filtered_error - MAX_CHANGE_PER_LOOP
-        print(f"⚠️ Spike ignored: clamped -{MAX_CHANGE_PER_LOOP}")
-
-    # 3. [안전장치 2] 부드러운 이동 (Low Pass Filter)
-    # 현재 값 30%, 과거 값 70%를 섞어서 출력
-    filtered_error = (SMOOTHING_FACTOR * raw_error) + ((1 - SMOOTHING_FACTOR) * prev_filtered_error)
-    
-    # 다음 계산을 위해 현재 값을 저장
-    prev_filtered_error = filtered_error
-
-    # 로그 출력
-    print(f"Raw: {raw_error:.1f} -> Filtered: {filtered_error:.1f}")
-
-    return filtered_error
 def calculate_motor_control(yaw: float) -> float:
-    global last_error, last_yaw
+    global prev_filtered_error, is_first_run, last_error
+    
+    dx = target_lon - 1
+    dy = target_lat - 1
 
-    # if last_yaw is None:
-    #     last_yaw = yaw
-    # else:
-    #     diff = yaw - last_yaw
-        
-    #     if abs(diff) > MAX_YAW_CHANGE:
-    #         diff = MAX_YAW_CHANGE if diff > 0 else -MAX_YAW_CHANGE
-        
-    #     last_yaw = yaw
-    dx=target_lon - 1
-    dy=target_lat - 1
-
-    # GPS 유효 → 방위각 계산
-    if is_gps_valid(1, 1) and not (target_lat == 0.0 and target_lon == 0.0):
-        target_azimuth = math.degrees(math.atan2(dx, dy))
-        if target_azimuth<180:
-            target_azimuth=target_azimuth+360
-        error=quick_angle(target_azimuth - yaw)
-        last_error = error
-        print(f"\nyaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={error:.1f}")
-        return error
-
-    # GPS 무효 + 목표 좌표 없음 → IMU 기반 기본 헤딩(0도) 유지
+    # GPS 무효 + 목표 좌표 없음 → 직진
     if target_lat == 0.0 and target_lon == 0.0:
         return quick_angle(0.0 - yaw)
-    # GPS 무효 but 이전 방위각 있음 → 유지
+    
+    # GPS 유효 → 방위각 계산
+    if is_gps_valid(1, 1):
+        target_azimuth = math.degrees(math.atan2(dx, dy))
+        if target_azimuth < 0:
+            target_azimuth += 360
+        
+        # 날것의 에러 계산
+        raw_error = quick_angle(target_azimuth - yaw)
+        
+        # ========== 필터링 시작 ==========
+        
+        # 첫 실행 시 초기화
+        if is_first_run:
+            prev_filtered_error = raw_error
+            is_first_run = False
+            last_error = raw_error
+            print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f} (init)")
+            return raw_error
+        
+        # Rate Limiter: 급격한 변화 제한
+        diff = raw_error - prev_filtered_error
+        if diff > MAX_CHANGE:
+            raw_error = prev_filtered_error + MAX_CHANGE
+            print(f"⚠️ Clamped: +{MAX_CHANGE}")
+        elif diff < -MAX_CHANGE:
+            raw_error = prev_filtered_error - MAX_CHANGE
+            print(f"⚠️ Clamped: -{MAX_CHANGE}")
+        
+        # Low Pass Filter: 부드럽게
+        filtered_error = (ALPHA * raw_error) + ((1 - ALPHA) * prev_filtered_error)
+        prev_filtered_error = filtered_error
+        last_error = filtered_error
+        
+        print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
+        return filtered_error
+    
+    # GPS 무효 but 이전 에러 있음 → 유지
     if last_error is not None:
         return last_error
     
-    # GPS 무효, 이전 방위각 없음 → 직진
     return 0.0
