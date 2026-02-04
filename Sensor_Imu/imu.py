@@ -62,7 +62,7 @@ class I2CLock:
             pass
         return False
 
-# BNO085 장착 방향 보정
+# BNO055 장착 방향 보정
 IMU_MOUNTED_ON_BOTTOM = True  # Z축이 아래로 향함
 IMU_FORWARD_AXIS = 'Y'        # 캔위성 앞쪽 방향
 
@@ -112,9 +112,8 @@ def _filter_mag(mx, my, mz):
 def init_imu(i2c=None):
     import board
     import busio
-    import adafruit_bno08x
-    from adafruit_bno08x.i2c import BNO08X_I2C
-    
+    import adafruit_bno055
+
     max_retries = 5
     last_error = None
     if i2c is None:
@@ -135,32 +134,23 @@ def init_imu(i2c=None):
                 finally:
                     i2c.unlock()
 
-            if 0x4A not in addrs and 0x4B not in addrs:
-                last_error = RuntimeError(f"BNO08X not found on I2C bus. scan={addrs}")
+            if 0x28 not in addrs and 0x29 not in addrs:
+                last_error = RuntimeError(f"BNO055 not found on I2C bus. scan={addrs}")
                 time.sleep(0.5)
                 continue
 
-            addr = 0x4A if 0x4A in addrs else 0x4B
+            addr = 0x28 if 0x28 in addrs else 0x29
 
             with I2CLock():
                 # 디버그 출력 억제
                 with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                    sensor = BNO08X_I2C(i2c, address=addr, debug=False)
+                    sensor = adafruit_bno055.BNO055_I2C(i2c, address=addr)
 
-                # 디버그 속성 비활성화
-                if hasattr(sensor, '_debug'):
-                    sensor._debug = False
-                time.sleep(0.2)
+                time.sleep(0.5)  # BNO055 초기화 대기
 
-                # 필수 기능 활성화 (디버그 출력 억제)
-                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER, REPORT_INTERVAL_US)
+                # NDOF 모드 설정 (9-DOF fusion)
+                sensor.mode = adafruit_bno055.NDOF_MODE
+
             time.sleep(0.5)
             return i2c, sensor
 
@@ -177,62 +167,68 @@ def init_imu(i2c=None):
 def read_sensor_data(sensor):
     global angle_window
     global LAST_VALID_SENSORS
-    
-    # 쿼터니언 읽기 (디버그 출력 억제)
+
+    # BNO055에서 직접 euler angles, 센서 데이터 읽기
     try:
         with I2CLock():
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                quat = sensor.quaternion
+                euler = sensor.euler
                 acc = sensor.acceleration
                 mag = sensor.magnetic
                 gyr = sensor.gyro
-        if quat is None:
+        if euler is None or euler[0] is None:
             return False
     except Exception:
         return False
-    
-    x, y, z, w = quat
-    
-    # 쿼터니언 → 오일러각 변환
-    yaw = math.degrees(math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2)))
-    roll = math.degrees(math.atan2(2*(w*x + y*z), 1 - 2*(x**2 + y**2)))
-    
-    pitch_val = max(-1, min(1, 2*(w*y - z*x)))
-    pitch = math.degrees(math.asin(pitch_val))
-    
+
+    # BNO055 euler: (heading, roll, pitch) in degrees
+    # heading은 0~360, roll/pitch는 -180~180 범위
+    heading, roll, pitch = euler
+
+    # None 체크
+    if heading is None or roll is None or pitch is None:
+        return False
+
+    yaw = heading  # BNO055의 heading을 yaw로 사용
+
     # 장착 방향 보정
     if IMU_MOUNTED_ON_BOTTOM:
         yaw = -yaw
     if IMU_FORWARD_AXIS == 'Y':
         yaw += 90
-    
+
     # YAW_OFFSET 적용
     try:
         from lib import config
         yaw += config.YAW_OFFSET
     except:
         pass
-    
+
     # 0~360도 범위로 정규화
     yaw = yaw % 360
     roll = roll % 360
-    
-    # 가속도, 자이로, 자기장 읽기 (동일 락 내에서 읽음)
+    pitch = pitch % 360
+
+    # 가속도, 자이로, 자기장 읽기
     try:
-        accX, accY, accZ = acc
-        magX, magY, magZ = mag
-        gyrX, gyrY, gyrZ = gyr
+        accX, accY, accZ = acc if acc and acc[0] is not None else LAST_VALID_SENSORS["acc"]
+        magX, magY, magZ = mag if mag and mag[0] is not None else LAST_VALID_SENSORS["mag"]
+        gyrX, gyrY, gyrZ = gyr if gyr and gyr[0] is not None else LAST_VALID_SENSORS["gyr"]
 
-        mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
-        if _mag_norm_is_valid(mag_norm):
-            magX, magY, magZ = _filter_mag(magX, magY, magZ)
-            MAG_FILTER_STATE["norm"] = mag_norm
-            LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
-        else:
-            magX, magY, magZ = LAST_VALID_SENSORS["mag"]
+        # 자기장 필터링
+        if mag and mag[0] is not None:
+            mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
+            if _mag_norm_is_valid(mag_norm):
+                magX, magY, magZ = _filter_mag(magX, magY, magZ)
+                MAG_FILTER_STATE["norm"] = mag_norm
+                LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
+            else:
+                magX, magY, magZ = LAST_VALID_SENSORS["mag"]
 
-        LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
-        LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
+        if acc and acc[0] is not None:
+            LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
+        if gyr and gyr[0] is not None:
+            LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
     except Exception:
         accX, accY, accZ = LAST_VALID_SENSORS["acc"]
         magX, magY, magZ = LAST_VALID_SENSORS["mag"]
@@ -254,26 +250,26 @@ def read_sensor_data(sensor):
         yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
     except Exception:
         pass
-    
+
     # 이동평균 필터 (보정된 yaw 사용)
     angle_window[0].append(yaw)
     angle_window[1].append(roll)
     angle_window[2].append(pitch)
-    
+
     for i in range(3):
         if len(angle_window[i]) > WINDOW_SIZE:
             angle_window[i].pop(0)
-    
+
     avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
     avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
     avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
-    
+
     accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
     gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
     magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
-    
+
     log_imu(f"{avg_roll:.4f},{avg_pitch:.4f},{avg_yaw:.4f},{accX},{accY},{accZ},{magX},{magY},{magZ},{gyrX},{gyrY},{gyrZ}")
-    
+
     return (avg_roll, avg_pitch, avg_yaw, accX, accY, accZ, magX, magY, magZ, gyrX, gyrY, gyrZ)
 
 
