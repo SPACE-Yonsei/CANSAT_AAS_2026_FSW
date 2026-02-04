@@ -2,8 +2,8 @@
 import time
 
 
-PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 12, physical pin 32
-PARAFOIL_LEFT_MOTOR_PIN = 12  # GPIO 13, physical pin 33
+PARAFOIL_RIGHT_MOTOR_PIN = 12  # GPIO 12, physical pin 32
+PARAFOIL_LEFT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 
 # 2500 when left angle is 0 angle
 # 500 when right angle is 0 angle
