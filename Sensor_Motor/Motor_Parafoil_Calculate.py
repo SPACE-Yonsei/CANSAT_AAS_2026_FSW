@@ -94,9 +94,9 @@ def calculate_motor_control(yaw: float) -> float:
         target_azimuth = math.degrees(math.atan2(dx, dy))
         if target_azimuth < 0:
             target_azimuth += 360
-            raw_error = quick_angle(-target_azimuth + yaw)
-            print(f"azimuth{target_azimuth:.1f}-yaw{yaw:.1f}=error{raw_error:.1f}")
-            return raw_error
+        
+        raw_error = quick_angle(target_azimuth - yaw)
+        return raw_error
         # # 첫 실행: 초기화
         # if is_first_run:
         #     prev_filtered_error = raw_error
