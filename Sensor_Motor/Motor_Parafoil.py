@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import time
 
-PARAFOIL_LEFT_MOTOR_PIN = 13   # GPIO 12, physical pin 32
-PARAFOIL_RIGHT_MOTOR_PIN = 12  # GPIO 13, physical pin 33
+
+PARAFOIL_RIGHT_MOTOR_PIN = 12  # GPIO 12, physical pin 32
+PARAFOIL_LEFT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
 
 # 2500 when left angle is 0 angle
 # 500 when right angle is 0 angle
@@ -13,9 +14,10 @@ pulse_per_degree = 2000/180
 
 left_zero = 2500
 right_zero = 600
+MAX_ANGLE_SCOPE = 120  # degrees
 
-left_neutral = int(left_zero - 30 * pulse_per_degree)
-right_neutral = int(right_zero + 30* pulse_per_degree)
+right_neutral = int(right_zero + MAX_ANGLE_SCOPE * pulse_per_degree)
+left_neutral = int(left_zero - MAX_ANGLE_SCOPE * pulse_per_degree)
 
 THRESHOLD = 15  # degrees
 
@@ -48,16 +50,7 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 def rotate_parafoil_motor(pi, error: float):
-    """
-    Control parafoil motor based on error (direction).
-
-    Neutral (straight): Both motors at 120° (1167, 1833)
-    Left turn (error < 0): Left neutral, Right moves (1833 → 500)
-    Right turn (error > 0): Right neutral, Left moves (1167 → 2500)
-    Range: ±135° (±15° dead zone + ±120° control)
-
-    error가 ±135도를 넘으면 neutral로 초기화
-    """
+    
     print(f"operate before error={error:.1f}")
     if error>=135:
         error=135
@@ -66,7 +59,7 @@ def rotate_parafoil_motor(pi, error: float):
     print(f"operate after error={error:.1f}")
 
     global current_left_pulse, current_right_pulse
-    #go straight
+        #go straight
     if abs(error) < THRESHOLD:
         left_pulse = left_neutral
         right_pulse = right_neutral
