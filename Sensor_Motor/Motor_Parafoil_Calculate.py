@@ -92,7 +92,7 @@ def calculate_motor_control(yaw: float) -> float:
     # GPS 유효 → 방위각 계산
     if is_gps_valid(1, 1):
         target_azimuth = math.degrees(math.atan2(dx, dy))
-        if target_azimuth < 0:
+        while target_azimuth < 0:
             target_azimuth += 360
         
             raw_error = quick_angle(target_azimuth - yaw)
