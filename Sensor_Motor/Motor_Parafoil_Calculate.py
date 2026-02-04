@@ -95,40 +95,40 @@ def calculate_motor_control(yaw: float) -> float:
         if target_azimuth < 0:
             target_azimuth += 360
         
-        raw_error = quick_angle(target_azimuth - yaw)
-        
-        # 첫 실행: 초기화
-        if is_first_run:
-            prev_filtered_error = raw_error
-            prev_raw_error = raw_error
-            is_first_run = False
-            last_error = raw_error
-            print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f} (init)")
+            raw_error = quick_angle(target_azimuth - yaw)
             return raw_error
+        # # 첫 실행: 초기화
+        # if is_first_run:
+        #     prev_filtered_error = raw_error
+        #     prev_raw_error = raw_error
+        #     is_first_run = False
+        #     last_error = raw_error
+        #     print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f} (init)")
+        #     return raw_error
         
-        # raw_error 변화량 계산 (래핑 고려)
-        raw_diff = quick_angle(raw_error - prev_raw_error)
+        # # raw_error 변화량 계산 (래핑 고려)
+        # raw_diff = quick_angle(raw_error - prev_raw_error)
         
-        # 급변 감지 시에만 Rate Limit 적용
-        if abs(raw_diff) > MAX_CHANGE:
-            if raw_diff > 0:
-                limited_error = prev_filtered_error + MAX_CHANGE
-            else:
-                limited_error = prev_filtered_error - MAX_CHANGE
-            print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f}, clamped")
-        else:
-            limited_error = raw_error
+        # # 급변 감지 시에만 Rate Limit 적용
+        # if abs(raw_diff) > MAX_CHANGE:
+        #     if raw_diff > 0:
+        #         limited_error = prev_filtered_error + MAX_CHANGE
+        #     else:
+        #         limited_error = prev_filtered_error - MAX_CHANGE
+        #     print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f}, clamped")
+        # else:
+        #     limited_error = raw_error
         
-        # Low Pass Filter
-        filtered_error = (ALPHA * limited_error) + ((1 - ALPHA) * prev_filtered_error)
+        # # Low Pass Filter
+        # filtered_error = (ALPHA * limited_error) + ((1 - ALPHA) * prev_filtered_error)
         
-        # 상태 업데이트
-        prev_raw_error = raw_error
-        prev_filtered_error = filtered_error
-        last_error = filtered_error
+        # # 상태 업데이트
+        # prev_raw_error = raw_error
+        # prev_filtered_error = filtered_error
+        # last_error = filtered_error
         
-        print(f"////yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
-        return filtered_error
+        # print(f"////yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
+        # return filtered_error
     
     # GPS 무효 but 이전 에러 있음 → 유지
     if last_error is not None:
