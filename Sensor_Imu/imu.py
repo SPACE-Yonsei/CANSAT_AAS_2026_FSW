@@ -29,7 +29,6 @@ MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
 MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
-REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
 
 
 class I2CLock:
@@ -112,11 +111,11 @@ def _filter_mag(mx, my, mz):
 def init_imu(i2c=None):
     import board
     import busio
-    import adafruit_bno08x
-    from adafruit_bno08x.i2c import BNO08X_I2C
+    import adafruit_bno055
     
     max_retries = 5
     last_error = None
+    
     if i2c is None:
         i2c = busio.I2C(board.SCL, board.SDA, frequency=I2C_FREQUENCY)
 
@@ -135,33 +134,25 @@ def init_imu(i2c=None):
                 finally:
                     i2c.unlock()
 
-            if 0x4A not in addrs and 0x4B not in addrs:
-                last_error = RuntimeError(f"BNO08X not found on I2C bus. scan={addrs}")
+            # BNO055 기본 주소: 0x28 또는 0x29
+            if 0x28 not in addrs and 0x29 not in addrs:
+                last_error = RuntimeError(f"BNO055 not found on I2C bus. scan={addrs}")
                 time.sleep(0.5)
                 continue
 
-            addr = 0x4A if 0x4A in addrs else 0x4B
+            addr = 0x28 if 0x28 in addrs else 0x29
 
             with I2CLock():
-                # 디버그 출력 억제
-                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                    sensor = BNO08X_I2C(i2c, address=addr, debug=False)
-
-                # 디버그 속성 비활성화
-                if hasattr(sensor, '_debug'):
-                    sensor._debug = False
+                # BNO055 초기화
+                sensor = adafruit_bno055.BNO055_I2C(i2c, address=addr)
                 time.sleep(0.2)
+                
+                # BNO055 모드 설정 (NDOF: 9축 융합 모드)
+                sensor.mode = adafruit_bno055.NDOF_MODE
+                time.sleep(0.1)
 
-                # 필수 기능 활성화 (디버그 출력 억제)
-                with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ROTATION_VECTOR, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_ACCELEROMETER, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_GYROSCOPE, REPORT_INTERVAL_US)
-                    time.sleep(0.05)
-                    sensor.enable_feature(adafruit_bno08x.BNO_REPORT_MAGNETOMETER, REPORT_INTERVAL_US)
             time.sleep(0.5)
+            print(f"BNO055 initialized at address 0x{addr:02X}")
             return i2c, sensor
 
         except (KeyError, IndexError, OSError, RuntimeError, ValueError) as e:
@@ -178,27 +169,32 @@ def read_sensor_data(sensor):
     global angle_window
     global LAST_VALID_SENSORS
     
-    # 쿼터니언 읽기 (디버그 출력 억제)
     try:
         with I2CLock():
-            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-                quat = sensor.quaternion
-                acc = sensor.acceleration
-                mag = sensor.magnetic
-                gyr = sensor.gyro
-        if quat is None:
-            return False
-    except Exception:
+            # BNO055에서 오일러각 직접 읽기 (heading, roll, pitch)
+            euler = sensor.euler
+            if euler is None or None in euler:
+                return False
+            
+            # BNO055 오일러각: (heading, roll, pitch)
+            heading, roll, pitch = euler
+            
+            # None 체크
+            if heading is None or roll is None or pitch is None:
+                return False
+            
+            yaw = float(heading)
+            roll = float(roll)
+            pitch = float(pitch)
+            
+            # 센서 데이터 읽기
+            acc = sensor.acceleration
+            mag = sensor.magnetic
+            gyr = sensor.gyro
+            
+    except Exception as e:
+        print(f"Read error: {e}")
         return False
-    
-    x, y, z, w = quat
-    
-    # 쿼터니언 → 오일러각 변환
-    yaw = math.degrees(math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2)))
-    roll = math.degrees(math.atan2(2*(w*x + y*z), 1 - 2*(x**2 + y**2)))
-    
-    pitch_val = max(-1, min(1, 2*(w*y - z*x)))
-    pitch = math.degrees(math.asin(pitch_val))
     
     # 장착 방향 보정
     if IMU_MOUNTED_ON_BOTTOM:
@@ -214,44 +210,57 @@ def read_sensor_data(sensor):
         pass
     
     # 0~360도 범위로 정규화
-    yaw = yaw % 360
-    roll = roll % 360
+    yaw = _wrap_angle_deg(yaw)
+    roll = _wrap_angle_deg(roll)
+    pitch = _wrap_angle_deg(pitch)
     
-    # 가속도, 자이로, 자기장 읽기 (동일 락 내에서 읽음)
+    # 가속도, 자이로, 자기장 처리
     try:
-        accX, accY, accZ = acc
-        magX, magY, magZ = mag
-        gyrX, gyrY, gyrZ = gyr
-
-        mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
-        if _mag_norm_is_valid(mag_norm):
-            magX, magY, magZ = _filter_mag(magX, magY, magZ)
-            MAG_FILTER_STATE["norm"] = mag_norm
-            LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
+        if acc and None not in acc:
+            accX, accY, accZ = acc
+            LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
+        else:
+            accX, accY, accZ = LAST_VALID_SENSORS["acc"]
+            
+        if mag and None not in mag:
+            magX, magY, magZ = mag
+            mag_norm = math.sqrt(magX * magX + magY * magY + magZ * magZ)
+            if _mag_norm_is_valid(mag_norm):
+                magX, magY, magZ = _filter_mag(magX, magY, magZ)
+                MAG_FILTER_STATE["norm"] = mag_norm
+                LAST_VALID_SENSORS["mag"] = (magX, magY, magZ)
+            else:
+                magX, magY, magZ = LAST_VALID_SENSORS["mag"]
         else:
             magX, magY, magZ = LAST_VALID_SENSORS["mag"]
-
-        LAST_VALID_SENSORS["acc"] = (accX, accY, accZ)
-        LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
-    except Exception:
+            
+        if gyr and None not in gyr:
+            gyrX, gyrY, gyrZ = gyr
+            LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
+        else:
+            gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
+            
+    except Exception as e:
+        print(f"Sensor data error: {e}")
         accX, accY, accZ = LAST_VALID_SENSORS["acc"]
         magX, magY, magZ = LAST_VALID_SENSORS["mag"]
         gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
 
-    # Yaw drift 보정 (자기장 기반 천천히 보정)
+    # Yaw drift 보정 (자기장 기반)
     try:
-        mag_heading = math.degrees(math.atan2(magY, magX))
-        if IMU_MOUNTED_ON_BOTTOM:
-            mag_heading = -mag_heading
-        if IMU_FORWARD_AXIS == 'Y':
-            mag_heading += 90
-        try:
-            from lib import config
-            mag_heading += config.YAW_OFFSET
-        except Exception:
-            pass
-        mag_heading = _wrap_angle_deg(mag_heading)
-        yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
+        if magX != 0.0 or magY != 0.0:
+            mag_heading = math.degrees(math.atan2(magY, magX))
+            if IMU_MOUNTED_ON_BOTTOM:
+                mag_heading = -mag_heading
+            if IMU_FORWARD_AXIS == 'Y':
+                mag_heading += 90
+            try:
+                from lib import config
+                mag_heading += config.YAW_OFFSET
+            except Exception:
+                pass
+            mag_heading = _wrap_angle_deg(mag_heading)
+            yaw = _wrap_angle_deg(yaw + YAW_CORRECTION_GAIN * _angle_diff_deg(mag_heading, yaw))
     except Exception:
         pass
     
@@ -331,13 +340,15 @@ if __name__ == "__main__":
                 consecutive_failures = 0
                 try:
                     i2c, sensor = reinit_imu(i2c, sensor)
-                    time.sleep(0.5)  # 재초기화 후 안정화 대기
+                    time.sleep(0.5)
                 except Exception as e:
+                    print(f"Reinit error: {e}")
                     time.sleep(0.5)
                     try:
                         i2c, sensor = reinit_imu(i2c, sensor)     
                     except Exception as e2:
-                        break  # 재초기화 실패 시 루프 종료
+                        print(f"Reinit failed: {e2}")
+                        break
                 continue
             
             consecutive_failures = 0
@@ -345,4 +356,5 @@ if __name__ == "__main__":
             time.sleep(0.1)
     
     except KeyboardInterrupt:
+        print("\nTerminating IMU...")
         imu_terminate(i2c)
