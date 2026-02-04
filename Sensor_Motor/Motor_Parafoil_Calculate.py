@@ -93,7 +93,7 @@ def calculate_motor_control(yaw: float) -> float:
     if is_gps_valid(1, 1):
         target_azimuth = math.degrees(math.atan2(dx, dy))
         if target_azimuth < 0:
-            target_azimuth += 360)
+            target_azimuth += 360
             raw_error = quick_angle(target_azimuth - yaw)
             print(f"azimuth{target_azimuth:.1f}-yaw{yaw:.1f}=error{raw_error:.1f}")
             return raw_error
