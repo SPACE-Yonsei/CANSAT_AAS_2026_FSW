@@ -52,12 +52,10 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 def rotate_parafoil_motor(pi, error: float):
     
-    print(f"operate before error={error:.1f}")
     if error>=135:
         error=135
     elif error<=-135:
         error=-135
-    print(f"operate after error={error:.1f}")
 
     global current_left_pulse, current_right_pulse
         #go straight
