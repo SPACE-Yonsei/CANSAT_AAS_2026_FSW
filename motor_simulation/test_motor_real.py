@@ -2,8 +2,9 @@
 import pigpio
 import time
 
-LEFT_PIN = 13
-RIGHT_PIN = 12
+
+RIGHT_PIN = 13
+LEFT_PIN = 12
 
 pulse_per_degree = 2000/180
 
