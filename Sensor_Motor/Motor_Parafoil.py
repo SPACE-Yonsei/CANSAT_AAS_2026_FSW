@@ -2,8 +2,8 @@
 import time
 
 
-PARAFOIL_RIGHT_MOTOR_PIN = 12  # GPIO 12, physical pin 32
-PARAFOIL_LEFT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
+PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 12, physical pin 32
+PARAFOIL_LEFT_MOTOR_PIN = 12  # GPIO 13, physical pin 33
 
 # 2500 when left angle is 0 angle
 # 500 when right angle is 0 angle
@@ -13,12 +13,12 @@ pulse_per_degree = 2000/180
 #max_pulse_scope = max_angle_scope * pulse_per_degree
 
 
-right_zero = 2500
-left_zero = 600
+right_zero = 550
+left_zero = 2500
 MAX_ANGLE_SCOPE = 120  # degrees
 
-right_neutral = int(right_zero - MAX_ANGLE_SCOPE * pulse_per_degree)
-left_neutral = int(left_zero + MAX_ANGLE_SCOPE * pulse_per_degree)
+right_neutral = int(right_zero + MAX_ANGLE_SCOPE * pulse_per_degree)
+left_neutral = int(left_zero - MAX_ANGLE_SCOPE * pulse_per_degree)
 
 THRESHOLD = 15  # degrees
 
@@ -67,14 +67,14 @@ def rotate_parafoil_motor(pi, error: float):
     elif error < 0:
         #turn left
         effective_error = abs(error) - THRESHOLD
-        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
+        pulse_to_rotate_motor = abs(int(effective_error * pulse_per_degree))
 
         left_pulse = left_neutral - pulse_to_rotate_motor
         right_pulse = right_neutral
     else:
         #turn right
         effective_error = abs(error) - THRESHOLD
-        pulse_to_rotate_motor = int(effective_error * pulse_per_degree)
+        pulse_to_rotate_motor = abs(int(effective_error * pulse_per_degree))
 
         left_pulse = left_neutral
         right_pulse = right_neutral + pulse_to_rotate_motor
