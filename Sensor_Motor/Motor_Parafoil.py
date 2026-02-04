@@ -68,16 +68,16 @@ def rotate_parafoil_motor(pi, error: float):
         pulse_to_rotate_motor = abs(int(effective_error * pulse_per_degree))
 
         left_pulse = left_neutral 
-        right_pulse = right_neutral - pulse_to_rotate_motor
+        right_pulse = right_neutral + pulse_to_rotate_motor
     else:
         #turn left
         effective_error = abs(error) - THRESHOLD
         pulse_to_rotate_motor = abs(int(effective_error * pulse_per_degree))
 
-        left_pulse = left_neutral + pulse_to_rotate_motor
+        left_pulse = left_neutral - pulse_to_rotate_motor
         right_pulse = right_neutral
-    left_pulse = max(500, min(2500, left_pulse))
-    right_pulse = max(500, min(2500, right_pulse))
+    # left_pulse = max(500, min(2500, left_pulse))
+    # right_pulse = max(500, min(2500, right_pulse))
     # 현재 상태 저장
     current_left_pulse = left_pulse
     current_right_pulse = right_pulse
