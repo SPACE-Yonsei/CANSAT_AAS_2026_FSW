@@ -2,8 +2,8 @@
 import pigpio
 import time
 
-LEFT_PIN = 12
-RIGHT_PIN = 13
+LEFT_PIN = 13
+RIGHT_PIN = 12
 
 pulse_per_degree = 2000/180
 
@@ -21,20 +21,27 @@ if not pi.connected:
     exit()
 
 print("LEFT 모터 0(2500) 이동..")
-pi.set_servo_pulsewidth(LEFT_PIN, left_zero)
+pi.set_servo_pulsewidth(LEFT_PIN, 2500)
 time.sleep(10)
 
 print("LEFT 모터 120 이동...")
 pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
 time.sleep(10)
 
-print("RIGHT 모터 0(500) 이동...")
-pi.set_servo_pulsewidth(RIGHT_PIN, right_zero) 
+print("LEFT 모터 0(600) 이동..")
+pi.set_servo_pulsewidth(LEFT_PIN, 600)
 time.sleep(10)
 
+print("RIGHT 모터 (500) 이동...")
+pi.set_servo_pulsewidth(RIGHT_PIN, 500) 
+time.sleep(10)
 
 print("RIGHT 모터 120 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
+time.sleep(10)
+
+print("RIGHT 모터 (2500) 이동...")
+pi.set_servo_pulsewidth(RIGHT_PIN, 2500) 
 time.sleep(10)
 
 # print("right 1500")
