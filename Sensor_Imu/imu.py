@@ -29,6 +29,12 @@ MAG_FIELD_MAX = float(os.getenv("IMU_MAG_FIELD_MAX", "150.0"))
 MAG_NORM_SPIKE_RATIO = float(os.getenv("IMU_MAG_NORM_SPIKE_RATIO", "3.0"))
 YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
+REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
+
+# Hampel filter configuration (spike rejection)
+HAMPEL_WINDOW_SIZE = int(os.getenv("IMU_HAMPEL_WINDOW_SIZE", "7"))
+HAMPEL_THRESHOLD = float(os.getenv("IMU_HAMPEL_THRESHOLD", "3.0"))
+HAMPEL_MIN_MAD = float(os.getenv("IMU_HAMPEL_MIN_MAD", "2.0"))
 
 
 class I2CLock:
@@ -94,6 +100,50 @@ def _mag_norm_is_valid(mag_norm):
         if mag_norm < prev_norm / MAG_NORM_SPIKE_RATIO:
             return False
     return True
+
+def _hampel_filter_angle(window: list, new_value: float) -> float:
+    """
+    Hampel filter for angular data (handles 0/360 wraparound)
+    Returns: filtered angle value
+    """
+    # Window 업데이트
+    window.append(new_value)
+    if len(window) > HAMPEL_WINDOW_SIZE:
+        window.pop(0)
+
+    # 최소 3개 샘플 필요
+    if len(window) < 3:
+        return sum(window) / len(window)
+
+    # Unwrap angles (0/360 경계 처리)
+    unwrapped = [window[0]]
+    for i in range(1, len(window)):
+        diff = _angle_diff_deg(window[i], unwrapped[i-1])
+        unwrapped.append(unwrapped[i-1] + diff)
+
+    # Median 및 MAD 계산
+    sorted_vals = sorted(unwrapped)
+    n = len(sorted_vals)
+    median_val = sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2
+
+    deviations = [abs(x - median_val) for x in unwrapped]
+    sorted_devs = sorted(deviations)
+    mad = sorted_devs[n // 2] if n % 2 == 1 else (sorted_devs[n//2-1] + sorted_devs[n//2]) / 2
+
+    # Outlier detection & replacement
+    threshold = HAMPEL_THRESHOLD * max(mad, HAMPEL_MIN_MAD)
+    filtered = []
+    for val in unwrapped:
+        if abs(val - median_val) > threshold:
+            filtered.append(median_val)  # Replace outlier
+        else:
+            filtered.append(val)
+
+    # 평균 계산
+    avg = sum(filtered) / len(filtered)
+
+    # Wrap back to 0-360
+    return _wrap_angle_deg(avg)
 
 def _filter_mag(mx, my, mz):
     if not MAG_FILTER_STATE["init"]:
@@ -264,19 +314,11 @@ def read_sensor_data(sensor):
     except Exception:
         pass
     
-    # 이동평균 필터 (보정된 yaw 사용)
-    angle_window[0].append(yaw)
-    angle_window[1].append(roll)
-    angle_window[2].append(pitch)
-    
-    for i in range(3):
-        if len(angle_window[i]) > WINDOW_SIZE:
-            angle_window[i].pop(0)
-    
-    avg_yaw = round(sum(angle_window[0]) / len(angle_window[0]), 4)
-    avg_roll = round(sum(angle_window[1]) / len(angle_window[1]), 4)
-    avg_pitch = round(sum(angle_window[2]) / len(angle_window[2]), 4)
-    
+    # Hampel 필터 (보정된 yaw 사용, 스파이크 제거)
+    avg_yaw = round(_hampel_filter_angle(angle_window[0], yaw), 4)
+    avg_roll = round(_hampel_filter_angle(angle_window[1], roll), 4)
+    avg_pitch = round(_hampel_filter_angle(angle_window[2], pitch), 4)
+
     accX, accY, accZ = round(accX, 4), round(accY, 4), round(accZ, 4)
     gyrX, gyrY, gyrZ = round(gyrX, 4), round(gyrY, 4), round(gyrZ, 4)
     magX, magY, magZ = round(magX, 4), round(magY, 4), round(magZ, 4)
