@@ -8,8 +8,8 @@ LEFT_PIN = 12
 
 pulse_per_degree = 2000/180
 
-left_zero = 2500
-right_zero = 600
+left_zero = 600
+right_zero = 2500
 left_neutral = int(left_zero + 120 * pulse_per_degree)
 right_neutral = int(right_zero - 120 * pulse_per_degree)
 
