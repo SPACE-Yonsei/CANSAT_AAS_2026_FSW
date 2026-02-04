@@ -21,7 +21,7 @@ if not pi.connected:
     exit()
 
 print("LEFT 모터 0(2500) 이동..")
-pi.set_servo_pulsewidth(RIGHT_PIN_PIN, left_zero)
+pi.set_servo_pulsewidth(RIGHT_PIN, left_zero)
 time.sleep(10)
 
 print("LEFT 모터 30 이동...")
