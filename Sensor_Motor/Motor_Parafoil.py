@@ -61,6 +61,7 @@ def rotate_parafoil_motor(pi, error: float):
     if abs(error) < THRESHOLD:
         left_pulse = left_neutral
         right_pulse = right_neutral
+        print(f"both neutral => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}")
     elif error > 0:
         #turn right
         effective_error = abs(error) - THRESHOLD
@@ -69,25 +70,22 @@ def rotate_parafoil_motor(pi, error: float):
         
         left_pulse = left_neutral - pulse_to_rotate_motor*2
         right_pulse = right_neutral
+        print(f"left moved => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}, effective_error: {effective_error}")
     else:
         #turn left
         effective_error = abs(error) - THRESHOLD
         pulse_to_rotate_motor = abs(int(effective_error * pulse_per_degree))
-
+        
         
         left_pulse = left_neutral
         right_pulse = right_neutral + pulse_to_rotate_motor*2
+        print(f"right moved => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}, effective_error: {effective_error}")
     left_pulse = max(600, min(2500, left_pulse))
     right_pulse = max(600, min(2500, right_pulse))
     # 현재 상태 저장
     current_left_pulse = left_pulse
     current_right_pulse = right_pulse
-    if left_pulse == left_neutral:    
-        print(f"right moved => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}, effective_error: {effective_error}")
-    elif right_pulse == right_neutral:
-        print(f"left moved => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}, effective_error: {effective_error}")
-    else:
-        print(f"both neutral => error: {error}, left_pulse: {left_pulse}, right_pulse: {right_pulse}, effective_error: {effective_error}")
+    
     # 모터에 적용
     #print(f"Parafoil Motor Control - Left Pulse: {left_pulse}μs, Right Pulse: {right_pulse}μs")
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
