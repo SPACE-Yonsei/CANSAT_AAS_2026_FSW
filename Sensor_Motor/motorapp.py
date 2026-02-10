@@ -1,7 +1,6 @@
 import signal
 import threading
-import time
-from multiprocessing import Queue, connection
+from multiprocessing import connection
 
 from lib import appargs, msgstructure, events
 
@@ -110,7 +109,7 @@ def update_parafoil():
     if state < 3 or not motor_enabled:
         return
     
-    error = Motor_Parafoil_Calculate.calculate_motor_control(yaw)
+    error = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
     Motor_Parafoil.rotate_parafoil_motor(pi, error)
 
     if state == 5:
@@ -162,7 +161,7 @@ def terminate():
 # 메인 루프
 # =============================================================================
 
-def motorapp_main(main_queue: Queue, main_pipe: connection.Connection):
+def motorapp_main(main_pipe: connection.Connection):
     global running
     running = True
     
