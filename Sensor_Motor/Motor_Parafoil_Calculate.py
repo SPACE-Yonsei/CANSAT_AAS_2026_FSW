@@ -79,18 +79,18 @@ MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
 ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
 
 
-def calculate_motor_control(yaw: float) -> float:
+def calculate_motor_control(yaw: float, lat, lon) -> float:
     global prev_filtered_error, prev_raw_error, is_first_run, last_error
     
-    dx = target_lon - 1
-    dy = target_lat - 1
+    dx = target_lon - lon
+    dy = target_lat - lat
 
     # 목표 좌표 없음 → 직진 (yaw=0 유지)
     if target_lat == 0.0 and target_lon == 0.0:
         return quick_angle(0.0 - yaw)
     
     # GPS 유효 → 방위각 계산
-    if is_gps_valid(1, 1):
+    if is_gps_valid(lon, lat):
         target_azimuth = math.degrees(math.atan2(dx, dy))
         if target_azimuth < 0:
             target_azimuth += 360
