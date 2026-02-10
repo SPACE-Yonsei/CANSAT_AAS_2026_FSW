@@ -221,32 +221,31 @@ def read_sensor_data(sensor):
     
     try:
         with I2CLock():
-            # BNO055에서 오일러각 직접 읽기 (heading, roll, pitch)
-            euler = sensor.euler
-            if euler is None or None in euler:
-                return False
-            
-            # BNO055 오일러각: (heading, roll, pitch)
-            heading, roll, pitch = euler
-            
-            # None 체크
-            if heading is None or roll is None or pitch is None:
-                return False
-            
-            yaw = float(heading)
-            roll = float(roll)
-            pitch = float(pitch)
-            
-            # 센서 데이터 읽기
+            # Quaternion 읽기 (Euler 대신 사용)
+            quat = sensor.quaternion
             acc = sensor.acceleration
             mag = sensor.magnetic
             gyr = sensor.gyro
             
+        # Quaternion None 체크
+        if quat is None or None in quat:
+            return False
+            
+        # BNO055 quaternion 순서: (w, x, y, z)
+        w, x, y, z = quat
+        
     except Exception as e:
         print(f"Read error: {e}")
         return False
     
-    # 장착 방향 보정
+    # Quaternion → Euler 변환 (A 코드와 동일한 방식)
+    yaw = math.degrees(math.atan2(2*(w*z + x*y), 1 - 2*(y**2 + z**2)))
+    roll = math.degrees(math.atan2(2*(w*x + y*z), 1 - 2*(x**2 + y**2)))
+    
+    pitch_val = max(-1, min(1, 2*(w*y - z*x)))
+    pitch = math.degrees(math.asin(pitch_val))
+    
+    # 장착 방향 보정 (A 코드와 동일)
     if IMU_MOUNTED_ON_BOTTOM:
         yaw = -yaw
     if IMU_FORWARD_AXIS == 'Y':
