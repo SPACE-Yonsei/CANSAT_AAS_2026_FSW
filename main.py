@@ -62,11 +62,11 @@ def barometerapp_launcher(queue, pipe, log_queue):
     from Sensor_Barometer import barometerapp
     barometerapp.barometerapp_main(queue, pipe)
 
-def cameraapp_launcher(queue, pipe, log_queue):
+def cameraapp_launcher(pipe, log_queue):
     from lib import events
     events.init_events_subprocess(log_queue)
     from Sensor_Camera import cameraapp
-    cameraapp.cameraapp_main(queue, pipe)
+    cameraapp.cameraapp_main(pipe)
 
 def gpsapp_launcher(queue, pipe, log_queue):
     from lib import events
@@ -98,11 +98,11 @@ def flightlogicapp_launcher(queue, pipe, log_queue):
     from flight_logic import flightlogicapp
     flightlogicapp.flightlogicapp_main(queue, pipe)
 
-def motorapp_launcher(queue, pipe, log_queue):
+def motorapp_launcher(pipe, log_queue):
     from lib import events
     events.init_events_subprocess(log_queue)
     from Sensor_Motor import motorapp
-    motorapp.motorapp_main(queue, pipe)
+    motorapp.motorapp_main(pipe)
 
 def distanceapp_launcher(queue, pipe, log_queue):
     from lib import events
@@ -124,7 +124,7 @@ app_dict[appargs.BarometerAppArg.AppID] = barometerapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 cameraapp_elements = app_elements()
-cameraapp_elements.process = Process(target=cameraapp_launcher, args=(main_queue, child_pipe, log_queue))
+cameraapp_elements.process = Process(target=cameraapp_launcher, args=(child_pipe, log_queue))
 cameraapp_elements.pipe = parent_pipe
 app_dict[appargs.CameraAppArg.AppID] = cameraapp_elements
 
@@ -174,16 +174,16 @@ flightlogicapp_elements.pipe = parent_pipe
 app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 
 #########################################################
-# Gimbalmotorapp                                        #
+# motorapp                                        #
 #########################################################
 parent_pipe, child_pipe = Pipe()
 motorapp_elements = app_elements()
-motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe, log_queue))
+motorapp_elements.process = Process(target=motorapp_launcher, args=(child_pipe, log_queue))
 motorapp_elements.pipe = parent_pipe
 app_dict[appargs.MotorAppArg.AppID] = motorapp_elements
 
 #########################################################
-# DistanceApp (VL53L1CX ToF Sensor)                     #
+# DistanceApp (TF-Luna Sensor)                     #
 #########################################################
 parent_pipe, child_pipe = Pipe()
 distanceapp_elements = app_elements()

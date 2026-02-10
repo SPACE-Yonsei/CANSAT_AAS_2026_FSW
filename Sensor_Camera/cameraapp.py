@@ -10,7 +10,7 @@ from lib import logging
 from lib import events
 
 import signal
-from multiprocessing import Queue, connection
+from multiprocessing import connection
 import threading
 import time
 
@@ -165,7 +165,7 @@ thread_dict = dict[str, threading.Thread]()
 from lib import config
 
 # This method is called from main app. Initialization, runloop process
-def cameraapp_main(Main_Queue : Queue, Main_Pipe : connection.Connection):
+def cameraapp_main(Main_Pipe : connection.Connection):
     
     global CAMERAAPP_RUNSTATUS
     CAMERAAPP_RUNSTATUS = True
