@@ -308,7 +308,7 @@ def send_tlm(serial_instance):
                  f"GPS : Lat({tlm_data.gps_lat:.6f}), Lon({tlm_data.gps_lon:.6f}), Alt({tlm_data.gps_alt:.2f}), " \
                  f"Time({tlm_data.gps_time}), Sats({tlm_data.gps_sats})\n"
 
-        #events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, tlm_debug_text)
+        events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info, tlm_debug_text)
 
         # Only send telemetry when telemetry is enabled
         if TELEMETRY_ENABLE:
