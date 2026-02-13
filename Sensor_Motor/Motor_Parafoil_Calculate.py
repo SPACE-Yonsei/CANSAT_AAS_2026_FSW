@@ -12,7 +12,6 @@ from lib import prevstate
 
 target_lat = 0.0
 target_lon = 0.0
-last_error = None  # GPS 무효 시 사용할 마지막 유효 방위각
 
 def init_parafoil_control():
     global target_lat, target_lon
@@ -69,69 +68,78 @@ def quick_angle(angle: float) -> float:
     return angle
 
 # 전역 변수
-prev_filtered_error = 0.0
-prev_raw_error = 0.0
-is_first_run = True
 last_error = None
 
 # 설정값
 MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
 ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
 
+def calculate_motor_control(yaw: float, current_lat, current_lon) -> float:
+    # [1. 추가] 전역 변수 수정 권한 획득 (이게 없으면 저장이 안 됩니다)
+    global last_error 
 
-def calculate_motor_control(yaw: float, lat, lon) -> float:
-    global prev_filtered_error, prev_raw_error, is_first_run, last_error
-    
-    dx = target_lon - lon
-    dy = target_lat - lat
+    # [2. 추가] 입력값 방어 (센서가 None을 줄 경우 대비)
+    if yaw is None or current_lat is None or current_lon is None:
+         return last_error if last_error is not None else 0.0
 
-    # 목표 좌표 없음 → 직진 (yaw=0 유지)
+    # 목표 좌표 없음 → 직진
     if target_lat == 0.0 and target_lon == 0.0:
-        return quick_angle(0.0 - yaw)
-    
-    # GPS 유효 → 방위각 계산
-    if is_gps_valid(lon, lat):
-        target_azimuth = math.degrees(math.atan2(dx, dy))
-        if target_azimuth < 0:
-            target_azimuth += 360
-        
-        raw_error = quick_angle(target_azimuth - yaw)
-        return raw_error
-        # # 첫 실행: 초기화
-        # if is_first_run:
-        #     prev_filtered_error = raw_error
-        #     prev_raw_error = raw_error
-        #     is_first_run = False
-        #     last_error = raw_error
-        #     print(f"yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f} (init)")
-        #     return raw_error
-        
-        # # raw_error 변화량 계산 (래핑 고려)
-        # raw_diff = quick_angle(raw_error - prev_raw_error)
-        
-        # # 급변 감지 시에만 Rate Limit 적용
-        # if abs(raw_diff) > MAX_CHANGE:
-        #     if raw_diff > 0:
-        #         limited_error = prev_filtered_error + MAX_CHANGE
-        #     else:
-        #         limited_error = prev_filtered_error - MAX_CHANGE
-        #     print(f"⚠️ Spike: raw_diff={raw_diff:.1f}, yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, error={raw_error:.1f}, clamped")
-        # else:
-        #     limited_error = raw_error
-        
-        # # Low Pass Filter
-        # filtered_error = (ALPHA * limited_error) + ((1 - ALPHA) * prev_filtered_error)
-        
-        # # 상태 업데이트
-        # prev_raw_error = raw_error
-        # prev_filtered_error = filtered_error
-        # last_error = filtered_error
-        
-        # print(f"////yaw={yaw:.1f}, azimuth={target_azimuth:.1f}, raw={raw_error:.1f}, filtered={filtered_error:.1f}")
-        # return filtered_error
-    
-    # GPS 무효 but 이전 에러 있음 → 유지
+        return 0.0
+
+    # [3. 추가] 수학 계산 중 에러(ZeroDivision 등)가 나도 멈추지 않게 try로 감쌈
+    try:
+        if is_gps_valid(current_lat, current_lon):
+            # --- 기존 계산 로직 시작 ---
+            phi1 = math.radians(current_lat)
+            phi2 = math.radians(target_lat)
+            d_lambda = math.radians(target_lon - current_lon)
+
+            y = math.sin(d_lambda) * math.cos(phi2)
+            x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
+            
+            target_azimuth = math.degrees(math.atan2(y, x))
+            raw_error = quick_angle(target_azimuth - yaw)
+            
+            last_error = raw_error
+            return raw_error
+
+    except Exception as e:
+        # 에러 발생 시 로그만 찍고(선택사항) 아래 Fallback으로 넘어감
+        # print(f"Calc Error: {e}") 
+        pass
+
+    # [5. 추가] GPS가 끊기거나 에러 발생 시, 기억해둔 직전 값 리턴
     if last_error is not None:
         return last_error
     
+    # 아무 기록도 없으면 직진
     return 0.0
+# def calculate_motor_control(yaw: float, current_lat, current_lon) -> float:
+#     global prev_filtered_error, prev_raw_error, is_first_run, last_error
+    
+#     dx = target_lon - current_lon
+#     dy = target_lat - current_lat
+
+#     # 목표 좌표 없음 → 직진 (yaw=0 유지)
+#     if target_lat == 0.0 and target_lon == 0.0:
+#         return quick_angle(0.0 - yaw)
+    
+#     # GPS 유효 → 방위각 계산
+#     if is_gps_valid(current_lat, current_lon):
+#         phi1 = math.radians(current_lat)
+#         phi2 = math.radians(target_lat)
+#         d_lambda = math.radians(target_lon - current_lon)
+
+#         y = math.sin(d_lambda) * math.cos(phi2)
+#         x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
+        
+#         target_azimuth = math.degrees(math.atan2(y, x))
+
+#         raw_error = quick_angle(target_azimuth - yaw)
+
+#         return raw_error
+    
+#     if last_error is not None:
+#         return last_error
+    
+#     return 0.0
