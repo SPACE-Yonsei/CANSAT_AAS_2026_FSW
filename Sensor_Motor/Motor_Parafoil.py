@@ -130,7 +130,7 @@ def compute_pid(error: float, yaw: float = None) -> float:
         pid_prev_yaw = yaw
 
     output = p_term + i_term + d_term
-    print(f"\nPID Compute => error: {error:.1f}, P: {p_term:.2f}, I: {i_term:.2f}, D: {d_term:.2f}, Output: {output:.2f}")
+    #print(f"\nPID Compute => error: {error:.1f}, P: {p_term:.2f}, I: {i_term:.2f}, D: {d_term:.2f}, Output: {output:.2f}")
     output = max(-MAX_ANGLE_SCOPE, min(MAX_ANGLE_SCOPE, output))
 
     return output
@@ -148,8 +148,8 @@ def rotate_parafoil_motor(pi, yaw: float, error: float):
     if pid_output == 0.0:
         left_pulse = left_neutral
         right_pulse = right_neutral
-        print(f"neutral => error: {error:.1f}, pid: {pid_output:.2f}, "
-              f"L: {left_pulse}, R: {right_pulse}\n")
+        #print(f"neutral => error: {error:.1f}, pid: {pid_output:.2f}, "
+              #f"L: {left_pulse}, R: {right_pulse}\n")
     else:
         abs_output = abs(pid_output)
         e = int(abs(abs_output / 2 * pulse_per_degree))
@@ -159,15 +159,15 @@ def rotate_parafoil_motor(pi, yaw: float, error: float):
             right_pulse = right_neutral + e
             left_pulse = min(2500, left_pulse)
             right_pulse = min(2500, right_pulse)
-            print(f"RIGHT => error: {error:.1f}, pid: {pid_output:.2f}, "
-                  f"L: {left_pulse}, R: {right_pulse}\n")
+            #print(f"RIGHT => error: {error:.1f}, pid: {pid_output:.2f}, "
+            #      f"L: {left_pulse}, R: {right_pulse}\n")
         else:
             left_pulse = left_neutral - e
             right_pulse = right_neutral - e
             left_pulse = max(600, left_pulse)
             right_pulse = max(600, right_pulse)
-            print(f"LEFT => error: {error:.1f}, pid: {pid_output:.2f}, "
-                  f"L: {left_pulse}, R: {right_pulse}\n")
+            #print(f"LEFT => error: {error:.1f}, pid: {pid_output:.2f}, "
+             #     f"L: {left_pulse}, R: {right_pulse}\n")
 
     current_left_pulse = left_pulse
     current_right_pulse = right_pulse
