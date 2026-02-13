@@ -111,7 +111,7 @@ def update_parafoil():
         return
     
     error = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
-    Motor_Parafoil.rotate_parafoil_motor(pi, error)
+    Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
 
     if state == 5:
         log("Stopping motors", events.EventType.warning)
