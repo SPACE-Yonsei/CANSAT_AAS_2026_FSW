@@ -105,7 +105,7 @@ def compute_pid(error: float, yaw: float = None) -> float:
     p_term = Kp * effective_error
 
     # --- I항 (Anti-windup) ---
-    pid_integral += effective_error * dt
+    pid_integral += effective_error * dt *100
     # pid_integral = max(-INTEGRAL_MAX, min(INTEGRAL_MAX, pid_integral))
     if pid_integral > INTEGRAL_MAX:
         pid_integral = INTEGRAL_MAX
