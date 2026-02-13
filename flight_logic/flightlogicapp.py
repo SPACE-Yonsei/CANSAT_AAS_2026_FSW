@@ -430,7 +430,7 @@ def init(queue: Queue):
         
         # 이전 데이터 복원
         max_alt = float(prevstate.PREV_MAX_ALT)
-        _lat = float(prevstate.Target_lat)
+        target_lat = float(prevstate.Target_lat)
         target_lon = float(prevstate.Target_lon)
         
         # 목표 좌표 전송
