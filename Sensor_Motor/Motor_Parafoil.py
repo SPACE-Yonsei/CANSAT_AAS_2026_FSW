@@ -55,6 +55,7 @@ pid_last_time = time.time()
 pid_integral = 0.0
 pid_prev_error = 0.0
 pid_prev_yaw = None
+prev_d_term = 0.0
 
 # PID 게인 (튜닝 필요)
 Kp = 1.0      # 비례 게인
@@ -64,10 +65,12 @@ INTEGRAL_MAX = 50.0  # Anti-windup 한계
 
 def reset_pid():
     global pid_last_time, pid_integral, pid_prev_error, pid_prev_yaw
+    global prev_d_term
     pid_last_time = time.time()
     pid_integral = 0.0
     pid_prev_error = 0.0
     pid_prev_yaw = None
+    prev_d_term = 0.0
 
 
 def compute_pid(error: float, yaw: float = None) -> float:
@@ -76,7 +79,7 @@ def compute_pid(error: float, yaw: float = None) -> float:
     Returns: p + i + d (도 단위, 양수=오른쪽, 음수=왼쪽)
     """
     global pid_last_time, pid_integral, pid_prev_error, pid_prev_yaw
-
+    global prev_d_term
     current_time = time.time()
     dt = current_time - pid_last_time
     if dt <= 0.02 or dt > 0.5:
@@ -120,9 +123,11 @@ def compute_pid(error: float, yaw: float = None) -> float:
             delta_yaw -= 360
         elif delta_yaw < -180:
             delta_yaw += 360
-        d_term = -Kd * (delta_yaw / dt)
+        raw_d_term = -Kd * (delta_yaw / dt) 
     else:
-        d_term = Kd * (effective_error - pid_prev_error) / dt
+        raw_d_term = Kd * (effective_error - pid_prev_error) / dt
+    d_term = 0.3 * raw_d_term + 0.7 * prev_d_term
+    prev_d_term = d_term
 
     # 상태 저장
     pid_prev_error = effective_error
