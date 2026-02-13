@@ -51,6 +51,7 @@ def handle_imu_data(data: str):
     update_parafoil()
 
 def handle_target_coords(data: str):
+    global lat, lon
     parts = data.split(",")
     if len(parts) == 2:
         lat, lon = float(parts[0]), float(parts[1])
