@@ -49,7 +49,7 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
-def rotate_parafoil_motor(pi, error: float):
+def rotate_parafoil_motor(pi,yaw, error: float):
     global current_left_pulse, current_right_pulse
 
     if error>=MAX_ANGLE_SCOPE+THRESHOLD:
