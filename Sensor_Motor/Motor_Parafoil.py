@@ -59,7 +59,7 @@ pid_prev_yaw = None
 # PID 게인 (튜닝 필요)
 Kp = 1.0      # 비례 게인
 Ki = 0.05    # 적분 게인 (느린 정상상태 오차 제거)
-Kd = 0.1      # 미분 게인 (오버슈트 억제)
+Kd = 0.2     # 미분 게인 (오버슈트 억제)
 INTEGRAL_MAX = 20.0  # Anti-windup 한계
 
 def reset_pid():
@@ -151,7 +151,7 @@ def rotate_parafoil_motor(pi, yaw: float, error: float):
               f"L: {left_pulse}, R: {right_pulse}")
     else:
         abs_output = abs(pid_output)
-        e = abs(int(abs_output / 2 * pulse_per_degree)) * 2
+        e = int(abs(abs_output / 2 * pulse_per_degree))
 
         if pid_output > 0:
             left_pulse = left_neutral + e
