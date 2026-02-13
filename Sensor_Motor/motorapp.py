@@ -109,7 +109,7 @@ def update_parafoil():
     if state < 3 or not motor_enabled:
         return
     
-    error = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
+    error = Motor_Parafoil_Calculate.calculate_motor_control(yaw, 1, 1)
     Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
 
     if state == 5:
