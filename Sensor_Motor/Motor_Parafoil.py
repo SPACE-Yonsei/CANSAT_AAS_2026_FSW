@@ -59,8 +59,8 @@ pid_prev_yaw = None
 # PID 게인 (튜닝 필요)
 Kp = 1.0      # 비례 게인
 Ki = 0.05    # 적분 게인 (느린 정상상태 오차 제거)
-Kd = 1     # 미분 게인 (오버슈트 억제)
-INTEGRAL_MAX = 20.0  # Anti-windup 한계
+Kd = 0.01    # 미분 게인 (오버슈트 억제)
+INTEGRAL_MAX = 50.0  # Anti-windup 한계
 
 def reset_pid():
     global pid_last_time, pid_integral, pid_prev_error, pid_prev_yaw
