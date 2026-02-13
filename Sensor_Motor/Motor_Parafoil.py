@@ -59,7 +59,7 @@ pid_prev_yaw = None
 # PID 게인 (튜닝 필요)
 Kp = 1.0      # 비례 게인
 Ki = 2   # 적분 게인 (느린 정상상태 오차 제거)
-Kd = 1    # 미분 게인 (오버슈트 억제)
+Kd = 0.3   # 미분 게인 (오버슈트 억제)
 INTEGRAL_MAX = 50.0  # Anti-windup 한계
 
 def reset_pid():
@@ -79,7 +79,7 @@ def compute_pid(error: float, yaw: float = None) -> float:
 
     current_time = time.time()
     dt = current_time - pid_last_time
-    if dt <= 0 or dt > 0.5:
+    if dt <= 0.02 or dt > 0.5:
         dt = 0.1
     pid_last_time = current_time
 
