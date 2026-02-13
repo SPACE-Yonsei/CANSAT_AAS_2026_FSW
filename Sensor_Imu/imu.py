@@ -242,7 +242,7 @@ def read_sensor_data(sensor):
         qx, qy, qz, qw = quat
 
     except Exception as e:
-        print(f"Read error: {e}")
+        # print(f"Read error: {e}")
         return False
 
     # Quaternion → Euler 변환
@@ -298,7 +298,7 @@ def read_sensor_data(sensor):
             gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
 
     except Exception as e:
-        print(f"Sensor data error: {e}")
+        #print(f"Sensor data error: {e}")
         accX, accY, accZ = LAST_VALID_SENSORS["acc"]
         magX, magY, magZ = LAST_VALID_SENSORS["mag"]
         gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]
