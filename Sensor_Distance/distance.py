@@ -14,7 +14,6 @@ try:
     import fcntl
 except Exception:
     fcntl = None
-from lib import events, appargs
 
 # I2C Address
 TFLUNA_I2C_ADDR = 0x10
