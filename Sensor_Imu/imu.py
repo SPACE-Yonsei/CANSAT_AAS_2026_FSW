@@ -225,14 +225,15 @@ def read_sensor_data(sensor):
     """BNO085 센서 데이터 읽기"""
     global angle_window
     global LAST_VALID_SENSORS
-
     try:
         with I2CLock():
-            # BNO085: quaternion 속성으로 rotation vector 읽기
-            quat = sensor.quaternion
-            acc = sensor.acceleration
-            mag = sensor.magnetic
-            gyr = sensor.gyro
+            # BNO08x 라이브러리 패킷 디버그 출력 억제 (DBG:: / ********** Packet)
+            with open(os.devnull, "w") as devnull:
+                with redirect_stdout(devnull), redirect_stderr(devnull):
+                    quat = sensor.quaternion
+                    acc = sensor.acceleration
+                    mag = sensor.magnetic
+                    gyr = sensor.gyro
 
         # Quaternion None 체크
         if quat is None or None in quat:
