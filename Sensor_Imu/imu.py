@@ -192,7 +192,7 @@ def init_imu(i2c=None):
             addr = 0x4A if 0x4A in addrs else 0x4B
 
             with I2CLock():
-                sensor = BNO08X_I2C(i2c, address=addr)
+                sensor = BNO08X_I2C(i2c, address=addr, debug=False)
                 time.sleep(0.2)
 
                 # 디버그 속성 비활성화
