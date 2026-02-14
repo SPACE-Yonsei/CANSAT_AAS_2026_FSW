@@ -112,28 +112,6 @@ def handle_barometer(data: str, queue: Queue):
         barometer_logic(queue, float(data))
 
 
-# def handle_gps(data: str, queue: Queue):
-#     if sim_enable and sim_active:
-#         return
-    
-#     parts = data.split(",")
-#     if len(parts) != 2:
-#         log("GPS data format error", events.EventType.error)
-#         return
-    
-#     lat, lon = float(parts[0]), float(parts[1])
-
-#     # motorapp으로 전달
-#     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendGpsMotorData, f"{lat},{lon}")
-
-
-# def handle_imu(data: str, queue: Queue):
-#     if sim_enable and sim_active:
-#         return
-#     yaw = float(data)
-#     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_SendImuMotorData, str(yaw))
-
-
 def handle_distance(data: str, queue: Queue):
     """TF-Luna 거리 센서 데이터 처리"""
     global distance_mm, recent_distance, state, solenoid_done
@@ -361,8 +339,8 @@ def to_apogee(queue: Queue, force: bool = False):
 
 def to_release(queue: Queue, force: bool = False):
     global state
-    if not can_transition(force):
-        return
+    #if not can_transition(force): 낙하테스트 + 솔레노이드 사출 테스트 용
+    #    return
     state = STATE["RELEASE"]
     log("STATE → RELEASE (burnwire activate)")
     prevstate.update_prevstate(state)
