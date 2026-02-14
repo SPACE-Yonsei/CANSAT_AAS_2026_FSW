@@ -1,6 +1,5 @@
 from lib import appargs
 from lib import msgstructure
-from lib import logging
 from lib import events
 
 import signal
