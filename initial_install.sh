@@ -1,9 +1,14 @@
 #!/bin/bash
 # CANSAT AAS 2026 Flight Software Initial Installation Script
 # This script installs all required dependencies and sets up the system
+# Run from the repo root (e.g. CANSAT_AAS_2026_FSW or CANSAT_AAS_2026_FSW-2)
 
 # Note: set -e is not used to allow graceful handling of optional packages
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR}"
+echo "Using repo root: ${REPO_ROOT}"
+echo ""
 echo "=========================================="
 echo "CANSAT AAS 2026 FSW Installation Script"
 echo "=========================================="
@@ -76,27 +81,32 @@ echo "Installing basic Python modules"
 pip3 install numpy==1.26.4
 
 echo ""
-echo "Initializing git submodules (if repository is cloned)"
-if [ -d "/home/pi/CANSAT_AAS_2026_FSW/.git" ]; then
-    cd /home/pi/CANSAT_AAS_2026_FSW
-    git submodule init
-    git submodule update
-    echo "Git submodules initialized"
+echo "Checking git repository"
+if [ -d "${REPO_ROOT}/.git" ]; then
+    cd "${REPO_ROOT}"
+    if [ -f "${REPO_ROOT}/.gitmodules" ]; then
+        git submodule init
+        git submodule update
+        echo "Git submodules initialized"
+    else
+        echo "No .gitmodules found (monorepo or in-repo sensors); skipping submodule init"
+    fi
 else
-    echo "Warning: Git repository not found at /home/pi/CANSAT_AAS_2026_FSW"
-    echo "Please clone the repository and run 'git submodule init && git submodule update' manually"
+    echo "Warning: Git repository not found at ${REPO_ROOT}"
 fi
 
 echo ""
 echo "Setting up startup configuration"
-# Remove old crontab entry if exists, then add new one
-(crontab -l 2>/dev/null | grep -v "@reboot /home/pi/CANSAT_AAS_2026_FSW/startup.sh" || true; echo "@reboot /home/pi/CANSAT_AAS_2026_FSW/startup.sh") | crontab -
+STARTUP_SCRIPT="${REPO_ROOT}/startup.sh"
+# Remove any existing CANSAT FSW startup line, then add current repo's startup
+(crontab -l 2>/dev/null | grep -v "CANSAT_AAS_2026_FSW.*startup.sh" || true; echo "@reboot ${STARTUP_SCRIPT}") | crontab -
+echo "Crontab set: @reboot ${STARTUP_SCRIPT}"
 
 # Note: Systemd service can be set up manually if needed
-if [ -f "/home/pi/CANSAT_AAS_2026_FSW/setup_systemd_service.sh" ]; then
+if [ -f "${REPO_ROOT}/setup_systemd_service.sh" ]; then
     echo ""
     echo "Note: Systemd service setup script found."
-    echo "      To set up systemd service, run: bash /home/pi/CANSAT_AAS_2026_FSW/setup_systemd_service.sh"
+    echo "      To set up systemd service, run: bash ${REPO_ROOT}/setup_systemd_service.sh"
 fi
 
 echo ""
@@ -112,7 +122,7 @@ echo "   dtoverlay=ov5647"
 echo ""
 echo "2. Verify installation by activating venv and running:"
 echo "   source ~/env/bin/activate"
-echo "   cd /home/pi/CANSAT_AAS_2026_FSW"
+echo "   cd ${REPO_ROOT}"
 echo "   python3 main.py"
 echo ""
 echo "3. The system will reboot in 10 seconds..."
