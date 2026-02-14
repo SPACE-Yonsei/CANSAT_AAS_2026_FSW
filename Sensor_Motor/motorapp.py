@@ -45,6 +45,8 @@ lon = 0.0
 state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
 
 threads: dict[str, threading.Thread] = {}
+update_lock = threading.Lock()
+CONTROL_LOG_INTERVAL = 0.1  # 10Hz 주기 로깅 (GPS/IMU 의존 없이)
 
 APP = appargs.MotorAppArg.AppName
 
@@ -138,8 +140,9 @@ def dispatch(msg: msgstructure.MsgStructure):
 # 파라포일 제어
 # =============================================================================
 
-def update_parafoil():
-    if state < 3 or not motor_enabled:
+def _do_update_parafoil():
+    """실제 파라포일 제어 및 로깅 (update_lock 보유 상태에서 호출)"""
+    if state < 3 or not motor_enabled or pi is None:
         return
 
     if arms_pulled:
@@ -166,6 +169,22 @@ def update_parafoil():
         log("Stopping motors", events.EventType.warning)
         Motor_Parafoil.rotate_parafoil_motor(pi, 0.0, 0.0)
 
+
+def update_parafoil():
+    """메시지 핸들러 또는 주기 스레드에서 호출"""
+    with update_lock:
+        _do_update_parafoil()
+
+
+def _control_log_timer():
+    """state 3~5일 때 10Hz로 로깅 (GPS/IMU 끊겨도 연속 기록)"""
+    import time
+    while running:
+        if state >= 3 and motor_enabled and pi is not None:
+            with update_lock:
+                _do_update_parafoil()
+        time.sleep(CONTROL_LOG_INTERVAL)
+
 # =============================================================================
 # 초기화 / 종료
 # =============================================================================
@@ -181,6 +200,8 @@ def init() -> bool:
         pi = Motor_Parafoil.init_parafoil_motor()
         Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()
+        threads["ControlLog_Thread"] = threading.Thread(target=_control_log_timer, name="ControlLog_Thread", daemon=True)
+        threads["ControlLog_Thread"].start()
         log("Motors initialized (parafoil, burnwire, solenoid)")
         return True
     except Exception as e:
