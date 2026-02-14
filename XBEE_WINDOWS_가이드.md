@@ -465,6 +465,14 @@ Enter command to send to payload: CAL
 ```
 - 현재 고도를 0m로 보정
 
+**Serial Studio / 시리얼 터미널에서 직접 전송할 때**  
+페이로드가 기대하는 **원문 형식**은 아래와 같습니다 (TEAMID는 `comm/commapp.py`의 `TEAMID`와 동일해야 함, 기본값 1070):
+```
+CMD,1070,CAL
+```
+- 시리얼 포트로 위 문자열을 그대로 보내면 고도 보정 명령으로 인식됩니다.
+- **Ground.py**를 쓰는 경우에는 Ground.py 콘솔에서 `CAL`만 입력하면 됩니다 (Ground.py가 `CMD,1070,CAL`로 변환해 전송).
+
 ### MEC - 메커니즘 제어
 ```
 Enter command to send to payload: MEC
@@ -474,6 +482,57 @@ Input the ON/OFF : ON
 - `MOTOR`: 모터 제어
 - `CAMERA`: 카메라 제어
 - `ON`/`OFF`: 작동/정지
+
+### SS - 상태(State) 설정
+```
+Enter command to send to payload: SS
+Input state (0-9) : 3
+```
+- 플라이트 로직 상태를 0~9 중 하나로 강제 설정
+
+### RBT - 재부팅
+```
+Enter command to send to payload: RBT
+```
+- 페이로드 재부팅 명령 (옵션 없음)
+
+### CAM - 카메라 제어
+```
+Enter command to send to payload: CAM
+Input the ON/OFF : ON
+```
+- `ON`: 카메라 녹화 시작
+- `OFF`: 카메라 녹화 중지  
+- (MEC에서 MOTOR/CAMERA 선택과 별도로, CAM 명령은 카메라만 제어)
+
+### SIMP - 시뮬레이션 기압(고도) 설정
+```
+Enter command to send to payload: SIMP
+Input 5~6 digit value (e.g. altitude in 0.01m) : 101325
+```
+- 시뮬레이션 모드에서 사용. 5자리 또는 6자리 숫자 (예: 기압 또는 고도 관련 값)
+
+---
+
+### 시리얼 직접 전송 시 원문 형식 요약 (TEAMID=1070 기준)
+
+시리얼 포트/Serial Studio 등에서 **한 줄 전체**를 그대로 보낼 때 사용하는 형식입니다. `comm/commapp.py`의 `TEAMID`가 다르면 `1070`을 해당 값으로 바꾸면 됩니다.
+
+| 명령 | 설명 | 원문 예시 |
+|------|------|-----------|
+| **CX** | 텔레메트리 ON/OFF | `CMD,1070,CX,ON` / `CMD,1070,CX,OFF` |
+| **ST** | 시간 설정 | `CMD,1070,ST,12:00:00` / `CMD,1070,ST,GPS` |
+| **SIM** | 시뮬레이션 모드 | `CMD,1070,SIM,ENABLE` / `ACTIVATE` / `DISABLE` |
+| **SIMP** | 시뮬 기압/고도 값 | `CMD,1070,SIMP,101325` (5~6자리 숫자) |
+| **CAL** | 고도 보정 | `CMD,1070,CAL` |
+| **MEC** | 모터 제어 | `CMD,1070,MEC,MOTOR,ON` / `CMD,1070,MEC,MOTOR,OFF` |
+| **SS** | 상태 설정 | `CMD,1070,SS,3` (0~9 한 자리) |
+| **RBT** | 재부팅 | `CMD,1070,RBT` |
+| **CAM** | 카메라 ON/OFF | `CMD,1070,CAM,ON` / `CMD,1070,CAM,OFF` |
+
+- ST: 시간은 `HH:MM:SS` (00~23시, 00~59분/초) 또는 `GPS`
+- SIM: `ENABLE`, `ACTIVATE`, `DISABLE` 만 인식
+- 옵션 없음: CAL, RBT
 
 ---
 
