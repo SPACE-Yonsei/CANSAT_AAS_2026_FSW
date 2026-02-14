@@ -7,7 +7,7 @@ GPIO 6: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
 import time
 import RPi.GPIO as GPIO 
 
-BURNWIRE_PIN = 6
+BURNWIRE_PIN = 5
 BURNWIRE_ACTIVATE_LEVEL = GPIO.HIGH
 BURNWIRE_DEACTIVATE_LEVEL = GPIO.LOW
 BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)

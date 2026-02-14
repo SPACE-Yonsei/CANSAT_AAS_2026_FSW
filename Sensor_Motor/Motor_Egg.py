@@ -7,7 +7,7 @@ GPIO 5: Solenoid (솔레노이드로 계란 사출)
 import time
 import RPi.GPIO as GPIO 
 
-SOLENOID_PIN = 5
+SOLENOID_PIN = 6
 SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
 SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
 SOLENOID_DURATION = 0.5  # 솔레노이드 작동 시간 (초)
