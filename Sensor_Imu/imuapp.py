@@ -254,6 +254,15 @@ def read_imu_data(imu_instance):
             # Write latest IMU data for IPC consumers
             write_imu_ipc()
                 
+        except TimeoutError:
+            # I2C lock held by another process (Barometer/Distance etc.) - skip this cycle, do not count toward reinit
+            if not IMUAPP_RUNSTATUS:
+                break
+            mark_imu_stale()
+            events.LogEvent(appargs.ImuAppArg.AppName, events.EventType.warning, "I2C lock timeout, skipping cycle")
+            time.sleep(0.1)
+            continue
+
         except (AttributeError, OSError, RuntimeError, KeyError) as e:
             # Handle I2C errors during shutdown or communication issues
             # KeyError: BNO08x receives unknown report type (I2C bus noise/conflict)
