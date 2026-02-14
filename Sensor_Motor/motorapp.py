@@ -1,10 +1,33 @@
+import os
 import signal
 import threading
+from datetime import datetime
 from multiprocessing import connection
 
 from lib import appargs, msgstructure, events
 
 from Sensor_Motor import Motor_Parafoil, Motor_Release, Motor_Egg, Motor_Parafoil_Calculate
+
+# =============================================================================
+# 제어 로그 (control.txt)
+# =============================================================================
+
+log_dir = "./sensorlogs"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
+
+
+def log_control(target_lat, target_lon, target_azimuth, distance, error, effective_error,
+                p_term, i_term, d_term, pid_integral, pid_output, left_pulse, right_pulse):
+    """제어 목표, 오차, PID 상태, 모터 펄스를 control.txt에 기록 (imu.txt 형식)"""
+    t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
+    line = (f"{t},{target_lat:.6f},{target_lon:.6f},{target_azimuth:.4f},{distance:.2f},"
+            f"{error:.4f},{effective_error:.4f},{p_term:.4f},{i_term:.4f},{d_term:.4f},"
+            f"{pid_integral:.4f},{pid_output:.4f},{left_pulse},{right_pulse}\n")
+    controllogfile.write(line)
+    controllogfile.flush()
+
 
 # =============================================================================
 # 상태 변수
@@ -109,13 +132,22 @@ def dispatch(msg: msgstructure.MsgStructure):
 def update_parafoil():
     if state < 3 or not motor_enabled:
         return
-    
-    error = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
-    Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
+
+    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
+    target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
+
+    log_control(
+        target_lat, target_lon, target_azimuth, distance,
+        ctrl["error"], ctrl["effective_error"],
+        ctrl["p_term"], ctrl["i_term"], ctrl["d_term"],
+        ctrl["pid_integral"], ctrl["pid_output"],
+        ctrl["left_pulse"], ctrl["right_pulse"],
+    )
 
     if state == 5:
         log("Stopping motors", events.EventType.warning)
-        Motor_Parafoil.rotate_parafoil_motor(pi, 0.0)
+        Motor_Parafoil.rotate_parafoil_motor(pi, 0.0, 0.0)
 
 # =============================================================================
 # 초기화 / 종료
@@ -143,7 +175,12 @@ def terminate():
     global running
     running = False
     log("Terminating motorapp")
-    
+
+    try:
+        controllogfile.close()
+    except Exception:
+        pass
+
     # 모터 종료
     if pi:
         Motor_Parafoil.terminate_parafoil_motor(pi)

@@ -74,46 +74,48 @@ last_error = None
 MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
 ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
 
-def calculate_motor_control(yaw: float, current_lat, current_lon) -> float:
-    # [1. 추가] 전역 변수 수정 권한 획득 (이게 없으면 저장이 안 됩니다)
-    global last_error 
+def calculate_motor_control(yaw: float, current_lat, current_lon) -> tuple:
+    """
+    Returns: (error, target_azimuth, distance)
+    - error: 방향 오차 (도)
+    - target_azimuth: 목표 방위각 (도)
+    - distance: 목표까지 거리 (m)
+    """
+    global last_error
 
-    # [2. 추가] 입력값 방어 (센서가 None을 줄 경우 대비)
+    # 입력값 방어 (센서가 None을 줄 경우 대비)
     if yaw is None or current_lat is None or current_lon is None:
-         return last_error if last_error is not None else 0.0
+        err = last_error if last_error is not None else 0.0
+        return (err, 0.0, 0.0)
 
     # 목표 좌표 없음 → 직진
     if target_lat == 0.0 and target_lon == 0.0:
-        return 0.0
+        return (0.0, 0.0, 0.0)
 
-    # [3. 추가] 수학 계산 중 에러(ZeroDivision 등)가 나도 멈추지 않게 try로 감쌈
     try:
         if is_gps_valid(current_lat, current_lon):
-            # --- 기존 계산 로직 시작 ---
             phi1 = math.radians(current_lat)
             phi2 = math.radians(target_lat)
             d_lambda = math.radians(target_lon - current_lon)
 
             y = math.sin(d_lambda) * math.cos(phi2)
             x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
-            
+
             target_azimuth = math.degrees(math.atan2(y, x))
             raw_error = quick_angle(target_azimuth - yaw)
-            
-            last_error = raw_error
-            return raw_error
+            distance = calculate_distance_haversine(current_lat, current_lon, target_lat, target_lon)
 
-    except Exception as e:
-        # 에러 발생 시 로그만 찍고(선택사항) 아래 Fallback으로 넘어감
-        # print(f"Calc Error: {e}") 
+            last_error = raw_error
+            return (raw_error, target_azimuth, distance)
+
+    except Exception:
         pass
 
-    # [5. 추가] GPS가 끊기거나 에러 발생 시, 기억해둔 직전 값 리턴
+    # GPS가 끊기거나 에러 발생 시, 기억해둔 직전 값 리턴
     if last_error is not None:
-        return last_error
-    
-    # 아무 기록도 없으면 직진
-    return 0.0
+        return (last_error, 0.0, 0.0)
+
+    return (0.0, 0.0, 0.0)
 # def calculate_motor_control(yaw: float, current_lat, current_lon) -> float:
 #     global prev_filtered_error, prev_raw_error, is_first_run, last_error
     
