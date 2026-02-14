@@ -27,6 +27,20 @@ sudo kill <PID>
 
 
 
+## Windows에서 영상 재생이 안 될 때 ##
+
+- **원인**: 예전에는 raw H.264를 .mp4로 저장해서 Windows 기본 플레이어가 인식하지 못함.
+- **코드 수정**: `picam.py`에서 `FfmpegOutput` 사용 시 **진짜 MP4 컨테이너**로 저장되어 Windows에서 재생 가능.
+- **라즈베리 파이에 ffmpeg 설치** (MP4 저장을 위해 필요):
+  ```bash
+  sudo apt update && sudo apt install -y ffmpeg
+  ```
+- **이미 받은 영상이 재생 안 되면** (Windows에서 변환):
+  ```bash
+  ffmpeg -i P_0214_123456.mp4 -c copy P_0214_123456_fixed.mp4
+  ```
+  또는 **VLC**로 재생 시도 (raw H.264도 재생 가능한 경우 있음).
+
 h264->mp4 변환
 ffmpeg -framerate 30 -i test.h264 -c copy test.mp4
 

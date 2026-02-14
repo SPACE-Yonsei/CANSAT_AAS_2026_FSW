@@ -60,23 +60,35 @@ def init_cam():
         return None, None
 
 def record(cam, enc, sec: int):
-    from picamera2.outputs import FileOutput
+    """Record to a proper MP4 container so the file plays on Windows."""
+    try:
+        from picamera2.outputs import FfmpegOutput
+        use_ffmpeg = True
+    except ImportError:
+        from picamera2.outputs import FileOutput
+        use_ffmpeg = False
+
     global PICAM_RECORDING
-    
+
     PICAM_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%m%d_%H%M%S")
     fname = PICAM_VIDEO_DIR / f"{PICAM_VIDEO_NAME_HEADER}_{stamp}.mp4"
 
-    #cam.start()
+    if use_ffmpeg:
+        # Proper MP4 container – plays on Windows (requires ffmpeg on the Pi)
+        output = FfmpegOutput(str(fname))
+    else:
+        # Raw H.264 – convert on PC: ffmpeg -i file.mp4 -c copy out.mp4 (or use VLC)
+        output = FileOutput(str(fname))
+
     counter = 0
-    cam.start_recording(enc, FileOutput(str(fname)))
+    cam.start_recording(enc, output)
     while counter < sec:
-        if PICAM_RECORDING == False:
+        if PICAM_RECORDING is False:
             break
         time.sleep(1)
         counter += 1
     cam.stop_recording()
-    #cam.close()
 
 def stop_record(cam):
     cam.stop_recording()
