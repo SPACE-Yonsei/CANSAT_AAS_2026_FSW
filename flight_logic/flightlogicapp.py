@@ -339,8 +339,8 @@ def to_apogee(queue: Queue, force: bool = False):
 
 def to_release(queue: Queue, force: bool = False):
     global state
-    #if not can_transition(force): 낙하테스트 + 솔레노이드 사출 테스트 용
-    #    return
+    if not can_transition(force): 
+        return
     state = STATE["RELEASE"]
     log("STATE → RELEASE (burnwire activate)")
     prevstate.update_prevstate(state)
@@ -350,8 +350,8 @@ def to_release(queue: Queue, force: bool = False):
 
 def to_egg(queue: Queue, force: bool = False):
     global state, solenoid_count, solenoid_done, recent_distance
-    if not can_transition(force):
-        return
+    #if not can_transition(force): 낙하테스트 + 솔레노이드 사출 테스트 용
+    #    return
     state = STATE["EGG"]
     # 솔레노이드 관련 변수 초기화
     solenoid_count = 0
