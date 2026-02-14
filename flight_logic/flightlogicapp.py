@@ -27,7 +27,7 @@ STATE = {
 STATE_NAMES = ["LAUNCH_PAD", "ASCENT", "APOGEE", "RELEASE", "EGG", "LANDED"]
 
 EGG_DROP_ALT = 2.5      # 계란 사출 고도 (m, barometer)
-RELEASE_TO_EGG_ALT = 50.0   # RELEASE → EGG 전환 고도 (m, barometer)
+RELEASE_TO_EGG_ALT = 10.0   # RELEASE → EGG 전환 고도 (m, barometer) 원래는 50이였음.
 
 SOLENOID_DISTANCE_TARGET = 2500  # 솔레노이드 작동 목표 거리 (250cm = 2500mm)
 SOLENOID_COUNT_MAX = 3      # 솔레노이드 작동 횟수 (3번)
