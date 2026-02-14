@@ -462,16 +462,21 @@ Input the ENABLE(E), ACTIVATE(A), or DISABLE(D) : E
 ### CAL - 고도 보정
 ```
 Enter command to send to payload: CAL
+또는 (20m 낮추기): CAL,20
 ```
-- 현재 고도를 0m로 보정
+- **CAL** (옵션 없음): 현재 고도를 0m로 보정
+- **CAL,20**: 표시 고도를 20m 낮춤 (오프셋 +20)
+- **CAL,-10**: 표시 고도를 10m 높임 (오프셋 -10)
 
 **Serial Studio / 시리얼 터미널에서 직접 전송할 때**  
-페이로드가 기대하는 **원문 형식**은 아래와 같습니다 (TEAMID는 `comm/commapp.py`의 `TEAMID`와 동일해야 함, 기본값 1070):
+페이로드가 기대하는 **원문 형식**:
 ```
-CMD,1070,CAL
+CMD,1070,CAL          ← 0m 보정
+CMD,1070,CAL,20       ← 20m 낮춤
+CMD,1070,CAL,-10      ← 10m 높임
 ```
 - 시리얼 포트로 위 문자열을 그대로 보내면 고도 보정 명령으로 인식됩니다.
-- **Ground.py**를 쓰는 경우에는 Ground.py 콘솔에서 `CAL`만 입력하면 됩니다 (Ground.py가 `CMD,1070,CAL`로 변환해 전송).
+- **Ground.py**를 쓰는 경우에는 Ground.py 콘솔에서 `CAL` 또는 `CAL,20` 입력.
 
 ### MEC - 메커니즘 제어
 ```
@@ -524,7 +529,7 @@ Input 5~6 digit value (e.g. altitude in 0.01m) : 101325
 | **ST** | 시간 설정 | `CMD,1070,ST,12:00:00` / `CMD,1070,ST,GPS` |
 | **SIM** | 시뮬레이션 모드 | `CMD,1070,SIM,ENABLE` / `ACTIVATE` / `DISABLE` |
 | **SIMP** | 시뮬 기압/고도 값 | `CMD,1070,SIMP,101325` (5~6자리 숫자) |
-| **CAL** | 고도 보정 | `CMD,1070,CAL` |
+| **CAL** | 고도 보정 | `CMD,1070,CAL` / `CMD,1070,CAL,20` (20m 낮춤) |
 | **MEC** | 모터 제어 | `CMD,1070,MEC,MOTOR,ON` / `CMD,1070,MEC,MOTOR,OFF` |
 | **SS** | 상태 설정 | `CMD,1070,SS,3` (0~9 한 자리) |
 | **RBT** | 재부팅 | `CMD,1070,RBT` |
@@ -532,7 +537,34 @@ Input 5~6 digit value (e.g. altitude in 0.01m) : 101325
 
 - ST: 시간은 `HH:MM:SS` (00~23시, 00~59분/초) 또는 `GPS`
 - SIM: `ENABLE`, `ACTIVATE`, `DISABLE` 만 인식
-- 옵션 없음: CAL, RBT
+- 옵션 없음: RBT
+- CAL: 옵션 없으면 0m 보정, `CAL,20` 이면 20m 낮춤
+
+---
+
+### SSH / 명령줄에서 고도 보정 (재시작 필요)
+
+XBee 없이 SSH로 접속한 상태에서 `lib/prevstate.txt`의 `ALTCAL` 값을 직접 수정할 수 있습니다.
+표시 고도를 20m 낮추려면 `ALTCAL` 값에 20을 더합니다. **FSW 재시작 후** 반영됩니다.
+
+```bash
+# Raspberry Pi 등 대상 기기에서
+cd /path/to/CANSAT_AAS_2026_FSW-2
+
+# ALTCAL에 20 더하기 (예: 50 → 70)
+python3 -c "
+import re
+with open('lib/prevstate.txt','r') as f: s=f.read()
+m=re.search(r'ALTCAL=([\d.-]+)', s)
+if m:
+    v=float(m.group(1))+20
+    s=re.sub(r'ALTCAL=[\d.-]+', f'ALTCAL={v}', s)
+    with open('lib/prevstate.txt','w') as f: f.write(s)
+    print(f'ALTCAL updated: +20 -> {v}')
+"
+```
+
+또는 에디터로 `lib/prevstate.txt`를 열어 `ALTCAL=50` 같은 값을 `ALTCAL=70`으로 수정 후 저장.
 
 ---
 

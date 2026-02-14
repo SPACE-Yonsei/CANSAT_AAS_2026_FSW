@@ -43,19 +43,24 @@ def command_handler (Main_Queue:Queue, recv_msg : msgstructure.MsgStructure, bar
 
     # Calibrate Barometer when calibrate command is input
     elif recv_msg.MsgID == appargs.CommAppArg.MID_RouteCmd_CAL:
-        
-        # Use mutex to prevent multiple thread accessing barometer instance at the same time
+        adjust_m = 0.0
+        try:
+            if recv_msg.data and str(recv_msg.data).strip():
+                adjust_m = float(str(recv_msg.data).strip())
+        except (ValueError, TypeError):
+            adjust_m = 0.0
+
         with OFFSET_MUTEX:
-            caldata = barometer.read_barometer(barometer_instance, 0)
-            # altitude is the third index
-            BAROMETER_OFFSET = float(caldata[2])
-
-        # Use mutex to prevent the barometer process sending the wrong maxalt
-        with MAXALT_RESET_MUTEX:
-            msgstructure.send_msg(Main_Queue, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_flight_ResetMaxAlt, "")
-
-            # sleep for 0.5 seconds to ensure the max alt reset. Since the mutex is holding, no barometer data can be sent to flightlogic
-            time.sleep(0.5)
+            if adjust_m == 0.0:
+                # CAL (옵션 없음): 현재 고도를 0m로 보정
+                caldata = barometer.read_barometer(barometer_instance, 0)
+                BAROMETER_OFFSET = float(caldata[2])
+                with MAXALT_RESET_MUTEX:
+                    msgstructure.send_msg(Main_Queue, appargs.BarometerAppArg.AppID, appargs.FlightlogicAppArg.AppID, appargs.BarometerAppArg.MID_flight_ResetMaxAlt, "")
+                    time.sleep(0.5)
+            else:
+                # CAL,20: 오프셋에 20 더함 → 표시 고도 20m 낮춤
+                BAROMETER_OFFSET += adjust_m
 
         events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.info, f"Barometer offset changed to {BAROMETER_OFFSET}")
 

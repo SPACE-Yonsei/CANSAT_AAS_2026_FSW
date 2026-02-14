@@ -363,14 +363,14 @@ def cmd_simp(option:str, Main_Queue:Queue):
 
     return
 
-def cmd_cal(option:str, Main_Queue:Queue):
+def cmd_cal(option: str, Main_Queue: Queue):
     global tlm_data
     global SIMP_OFFSET
 
-    # If flight mod
+    # If flight mode
     if tlm_data.mode == "F":
-        # Route The Calibration command to Baromter app
-        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, "")
+        # Route to Barometer app: "" = 0m 보정, "20" = 20m 낮춤, "-10" = 10m 높임
+        msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, option)
 
     # If simulation mode
     if tlm_data.mode == "S":
@@ -424,9 +424,9 @@ def read_cmd(Main_Queue:Queue, serial_instance):
     simp_re_header = f"CMD,{TEAMID},SIMP,"
     simp_re_option = r"\d{5,6}$"
 
-    # Altitude Calibration
+    # Altitude Calibration (CAL 또는 CAL,20 형식 - 20m 낮춤)
     cal_re_header = f"CMD,{TEAMID},CAL"
-    cal_re_option = "$"
+    cal_re_option = r"(,\s*-?\d+(\.\d+)?)?$"
 
     # Mechanism activation
     mec_re_header = f"CMD,{TEAMID},MEC,MOTOR,"
@@ -523,13 +523,14 @@ def read_cmd(Main_Queue:Queue, serial_instance):
                     events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"Failed to parse option from command: {rcv_cmd}")
 
             # cal
-            elif re.fullmatch(cal_re_header+cal_re_option, rcv_cmd):
+            elif re.fullmatch(cal_re_header + cal_re_option, rcv_cmd):
 
-                # Change the CMD Echo String
                 set_cmdecho(rcv_cmd)
 
-                # Calibration command has no option
                 option = ""
+                match = re.search(r",\s*(-?\d+(?:\.\d+)?)$", rcv_cmd)
+                if match:
+                    option = match.group(1).strip()
                 cmd_cal(option, Main_Queue)
 
             # mec
