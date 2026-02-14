@@ -10,6 +10,7 @@ Resolution: 1cm
 
 import time
 import os
+from collections import deque
 try:
     import fcntl
 except Exception:
@@ -17,6 +18,19 @@ except Exception:
 
 # I2C Address
 TFLUNA_I2C_ADDR = 0x10
+
+# Median filter for narrow FOV / misreads (0 = disabled)
+DISTANCE_FILTER_WINDOW = max(0, int(os.getenv("DISTANCE_FILTER_WINDOW", "5")))
+_distance_window: deque = deque(maxlen=DISTANCE_FILTER_WINDOW) if DISTANCE_FILTER_WINDOW > 0 else None
+
+
+def _median_mm(values):
+    """Return median of integer list (for distance mm)."""
+    if not values:
+        return 0
+    ordered = sorted(values)
+    n = len(ordered)
+    return ordered[n // 2] if n % 2 == 1 else (ordered[n // 2 - 1] + ordered[n // 2]) // 2
 
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
@@ -138,7 +152,7 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
 
 
 def read_distance(sensor=None) -> int:
-    global _sensor
+    global _sensor, _distance_window
     
     if sensor is None:
         sensor = _sensor
@@ -147,17 +161,29 @@ def read_distance(sensor=None) -> int:
         return 0
     
     try:
-        distance_mm = sensor.read_distance_mm()
+        raw_mm = sensor.read_distance_mm()
         
         # TF-Luna range: 0.2m (200mm) to 8m (8000mm)
-        if distance_mm < 200 or distance_mm > 8000:
+        if raw_mm < 200 or raw_mm > 8000:
+            if _distance_window is None:
+                return 0
+            # Filter mode: don't add invalid sample; return median of current window
+            if len(_distance_window) == 0:
+                return 0
+            return _median_mm(list(_distance_window))
+        
+        raw_mm = int(raw_mm)
+        
+        if _distance_window is None:
+            return raw_mm
+        
+        _distance_window.append(raw_mm)
+        return _median_mm(list(_distance_window))
+        
+    except Exception:
+        if _distance_window is None or len(_distance_window) == 0:
             return 0
-        
-        return int(distance_mm)
-        
-    except Exception as e:
-        #print(f"TF-Luna read error: {e}")
-        return 0    
+        return _median_mm(list(_distance_window))    
 
 
 def read_distance_data(sensor=None) -> int:
