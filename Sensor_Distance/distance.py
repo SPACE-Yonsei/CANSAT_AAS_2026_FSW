@@ -149,8 +149,11 @@ def init_TFLuna(address=TFLUNA_I2C_ADDR):
         return _sensor
         
     except Exception as e:
-        # print(f"TF-Luna init error: {e}")
-        events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.warning, f"TF-Luna init error: {e}")
+        try:
+            from lib import appargs, events
+            events.LogEvent(appargs.DistanceAppArg.AppName, events.EventType.warning, f"TF-Luna init error: {e}")
+        except Exception:
+            print(f"[Distance] TF-Luna init error: {e}")
         return None
 
 
