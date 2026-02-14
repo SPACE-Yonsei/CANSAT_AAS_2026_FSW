@@ -35,6 +35,7 @@ def log_control(target_lat, target_lon, target_azimuth, distance, error, effecti
 
 running = True
 motor_enabled = True
+arms_pulled = False  # EGG 진입 시 모터 암 중립(당김) 유지
 pi = None  # pigpio instance
 
 # 센서 데이터
@@ -84,9 +85,16 @@ def handle_target_coords(data: str):
         log("Target coords format error", events.EventType.error)
 
 def handle_flight_state(data: str):
-    global state
+    global state, arms_pulled
     state = int(data)
+    if state == 4:  # EGG 진입 시 초기화
+        arms_pulled = False
     log(f"Flight state: {state}")
+
+def handle_pull_arms():
+    global arms_pulled
+    arms_pulled = True
+    log("Motor arms pull (neutral)")
 
 def handle_release():
     log("Activating burnwire")
@@ -114,6 +122,7 @@ MSG_HANDLERS = {
     appargs.FlightlogicAppArg.MID_motor_state: handle_flight_state,
     appargs.FlightlogicAppArg.MID_motor_burnwire: lambda d: handle_release(),
     appargs.FlightlogicAppArg.MID_motor_EggDrop: lambda d: handle_egg_drop(),
+    appargs.FlightlogicAppArg.MID_motor_PullArms: lambda d: handle_pull_arms(),
     appargs.CommAppArg.MID_RouteCmd_MEC: handle_mec
 }
 
@@ -133,8 +142,16 @@ def update_parafoil():
     if state < 3 or not motor_enabled:
         return
 
-    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
-    target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+    if arms_pulled:
+        # EGG 5m 이하: 둘 다 당겨서 중립(직진)
+        error = 0.0
+        target_azimuth = 0.0
+        distance = 0.0
+        target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+    else:
+        error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
+        target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+
     ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
 
     log_control(

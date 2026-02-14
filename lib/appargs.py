@@ -19,6 +19,7 @@ class FlightlogicAppArg:
     MID_motor_state : int = 1101902
     MID_motor_burnwire : int = 1101903  # 번와이어
     MID_motor_EggDrop : int = 1101904  # 솔레노이드
+    MID_motor_PullArms : int = 1101905  # EGG 진입 시 모터 암 중립
     # MID_SendGpsMotorData : int = 1101905
     # MID_SendImuMotorData : int = 1101906
 

@@ -276,7 +276,7 @@ def barometer_logic(queue: Queue, alt: float):
     elif state == STATE["EGG"]:
         # 솔레노이드 작동은 TF-Luna 거리 센서로 판별 (handle_distance에서 처리)
         # 여기서는 barometer 기반 계란 사출 및 착륙 감지만 처리
-        
+
         # 계란 사출 (2m 이하, barometer)
         if not egg_activated and alt <= EGG_DROP_ALT:
             cnt_egg_drop += 1
@@ -360,6 +360,7 @@ def to_egg(queue: Queue, force: bool = False):
     log("STATE → EGG (TF-Luna distance sensor ready for solenoid)")
     prevstate.update_prevstate(state)
     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
+    msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_PullArms, "")
 
 
 def to_landed(queue: Queue, force: bool = False):
