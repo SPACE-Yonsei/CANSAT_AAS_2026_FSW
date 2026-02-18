@@ -74,13 +74,8 @@ last_error = None
 MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
 ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
 
-def calculate_motor_control(yaw: float, current_lat, current_lon) -> tuple:
-    """
-    Returns: (error, target_azimuth, distance)
-    - error: 방향 오차 (도)
-    - target_azimuth: 목표 방위각 (도)
-    - distance: 목표까지 거리 (m)
-    """
+def calculate_raw_error(yaw: float, current_lat, current_lon) -> tuple:
+    
     global last_error
 
     # 입력값 방어 (센서가 None을 줄 경우 대비)
