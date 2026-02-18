@@ -144,17 +144,14 @@ def control_payload():
         with update_lock:
             if state >= 3 and motor_enabled and pi is not None:
                 if arms_pulled:
-                    # EGG 5m 이하: 둘 다 당겨서 중립(직진)
-                    error = 0.0
-                    target_azimuth = 0.0
-                    distance = 0.0
-                    target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+                    ctrl = Motor_Parafoil.pull_both_arms(pi)
+                    target_azimuth, distance = 0.0, 0.0
+                    
                 else:
                     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
-                    target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
-
-                ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
-
+                    
+                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
+                target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
                     ctrl["error"], ctrl["effective_error"],

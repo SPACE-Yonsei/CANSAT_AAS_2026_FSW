@@ -49,6 +49,22 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
+def pull_both_arms(pi) -> dict:
+    """양쪽 모터를 최대로 당김 (EGG 착지 감속용)."""
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_zero)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_zero)
+    return {
+        "error": 0.0,
+        "effective_error": 0.0,
+        "p_term": 0.0,
+        "i_term": 0.0,
+        "d_term": 0.0,
+        "pid_integral": 0.0,
+        "pid_output": 0.0,
+        "left_pulse": left_zero,
+        "right_pulse": right_zero,
+    }
+
 
 # PID 상태 변수
 pid_last_time = time.time()
