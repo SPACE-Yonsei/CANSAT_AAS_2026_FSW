@@ -145,7 +145,7 @@ def control_payload():
             if state >= 3 and motor_enabled and pi is not None:
                 if arms_pulled:
                     ctrl = Motor_Parafoil.pull_both_arms(pi)
-                    target_azimuth, distance = 0.0, 0.0
+                    error, target_azimuth, distance = 0.0, 0.0, 0.0
                     
                 else:
                     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
