@@ -71,11 +71,6 @@ def reset_pid():
 
 
 def compute_pid(error: float, yaw: float = None) -> tuple:
-    """
-    PID 제어 출력 계산
-    Returns: (pid_output, p_term, i_term, d_term, pid_integral, effective_error)
-    - pid_output: p+i+d (도 단위, 양수=오른쪽, 음수=왼쪽)
-    """
     global pid_last_time, pid_integral, pid_prev_error, pid_prev_yaw
 
     current_time = time.time()
