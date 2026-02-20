@@ -148,8 +148,7 @@ def control_payload():
                     error, target_azimuth, distance = 0.0, 0.0, 0.0
                     
                 else:
-                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, lat, lon)
-                    
+                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, 1, 1)
                     ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
                 target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
