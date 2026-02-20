@@ -177,7 +177,7 @@ def rotate_parafoil_motor(pi, yaw: float, error: float) -> dict:
 
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-
+    print(f"Parafoil Motor Control - Yaw: {yaw:.2f}, Error: {error:.2f}, Output: {pid_output:.2f}, Left Pulse: {left_pulse}μs, Right Pulse: {right_pulse}μs")
     return {
         "error": error,
         "effective_error": effective_error,
