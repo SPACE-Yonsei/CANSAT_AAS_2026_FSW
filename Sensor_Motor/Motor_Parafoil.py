@@ -49,6 +49,22 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
+def pull_both_arms(pi) -> dict:
+    """양쪽 모터를 최대로 당김 (EGG 착지 감속용)."""
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_zero)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_zero)
+    return {
+        "error": 0.0,
+        "effective_error": 0.0,
+        "p_term": 0.0,
+        "i_term": 0.0,
+        "d_term": 0.0,
+        "pid_integral": 0.0,
+        "pid_output": 0.0,
+        "left_pulse": left_zero,
+        "right_pulse": right_zero,
+    }
+
 
 # PID 상태 변수
 pid_last_time = time.time()
@@ -57,9 +73,11 @@ pid_prev_error = 0.0
 pid_prev_yaw = None
 
 # PID 게인 (튜닝 필요)
+
 Kp = 0.5      # 비례 게인
 Ki = 1.0   # 적분 게인 (느린 정상상태 오차 제거)
 Kd = 0.5   # 미분 게인 (오버슈트 억제)
+
 INTEGRAL_MAX = 25.0  # Anti-windup 한계
 
 def reset_pid():
@@ -71,11 +89,6 @@ def reset_pid():
 
 
 def compute_pid(error: float, yaw: float = None) -> tuple:
-    """
-    PID 제어 출력 계산
-    Returns: (pid_output, p_term, i_term, d_term, pid_integral, effective_error)
-    - pid_output: p+i+d (도 단위, 양수=오른쪽, 음수=왼쪽)
-    """
     global pid_last_time, pid_integral, pid_prev_error, pid_prev_yaw
 
     current_time = time.time()
@@ -166,7 +179,7 @@ def rotate_parafoil_motor(pi, yaw: float, error: float) -> dict:
 
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-
+    print(f"Parafoil Motor Control - Yaw: {yaw:.2f}, Error: {error:.2f}, Output: {pid_output:.2f}, Left Pulse: {left_pulse}μs, Right Pulse: {right_pulse}μs")
     return {
         "error": error,
         "effective_error": effective_error,

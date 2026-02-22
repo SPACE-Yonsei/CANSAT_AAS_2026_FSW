@@ -67,14 +67,12 @@ def handle_gps_data(data: str):
     parts = data.split(",")
     if len(parts) == 2:
         lat, lon = float(parts[0]), float(parts[1])
-        update_parafoil()
     else:
         log("GPS data format error", events.EventType.error)
 
 def handle_imu_data(data: str):
     global yaw
     yaw = float(data)
-    update_parafoil()
 
 def handle_target_coords(data: str):
     global lat, lon
@@ -128,9 +126,8 @@ MSG_HANDLERS = {
     appargs.CommAppArg.MID_RouteCmd_MEC: handle_mec
 }
 
-
 def dispatch(msg: msgstructure.MsgStructure):
-    handler = MSG_HANDLERS.get(msg.MsgID)
+    handler = MSG_HANDLERS.get(msg.MsgID) # MID에 해당하는 함수 가져오기 (pipe와 상관 없음)
     if handler:
         handler(msg.data)
     else:
@@ -140,49 +137,32 @@ def dispatch(msg: msgstructure.MsgStructure):
 # 파라포일 제어
 # =============================================================================
 
-def _do_update_parafoil():
-    """실제 파라포일 제어 및 로깅 (update_lock 보유 상태에서 호출)"""
-    if state < 3 or not motor_enabled or pi is None:
-        return
-
-    if arms_pulled:
-        # EGG 5m 이하: 둘 다 당겨서 중립(직진)
-        error = 0.0
-        target_azimuth = 0.0
-        distance = 0.0
-        target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
-    else:
-        error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_motor_control(yaw, lat, lon)
-        target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
-
-    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
-
-    log_control(
-        target_lat, target_lon, target_azimuth, distance,
-        ctrl["error"], ctrl["effective_error"],
-        ctrl["p_term"], ctrl["i_term"], ctrl["d_term"],
-        ctrl["pid_integral"], ctrl["pid_output"],
-        ctrl["left_pulse"], ctrl["right_pulse"],
-    )
-
-    if state == 5:
-        log("Stopping motors", events.EventType.warning)
-        Motor_Parafoil.rotate_parafoil_motor(pi, 0.0, 0.0)
-
-
-def update_parafoil():
-    """메시지 핸들러 또는 주기 스레드에서 호출"""
-    with update_lock:
-        _do_update_parafoil()
-
-
-def _control_log_timer():
-    """state 3~5일 때 10Hz로 로깅 (GPS/IMU 끊겨도 연속 기록)"""
+def control_payload():
+    """10Hz로 파라포일 제어 및 로깅"""
     import time
     while running:
-        if state >= 3 and motor_enabled and pi is not None:
-            with update_lock:
-                _do_update_parafoil()
+        with update_lock:
+            if state >= 3 and motor_enabled and pi is not None:
+                if arms_pulled:
+                    ctrl = Motor_Parafoil.pull_both_arms(pi)
+                    error, target_azimuth, distance = 0.0, 0.0, 0.0
+                    
+                else:
+                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, lat, lon)
+                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
+                target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+                log_control(
+                    target_lat, target_lon, target_azimuth, distance,
+                    ctrl["error"], ctrl["effective_error"],
+                    ctrl["p_term"], ctrl["i_term"], ctrl["d_term"],
+                    ctrl["pid_integral"], ctrl["pid_output"],
+                    ctrl["left_pulse"], ctrl["right_pulse"],
+                )
+
+                if state == 5:
+                    log("Stopping motors", events.EventType.warning)
+                    Motor_Parafoil.rotate_parafoil_motor(pi, 0.0, 0.0)
+
         time.sleep(CONTROL_LOG_INTERVAL)
 
 # =============================================================================
@@ -200,7 +180,7 @@ def init() -> bool:
         pi = Motor_Parafoil.init_parafoil_motor()
         Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()
-        threads["ControlLog_Thread"] = threading.Thread(target=_control_log_timer, name="ControlLog_Thread", daemon=True)
+        threads["ControlLog_Thread"] = threading.Thread(target=control_payload, name="ControlLog_Thread", daemon=True)
         threads["ControlLog_Thread"].start()
         log("Motors initialized (parafoil, burnwire, solenoid)")
         return True
@@ -246,14 +226,14 @@ def motorapp_main(main_pipe: connection.Connection):
 
     try:
         while running:
-            raw = main_pipe.recv()
-            msg = msgstructure.unpack_msg(raw)
+            recv_msg = main_pipe.recv()
+            unpacked_msg = msgstructure.unpack_msg(recv_msg)
 
-            if msg == False:
+            if unpacked_msg == False:
                 continue
 
-            if msg.receiver_app in (appargs.MotorAppArg.AppID, appargs.MainAppArg.AppID):
-                dispatch(msg)
+            if unpacked_msg.receiver_app in (appargs.MotorAppArg.AppID, appargs.MainAppArg.AppID):
+                dispatch(unpacked_msg)
     
     except Exception as e:
         log(f"Error: {e}", events.EventType.error)

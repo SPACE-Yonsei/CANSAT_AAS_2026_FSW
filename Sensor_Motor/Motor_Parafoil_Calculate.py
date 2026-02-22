@@ -74,13 +74,8 @@ last_error = None
 MAX_CHANGE = 15.0  # raw_error 급변 감지 임계값
 ALPHA = 0.3        # Low Pass Filter 계수 (0.1=부드러움, 1.0=즉각반응)
 
-def calculate_motor_control(yaw: float, current_lat, current_lon) -> tuple:
-    """
-    Returns: (error, target_azimuth, distance)
-    - error: 방향 오차 (도)
-    - target_azimuth: 목표 방위각 (도)
-    - distance: 목표까지 거리 (m)
-    """
+def calculate_raw_error(yaw: float, current_lat, current_lon) -> tuple:
+    
     global last_error
 
     # 입력값 방어 (센서가 None을 줄 경우 대비)
@@ -116,32 +111,3 @@ def calculate_motor_control(yaw: float, current_lat, current_lon) -> tuple:
         return (last_error, 0.0, 0.0)
 
     return (0.0, 0.0, 0.0)
-# def calculate_motor_control(yaw: float, current_lat, current_lon) -> float:
-#     global prev_filtered_error, prev_raw_error, is_first_run, last_error
-    
-#     dx = target_lon - current_lon
-#     dy = target_lat - current_lat
-
-#     # 목표 좌표 없음 → 직진 (yaw=0 유지)
-#     if target_lat == 0.0 and target_lon == 0.0:
-#         return quick_angle(0.0 - yaw)
-    
-#     # GPS 유효 → 방위각 계산
-#     if is_gps_valid(current_lat, current_lon):
-#         phi1 = math.radians(current_lat)
-#         phi2 = math.radians(target_lat)
-#         d_lambda = math.radians(target_lon - current_lon)
-
-#         y = math.sin(d_lambda) * math.cos(phi2)
-#         x = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(d_lambda)
-        
-#         target_azimuth = math.degrees(math.atan2(y, x))
-
-#         raw_error = quick_angle(target_azimuth - yaw)
-
-#         return raw_error
-    
-#     if last_error is not None:
-#         return last_error
-    
-#     return 0.0
