@@ -26,8 +26,8 @@ STATE = {
 
 STATE_NAMES = ["LAUNCH_PAD", "ASCENT", "APOGEE", "RELEASE", "EGG", "LANDED"]
 
-EGG_DROP_ALT = 2.5      # 계란 사출 고도 (m, barometer)
-RELEASE_TO_EGG_ALT = 10.0   # RELEASE → EGG 전환 고도 (m, barometer) 원래는 50이였음.
+EGG_DROP_ALT = 4.0      # 계란 사출 고도 (m, barometer)
+RELEASE_TO_EGG_ALT = 50.0   # RELEASE → EGG 전환 고도 (m, barometer) 원래는 50이였음.
 
 SOLENOID_DISTANCE_TARGET = 2500  # 솔레노이드 작동 목표 거리 (250cm = 2500mm)
 SOLENOID_COUNT_MAX = 3      # 솔레노이드 작동 횟수 (3번)
@@ -50,7 +50,6 @@ sim_active = False
 # 카운터
 cnt_ascent = 0
 cnt_apogee = 0
-cnt_descent = 0
 cnt_release = 0
 cnt_landed = 0
 cnt_egg_drop = 0
@@ -203,7 +202,7 @@ def solenoid_logic(queue: Queue, distance_mm: int):
 
 def barometer_logic(queue: Queue, alt: float):
     global max_alt, recent_alt, state
-    global cnt_ascent, cnt_apogee, cnt_descent, cnt_release, cnt_landed, cnt_egg_drop
+    global cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop
     global egg_activated, solenoid_count, solenoid_done
     
     # 최근 고도 기록
@@ -224,7 +223,6 @@ def barometer_logic(queue: Queue, alt: float):
     # 카운터 하한 보정(0 밑으로 x)
     cnt_ascent = max(0, cnt_ascent)
     cnt_apogee = max(0, cnt_apogee)
-    cnt_descent = max(0, cnt_descent)
     cnt_release = max(0, cnt_release)
     cnt_landed = max(0, cnt_landed)
     
@@ -239,28 +237,28 @@ def barometer_logic(queue: Queue, alt: float):
     
     # === ASCENT (1) ===
     elif state == STATE["ASCENT"]:
-        if alt <= max_alt - 20:
-            cnt_descent += 1
+        if max_alt > 0 and alt <= max_alt * 0.8:
+            cnt_release += 1
         else:
-            cnt_descent -= 2
+            cnt_release -= 2
         
-        if max_alt - 20 < alt < max_alt - 0.25:
+        if max_alt * 0.8 < alt < max_alt - 0.25:
             cnt_apogee += 1
         else:
             cnt_apogee -= 2
         
-        if cnt_descent >= 2:
+        if cnt_release >= 3:
             to_release(queue)
         elif cnt_apogee >= 2:
             to_apogee(queue)
     
     # === APOGEE (2) ===
     elif state == STATE["APOGEE"]:
-        if alt <= max_alt - 20:
-            cnt_descent += 1
+        if max_alt > 0 and alt <= max_alt * 0.8:
+            cnt_release += 1
         else:
-            cnt_descent -= 2
-        if cnt_descent >= 2:
+            cnt_release -= 2
+        if cnt_release >= 3:
             to_release(queue)
     
     # === RELEASE (3) ===
@@ -289,11 +287,11 @@ def barometer_logic(queue: Queue, alt: float):
             egg_activated = True
         
         # 착륙 감지
-        if alt <= 5:
+        if alt <= 10:
             cnt_landed += 1
         else:
             cnt_landed -= 2
-        if cnt_landed >= 3:
+        if cnt_landed >= 100:
             to_landed(queue)
 
 
