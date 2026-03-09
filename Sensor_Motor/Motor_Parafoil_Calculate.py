@@ -43,6 +43,7 @@ def calculate_distance_haversine(lat1: float, lon1: float, lat2: float, lon2: fl
 # 목표 좌표 관리
 # =============================================================================
 
+
 def set_target_coordinates(lat: float, lon: float):
     global target_lat, target_lon
     target_lat, target_lon = lat, lon
