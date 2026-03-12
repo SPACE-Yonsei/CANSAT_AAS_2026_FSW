@@ -52,11 +52,6 @@ last_time = None
 def _wrap_180(a: float) -> float:
     return (a + 180) % 360 - 180
 
-
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-
 # =============================================================================
 # GPS Utilities
 # =============================================================================
@@ -93,7 +88,6 @@ def _carrot(my_N: float, my_E: float,
     s = max(my_N * uN + my_E * uE, min(0.0, rope_len))
     return (s + L) * uN, (s + L) * uE
 
-
 # =============================================================================
 # Target Coordinate Management
 # =============================================================================
@@ -105,10 +99,6 @@ def set_start_coordinates(lat: float, lon: float):
 def set_target_coordinates(lat: float, lon: float):
     global target_lat, target_lon
     target_lat, target_lon = lat, lon
-
-
-def get_target_coordinates() -> tuple[float, float]:
-    return target_lat, target_lon
 
 
 # =============================================================================
@@ -237,10 +227,7 @@ def rotate_parafoil_motor(pi,
         pi_integral = 0.0
         u = 0.0
     else:
-        pi_integral = _clamp(
-            pi_integral + rate_error * dt,
-            -MAX_INTEGRAL, MAX_INTEGRAL,
-        )
+        pi_integral = max(pi_integral + rate_error * dt, min(-MAX_INTEGRAL, MAX_INTEGRAL))
         u = Kp_inner * rate_error + Ki_inner * pi_integral
 
     # -- [5] Motor Allocation --
