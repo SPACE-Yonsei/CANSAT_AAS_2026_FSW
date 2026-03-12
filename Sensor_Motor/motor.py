@@ -48,8 +48,8 @@ wind_crab_est = 0.0
 pi_integral = 0.0
 last_time = None
 
-
-def _wrap_180(a: float) -> float:
+#use for north based angle
+def _quick_angle(a: float) -> float:
     return (a + 180) % 360 - 180
 
 # =============================================================================
@@ -136,7 +136,7 @@ def pull_both_arms(pi) -> dict:
         "left_pulse": LEFT_ZERO,
         "right_pulse": RIGHT_ZERO,
         "distance": 0.0,
-    }
+    } #need to fix
 
 
 # =============================================================================
@@ -211,13 +211,13 @@ def rotate_parafoil_motor(pi,
 
     # -- [2] Wind Compensation (crab angle estimation) --
     if gps_speed > 1.0 and abs(gyro_z) < 20.0:
-        current_crab = _wrap_180(gps_course - yaw)
+        current_crab = _quick_angle(gps_course - yaw)
         wind_crab_est = 0.95 * wind_crab_est + 0.05 * current_crab
 
-    desired_heading = _wrap_180(desired_course - wind_crab_est)
+    desired_heading = _quick_angle(desired_course - wind_crab_est)
 
     # -- [3] Outer Loop: heading error -> desired yaw rate --
-    heading_error = _wrap_180(desired_heading - yaw)
+    heading_error = _quick_angle(desired_heading - yaw)
     desired_yaw_rate = Kp_outer * heading_error
 
     # -- [4] Inner Loop: PI (yaw rate error -> u) --
