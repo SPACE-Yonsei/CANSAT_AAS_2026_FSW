@@ -181,7 +181,7 @@ def control_payload():
                     
                 else:
                     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, lat, lon)
-                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error) #gyro_Z
+                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error) #gyro_Z, and added gps datas
                 target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
