@@ -43,6 +43,11 @@ yaw = 0.0
 gyrz = 0.0
 lat = 0.0
 lon = 0.0
+rmc_status = "V"
+speed_ms = 0.0
+course = 0.0
+fix_quality = 0
+sats = 0
 state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
 
 threads: dict[str, threading.Thread] = {}
@@ -78,6 +83,25 @@ def handle_imu_yaw(data: str):
 def handle_imu_gyrz(data: str):
     global gyrz
     gyrz = float(data)
+
+def handle_gps_fidelity(data: str):
+    global fix_quality, sats, rmc_status
+    parts = data.split(",")
+    if len(parts) == 3:
+        fix_quality = int(parts[0])
+        sats = int(parts[1])
+        rmc_status = parts[2]
+    else:
+        log("GPS fidelity format error", events.EventType.error)
+
+def handle_gps_vector(data: str):
+    global speed_ms, course
+    parts = data.split(",")
+    if len(parts) == 2:
+        speed_ms = float(parts[0])
+        course = float(parts[1])
+    else:
+        log("GPS vector format error", events.EventType.error)
 
 def handle_target_coords(data: str):
     global lat, lon
@@ -122,6 +146,8 @@ def handle_mec(data: str):
 MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: handle_terminate,
     appargs.GpsAppArg.MID_motor_MyCor: handle_gps_data,
+    appargs.GpsAppArg.MID_motor_fidelity: handle_gps_fidelity,
+    appargs.GpsAppArg.MID_motor_vector: handle_gps_vector,
     appargs.ImuAppArg.MID_motor_yaw: handle_imu_yaw,
     appargs.ImuAppArg.MID_motor_gyroz: handle_imu_gyrz,
     appargs.FlightlogicAppArg.MID_motor_TargetCor: handle_target_coords,

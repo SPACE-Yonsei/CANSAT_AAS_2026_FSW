@@ -221,19 +221,24 @@ def gps_readdata(pi):
         except (ValueError, IndexError):
             fix_quality = 0
 
-        # RMC 메시지에서 지상 속도와 방향 추출 (추출만 하고 사용하지 않음)
+        # RMC 메시지에서 상태, 지상 속도, 방향 추출
+        rmc_status = "V"  # V=void, A=active
         ground_speed_knots = 0.0
         ground_speed_ms = 0.0  # m/s 단위로 변환한 속도
         course_over_ground = 0.0  # 방향 (도, 0-360)
-        
+
         if rmc is not None and len(rmc) > 8:
             try:
+                # 상태 추출 (RMC[2] = Status, A=active, V=void)
+                if rmc[2]:
+                    rmc_status = rmc[2]
+
                 # 속도 추출 (RMC[7] = Speed over ground in knots)
                 if rmc[7]:
                     ground_speed_knots = float(rmc[7])
                     # 노트를 m/s로 변환: 1 knot = 0.514444 m/s
                     ground_speed_ms = ground_speed_knots * 0.514444
-                
+
                 # 방향 추출 (RMC[8] = Course over ground in degrees, 0-360)
                 if rmc[8]:
                     course_over_ground = float(rmc[8])
@@ -244,14 +249,12 @@ def gps_readdata(pi):
                         course_over_ground -= 360
             except (ValueError, IndexError, TypeError):
                 # 파싱 오류 시 기본값 유지
+                rmc_status = "V"
                 ground_speed_knots = 0.0
                 ground_speed_ms = 0.0
                 course_over_ground = 0.0
-        
-        # Note: ground_speed_ms, course_over_ground은 추출만 하고 현재는 사용하지 않음
-        # 필요시 향후 활용 가능
 
-        modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality]
+        modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록
         if fix_quality == 0:
             log_gps(f"{gps_time},{alt},{lat},{lon},{fixed_sat},fix_quality={fix_quality}")

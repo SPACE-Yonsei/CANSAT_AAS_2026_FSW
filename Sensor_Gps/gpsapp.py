@@ -92,6 +92,9 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
     GPS_TIME = "00:00:00"
     GPS_SATS = 0
     GPS_FIX_QUALITY = 0
+    GPS_RMC_STATUS = "V"
+    GPS_SPEED_MS = 0.0
+    GPS_COURSE = 0.0
 
     send_counter = 0
 
@@ -109,8 +112,8 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             continue
 
         # 데이터가 유효할 때만 변수를 업데이트한다 (None이거나 유효하지 않으면 이전 값 유지)
-        # gps.py에서 fix_quality를 추가했으므로 len이 5 또는 6일 수 있음
-        if rcv_data and (len(rcv_data) == 5 or len(rcv_data) == 6):
+        # gps.py 반환: [time, alt, lat, lon, sats, fix_quality, rmc_status, speed_ms, course]
+        if rcv_data and len(rcv_data) >= 5:
             try:
                 GPS_TIME = rcv_data[0]
                 GPS_ALT  = float(rcv_data[1])
@@ -118,6 +121,9 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_LON  = float(rcv_data[3])
                 GPS_SATS = int(rcv_data[4])
                 GPS_FIX_QUALITY = int(rcv_data[5]) if len(rcv_data) > 5 else 0
+                GPS_RMC_STATUS = str(rcv_data[6]) if len(rcv_data) > 6 else "V"
+                GPS_SPEED_MS = float(rcv_data[7]) if len(rcv_data) > 7 else 0.0
+                GPS_COURSE = float(rcv_data[8]) if len(rcv_data) > 8 else 0.0
                 # Print GPS data for debugging (disabled)
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
@@ -145,6 +151,22 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 appargs.GpsAppArg.MID_motor_MyCor,
                 f"{GPS_LAT},{GPS_LON}"
             )
+
+        # gps->motor, fidelity (fix_quality, sats, rmc_status)
+        msgstructure.send_msg(
+            Main_Queue,
+            appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+            appargs.GpsAppArg.MID_motor_fidelity,
+            f"{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
+        )
+
+        # gps->motor, vector (speed_ms, course)
+        msgstructure.send_msg(
+            Main_Queue,
+            appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+            appargs.GpsAppArg.MID_motor_vector,
+            f"{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f}"
+        )
 
         send_counter += 1
         if send_counter >= 10:
