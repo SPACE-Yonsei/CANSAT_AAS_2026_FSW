@@ -52,8 +52,8 @@ class ImuAppArg:
     AppName : str = "Imu"
 
     MID_comm_euler : int = 1401201
-    #MID_flight_yaw : int = 1401101
     MID_motor_yaw : int = 1401901 # flightlogic 거치지 않고 motor로 바로 imu
+    MID_motor_gyroz : int = 1401902 # flightlogic 거치지 않고 motor로 바로 imu
 class GpsAppArg:
     AppID : int = 15
     AppName : str = "GPS"

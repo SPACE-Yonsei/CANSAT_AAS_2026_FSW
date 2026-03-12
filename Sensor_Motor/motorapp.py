@@ -40,6 +40,7 @@ pi = None  # pigpio instance
 
 # 센서 데이터
 yaw = 0.0
+gyrz = 0.0
 lat = 0.0
 lon = 0.0
 state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
@@ -70,9 +71,13 @@ def handle_gps_data(data: str):
     else:
         log("GPS data format error", events.EventType.error)
 
-def handle_imu_data(data: str):
+def handle_imu_yaw(data: str):
     global yaw
     yaw = float(data)
+
+def handle_imu_gyrz(data: str):
+    global gyrz
+    gyrz = float(data)
 
 def handle_target_coords(data: str):
     global lat, lon
@@ -117,7 +122,8 @@ def handle_mec(data: str):
 MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: handle_terminate,
     appargs.GpsAppArg.MID_motor_MyCor: handle_gps_data,
-    appargs.ImuAppArg.MID_motor_yaw: handle_imu_data,
+    appargs.ImuAppArg.MID_motor_yaw: handle_imu_yaw,
+    appargs.ImuAppArg.MID_motor_gyroz: handle_imu_gyrz,
     appargs.FlightlogicAppArg.MID_motor_TargetCor: handle_target_coords,
     appargs.FlightlogicAppArg.MID_motor_state: handle_flight_state,
     appargs.FlightlogicAppArg.MID_motor_burnwire: lambda d: handle_release(),
@@ -149,7 +155,7 @@ def control_payload():
                     
                 else:
                     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, lat, lon)
-                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error)
+                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error) #gyro_Z
                 target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
@@ -157,7 +163,7 @@ def control_payload():
                     ctrl["p_term"], ctrl["i_term"], ctrl["d_term"],
                     ctrl["pid_integral"], ctrl["pid_output"],
                     ctrl["left_pulse"], ctrl["right_pulse"],
-                )
+                )#need to fix
 
                 if state == 5:
                     log("Stopping motors", events.EventType.warning)
