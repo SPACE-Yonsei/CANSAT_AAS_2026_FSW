@@ -127,17 +127,7 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 
-def pull_both_arms(pi) -> dict:
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_ZERO)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_ZERO)
-    return {
-        "heading_error": 0.0,
-        "u": 0.0,
-        "left_pulse": LEFT_ZERO,
-        "right_pulse": RIGHT_ZERO,
-        "distance": 0.0,
-    } #need to fix
-
+#landing patterns/////////////////////////////////
 
 # =============================================================================
 # Motor Allocation (u -> pulse)
