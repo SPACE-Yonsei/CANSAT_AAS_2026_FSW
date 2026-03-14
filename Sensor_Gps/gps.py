@@ -236,7 +236,7 @@ def gps_readdata(pi):
         except (ValueError, IndexError):
             fix_quality = 0
 
-        print(f"----------GGA[1] time: {gps_time}, GGA[2] lat: {lat}, GGA[4] lon: {lon}, GGA[6] fix_quality: {fix_quality}, GGA[7] fixed_sat: {fixed_sat}")
+        print(f"GGA[1] time: {gps_time}, \nGGA[2] lat: {lat}, \nGGA[4] lon: {lon}, \nGGA[6] fix_quality: {fix_quality}, \nGGA[7] fixed_sat: {fixed_sat}")
 
         # RMC 메시지에서 상태, 지상 속도, 방향 추출
         rmc_status = "V"  # V=void, A=active
@@ -264,7 +264,7 @@ def gps_readdata(pi):
                         course_over_ground += 360
                     while course_over_ground >= 360:
                         course_over_ground -= 360
-                print(f"----------RMC[2] Status: {rmc_status}, RMC[7] Ground Speed (m/s): {ground_speed_ms}, RMC[8] Course: {course_over_ground}")
+                print(f"\nRMC[2] Status: {rmc_status}, \nRMC[7] Ground Speed (m/s): {ground_speed_ms}, \nRMC[8] Course: {course_over_ground}")
             except (ValueError, IndexError, TypeError):
                 # 파싱 오류 시 기본값 유지
                 rmc_status = "V"
