@@ -141,14 +141,14 @@ def parse_gps_data(NMEA_lines):
         # GGA
         if decoded_line.startswith(('$GPGGA', '$GNGGA')):
             parts = decoded_line.split(',')
-            print(f"[DEBUG][parse] GGA ({len(parts)} fields): {parts}")
+            #print(f"[DEBUG][parse] GGA ({len(parts)} fields): {parts}")
             if len(parts) > 7:
                 gga_data = parts
 
         # RMC
         elif decoded_line.startswith(('$GPRMC', '$GNRMC')):
             parts = decoded_line.split(',')
-            print(f"[DEBUG][parse] RMC ({len(parts)} fields): {parts}")
+            #print(f"[DEBUG][parse] RMC ({len(parts)} fields): {parts}")
             if len(parts) > 10:
                 rmc_data = parts
         else:
@@ -156,8 +156,8 @@ def parse_gps_data(NMEA_lines):
 
     if gga_data and rmc_data:
         gps_data = [gga_data, rmc_data]
-    else:
-        print(f"[DEBUG][parse] parse result - gga_data: {'OK' if gga_data else 'MISSING'}, rmc_data: {'OK' if rmc_data else 'MISSING'}")
+    # else:
+    #     #print(f"[DEBUG][parse] parse result - gga_data: {'OK' if gga_data else 'MISSING'}, rmc_data: {'OK' if rmc_data else 'MISSING'}")
 
     return gps_data
 
