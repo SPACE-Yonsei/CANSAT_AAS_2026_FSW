@@ -77,7 +77,7 @@ def _i2c_read_block(bus):
         print(f"[DEBUG][i2c] OSError with reg 0xFF: {e}, retrying with 0x00")
         with I2CLock():
             data = bus.read_i2c_block_data(GNSS_ADDR, 0x00, READ_SIZE)
-    print(f"[DEBUG][i2c] raw chunk: {bytes(data)}")
+    #print(f"[DEBUG][i2c] raw chunk: {bytes(data)}")
     return bytes(data)
 
 
