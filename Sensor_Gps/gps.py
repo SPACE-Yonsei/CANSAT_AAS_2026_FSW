@@ -79,10 +79,14 @@ def _i2c_read_block(bus):
     return bytes(data)
 
 
+_read_buffer = b''
+
+
 def read_gps(pi, timeout: float = 1.0):
+    global _read_buffer
     bus = pi
     NMEA_lines = []
-    buffer = b''
+    got_valid_data = False
     start = time.time()
 
     while time.time() - start < timeout:
@@ -92,23 +96,25 @@ def read_gps(pi, timeout: float = 1.0):
         try:
             chunk = _i2c_read_block(bus)
         except OSError:
-            time.sleep(0.05)
+            time.sleep(0.01)
             continue
 
         if not chunk or not chunk.strip(b"\x00"):
-            time.sleep(0.02)
+            if got_valid_data:
+                break
+            time.sleep(0.01)
             continue
 
-        buffer += chunk
+        got_valid_data = True
+        _read_buffer += chunk
 
-        while b'\n' in buffer:
-            line, buffer = buffer.split(b'\n', 1)
+        while b'\n' in _read_buffer:
+            line, _read_buffer = _read_buffer.split(b'\n', 1)
             line = line + b'\n'
             if b'$' not in line:
                 continue
-            line = line[line.find(b'$'):]  # '$'부터 잘라줌
+            line = line[line.find(b'$'):]
             NMEA_lines.append(line)
-        time.sleep(0.01)
 
     return NMEA_lines
 
@@ -221,6 +227,8 @@ def gps_readdata(pi):
         except (ValueError, IndexError):
             fix_quality = 0
 
+        print(f"GGA[1] time: {gps_time}, GGA[2] lat: {lat}, GGA[4] lon: {lon}, GGA[6] fix_quality: {fix_quality}, GGA[7] fixed_sat: {fixed_sat}")
+
         # RMC 메시지에서 상태, 지상 속도, 방향 추출
         rmc_status = "V"  # V=void, A=active
         ground_speed_knots = 0.0
@@ -247,6 +255,7 @@ def gps_readdata(pi):
                         course_over_ground += 360
                     while course_over_ground >= 360:
                         course_over_ground -= 360
+                print(f"RMC[2] Status: {rmc_status}, RMC[7] Ground Speed (m/s): {ground_speed_ms}, RMC[8] Course: {course_over_ground}")
             except (ValueError, IndexError, TypeError):
                 # 파싱 오류 시 기본값 유지
                 rmc_status = "V"
@@ -271,8 +280,9 @@ if __name__ == "__main__":
     try:
         while True:
             gps_data = gps_readdata(pi)
-            print(gps_data)
-            time.sleep(0.5)
+            print("\n")
+            if gps_data is None:
+                time.sleep(0.05)
     except KeyboardInterrupt:
         print("Stop")
     finally:
