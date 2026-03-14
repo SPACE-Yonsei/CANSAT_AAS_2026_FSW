@@ -74,7 +74,7 @@ def _i2c_read_block(bus):
         with I2CLock():
             data = bus.read_i2c_block_data(GNSS_ADDR, 0xFF, READ_SIZE)
     except OSError as e:
-        print(f"[DEBUG][i2c] OSError with reg 0xFF: {e}, retrying with 0x00")
+        #print(f"[DEBUG][i2c] OSError with reg 0xFF: {e}, retrying with 0x00")
         with I2CLock():
             data = bus.read_i2c_block_data(GNSS_ADDR, 0x00, READ_SIZE)
     #print(f"[DEBUG][i2c] raw chunk: {bytes(data)}")
@@ -102,7 +102,7 @@ def read_gps(pi, timeout: float = 1.0):
             continue
 
         if not chunk or not chunk.strip(b"\x00\xff"):
-            print(f"[DEBUG][read_gps] empty/no-data chunk (all 0x00 or 0xFF), skipping")
+            #print(f"[DEBUG][read_gps] empty/no-data chunk (all 0x00 or 0xFF), skipping")
             if got_valid_data:
                 break
             time.sleep(0.01)
@@ -117,10 +117,10 @@ def read_gps(pi, timeout: float = 1.0):
             if b'$' not in line:
                 continue
             line = line[line.find(b'$'):]
-            print(f"[DEBUG][read_gps] NMEA line: {line.decode('ascii', errors='ignore').strip()}")
+            #print(f"[DEBUG][read_gps] NMEA line: {line.decode('ascii', errors='ignore').strip()}")
             NMEA_lines.append(line)
 
-    print(f"[DEBUG][read_gps] total NMEA lines collected: {len(NMEA_lines)}")
+    #print(f"[DEBUG][read_gps] total NMEA lines collected: {len(NMEA_lines)}")
     return NMEA_lines
 
 
@@ -273,7 +273,7 @@ def gps_readdata(pi):
                 course_over_ground = 0.0
 
         modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
-        print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
+        #print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록
         if fix_quality == 0:
             log_gps(f"{gps_time},{alt},{lat},{lon},{fixed_sat},fix_quality={fix_quality}")
