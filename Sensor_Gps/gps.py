@@ -73,9 +73,11 @@ def _i2c_read_block(bus):
     try:
         with I2CLock():
             data = bus.read_i2c_block_data(GNSS_ADDR, 0xFF, READ_SIZE)
-    except OSError:
+    except OSError as e:
+        print(f"[DEBUG][i2c] OSError with reg 0xFF: {e}, retrying with 0x00")
         with I2CLock():
             data = bus.read_i2c_block_data(GNSS_ADDR, 0x00, READ_SIZE)
+    print(f"[DEBUG][i2c] raw chunk: {bytes(data)}")
     return bytes(data)
 
 
@@ -114,8 +116,10 @@ def read_gps(pi, timeout: float = 1.0):
             if b'$' not in line:
                 continue
             line = line[line.find(b'$'):]
+            print(f"[DEBUG][read_gps] NMEA line: {line.decode('ascii', errors='ignore').strip()}")
             NMEA_lines.append(line)
 
+    print(f"[DEBUG][read_gps] total NMEA lines collected: {len(NMEA_lines)}")
     return NMEA_lines
 
 
@@ -136,12 +140,14 @@ def parse_gps_data(NMEA_lines):
         # GGA
         if decoded_line.startswith(('$GPGGA', '$GNGGA')):
             parts = decoded_line.split(',')
+            print(f"[DEBUG][parse] GGA ({len(parts)} fields): {parts}")
             if len(parts) > 7:
                 gga_data = parts
 
         # RMC
         elif decoded_line.startswith(('$GPRMC', '$GNRMC')):
             parts = decoded_line.split(',')
+            print(f"[DEBUG][parse] RMC ({len(parts)} fields): {parts}")
             if len(parts) > 10:
                 rmc_data = parts
         else:
@@ -149,6 +155,8 @@ def parse_gps_data(NMEA_lines):
 
     if gga_data and rmc_data:
         gps_data = [gga_data, rmc_data]
+    else:
+        print(f"[DEBUG][parse] parse result - gga_data: {'OK' if gga_data else 'MISSING'}, rmc_data: {'OK' if rmc_data else 'MISSING'}")
 
     return gps_data
 
@@ -264,6 +272,7 @@ def gps_readdata(pi):
                 course_over_ground = 0.0
 
         modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
+        print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록
         if fix_quality == 0:
             log_gps(f"{gps_time},{alt},{lat},{lon},{fixed_sat},fix_quality={fix_quality}")
@@ -282,6 +291,7 @@ if __name__ == "__main__":
             gps_data = gps_readdata(pi)
             print("\n")
             if gps_data is None:
+                print("No GPS data")
                 time.sleep(0.05)
     except KeyboardInterrupt:
         print("Stop")
