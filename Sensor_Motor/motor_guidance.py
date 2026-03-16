@@ -86,44 +86,12 @@ def set_target_coordinates(lat: float, lon: float):
     global target_lat, target_lon
     target_lat, target_lon = lat, lon
 
-
-# =============================================================================
-# Motor Init / Terminate
-# =============================================================================
-
-
-
-
-
 #landing patterns/////////////////////////////////
 
-# =============================================================================
-# Motor Allocation (u -> pulse)
-# =============================================================================
-def _allocate_motor(u: float) -> tuple[int, int]:
-    e = int(abs(u) * PULSE_PER_DEG / 2)
-    if u > 0.0:      # right turn
-        l_pw = LEFT_NEUTRAL
-        r_pw = min(2500, RIGHT_NEUTRAL + e)
-    elif u < 0.0:    # left turn
-        l_pw = max(600, LEFT_NEUTRAL - e)
-        r_pw = RIGHT_NEUTRAL
-    else:             # straight
-        l_pw = LEFT_NEUTRAL
-        r_pw = RIGHT_NEUTRAL
-    return l_pw, r_pw
-
-
-# =============================================================================
-# Main Control Function
-# =============================================================================
-def rotate_parafoil_motor(pi,
-                          yaw: float,
-                          gyro_z: float,
-                          current_lat: float,
-                          current_lon: float,
-                          gps_speed: float = 0.0,
-                          gps_course: float = 0.0) -> dict:
+def guidance(pi, yaw: float, gyro_z: float,
+             current_lat: float, current_lon: float,
+             gps_speed: float = 0.0, gps_course: float = 0.0
+             ) -> dict:
     """
     L1 Carrot Guidance + Cascaded Control
 
@@ -142,74 +110,46 @@ def rotate_parafoil_motor(pi,
     global wind_crab_est, pi_integral, last_time
 
     # -- dt --
-    now = time.time()
-    dt = now - last_time if last_time else 0.1
+    prsnt_time = time.time()
+    dt = prsnt_time - last_time if last_time else 0.1
     if dt <= 0.02 or dt > 0.5:
         dt = 0.1
-    last_time = now
+    last_time = prsnt_time
 
     # -- GPS validity check --
-    if not is_gps_valid(current_lat, current_lon) or (target_lat == 0.0 and target_lon == 0.0):
-        l_pw, r_pw = LEFT_NEUTRAL, RIGHT_NEUTRAL
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, l_pw)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, r_pw)
-        return {
-            "heading_error": 0.0, "desired_course": 0.0,
-            "wind_crab_est": wind_crab_est, "u": 0.0,
-            "left_pulse": l_pw, "right_pulse": r_pw, "distance": 0.0,
-        }
+    if not is_gps_valid(current_lat, current_lon) or (target_lat == 0.0 and target_lon == 0.0):  
+        
+        # -- [1] L1 Carrot Guidance --
+        my_N, my_E = _llh_to_ne(current_lat, current_lon)
+        tgt_N, tgt_E = _llh_to_ne(target_lat, target_lon)
+        distance = math.hypot(tgt_N - my_N, tgt_E - my_E)
 
-    # -- [1] L1 Carrot Guidance --
-    my_N, my_E = _llh_to_ne(current_lat, current_lon)
-    tgt_N, tgt_E = _llh_to_ne(target_lat, target_lon)
-    distance = math.hypot(tgt_N - my_N, tgt_E - my_E)
+        cN, cE = _carrot(my_N, my_E, tgt_N, tgt_E, L_DISTANCE)
+        desired_course = math.degrees(math.atan2(cE - my_E, cN - my_N))
 
-    cN, cE = _carrot(my_N, my_E, tgt_N, tgt_E, L_DISTANCE)
-    desired_course = math.degrees(math.atan2(cE - my_E, cN - my_N))
+        # -- [2] Wind Compensation (crab angle estimation) --
+        if gps_speed > 1.0 and abs(gyro_z) < 20.0:
+            current_crab = _quick_angle(gps_course - yaw)
+            wind_crab_est = 0.95 * wind_crab_est + 0.05 * current_crab
 
-    # -- [2] Wind Compensation (crab angle estimation) --
-    if gps_speed > 1.0 and abs(gyro_z) < 20.0:
-        current_crab = _quick_angle(gps_course - yaw)
-        wind_crab_est = 0.95 * wind_crab_est + 0.05 * current_crab
+        desired_heading = _quick_angle(desired_course - wind_crab_est)
 
-    desired_heading = _quick_angle(desired_course - wind_crab_est)
+        # -- [3] Outer Loop: heading error -> desired yaw rate --
+        heading_error = _quick_angle(desired_heading - yaw)
+        desired_yaw_rate = Kp_outer * heading_error
 
-    # -- [3] Outer Loop: heading error -> desired yaw rate --
-    heading_error = _quick_angle(desired_heading - yaw)
-    desired_yaw_rate = Kp_outer * heading_error
+        # -- [4] Inner Loop: PI (yaw rate error -> u) --
+        rate_error = desired_yaw_rate - gyro_z
 
-    # -- [4] Inner Loop: PI (yaw rate error -> u) --
-    rate_error = desired_yaw_rate - gyro_z
+        if abs(heading_error) <= DEADBAND:
+            pi_integral = 0.0
+            u = 0.0
+        else:
+            pi_integral = max(pi_integral + rate_error * dt, min(-MAX_INTEGRAL, MAX_INTEGRAL))
+            u = Kp_inner * rate_error + Ki_inner * pi_integral
+        return
 
-    if abs(heading_error) <= DEADBAND:
-        pi_integral = 0.0
-        u = 0.0
-    else:
-        pi_integral = max(pi_integral + rate_error * dt, min(-MAX_INTEGRAL, MAX_INTEGRAL))
-        u = Kp_inner * rate_error + Ki_inner * pi_integral
-
-    # -- [5] Motor Allocation --
-    l_pw, r_pw = _allocate_motor(u)
-
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, l_pw)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, r_pw)
-
-    print(f"Motor - Yaw:{yaw:.1f} Err:{heading_error:.1f} u:{u:.2f} "
-          f"L:{l_pw} R:{r_pw} Dist:{distance:.1f}m Crab:{wind_crab_est:.1f}")
-
-    return {
-        "heading_error": heading_error,
-        "desired_course": desired_course,
-        "desired_heading": desired_heading,
-        "wind_crab_est": wind_crab_est,
-        "rate_error": rate_error,
-        "u": u,
-        "pi_integral": pi_integral,
-        "left_pulse": l_pw,
-        "right_pulse": r_pw,
-        "distance": distance,
-    }
-
+    return 
 
 def reset_control():
     global wind_crab_est, pi_integral, last_time

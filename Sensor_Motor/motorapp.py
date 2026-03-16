@@ -1,6 +1,7 @@
 import os
 import signal
 import threading
+import types
 from datetime import datetime
 from multiprocessing import connection
 
@@ -39,15 +40,9 @@ arms_pulled = False  # EGG 진입 시 모터 암 중립(당김) 유지
 pi = None  # pigpio instance
 
 # 센서 데이터
-yaw = 0.0
-gyrz = 0.0
-lat = 0.0
-lon = 0.0
-rmc_status = "V"
-speed = 0.0
-course = 0.0
-fix_quality = 0
-sats = 0
+altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
+GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
+GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
 state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
 
 threads: dict[str, threading.Thread] = {}
@@ -69,30 +64,27 @@ def handle_terminate(data: str):
     running = False
 
 def handle_gps(data: str):
-    global lat, lon, speed, course, fix_quality, sats, rmc_status
     parts = data.split(",")
     if len(parts) == 7:
-        lat = float(parts[0])
-        lon = float(parts[1])
-        speed = float(parts[2]) # m/s
-        course = float(parts[3])
-        fix_quality = int(parts[4])
-        sats = int(parts[5])
-        rmc_status = parts[6]
+        GpsVector.lat = float(parts[0])
+        GpsVector.lon = float(parts[1])
+        GpsVector.speed = float(parts[2])  # m/s
+        GpsVector.course = float(parts[3])
+        GpsFidelity.fix_quality = int(parts[4])
+        GpsFidelity.sats = int(parts[5])
+        GpsFidelity.rmc_status = parts[6]
     else:
         log("GPS data format error", events.EventType.error)
 
 def handle_imu(data: str):
-    global yaw, gyrz
     parts = data.split(",")
     if len(parts) == 2:
-        yaw = float(parts[0])
-        gyrz = float(parts[1])
+        altitude.yaw = float(parts[0])
+        altitude.gyrz = float(parts[1])
     else:
         log("IMU data format error", events.EventType.error)
 
 def handle_target_coords(data: str):
-    global lat, lon
     parts = data.split(",")
     if len(parts) == 2:
         lat, lon = float(parts[0]), float(parts[1])
@@ -165,8 +157,8 @@ def control_payload():
                     error, target_azimuth, distance = 0.0, 0.0, 0.0
                     
                 else:
-                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(yaw, lat, lon)
-                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, yaw, error) #gyro_Z, and added gps datas
+                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(altitude.yaw, GpsVector.lat, GpsVector.lon)
+                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, altitude.yaw, error) #gyro_Z, and added gps datas
                 target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
