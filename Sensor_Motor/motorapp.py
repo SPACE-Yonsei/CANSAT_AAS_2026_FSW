@@ -82,13 +82,14 @@ def handle_gps(data: str):
     else:
         log("GPS data format error", events.EventType.error)
 
-def handle_imu_yaw(data: str):
-    global yaw
-    yaw = float(data)
-
-def handle_imu_gyrz(data: str):
-    global gyrz
-    gyrz = float(data)
+def handle_imu(data: str):
+    global yaw, gyrz
+    parts = data.split(",")
+    if len(parts) == 2:
+        yaw = float(parts[0])
+        gyrz = float(parts[1])
+    else:
+        log("IMU data format error", events.EventType.error)
 
 def handle_target_coords(data: str):
     global lat, lon
@@ -133,8 +134,7 @@ def handle_mec(data: str):
 MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: handle_terminate,
     appargs.GpsAppArg.MID_motor_gps: handle_gps,
-    appargs.ImuAppArg.MID_motor_yaw: handle_imu_yaw,
-    appargs.ImuAppArg.MID_motor_gyroz: handle_imu_gyrz,
+    appargs.ImuAppArg.MID_motor_imu: handle_imu,
     appargs.FlightlogicAppArg.MID_motor_TargetCor: handle_target_coords,
     appargs.FlightlogicAppArg.MID_motor_state: handle_flight_state,
     appargs.FlightlogicAppArg.MID_motor_burnwire: lambda d: handle_release(),

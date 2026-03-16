@@ -324,21 +324,13 @@ def send_imu_data(Main_Queue : Queue):
 
         send_counter += 1
 
-        # Send yaw directly to motor app (10Hz)
+        # Send IMU data directly to motor app (10Hz)
         msgstructure.send_msg(
             Main_Queue,
             appargs.ImuAppArg.AppID,
             appargs.MotorAppArg.AppID,
-            appargs.ImuAppArg.MID_motor_yaw,
-            f"{IMU_YAW:.2f}"
-        )
-
-        msgstructure.send_msg(
-            Main_Queue,
-            appargs.ImuAppArg.AppID,
-            appargs.MotorAppArg.AppID,
-            appargs.ImuAppArg.MID_motor_gyroz,
-            f"{IMU_GYRZ:.2f}"
+            appargs.ImuAppArg.MID_motor_imu,
+            f"{IMU_YAW:.2f},{IMU_GYRZ:.2f}"
         )
 
 
