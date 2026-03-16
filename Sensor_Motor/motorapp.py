@@ -44,7 +44,7 @@ gyrz = 0.0
 lat = 0.0
 lon = 0.0
 rmc_status = "V"
-speed_ms = 0.0
+speed = 0.0
 course = 0.0
 fix_quality = 0
 sats = 0
@@ -69,12 +69,12 @@ def handle_terminate(data: str):
     running = False
 
 def handle_gps(data: str):
-    global lat, lon, speed_ms, course, fix_quality, sats, rmc_status
+    global lat, lon, speed, course, fix_quality, sats, rmc_status
     parts = data.split(",")
     if len(parts) == 7:
         lat = float(parts[0])
         lon = float(parts[1])
-        speed_ms = float(parts[2])
+        speed = float(parts[2]) # m/s
         course = float(parts[3])
         fix_quality = int(parts[4])
         sats = int(parts[5])
