@@ -4,6 +4,7 @@
 from lib import appargs
 from lib import msgstructure
 from lib import events
+from Sensor_Gps import gps
 
 import signal
 import sys
@@ -81,7 +82,7 @@ def gpsapp_terminate():
 ######################################################
 ## USER METHOD                                      ##
 ######################################################
-from Sensor_Gps import gps
+
 def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
     global GPSAPP_RUNSTATUS
 
@@ -143,29 +144,12 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             # 로그 출력 비활성화
             pass
 
-        # gps->motor, MyCor
-        if GPS_LAT != 0.0 or GPS_LON != 0.0:
-            msgstructure.send_msg(
-                Main_Queue,
-                appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-                appargs.GpsAppArg.MID_motor_MyCor,
-                f"{GPS_LAT},{GPS_LON}"
-            )
-
-        # gps->motor, fidelity (fix_quality, sats, rmc_status)
+        # gps->motor, GPS data (lat, lon, speed_ms, course, fix_quality, sats, rmc_status)
         msgstructure.send_msg(
             Main_Queue,
             appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-            appargs.GpsAppArg.MID_motor_fidelity,
-            f"{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
-        )
-
-        # gps->motor, vector (speed_ms, course)
-        msgstructure.send_msg(
-            Main_Queue,
-            appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-            appargs.GpsAppArg.MID_motor_vector,
-            f"{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f}"
+            appargs.GpsAppArg.MID_motor_gps,
+            f"{GPS_LAT},{GPS_LON},{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f},{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
         )
 
         send_counter += 1

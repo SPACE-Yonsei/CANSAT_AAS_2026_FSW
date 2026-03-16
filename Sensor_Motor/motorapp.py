@@ -68,11 +68,17 @@ def handle_terminate(data: str):
     log("Termination detected")
     running = False
 
-def handle_gps_data(data: str):
-    global lat, lon
+def handle_gps(data: str):
+    global lat, lon, speed_ms, course, fix_quality, sats, rmc_status
     parts = data.split(",")
-    if len(parts) == 2:
-        lat, lon = float(parts[0]), float(parts[1])
+    if len(parts) == 7:
+        lat = float(parts[0])
+        lon = float(parts[1])
+        speed_ms = float(parts[2])
+        course = float(parts[3])
+        fix_quality = int(parts[4])
+        sats = int(parts[5])
+        rmc_status = parts[6]
     else:
         log("GPS data format error", events.EventType.error)
 
@@ -83,25 +89,6 @@ def handle_imu_yaw(data: str):
 def handle_imu_gyrz(data: str):
     global gyrz
     gyrz = float(data)
-
-def handle_gps_fidelity(data: str):
-    global fix_quality, sats, rmc_status
-    parts = data.split(",")
-    if len(parts) == 3:
-        fix_quality = int(parts[0])
-        sats = int(parts[1])
-        rmc_status = parts[2]
-    else:
-        log("GPS fidelity format error", events.EventType.error)
-
-def handle_gps_vector(data: str):
-    global speed_ms, course
-    parts = data.split(",")
-    if len(parts) == 2:
-        speed_ms = float(parts[0])
-        course = float(parts[1])
-    else:
-        log("GPS vector format error", events.EventType.error)
 
 def handle_target_coords(data: str):
     global lat, lon
@@ -145,9 +132,7 @@ def handle_mec(data: str):
 
 MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: handle_terminate,
-    appargs.GpsAppArg.MID_motor_MyCor: handle_gps_data,
-    appargs.GpsAppArg.MID_motor_fidelity: handle_gps_fidelity,
-    appargs.GpsAppArg.MID_motor_vector: handle_gps_vector,
+    appargs.GpsAppArg.MID_motor_gps: handle_gps,
     appargs.ImuAppArg.MID_motor_yaw: handle_imu_yaw,
     appargs.ImuAppArg.MID_motor_gyroz: handle_imu_gyrz,
     appargs.FlightlogicAppArg.MID_motor_TargetCor: handle_target_coords,

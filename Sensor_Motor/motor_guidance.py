@@ -8,20 +8,6 @@ import math
 import time
 
 # =============================================================================
-# Hardware Constants
-# =============================================================================
-PARAFOIL_LEFT_MOTOR_PIN = 12   # GPIO 12, physical pin 32
-PARAFOIL_RIGHT_MOTOR_PIN = 13  # GPIO 13, physical pin 33
-
-PULSE_PER_DEG = 2000 / 180
-LEFT_ZERO = 600
-RIGHT_ZERO = 2500
-MAX_ANGLE_SCOPE = 120  # degrees
-
-LEFT_NEUTRAL = int(LEFT_ZERO + 60 * PULSE_PER_DEG)
-RIGHT_NEUTRAL = int(RIGHT_ZERO - 60 * PULSE_PER_DEG)
-
-# =============================================================================
 # Guidance Constants
 # =============================================================================
 LAT_TO_METER = 111320.0
@@ -48,7 +34,7 @@ wind_crab_est = 0.0
 pi_integral = 0.0
 last_time = None
 
-#use for north based angle
+#north based angle
 def _quick_angle(a: float) -> float:
     return (a + 180) % 360 - 180
 

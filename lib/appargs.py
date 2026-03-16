@@ -60,9 +60,7 @@ class GpsAppArg:
 
     MID_comm_gga : int = 1501201
 
-    MID_motor_MyCor : int = 1501901 #flightlogic 거치지 않고 motor로 바로
-    MID_motor_fidelity : int = 1501902 # fix_quality, sats, rmc_status
-    MID_motor_vector : int = 1501903 # speed_ms, course
+    MID_motor_gps : int = 1501901  # lat, lon, speed_ms, course, fix_quality, sats, rmc_status
 
 class DistanceAppArg:
     AppID : int = 16
