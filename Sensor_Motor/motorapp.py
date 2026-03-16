@@ -36,13 +36,14 @@ def log_control(target_lat, target_lon, target_azimuth, distance, error, effecti
 
 running = True
 motor_enabled = True
-arms_pulled = False  # EGG 진입 시 모터 암 중립(당김) 유지
+moter_patterned = False  # EGG 진입 시 모터 암 중립(당김) 유지
 pi = None  # pigpio instance
 
 # 센서 데이터
 altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
 GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
 GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
+
 state = 0  # 0=LAUNCHPAD, 1=ASCENT, 2=APOGEE, 3=DESCENT, 4=EGG_RELEASE, 5=LANDED
 
 threads: dict[str, threading.Thread] = {}
@@ -66,20 +67,20 @@ def handle_terminate(data: str):
 def handle_gps(data: str):
     parts = data.split(",")
     if len(parts) == 7:
-        GpsVector.lat = float(parts[0])
-        GpsVector.lon = float(parts[1])
-        GpsVector.speed = float(parts[2])  # m/s
+        GpsVector.lat    = float(parts[0])
+        GpsVector.lon    = float(parts[1])
+        GpsVector.speed  = float(parts[2])  # m/s
         GpsVector.course = float(parts[3])
         GpsFidelity.fix_quality = int(parts[4])
-        GpsFidelity.sats = int(parts[5])
-        GpsFidelity.rmc_status = parts[6]
+        GpsFidelity.sats        = int(parts[5])
+        GpsFidelity.rmc_status  = parts[6]
     else:
         log("GPS data format error", events.EventType.error)
 
 def handle_imu(data: str):
     parts = data.split(",")
     if len(parts) == 2:
-        altitude.yaw = float(parts[0])
+        altitude.yaw  = float(parts[0])
         altitude.gyrz = float(parts[1])
     else:
         log("IMU data format error", events.EventType.error)
@@ -94,15 +95,15 @@ def handle_target_coords(data: str):
         log("Target coords format error", events.EventType.error)
 
 def handle_flight_state(data: str):
-    global state, arms_pulled
+    global state, moter_patterned
     state = int(data)
     if state == 4:  # EGG 진입 시 초기화
-        arms_pulled = False
+        moter_patterned = False
     log(f"Flight state: {state}")
 
 def handle_pull_arms():
-    global arms_pulled
-    arms_pulled = True
+    global moter_patterned
+    moter_patterned = True
     log("Motor arms pull (neutral)")
 
 def handle_release():
@@ -152,14 +153,14 @@ def control_payload():
     while running:
         with update_lock:
             if state >= 3 and motor_enabled and pi is not None:
-                if arms_pulled:
+                if moter_patterned:
                     ctrl = Motor_Parafoil.pull_both_arms(pi)
                     error, target_azimuth, distance = 0.0, 0.0, 0.0
                     
                 else:
-                    error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(altitude.yaw, GpsVector.lat, GpsVector.lon)
-                    ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, altitude.yaw, error) #gyro_Z, and added gps datas
-                target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+                #     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(altitude.yaw, GpsVector.lat, GpsVector.lon)
+                #     ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, altitude.yaw, error) #gyro_Z, and added gps datas
+                # target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
                     ctrl["error"], ctrl["effective_error"],
