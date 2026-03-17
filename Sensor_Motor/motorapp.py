@@ -38,6 +38,7 @@ running = True
 motor_enabled = True
 patterned = False  # EGG 진입 시 모터 암 중립(당김) 유지
 pi = None  # pigpio instance
+target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
 # 센서 데이터
 altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
@@ -91,9 +92,9 @@ def handle_imu(data: str):
 def handle_target_coord(data: str):
     parts = data.split(",")
     if len(parts) == 2:
-        lat, lon = float(parts[0]), float(parts[1])
-        motor_guidance.set_target_coord(lat, lon)
-        log(f"Target set: ({lat:.6f}, {lon:.6f})")
+        target.lat, target.lon= float(parts[0]), float(parts[1])
+        motor_guidance.set_target_coord(target.lat, target.lon)
+        log(f"Target set: ({target.lat:.6f}, {target.lon:.6f})")
     else:
         log("Target coords format error", events.EventType.error)
 
@@ -178,6 +179,7 @@ def control_payload():
 # 초기화 / 종료
 # =============================================================================
 
+# when init() is called
 def init() -> bool:
     global pi, running
     
@@ -185,9 +187,9 @@ def init() -> bool:
     log("Initializing motorapp")
     
     try:
-        Motor_Parafoil_Calculate.init_parafoil_control()
-        pi = Motor_Parafoil.init_parafoil_motor()
         Motor_Release.init_burnwire()
+        motor_guidance.init_guidance()
+        pi=motor_guidance.init_parafoil_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(target=control_payload, name="ControlLog_Thread", daemon=True)
         threads["ControlLog_Thread"].start()
@@ -210,7 +212,7 @@ def terminate():
 
     # 모터 종료
     if pi:
-        Motor_Parafoil.terminate_parafoil_motor(pi)
+        motor_control.terminate_parafoil_motor(pi)
         pi.stop()
     Motor_Release.terminate_burnwire()
     Motor_Egg.terminate_solenoid()

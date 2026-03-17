@@ -34,6 +34,9 @@ wind_crab_est = 0.0
 pi_integral = 0.0
 last_time = None
 
+def init_guidance():
+    return
+
 #north based angle
 def _quick_angle(a: float) -> float:
     return (a + 180) % 360 - 180

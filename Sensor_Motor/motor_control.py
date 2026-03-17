@@ -12,7 +12,7 @@ MAX_ANGLE_SCOPE = 120  # degrees
 LEFT_NEUTRAL = int(LEFT_ZERO + 60 * PULSE_PER_DEG)
 RIGHT_NEUTRAL = int(RIGHT_ZERO - 60 * PULSE_PER_DEG)
 
-def init_parafoil_motor():
+def init_control():
     global last_time, pi_integral, wind_crab_est
     import pigpio
     pi = pigpio.pi()
