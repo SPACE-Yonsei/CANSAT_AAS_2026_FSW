@@ -4,9 +4,7 @@ import threading
 import types
 from datetime import datetime
 from multiprocessing import connection
-
 from lib import appargs, msgstructure, events
-
 from Sensor_Motor import motor_guidance, motor_control, Motor_Release, Motor_Egg
 
 # =============================================================================
@@ -18,16 +16,17 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
 
-
-def log_control(target_lat, target_lon, target_azimuth, distance, error, effective_error,
-                p_term, i_term, d_term, pid_integral, pid_output, left_pulse, right_pulse):
-    """제어 목표, 오차, PID 상태, 모터 펄스를 control.txt에 기록 (imu.txt 형식)"""
-    t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
-    line = (f"{t},{target_lat:.6f},{target_lon:.6f},{target_azimuth:.4f},{distance:.2f},"
-            f"{error:.4f},{effective_error:.4f},{p_term:.4f},{i_term:.4f},{d_term:.4f},"
-            f"{pid_integral:.4f},{pid_output:.4f},{left_pulse},{right_pulse}\n")
-    controllogfile.write(line)
-    controllogfile.flush()
+def log_control():
+    return
+# def log_control(target_lat, target_lon, target_azimuth, distance, error, effective_error,
+#                 p_term, i_term, d_term, pid_integral, pid_output, left_pulse, right_pulse):
+#     """제어 목표, 오차, PID 상태, 모터 펄스를 control.txt에 기록 (imu.txt 형식)"""
+#     t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
+#     line = (f"{t},{target_lat:.6f},{target_lon:.6f},{target_azimuth:.4f},{distance:.2f},"
+#             f"{error:.4f},{effective_error:.4f},{p_term:.4f},{i_term:.4f},{d_term:.4f},"
+#             f"{pid_integral:.4f},{pid_output:.4f},{left_pulse},{right_pulse}\n")
+#     controllogfile.write(line)
+#     controllogfile.flush()
 
 
 # =============================================================================
@@ -161,13 +160,7 @@ def control_payload():
                     motor_guidance.draw_pattern()
                 else:
                     
-                log_control(
-                    target_lat, target_lon, target_azimuth, distance,
-                    ctrl["error"], ctrl["effective_error"],
-                    ctrl["p_term"], ctrl["i_term"], ctrl["d_term"],
-                    ctrl["pid_integral"], ctrl["pid_output"],
-                    ctrl["left_pulse"], ctrl["right_pulse"],
-                )#need to fix
+                log_control()#need to fix
 
                 if state == 5:
                     log("Stopping motors", events.EventType.warning)
