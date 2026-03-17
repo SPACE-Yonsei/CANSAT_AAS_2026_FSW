@@ -150,7 +150,7 @@ def dispatch(msg: msgstructure.MsgStructure):
 # 파라포일 제어
 # =============================================================================
 
-def control_payload():
+def control_parafoil():
     """10Hz로 파라포일 제어 및 로깅"""
     import time
     while running:
@@ -184,7 +184,7 @@ def init() -> bool:
         motor_guidance.init_guidance()
         pi=motor_guidance.init_parafoil_control()
         Motor_Egg.init_solenoid()
-        threads["ControlLog_Thread"] = threading.Thread(target=control_payload, name="ControlLog_Thread", daemon=True)
+        threads["ControlLog_Thread"] = threading.Thread(target=control_parafoil, name="ControlLog_Thread", daemon=True)
         threads["ControlLog_Thread"].start()
         log("Motors initialized (parafoil, burnwire, solenoid)")
         return True
