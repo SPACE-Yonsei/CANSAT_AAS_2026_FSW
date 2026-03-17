@@ -30,8 +30,11 @@ def _quick_angle(a: float) -> float:
 # =============================================================================
 # GPS Utilities
 # =============================================================================
-def is_gps_valid(lat: float, lon: float) -> bool:
-    return not (lat == 0.0 and lon == 0.0) and abs(lat) <= 90.0 and abs(lon) <= 180.0
+def is_gps_valid(lat: float, lon: float,
+                 fix_quality: int = 0, sats: int = 0, rmc_status: str = "V") -> bool:
+    coord_ok   = not (lat == 0.0 and lon == 0.0) and abs(lat) <= 90.0 and abs(lon) <= 180.0
+    fidelity_ok = fix_quality >= 1 and sats >= 4 and rmc_status == "A"
+    return coord_ok and fidelity_ok
 
 
 def calculate_distance_haversine(lat1: float, lon1: float,
@@ -79,7 +82,8 @@ def draw_pattern():
 
 def guidance(pi, yaw: float, gyro_z: float,
              current_lat: float, current_lon: float,
-             gps_speed: float = 0.0, gps_course: float = 0.0
+             gps_speed: float = 0.0, gps_course: float = 0.0,
+             fix_quality: int = 0, sats: int = 0, rmc_status: str = "V"
              ) -> dict:
     """
     L1 Carrot Guidance + Cascaded Control
@@ -96,7 +100,7 @@ def guidance(pi, yaw: float, gyro_z: float,
     Returns:
         dict with control state for logging
     """
-    global wind_effect, pi_integral, last_time
+    global wind_effect, last_time
 
     # -- dt --
     prsnt_time = time.time()
@@ -106,42 +110,43 @@ def guidance(pi, yaw: float, gyro_z: float,
     last_time = prsnt_time
 
     # -- GPS validity check --
-    if not is_gps_valid(current_lat, current_lon) or (target_lat == 0.0 and target_lon == 0.0):  
-        
-        # -- [1] L1 Carrot Guidance --
-        my_N, my_E = _llh_to_ne(current_lat, current_lon)
-        tgt_N, tgt_E = _llh_to_ne(target_lat, target_lon)
-        distance = math.hypot(tgt_N - my_N, tgt_E - my_E)
-
-        cN, cE = _carrot(my_N, my_E, tgt_N, tgt_E, L_DISTANCE)
-        desired_course = math.degrees(math.atan2(cE - my_E, cN - my_N))
-
-        # -- [2] Wind Compensation (crab angle estimation) --
-        if gps_speed > 1.0 and abs(gyro_z) < 20.0:
-            current_crab = _quick_angle(gps_course - yaw)
-            wind_effect = 0.95 * wind_effect + 0.05 * current_crab
-
-        desired_heading = _quick_angle(desired_course - wind_effect)
-
-        # -- [3] Outer Loop: heading error -> desired yaw rate --
-        heading_error = _quick_angle(desired_heading - yaw)
-        desired_yaw_rate = Kp_outer * heading_error
-
-        # -- [4] Inner Loop: PI (yaw rate error -> u) --
-        rate_error = desired_yaw_rate - gyro_z
-
-        if abs(heading_error) <= DEADBAND:
-            pi_integral = 0.0
-            u = 0.0
-        else:
-            pi_integral = max(pi_integral + rate_error * dt, min(-MAX_INTEGRAL, MAX_INTEGRAL))
-            u = Kp_inner * rate_error + Ki_inner * pi_integral
+    if not is_gps_valid(current_lat, current_lon, fix_quality, sats, rmc_status) or (target_lat == 0.0 and target_lon == 0.0):
         return
 
-    return 
+    # -- [1] L1 Carrot Guidance --
+    my_N, my_E = _llh_to_ne(current_lat, current_lon)
+    tgt_N, tgt_E = _llh_to_ne(target_lat, target_lon)
+    distance = math.hypot(tgt_N - my_N, tgt_E - my_E)
+
+    cN, cE = _carrot(tgt_N - my_N, tgt_E - my_E)
+    desired_course = math.degrees(math.atan2(cE, cN))
+
+    # -- [2] Wind Compensation (crab angle estimation) --
+    if gps_speed > 1.0 and abs(gyro_z) < 20.0:
+        current_crab = _quick_angle(gps_course - yaw)
+        wind_effect = 0.95 * wind_effect + 0.05 * current_crab
+
+    desired_heading = _quick_angle(desired_course - wind_effect)
+
+    # -- [3] Outer Loop: heading error -> desired yaw rate --
+    heading_error = _quick_angle(desired_heading - yaw)
+    desired_yaw_rate = cascade_pi.Kp_outer * heading_error
+
+    # -- [4] Inner Loop: PI (yaw rate error -> u) --
+    rate_error = desired_yaw_rate - gyro_z
+
+    if abs(heading_error) <= cascade_pi.DEADBAND:
+        cascade_pi.pi_integral = 0.0
+        u = 0.0
+    else:
+        cascade_pi.pi_integral = max(
+            min(cascade_pi.pi_integral + rate_error * dt, cascade_pi.MAX_INTEGRAL),
+            -cascade_pi.MAX_INTEGRAL
+        )
+        u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
 def reset_control():
-    global wind_effect, pi_integral, last_time
+    global wind_effect, last_time
     wind_effect = 0.0
-    pi_integral = 0.0
+    cascade_pi.pi_integral = 0.0
     last_time = time.time()
