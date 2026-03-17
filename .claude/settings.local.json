@@ -3,7 +3,12 @@
     "allow": [
       "Bash(dir:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(python test_msgstructure.py:*)"
+      "Bash(python test_msgstructure.py:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motor_guidance.py''\\).read\\(\\)\\); print\\(''motor_guidance.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motor_control.py''\\).read\\(\\)\\); print\\(''motor_control.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motorapp.py''\\).read\\(\\)\\); print\\(''motorapp.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''lib/appargs.py''\\).read\\(\\)\\); print\\(''appargs.py: OK''\\)\")",
+      "Bash(python:*)"
     ]
   }
 }

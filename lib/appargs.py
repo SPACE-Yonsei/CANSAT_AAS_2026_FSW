@@ -47,6 +47,8 @@ class BarometerAppArg:
     MID_flight_alt : int = 1301101
     MID_flight_ResetMaxAlt : int = 1301102
 
+    MID_motor_alt : int = 1301901  # barometer altitude → motor (for altitude-adaptive guidance)
+
 class ImuAppArg:
     AppID : int = 14
     AppName : str = "Imu"
