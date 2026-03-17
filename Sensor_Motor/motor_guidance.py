@@ -82,7 +82,7 @@ def set_start_coordinates(lat: float, lon: float):
     start_lat, start_lon = lat, lon
 
 
-def set_target_coordinates(lat: float, lon: float):
+def set_target_coord(lat: float, lon: float):
     global target_lat, target_lon
     target_lat, target_lon = lat, lon
 
