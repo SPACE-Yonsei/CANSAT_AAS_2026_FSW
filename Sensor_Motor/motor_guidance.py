@@ -6,32 +6,18 @@ L1 Carrot Guidance + Cascaded Loop (Outer heading + Inner yaw-rate PI)
 
 import math
 import time
+import types
 
-# =============================================================================
-# Guidance Constants
-# =============================================================================
+cascade_pi = types.SimpleNamespace(Kp_outer=0.6,
+                                   Kp_inner=0.5, Ki_inner=0.1, pi_integral = 0.0, MAX_INTEGRAL=30.0,
+                                   DEADBAND=8.0)
+
+# carrot guidance parameters
+target = types.SimpleNamespace(lat=0.0, lon=0.0)
+start_point = types.SimpleNamespace(lat=0.0, lon=0.0)
 LAT_TO_METER = 111320.0
-L_DISTANCE = 15.0        # L1 look-ahead distance (m)
-
-# =============================================================================
-# Control Gains
-# =============================================================================
-Kp_outer = 0.6           # heading error -> desired yaw rate
-Kp_inner = 0.5           # rate error -> u
-Ki_inner = 0.1           # rate error integral -> u
-MAX_INTEGRAL = 30.0
-DEADBAND = 8.0           # heading error deadband (degrees)
-
-# =============================================================================
-# State Variables
-# =============================================================================
-target_lat = 0.0
-target_lon = 0.0
-start_lat = 0.0
-start_lon = 0.0
-
-wind_crab_est = 0.0
-pi_integral = 0.0
+L_DISTANCE = 15.0   # L1 look-ahead distance (m)
+wind_effect = 0.0
 last_time = None
 
 def init_guidance():
@@ -111,7 +97,7 @@ def guidance(pi, yaw: float, gyro_z: float,
     Returns:
         dict with control state for logging
     """
-    global wind_crab_est, pi_integral, last_time
+    global wind_effect, pi_integral, last_time
 
     # -- dt --
     prsnt_time = time.time()
@@ -134,9 +120,9 @@ def guidance(pi, yaw: float, gyro_z: float,
         # -- [2] Wind Compensation (crab angle estimation) --
         if gps_speed > 1.0 and abs(gyro_z) < 20.0:
             current_crab = _quick_angle(gps_course - yaw)
-            wind_crab_est = 0.95 * wind_crab_est + 0.05 * current_crab
+            wind_effect = 0.95 * wind_effect + 0.05 * current_crab
 
-        desired_heading = _quick_angle(desired_course - wind_crab_est)
+        desired_heading = _quick_angle(desired_course - wind_effect)
 
         # -- [3] Outer Loop: heading error -> desired yaw rate --
         heading_error = _quick_angle(desired_heading - yaw)
@@ -156,7 +142,7 @@ def guidance(pi, yaw: float, gyro_z: float,
     return 
 
 def reset_control():
-    global wind_crab_est, pi_integral, last_time
-    wind_crab_est = 0.0
+    global wind_effect, pi_integral, last_time
+    wind_effect = 0.0
     pi_integral = 0.0
     last_time = time.time()
