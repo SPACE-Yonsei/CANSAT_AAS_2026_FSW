@@ -56,18 +56,18 @@ def calculate_distance_haversine(lat1: float, lon1: float,
 def _llh_to_ne(lat: float, lon: float) -> tuple[float, float]:
     N = (lat - start_point.lat) * LAT_TO_METER
     E = (lon - start_point.lon) * LAT_TO_METER * math.cos(math.radians(start_point.lat))
-    return N, E
+    return E, N
 
 # =============================================================================
 # L1 Carrot Guidance
 # =============================================================================
-def _carrot(tgt_N: float, tgt_E: float) -> tuple[float, float]:
-    rope_len = math.hypot(tgt_N, tgt_E)
+def _carrot(tgt_E: float, tgt_N: float, my_E: float = 0.0, my_N: float = 0.0) -> tuple[float, float]:
+    rope_len = math.hypot(tgt_E, tgt_N)
     if rope_len < 0.01:
-        return tgt_N, tgt_E
-    uN, uE = tgt_N / rope_len, tgt_E / rope_len
-    s = max(my_N * uN + my_E * uE, min(0.0, rope_len))
-    return (s + L) * uN, (s + L) * uE
+        return tgt_E, tgt_N
+    unit_tgt_E, unit_tgt_N = tgt_E / rope_len, tgt_N / rope_len
+    my_on_TgtLine = max(my_E * unit_tgt_E + my_N * unit_tgt_N, min(0.0, rope_len))
+    return (my_on_TgtLine + L_DISTANCE) * unit_tgt_E, (my_on_TgtLine + L_DISTANCE) * unit_tgt_N
 
 # =============================================================================
 # Target Coordinate Management
@@ -83,7 +83,7 @@ def set_target_coord(lat: float, lon: float):
 def draw_pattern():
     return
 
-def guidance(gps_data, imu_data, target_data) -> types.SimpleNamespace:
+def guidance(imu_data, gps_data, target_data) -> types.SimpleNamespace:
     """
     L1 Carrot Guidance + Cascaded Control
     """
@@ -99,13 +99,13 @@ def guidance(gps_data, imu_data, target_data) -> types.SimpleNamespace:
         return types.SimpleNamespace(u_cmd=0.0, error=0.0, state="GPS_INVALID")
 
     # -- [1] L1 Carrot Guidance --
-    my_N, my_E = _llh_to_ne(gps_data.lat, gps_data.lon)
-    tgt_N, tgt_E = _llh_to_ne(target_data.lat, target_data.lon)
-    distance = math.hypot(tgt_N - my_N, tgt_E - my_E)
+    my_E, my_N = _llh_to_ne(gps_data.lat, gps_data.lon)
+    tgt_E, tgt_N = _llh_to_ne(target_data.lat, target_data.lon)
+    distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
     if distance < 5.0: return types.SimpleNamespace(u_cmd=0.0, error=0.0, state="TARGET_REACHED")
 
-    cN, cE = _carrot(tgt_N - my_N, tgt_E - my_E)
-    desired_course = math.degrees(math.atan2(cE, cN))
+    carrot_E, carrot_N = _carrot(tgt_E - my_E, tgt_N - my_N)
+    desired_course = math.degrees(math.atan2(carrot_E, carrot_N))
 
     # -- [2] Wind Compensation (crab angle estimation) --
     if gps_data.speed > 1.0 and abs(imu_data.gyrz) < 20.0:

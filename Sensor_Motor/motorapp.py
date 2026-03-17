@@ -159,7 +159,8 @@ def control_parafoil():
                 if patterned:
                     motor_guidance.draw_pattern()
                 else:
-                        
+                    motor_guidance.guidance(altitude, GpsVector, target)
+                    
                 log_control()#need to fix
 
                 if state == 5:
