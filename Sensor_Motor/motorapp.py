@@ -36,7 +36,7 @@ def log_control(target_lat, target_lon, target_azimuth, distance, error, effecti
 
 running = True
 motor_enabled = True
-moter_patterned = False  # EGG 진입 시 모터 암 중립(당김) 유지
+patterned = False  # EGG 진입 시 모터 암 중립(당김) 유지
 pi = None  # pigpio instance
 
 # 센서 데이터
@@ -64,6 +64,7 @@ def handle_terminate(data: str):
     log("Termination detected")
     running = False
 
+#check
 def handle_gps(data: str):
     parts = data.split(",")
     if len(parts) == 7:
@@ -77,6 +78,7 @@ def handle_gps(data: str):
     else:
         log("GPS data format error", events.EventType.error)
 
+#check
 def handle_imu(data: str):
     parts = data.split(",")
     if len(parts) == 2:
@@ -85,7 +87,7 @@ def handle_imu(data: str):
     else:
         log("IMU data format error", events.EventType.error)
 
-# check
+#check
 def handle_target_coord(data: str):
     parts = data.split(",")
     if len(parts) == 2:
@@ -96,15 +98,15 @@ def handle_target_coord(data: str):
         log("Target coords format error", events.EventType.error)
 
 def handle_flight_state(data: str):
-    global state, moter_patterned
+    global state, patterned
     state = int(data)
     if state == 4:  # EGG 진입 시 초기화
-        moter_patterned = False
+        patterned = False
     log(f"Flight state: {state}")
 
 def handle_pull_arms():
-    global moter_patterned
-    moter_patterned = True
+    global patterned
+    patterned = True
     log("Motor arms pull (neutral)")
 
 def handle_release():
@@ -154,13 +156,10 @@ def control_payload():
     while running:
         with update_lock:
             if state >= 3 and motor_enabled and pi is not None:
-                if moter_patterned:
-                    ctrl = Motor_Parafoil.pull_both_arms(pi)
-                    
+                if patterned:
+                    motor_guidance.draw_pattern()
                 else:
-                #     error, target_azimuth, distance = Motor_Parafoil_Calculate.calculate_raw_error(altitude.yaw, GpsVector.lat, GpsVector.lon)
-                #     ctrl = Motor_Parafoil.rotate_parafoil_motor(pi, altitude.yaw, error) #gyro_Z, and added gps datas
-                # target_lat, target_lon = Motor_Parafoil_Calculate.get_target_coordinates()
+                    
                 log_control(
                     target_lat, target_lon, target_azimuth, distance,
                     ctrl["error"], ctrl["effective_error"],

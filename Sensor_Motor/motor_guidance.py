@@ -86,7 +86,8 @@ def set_target_coord(lat: float, lon: float):
     global target_lat, target_lon
     target_lat, target_lon = lat, lon
 
-#landing patterns/////////////////////////////////
+def draw_pattern():
+    return
 
 def guidance(pi, yaw: float, gyro_z: float,
              current_lat: float, current_lon: float,
