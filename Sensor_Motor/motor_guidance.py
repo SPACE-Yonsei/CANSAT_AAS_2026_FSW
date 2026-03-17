@@ -54,8 +54,7 @@ def _llh_to_ne(lat: float, lon: float) -> tuple[float, float]:
 # =============================================================================
 # L1 Carrot Guidance
 # =============================================================================
-def _carrot(my_N: float, my_E: float,
-            tgt_N: float, tgt_E: float, L: float) -> tuple[float, float]:
+def _carrot(tgt_N: float, tgt_E: float) -> tuple[float, float]:
     rope_len = math.hypot(tgt_N, tgt_E)
     if rope_len < 0.01:
         return tgt_N, tgt_E

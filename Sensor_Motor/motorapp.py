@@ -159,7 +159,7 @@ def control_payload():
                 if patterned:
                     motor_guidance.draw_pattern()
                 else:
-                    
+                        
                 log_control()#need to fix
 
                 if state == 5:
