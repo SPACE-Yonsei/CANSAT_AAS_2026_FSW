@@ -1,6 +1,7 @@
 import os
 import signal
 import threading
+import time
 import types
 from datetime import datetime
 from multiprocessing import connection
@@ -13,7 +14,6 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
 
-
 def log_control(g, m):
     t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
 
@@ -24,37 +24,19 @@ def log_control(g, m):
             left_pulse=0, right_pulse=0
         )
 
+    # g 데이터는 state, distance, commanded_yaw_rate 3개만 존재함
     line = (
         f"{t},"
         f"state:{g.state},"
-        f"alt:{g.altitude:.1f},"
-        f"L:{g.l_distance:.1f},"
-        f"pat:{int(g.patterned)},"
-        f"pat_E:{g.pattern_wp_E:.1f},"
-        f"pat_N:{g.pattern_wp_N:.1f},"
         f"dist:{g.distance:.2f},"
-        f"d_crs:{g.desired_course:.1f},"
-        f"d_hdg:{g.desired_heading:.1f},"
-        f"h_err:{g.heading_error:.2f},"
-        f"d_yr:{g.desired_yaw_rate:.2f},"
-        f"m_yr:{g.measured_yaw_rate:.2f},"
-        f"u_pre:{g.u_before_sat:.2f},"
-        f"u_post:{g.u_after_sat:.2f},"
-        f"integ:{g.integral:.3f},"
-        f"wind:{g.wind_effect:.2f},"
+        f"cmd_yr:{g.commanded_yaw_rate:.2f},"
         f"L_deg:{m.left_cmd_deg:.1f},"
         f"R_deg:{m.right_cmd_deg:.1f},"
-        f"delta:{m.actual_delta_deg:.1f},"
-        f"exp_yr:{m.expected_yaw_rate:.2f},"
         f"L_pw:{m.left_pulse},"
-        f"R_pw:{m.right_pulse},"
-        f"yaw:{g.yaw:.1f},"
-        f"spd:{g.gps_speed:.2f},"
-        f"crs:{g.gps_course:.1f}\n"
+        f"R_pw:{m.right_pulse}\n"
     )
     controllogfile.write(line)
     controllogfile.flush()
-
 
 running = True
 motor_enabled = True
@@ -63,10 +45,17 @@ pi = None
 target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
 altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
+baro_m = 0.0
 GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
 GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
 
 state = 0
+
+# ── [FIX-1] Stale 데이터 감지용 타임스탬프 ──
+last_gps_time = 0.0
+last_imu_time = 0.0
+STALE_THRESHOLD = 1.5  # 1.5초 이상 갱신 없으면 stale 판정
+# ── [/FIX-1] ──
 
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
@@ -86,36 +75,46 @@ def handle_terminate(data: str):
 
 
 def handle_gps(data: str):
+    global last_gps_time
     parts = data.split(",")
     if len(parts) == 7:
-        GpsVector.lat    = float(parts[0])
-        GpsVector.lon    = float(parts[1])
-        GpsVector.speed  = float(parts[2])
-        GpsVector.course = float(parts[3])
-        GpsFidelity.fix_quality = int(parts[4])
-        GpsFidelity.sats        = int(parts[5])
-        GpsFidelity.rmc_status  = parts[6]
+        # ── [FIX-4] 핸들러에도 lock 적용 ──
+        with update_lock:
+            GpsVector.lat    = float(parts[0])
+            GpsVector.lon    = float(parts[1])
+            GpsVector.speed  = float(parts[2])
+            GpsVector.course = float(parts[3])
+            GpsFidelity.fix_quality = int(parts[4])
+            GpsFidelity.sats        = int(parts[5])
+            GpsFidelity.rmc_status  = parts[6]
+            last_gps_time = time.time()  # [FIX-1] 수신 시각 기록
+        # ── [/FIX-4] ──
     else:
         log("GPS data format error", events.EventType.error)
 
 
 def handle_imu(data: str):
+    global last_imu_time
     parts = data.split(",")
     if len(parts) == 2:
-        altitude.yaw  = float(parts[0])
-        altitude.gyrz = float(parts[1])
+        # ── [FIX-4] 핸들러에도 lock 적용 ──
+        with update_lock:
+            altitude.yaw  = float(parts[0])
+            altitude.gyrz = float(parts[1])
+            last_imu_time = time.time()  # [FIX-1] 수신 시각 기록
+        # ── [/FIX-4] ──
     else:
         log("IMU data format error", events.EventType.error)
 
 
 def handle_barometer(data: str):
+    global baro_m
     try:
         parts = data.split(",")
-        if len(parts) >= 3:
-            alt = float(parts[2])
-        else:
-            alt = float(parts[0])
-        motor_guidance.update_altitude(alt)
+        # ── [FIX-4] 핸들러에도 lock 적용 ──
+        with update_lock:
+            baro_m = float(parts[2]) if len(parts) >= 3 else float(parts[0])
+        # ── [/FIX-4] ──
     except (ValueError, IndexError):
         log("Barometer data format error", events.EventType.error)
 
@@ -123,7 +122,10 @@ def handle_barometer(data: str):
 def handle_target_coord(data: str):
     parts = data.split(",")
     if len(parts) == 2:
-        target.lat, target.lon = float(parts[0]), float(parts[1])
+        # ── [FIX-4] 핸들러에도 lock 적용 ──
+        with update_lock:
+            target.lat, target.lon = float(parts[0]), float(parts[1])
+        # ── [/FIX-4] ──
         motor_guidance.set_target_coord(target.lat, target.lon)
         log(f"Target set: ({target.lat:.6f}, {target.lon:.6f})")
     else:
@@ -132,15 +134,21 @@ def handle_target_coord(data: str):
 
 def handle_flight_state(data: str):
     global state, patterned
-    state = int(data)
-    if state == 4:
-        patterned = False
+    # ── [FIX-4] 핸들러에도 lock 적용 ──
+    with update_lock:
+        state = int(data)
+        if state == 4:
+            patterned = False
+    # ── [/FIX-4] ──
     log(f"Flight state: {state}")
 
 
 def handle_pull_arms(data=None):
     global patterned
-    patterned = True
+    # ── [FIX-4] 핸들러에도 lock 적용 ──
+    with update_lock:
+        patterned = True
+    # ── [/FIX-4] ──
     log("Pattern mode activated (figure-eight)")
 
 
@@ -157,12 +165,15 @@ def handle_egg_drop():
 def handle_mec(data: str):
     global motor_enabled
     log(f"MEC command: {data}")
-    if data == "ON":
-        motor_enabled = True
-    elif data == "OFF":
-        motor_enabled = False
-    else:
-        log(f"Invalid MEC option: {data}", events.EventType.error)
+    # ── [FIX-4] 핸들러에도 lock 적용 ──
+    with update_lock:
+        if data == "ON":
+            motor_enabled = True
+        elif data == "OFF":
+            motor_enabled = False
+        else:
+            log(f"Invalid MEC option: {data}", events.EventType.error)
+    # ── [/FIX-4] ──
 
 
 MSG_HANDLERS = {
@@ -188,24 +199,75 @@ def dispatch(msg: msgstructure.MsgStructure):
 
 
 def control_parafoil():
-    import time
     while running:
+        # ── [FIX-4] lock 범위를 스냅샷 복사로 최소화 ──
         with update_lock:
-            if state >= 3 and motor_enabled and pi is not None:
+            _state       = state
+            _motor_en    = motor_enabled
+            _patterned   = patterned
+            _baro_m      = baro_m
+            _gps         = types.SimpleNamespace(
+                lat=GpsVector.lat, lon=GpsVector.lon,
+                speed=GpsVector.speed, course=GpsVector.course)
+            _fidelity    = types.SimpleNamespace(
+                rmc_status=GpsFidelity.rmc_status,
+                fix_quality=GpsFidelity.fix_quality,
+                sats=GpsFidelity.sats)
+            _imu         = types.SimpleNamespace(
+                yaw=altitude.yaw, gyrz=altitude.gyrz)
+            _target      = types.SimpleNamespace(
+                lat=target.lat, lon=target.lon)
+            _last_gps_t  = last_gps_time
+            _last_imu_t  = last_imu_time
+        # ── [/FIX-4] ──
 
-                result = motor_guidance.guidance(
-                    altitude, GpsVector, GpsFidelity, target, patterned=patterned
-                )
+        if _state >= 3 and _motor_en and pi is not None:
 
-                motor_result = motor_control.apply_differential_deflection(
-                    pi, result.commanded_yaw_rate
-                )
+            # ── [FIX-6] State 5 즉시 정지 → 제어 파이프라인 완전 건너뜀 ──
+            if _state == 5:
+                log("State 5: stopping motors", events.EventType.warning)
+                motor_control.set_neutral(pi)
+                time.sleep(CONTROL_LOG_INTERVAL)
+                continue
+            # ── [/FIX-6] ──
 
-                log_control(result, motor_result)
+            # ── [FIX-1] Stale 데이터 감지 → Fail-safe 중립 ──
+            now = time.time()
+            gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t > 0 else True
+            imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t > 0 else True
+            if gps_stale or imu_stale:
+                motor_control.set_neutral(pi)
+                if gps_stale:
+                    log("GPS data stale – neutral", events.EventType.warning)
+                if imu_stale:
+                    log("IMU data stale – neutral", events.EventType.warning)
+                time.sleep(CONTROL_LOG_INTERVAL)
+                continue
+            # ── [/FIX-1] ──
 
-                if state == 5:
-                    log("Stopping motors", events.EventType.warning)
-                    motor_control.set_neutral(pi)
+            # ── [FIX-3] 기압계 고도 0.0 방어 → 유효 고도 수신 전까지 대기 ──
+            if _baro_m <= 0.0:
+                motor_control.set_neutral(pi)
+                log("Baro altitude not ready (0.0) – neutral", events.EventType.warning)
+                time.sleep(CONTROL_LOG_INTERVAL)
+                continue
+            # ── [/FIX-3] ──
+
+            # ── [FIX-5] 30m 이하에서 패턴 모드 자동 진입 ──
+            if _baro_m <= 30.0:
+                _patterned = True
+            # ── [/FIX-5] ──
+
+            result = motor_guidance.guidance(
+                _imu, _gps, _fidelity, _target,
+                baro_m=_baro_m, patterned=_patterned
+            )
+
+            motor_result = motor_control.apply_differential_deflection(
+                pi, result.commanded_yaw_rate
+            )
+
+            log_control(result, motor_result)
 
         time.sleep(CONTROL_LOG_INTERVAL)
 

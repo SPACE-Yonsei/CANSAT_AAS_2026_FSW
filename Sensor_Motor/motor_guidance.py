@@ -3,7 +3,6 @@ import math
 import time
 import types
 
-
 cascade_pi = types.SimpleNamespace(
     Kp_outer=0.6,
     Kp_inner=1.0,
@@ -28,7 +27,6 @@ ALT_HIGH = 100.0
 ALT_LOW  = 30.0
 
 wind_effect = 0.0
-altitude_m = 0.0
 last_time = None
 
 _pattern = types.SimpleNamespace(
@@ -38,19 +36,34 @@ _pattern = types.SimpleNamespace(
     RADIUS=25.0,
 )
 
-FINAL_APPROACH_ALT = 20.0
-MAX_YAW_RATE_FINAL = 15.0
+# ── [FIX-2] GPS 순간 이동 감지용 상태 ──
+_prev_gps = types.SimpleNamespace(lat=0.0, lon=0.0, time=0.0, initialized=False)
+GPS_JUMP_MAX_SPEED = 50.0  # m/s — 파라포일이 절대 낼 수 없는 속도 (≈180 km/h)
+GPS_STABLE_COUNT_REQUIRED = 5  # Fix 직후 안정화까지 무시할 샘플 수
+_gps_stable_count = 0
+# ── [/FIX-2] ──
+
+# ── [FIX-5] FINAL_APPROACH 분기 제거 — 패턴은 state 5 또는 착지까지 유지 ──
+# FINAL_APPROACH_ALT = 20.0  # 삭제됨
+# MAX_YAW_RATE_FINAL = 15.0  # 삭제됨
+# ── [/FIX-5] ──
 
 
 def init_guidance():
-    global wind_effect, last_time, altitude_m, L_DISTANCE
+    global wind_effect, last_time, L_DISTANCE, _gps_stable_count
     wind_effect = 0.0
-    altitude_m = 0.0
     L_DISTANCE = L_DISTANCE_BASE
     cascade_pi.pi_integral = 0.0
     last_time = time.time()
     _pattern.lobe_sign = 1
     _pattern.last_switch_time = time.time()
+    # ── [FIX-2] GPS 상태 초기화 ──
+    _prev_gps.lat = 0.0
+    _prev_gps.lon = 0.0
+    _prev_gps.time = 0.0
+    _prev_gps.initialized = False
+    _gps_stable_count = 0
+    # ── [/FIX-2] ──
 
 
 def reset_control():
@@ -74,8 +87,53 @@ def is_gps_valid(lat: float, lon: float,
     return coord_ok and fidelity_ok
 
 
+# ── [FIX-2] GPS 순간 이동(Multipath) 감지 ──
+def _is_gps_jump(lat: float, lon: float) -> bool:
+    """
+    Fix 직후 불안정 샘플 거부 + 비현실적 순간 이동 거부.
+    True를 반환하면 이번 좌표를 사용하지 않아야 함.
+    """
+    global _gps_stable_count
+
+    now = time.time()
+
+    if not _prev_gps.initialized:
+        _prev_gps.lat = lat
+        _prev_gps.lon = lon
+        _prev_gps.time = now
+        _prev_gps.initialized = True
+        _gps_stable_count = 1
+        return True  # 첫 Fix는 사용하지 않음
+
+    # Fix 직후 안정화 대기
+    if _gps_stable_count < GPS_STABLE_COUNT_REQUIRED:
+        _gps_stable_count += 1
+        _prev_gps.lat = lat
+        _prev_gps.lon = lon
+        _prev_gps.time = now
+        return True
+
+    dt = now - _prev_gps.time
+    if dt < 0.01:
+        dt = 0.01
+
+    dist = calculate_distance_haversine(_prev_gps.lat, _prev_gps.lon, lat, lon)
+    speed = dist / dt
+
+    _prev_gps.lat = lat
+    _prev_gps.lon = lon
+    _prev_gps.time = now
+
+    if speed > GPS_JUMP_MAX_SPEED:
+        _gps_stable_count = 0  # 점프 발생 → 안정화 카운터 리셋
+        return True
+
+    return False
+# ── [/FIX-2] ──
+
+
 def calculate_distance_haversine(lat1: float, lon1: float,
-                                  lat2: float, lon2: float) -> float:
+                                 lat2: float, lon2: float) -> float:
     R = 6371000.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     d_phi = math.radians(lat2 - lat1)
@@ -124,18 +182,6 @@ def _figure_eight_target(my_E: float, my_N: float,
     return tgt_E + offset_E, tgt_N + offset_N
 
 
-def update_altitude(alt_m: float):
-    global altitude_m, L_DISTANCE
-    altitude_m = alt_m
-
-    if alt_m > ALT_HIGH:
-        L_DISTANCE = L_DISTANCE_HIGH
-    elif alt_m < ALT_LOW:
-        L_DISTANCE = L_DISTANCE_LOW
-    else:
-        L_DISTANCE = L_DISTANCE_BASE
-
-
 def set_start_coordinates(lat: float, lon: float):
     start_point.lat = lat
     start_point.lon = lon
@@ -146,13 +192,10 @@ def set_target_coord(lat: float, lon: float):
     target.lon = lon
 
 
-def draw_pattern():
-    return
-
-
-def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt, is_final):
+# ── [FIX-5] is_final 파라미터 제거 — 패턴은 state 5까지 계속 ──
+def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
     rate_error = desired_yaw_rate - measured_yaw_rate
-    max_cmd = MAX_YAW_RATE_FINAL if is_final else cascade_pi.MAX_CMD
+    max_cmd = cascade_pi.MAX_CMD
 
     u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
@@ -164,10 +207,12 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt, is_final):
 
     u_sat = max(-max_cmd, min(max_cmd, u))
     return u_sat
+# ── [/FIX-5] ──
+
 
 def guidance(imu_data, gps_vector, gps_fidelity, target_data,
-             patterned: bool = False) -> types.SimpleNamespace:
-    global wind_effect, last_time
+             baro_m: float = 0.0, patterned: bool = False) -> types.SimpleNamespace:
+    global wind_effect, last_time, L_DISTANCE
 
     now = time.time()
     dt = now - last_time if last_time else 0.1
@@ -175,55 +220,43 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         dt = 0.1
     last_time = now
 
-    def _result(**kw):
-        defaults = dict(
-            commanded_yaw_rate=0.0, heading_error=0.0,
-            desired_course=0.0, desired_heading=0.0,
-            desired_yaw_rate=0.0, measured_yaw_rate=imu_data.gyrz,
-            u_before_sat=0.0, u_after_sat=0.0,
-            integral=cascade_pi.pi_integral,
-            wind_effect=wind_effect, distance=0.0,
-            altitude=altitude_m, l_distance=L_DISTANCE,
-            patterned=patterned,
-            pattern_wp_E=0.0, pattern_wp_N=0.0,
-            state="UNKNOWN",
-            gps_speed=gps_vector.speed, gps_course=gps_vector.course,
-            yaw=imu_data.yaw
-        )
-        defaults.update(kw)
-        return types.SimpleNamespace(**defaults)
-
     if not is_gps_valid(gps_vector.lat, gps_vector.lon,
                         gps_fidelity.fix_quality, gps_fidelity.sats,
                         gps_fidelity.rmc_status):
-        return _result(state="GPS_INVALID")
+        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+
+    # ── [FIX-2] GPS 순간 이동 / 초기 불안정 감지 ──
+    if _is_gps_jump(gps_vector.lat, gps_vector.lon):
+        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+    # ── [/FIX-2] ──
+
+    # ── [FIX-3] 기압계 고도 0.0 방어 (guidance 레벨) ──
+    if baro_m <= 0.0:
+        return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+    # ── [/FIX-3] ──
 
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(target_data.lat, target_data.lon)
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
     if distance < 5.0:
-        return _result(distance=distance, state="TARGET_REACHED")
+        return types.SimpleNamespace(state="TARGET_REACHED", distance=distance, commanded_yaw_rate=0.0)
 
-    pattern_wp_E, pattern_wp_N = 0.0, 0.0
-
-    is_final = (altitude_m > 0.0 and altitude_m < FINAL_APPROACH_ALT)
-
-    if patterned and not is_final:
-        pattern_wp_E, pattern_wp_N = _figure_eight_target(
-            my_E, my_N, tgt_E, tgt_N
-        )
-        guide_E, guide_N = pattern_wp_E, pattern_wp_N
-        phase = "PATTERN"
-
-    elif is_final:
-        guide_E, guide_N = tgt_E, tgt_N
-        phase = "FINAL"
-
+    if baro_m > ALT_HIGH:
+        L_DISTANCE = L_DISTANCE_HIGH
+    elif baro_m < ALT_LOW:
+        L_DISTANCE = L_DISTANCE_LOW
     else:
-        cE, cN = _carrot(my_E, my_N, tgt_E, tgt_N)
-        guide_E, guide_N = cE, cN
+        L_DISTANCE = L_DISTANCE_BASE
+
+    # ── [FIX-5] 패턴 모드가 활성화되면 고도 무관하게 유지 (state 5 전까지) ──
+    if patterned:
+        guide_E, guide_N = _figure_eight_target(my_E, my_N, tgt_E, tgt_N)
+        phase = "PATTERN"
+    else:
+        guide_E, guide_N = _carrot(my_E, my_N, tgt_E, tgt_N)
         phase = "HOMING"
+    # ── [/FIX-5] ──
 
     desired_course = math.degrees(
         math.atan2(guide_E - my_E, guide_N - my_N)
@@ -234,8 +267,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         wind_effect = 0.95 * wind_effect + 0.05 * current_crab
 
     desired_heading = _wrap_180(desired_course - wind_effect)
-
     heading_error = _wrap_180(desired_heading - imu_data.yaw)
+
     V = max(gps_vector.speed, 1.0)
     desired_yaw_rate = math.degrees(
         2.0 * (V / L_DISTANCE) * math.sin(math.radians(heading_error))
@@ -243,28 +276,21 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
 
     if abs(heading_error) <= cascade_pi.DEADBAND:
         cascade_pi.pi_integral = 0.0
-        u_before_sat = 0.0
-        u_after_sat = 0.0
+        commanded_yaw_rate = 0.0
         if phase == "HOMING":
             phase = "STRAIGHT"
     else:
-        u_before_sat, u_after_sat, _ = _yaw_rate_pi_control(
-            desired_yaw_rate, math.degrees(imu_data.gyrz), dt, is_final
+        # ── [FIX-5] is_final 파라미터 제거 ──
+        commanded_yaw_rate = _yaw_rate_pi_control(
+            desired_yaw_rate, math.degrees(imu_data.gyrz), dt
         )
+        # ── [/FIX-5] ──
         if phase == "HOMING":
             phase = "TURNING"
 
-    return _result(
-        commanded_yaw_rate=u_after_sat,
-        heading_error=heading_error,
-        desired_course=desired_course,
-        desired_heading=desired_heading,
-        desired_yaw_rate=desired_yaw_rate,
-        u_before_sat=u_before_sat,
-        u_after_sat=u_after_sat,
-        integral=cascade_pi.pi_integral,
+    # 꼭 필요한 제어 명령과 상태값만 간결하게 반환합니다.
+    return types.SimpleNamespace(
+        state=phase,
         distance=distance,
-        pattern_wp_E=pattern_wp_E,
-        pattern_wp_N=pattern_wp_N,
-        state=phase
+        commanded_yaw_rate=commanded_yaw_rate
     )
