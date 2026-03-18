@@ -163,7 +163,7 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt, is_final):
         u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
     u_sat = max(-max_cmd, min(max_cmd, u))
-    return u, u_sat, cascade_pi.pi_integral
+    return u_sat
 
 def guidance(imu_data, gps_vector, gps_fidelity, target_data,
              patterned: bool = False) -> types.SimpleNamespace:
@@ -249,7 +249,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
             phase = "STRAIGHT"
     else:
         u_before_sat, u_after_sat, _ = _yaw_rate_pi_control(
-            desired_yaw_rate, imu_data.gyrz, dt, is_final
+            desired_yaw_rate, math.degrees(imu_data.gyrz), dt, is_final
         )
         if phase == "HOMING":
             phase = "TURNING"
