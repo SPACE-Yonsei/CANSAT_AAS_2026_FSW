@@ -150,37 +150,20 @@ def draw_pattern():
     return
 
 
-def _yaw_rate_pi_control(desired_yaw_rate: float,
-                         measured_yaw_rate: float,
-                         dt: float,
-                         is_final: bool) -> tuple:
+def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt, is_final):
     rate_error = desired_yaw_rate - measured_yaw_rate
-
-    u_before_sat = (cascade_pi.Kp_inner * rate_error
-                    + cascade_pi.Ki_inner * cascade_pi.pi_integral)
-
     max_cmd = MAX_YAW_RATE_FINAL if is_final else cascade_pi.MAX_CMD
 
-    u_after_sat = max(-max_cmd, min(max_cmd, u_before_sat))
+    u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
-    is_saturated = abs(u_before_sat) > max_cmd
-    error_deepens_sat = (rate_error * u_before_sat > 0.0)
-
-    if is_saturated and error_deepens_sat:
-        pass
-    else:
+    if abs(u) < max_cmd or (rate_error * u < 0):
         cascade_pi.pi_integral += rate_error * dt
-        cascade_pi.pi_integral = max(
-            -cascade_pi.MAX_INTEGRAL,
-            min(cascade_pi.MAX_INTEGRAL, cascade_pi.pi_integral)
-        )
+        cascade_pi.pi_integral = max(-cascade_pi.MAX_INTEGRAL,
+                                     min(cascade_pi.MAX_INTEGRAL, cascade_pi.pi_integral))
+        u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
-    u_before_sat = (cascade_pi.Kp_inner * rate_error
-                    + cascade_pi.Ki_inner * cascade_pi.pi_integral)
-    u_after_sat = max(-max_cmd, min(max_cmd, u_before_sat))
-
-    return u_before_sat, u_after_sat, cascade_pi.pi_integral
-
+    u_sat = max(-max_cmd, min(max_cmd, u))
+    return u, u_sat, cascade_pi.pi_integral
 
 def guidance(imu_data, gps_vector, gps_fidelity, target_data,
              patterned: bool = False) -> types.SimpleNamespace:
