@@ -193,15 +193,8 @@ def control_parafoil():
         with update_lock:
             if state >= 3 and motor_enabled and pi is not None:
 
-                gps_data = types.SimpleNamespace(
-                    lat=GpsVector.lat, lon=GpsVector.lon,
-                    speed=GpsVector.speed, course=GpsVector.course,
-                    fix_quality=GpsFidelity.fix_quality,
-                    sats=GpsFidelity.sats, rmc_status=GpsFidelity.rmc_status
-                )
-
                 result = motor_guidance.guidance(
-                    altitude, gps_data, target, patterned=patterned
+                    altitude, GpsVector, GpsFidelity, target, patterned=patterned
                 )
 
                 motor_result = motor_control.apply_differential_deflection(

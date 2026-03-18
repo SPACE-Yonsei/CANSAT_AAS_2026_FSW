@@ -182,7 +182,7 @@ def _yaw_rate_pi_control(desired_yaw_rate: float,
     return u_before_sat, u_after_sat, cascade_pi.pi_integral
 
 
-def guidance(imu_data, gps_data, target_data,
+def guidance(imu_data, gps_vector, gps_fidelity, target_data,
              patterned: bool = False) -> types.SimpleNamespace:
     global wind_effect, last_time
 
@@ -204,18 +204,18 @@ def guidance(imu_data, gps_data, target_data,
             patterned=patterned,
             pattern_wp_E=0.0, pattern_wp_N=0.0,
             state="UNKNOWN",
-            gps_speed=gps_data.speed, gps_course=gps_data.course,
+            gps_speed=gps_vector.speed, gps_course=gps_vector.course,
             yaw=imu_data.yaw
         )
         defaults.update(kw)
         return types.SimpleNamespace(**defaults)
 
-    if not is_gps_valid(gps_data.lat, gps_data.lon,
-                        gps_data.fix_quality, gps_data.sats,
-                        gps_data.rmc_status):
+    if not is_gps_valid(gps_vector.lat, gps_vector.lon,
+                        gps_fidelity.fix_quality, gps_fidelity.sats,
+                        gps_fidelity.rmc_status):
         return _result(state="GPS_INVALID")
 
-    my_E, my_N = _llh_to_en(gps_data.lat, gps_data.lon)
+    my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(target_data.lat, target_data.lon)
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
@@ -246,14 +246,14 @@ def guidance(imu_data, gps_data, target_data,
         math.atan2(guide_E - my_E, guide_N - my_N)
     )
 
-    if gps_data.speed > 1.0 and abs(imu_data.gyrz) < 20.0:
-        current_crab = _wrap_180(gps_data.course - imu_data.yaw)
+    if gps_vector.speed > 1.0 and abs(imu_data.gyrz) < 20.0:
+        current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
         wind_effect = 0.95 * wind_effect + 0.05 * current_crab
 
     desired_heading = _wrap_180(desired_course - wind_effect)
 
     heading_error = _wrap_180(desired_heading - imu_data.yaw)
-    V = max(gps_data.speed, 1.0)
+    V = max(gps_vector.speed, 1.0)
     desired_yaw_rate = math.degrees(
         2.0 * (V / L_DISTANCE) * math.sin(math.radians(heading_error))
     )
