@@ -137,6 +137,8 @@ def handle_flight_state(data: str):
     # ── [FIX-4] 핸들러에도 lock 적용 ──
     with update_lock:
         state = int(data)
+        if state == 3:
+            motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
         if state == 4:
             patterned = False
     # ── [/FIX-4] ──
