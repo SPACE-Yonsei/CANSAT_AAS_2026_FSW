@@ -251,12 +251,13 @@ def control_parafoil():
                 log("Baro altitude not ready (0.0) – neutral", events.EventType.warning)
                 time.sleep(CONTROL_LOG_INTERVAL)
                 continue
-            # ── [/FIX-3] ──
-
-            # ── [FIX-5] 30m 이하에서 패턴 모드 자동 진입 ──
-            if _baro_m <= 30.0:
-                _patterned = True
-            # ── [/FIX-5] ──
+            # ── [수정] 고도별 비행 모드 세분화 ──
+            if _baro_m <= 10.0:
+                _patterned = False # 10m 이하에서는 패턴을 풀고 타겟으로 직진 (Final)
+            elif _baro_m <= 30.0:
+                _patterned = True  # 30~10m 구간에서는 체공을 위해 8자 비행 (Pattern)
+            else:
+                _patterned = False # 30m 이상에서는 타겟을 향해 호밍 (Homing)
 
             result = motor_guidance.guidance(
                 _imu, _gps, _fidelity, _target,

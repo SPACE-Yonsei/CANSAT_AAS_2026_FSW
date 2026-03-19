@@ -381,8 +381,8 @@ for step in range(MAX_STEPS):
     effective_delta = step_servo(motor_result.actual_delta_deg, DT)
 
     # 8. Aerodynamics update
-    Va_fwd       = max(VA_BASE - 0.06 * abs(effective_delta), 4.0)
-    descent_rate = max(DESCENT_BASE + 0.004 * effective_delta ** 2 + turb_w * 0.3, 1.0)
+    Va_fwd       = max(VA_BASE - 0.03 * abs(effective_delta), 4.0)
+    descent_rate = max(DESCENT_BASE + 0.001 * effective_delta ** 2 + turb_w * 0.3, 1.0)
     yaw_rate_phy = effective_delta * (Va_fwd / VA_BASE)
 
     # 9. Pendulum

@@ -41,20 +41,34 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
         pi.stop()
 
-
 def actuator_mixer(commanded_yaw_rate: float) -> tuple:
     desired_delta_deg = commanded_yaw_rate / K_delta
 
-    left_raw  = NEUTRAL_DEG + desired_delta_deg / 2.0
-    right_raw = NEUTRAL_DEG - desired_delta_deg / 2.0
+    # [수정됨] 양수(+) 명령(우선회)일 때 오른쪽(Right) 모터를 당기도록 부호 반전
+    left_raw  = NEUTRAL_DEG - desired_delta_deg / 2.0
+    right_raw = NEUTRAL_DEG + desired_delta_deg / 2.0
 
     left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
     right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
 
-    actual_delta_deg = left_cmd_deg - right_cmd_deg
+    # 실제 각도 차이도 (오른쪽 - 왼쪽)으로 기준을 맞춤
+    actual_delta_deg = right_cmd_deg - left_cmd_deg
     expected_yaw_rate = K_delta * actual_delta_deg
 
     return left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
+# def actuator_mixer(commanded_yaw_rate: float) -> tuple:
+#     desired_delta_deg = commanded_yaw_rate / K_delta
+
+#     left_raw  = NEUTRAL_DEG + desired_delta_deg / 2.0
+#     right_raw = NEUTRAL_DEG - desired_delta_deg / 2.0
+
+#     left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
+#     right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
+
+#     actual_delta_deg = left_cmd_deg - right_cmd_deg
+#     expected_yaw_rate = K_delta * actual_delta_deg
+
+#     return left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
 
 
 def _servo_pulse_left(angle_deg: float) -> int:

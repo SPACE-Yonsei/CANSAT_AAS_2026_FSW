@@ -261,10 +261,13 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
     desired_course = math.degrees(
         math.atan2(guide_E - my_E, guide_N - my_N)
     )
-
     if gps_vector.speed > 1.0 and abs(imu_data.gyrz) < 20.0:
         current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
-        wind_effect = 0.95 * wind_effect + 0.15 * current_crab
+        # [수정] 정상적인 비행 상태(오차가 60도 미만)일 때만 바람을 학습합니다.
+        if abs(current_crab) < 60.0:
+            wind_effect = 0.85 * wind_effect + 0.15 * current_crab
+            # [수정] 캔셋이 버틸 수 있는 최대 각도(±45도)로 리미트를 강제합니다.
+            wind_effect = max(-45.0, min(45.0, wind_effect))
 
     desired_heading = _wrap_180(desired_course - wind_effect)
     heading_error = _wrap_180(desired_heading - imu_data.yaw)
