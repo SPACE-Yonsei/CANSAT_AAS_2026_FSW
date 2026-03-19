@@ -18,9 +18,9 @@ start_point = types.SimpleNamespace(lat=0.0, lon=0.0)
 
 LAT_TO_METER = 111320.0
 
-L_DISTANCE      = 15.0
-L_DISTANCE_BASE = 15.0
-L_DISTANCE_HIGH = 25.0
+L_DISTANCE      = 25.0
+L_DISTANCE_BASE = 25.0
+L_DISTANCE_HIGH = 40.0
 L_DISTANCE_LOW  = 10.0
 
 ALT_HIGH = 100.0
@@ -264,7 +264,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
 
     if gps_vector.speed > 1.0 and abs(imu_data.gyrz) < 20.0:
         current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
-        wind_effect = 0.95 * wind_effect + 0.05 * current_crab
+        wind_effect = 0.95 * wind_effect + 0.15 * current_crab
 
     desired_heading = _wrap_180(desired_course - wind_effect)
     heading_error = _wrap_180(desired_heading - imu_data.yaw)

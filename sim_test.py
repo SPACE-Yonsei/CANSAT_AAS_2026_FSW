@@ -321,25 +321,25 @@ check("set_neutral → 좌/우 neutral pulse",
       f"L={lp}, R={rp} (expect L={motor_control.LEFT_NEUTRAL}, R={motor_control.RIGHT_NEUTRAL})")
 
 # 양수 yaw rate → 좌 당김 > 우 당김
-res = motor_control.apply_differential_deflection(mock_pi, 30.0)
+res = motor_control.control(mock_pi, 30.0)
 check("yaw_rate=+30 → left_deg > right_deg (좌선회)",
       res.left_cmd_deg > res.right_cmd_deg,
       f"L={res.left_cmd_deg:.1f}°, R={res.right_cmd_deg:.1f}°")
 
 # 음수 yaw rate → 우 당김 > 좌 당김
-res = motor_control.apply_differential_deflection(mock_pi, -30.0)
+res = motor_control.control(mock_pi, -30.0)
 check("yaw_rate=-30 → right_deg > left_deg (우선회)",
       res.right_cmd_deg > res.left_cmd_deg,
       f"L={res.left_cmd_deg:.1f}°, R={res.right_cmd_deg:.1f}°")
 
 # yaw_rate=0 → 대칭
-res = motor_control.apply_differential_deflection(mock_pi, 0.0)
+res = motor_control.control(mock_pi, 0.0)
 check("yaw_rate=0 → 좌우 대칭",
       abs(res.left_cmd_deg - res.right_cmd_deg) < 0.01,
       f"L={res.left_cmd_deg:.1f}°, R={res.right_cmd_deg:.1f}°")
 
 # 포화 테스트
-res = motor_control.apply_differential_deflection(mock_pi, 999.0)
+res = motor_control.control(mock_pi, 999.0)
 check("극단 yaw_rate → pulse 범위 내",
       motor_control.PULSE_MIN <= res.left_pulse <= motor_control.PULSE_MAX,
       f"L_pw={res.left_pulse}, R_pw={res.right_pulse}")
@@ -556,7 +556,7 @@ for step, (alt, patterned_flag, flight_state) in enumerate(altitude_profile):
         continue
 
     result = motor_guidance.guidance(im, g, f, tgt, baro_m=float(alt), patterned=patterned_flag)
-    mr = motor_control.apply_differential_deflection(sim_pi, result.commanded_yaw_rate)
+    mr = motor_control.control(sim_pi, result.commanded_yaw_rate)
     phase_history.append(result.state)
 
     # 매 10 step 또는 중요 구간만 출력

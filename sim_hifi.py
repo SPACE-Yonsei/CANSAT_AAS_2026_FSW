@@ -117,7 +117,7 @@ VA_BASE      = 8.0    # m/s, glide speed
 DESCENT_BASE = 3.0    # m/s, nominal sink rate
 
 # ── Wind model constants ──────────────────────────────────────────────────────
-WIND_U_REF = 10.0     # m/s at reference altitude
+WIND_U_REF = 5.0     # m/s at reference altitude
 WIND_Z_REF = 600.0    # m
 WIND_ALPHA  = 0.35    # power-law exponent
 
@@ -160,7 +160,7 @@ MAX_STEPS = 3000
 
 rng = np.random.default_rng(42)
 bearing_deg  = float(rng.uniform(30, 70))
-distance_m   = float(rng.uniform(1200, 1500))
+distance_m   = float(rng.uniform(500, 600))
 wind_dir_met = float(rng.uniform(280, 340))    # FROM direction (met convention)
 
 target_E = distance_m * math.sin(math.radians(bearing_deg))
@@ -377,7 +377,7 @@ for step in range(MAX_STEPS):
     phase  = guidance_result.state
 
     # 7. Motor control (actuator mixer + servo command)
-    motor_result   = motor_control.apply_differential_deflection(mock_pi, cmd_yr)
+    motor_result   = motor_control.control(mock_pi, cmd_yr)
     effective_delta = step_servo(motor_result.actual_delta_deg, DT)
 
     # 8. Aerodynamics update

@@ -263,7 +263,7 @@ def control_parafoil():
                 baro_m=_baro_m, patterned=_patterned
             )
 
-            motor_result = motor_control.apply_differential_deflection(
+            motor_result = motor_control.control(
                 pi, result.commanded_yaw_rate
             )
 

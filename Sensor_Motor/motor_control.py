@@ -67,7 +67,7 @@ def _servo_pulse_right(angle_deg: float) -> int:
     return max(PULSE_MIN, min(PULSE_MAX, pulse))
 
 
-def apply_differential_deflection(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
+def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
     left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate = \
         actuator_mixer(commanded_yaw_rate)
 
