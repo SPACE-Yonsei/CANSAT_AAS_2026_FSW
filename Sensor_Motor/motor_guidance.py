@@ -23,6 +23,8 @@ L_DISTANCE_BASE = 25.0
 L_DISTANCE_HIGH = 40.0
 L_DISTANCE_LOW  = 10.0
 
+PATTERN_ENTRY_DIST = 40.0  # m — only enter figure-8 when this close to target
+
 ALT_HIGH = 100.0
 ALT_LOW  = 30.0
 
@@ -39,7 +41,7 @@ _pattern = types.SimpleNamespace(
 # ── [FIX-2] GPS 순간 이동 감지용 상태 ──
 _prev_gps = types.SimpleNamespace(lat=0.0, lon=0.0, time=0.0, initialized=False)
 GPS_JUMP_MAX_SPEED = 50.0  # m/s — 파라포일이 절대 낼 수 없는 속도 (≈180 km/h)
-GPS_STABLE_COUNT_REQUIRED = 5  # Fix 직후 안정화까지 무시할 샘플 수
+GPS_STABLE_COUNT_REQUIRED = 2  # Fix 직후 안정화까지 무시할 샘플 수
 _gps_stable_count = 0
 # ── [/FIX-2] ──
 
@@ -250,7 +252,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         L_DISTANCE = L_DISTANCE_BASE
 
     # ── [FIX-5] 패턴 모드가 활성화되면 고도 무관하게 유지 (state 5 전까지) ──
-    if patterned:
+    if patterned and distance < PATTERN_ENTRY_DIST:
         guide_E, guide_N = _figure_eight_target(my_E, my_N, tgt_E, tgt_N)
         phase = "PATTERN"
     else:
@@ -261,14 +263,6 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
     desired_course = math.degrees(
         math.atan2(guide_E - my_E, guide_N - my_N)
     )
-    if gps_vector.speed > 1.0 and abs(imu_data.gyrz) < 20.0:
-        current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
-        # [수정] 정상적인 비행 상태(오차가 60도 미만)일 때만 바람을 학습합니다.
-        if abs(current_crab) < 60.0:
-            wind_effect = 0.85 * wind_effect + 0.15 * current_crab
-            # [수정] 캔셋이 버틸 수 있는 최대 각도(±45도)로 리미트를 강제합니다.
-            wind_effect = max(-45.0, min(45.0, wind_effect))
-
     desired_heading = _wrap_180(desired_course - wind_effect)
     heading_error = _wrap_180(desired_heading - imu_data.yaw)
 
@@ -282,6 +276,11 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         commanded_yaw_rate = 0.0
         if phase == "HOMING":
             phase = "STRAIGHT"
+        # Wind learning only when flying straight — no turn contamination
+        if gps_vector.speed > 1.0:
+            current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
+            wind_effect = 0.85 * wind_effect + 0.15 * current_crab
+            wind_effect = max(-45.0, min(45.0, wind_effect))
     else:
         # ── [FIX-5] is_final 파라미터 제거 ──
         commanded_yaw_rate = _yaw_rate_pi_control(
