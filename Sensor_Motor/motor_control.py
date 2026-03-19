@@ -106,3 +106,10 @@ def set_neutral(pi):
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
+
+
+def set_motors_off(pi):
+    """서보 신호 완전 차단 (LANDED state용)"""
+    if pi is not None:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)

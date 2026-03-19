@@ -40,7 +40,6 @@ def log_control(g, m):
 
 running = True
 motor_enabled = True
-patterned = False
 pi = None
 target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
@@ -133,25 +132,14 @@ def handle_target_coord(data: str):
 
 
 def handle_flight_state(data: str):
-    global state, patterned
+    global state
     # ── [FIX-4] 핸들러에도 lock 적용 ──
     with update_lock:
         state = int(data)
         if state == 3:
             motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
-        if state == 4:
-            patterned = False
     # ── [/FIX-4] ──
     log(f"Flight state: {state}")
-
-
-def handle_pull_arms(data=None):
-    global patterned
-    # ── [FIX-4] 핸들러에도 lock 적용 ──
-    with update_lock:
-        patterned = True
-    # ── [/FIX-4] ──
-    log("Pattern mode activated (figure-eight)")
 
 
 def handle_release():
@@ -187,7 +175,6 @@ MSG_HANDLERS = {
     appargs.FlightlogicAppArg.MID_motor_state:     handle_flight_state,
     appargs.FlightlogicAppArg.MID_motor_burnwire:  lambda d: handle_release(),
     appargs.FlightlogicAppArg.MID_motor_EggDrop:   lambda d: handle_egg_drop(),
-    appargs.FlightlogicAppArg.MID_motor_PullArms:  lambda d: handle_pull_arms(),
     appargs.CommAppArg.MID_RouteCmd_MEC:           handle_mec,
 }
 
@@ -200,13 +187,20 @@ def dispatch(msg: msgstructure.MsgStructure):
         log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
 
+def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
+    """고도와 state로 8자 비행 여부 결정."""
+    if flight_state == 4:
+        return alt_m > 10.0   # EGG: 10m 초과 → 8자, 10m 이하 → 당근 (Final)
+    return False               # state 3: 당근 제어 (호밍)
+
+
 def control_parafoil():
+    motors_off = False
     while running:
         # ── [FIX-4] lock 범위를 스냅샷 복사로 최소화 ──
         with update_lock:
             _state       = state
             _motor_en    = motor_enabled
-            _patterned   = patterned
             _baro_m      = baro_m
             _gps         = types.SimpleNamespace(
                 lat=GpsVector.lat, lon=GpsVector.lon,
@@ -225,13 +219,16 @@ def control_parafoil():
 
         if _state >= 3 and _motor_en and pi is not None:
 
-            # ── [FIX-6] State 5 즉시 정지 → 제어 파이프라인 완전 건너뜀 ──
+            # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
             if _state == 5:
-                log("State 5: stopping motors", events.EventType.warning)
-                motor_control.set_neutral(pi)
+                if not motors_off:
+                    motor_control.set_motors_off(pi)
+                    motors_off = True
+                    log("State 5: motors off", events.EventType.warning)
                 time.sleep(CONTROL_LOG_INTERVAL)
                 continue
-            # ── [/FIX-6] ──
+
+            motors_off = False
 
             # ── [FIX-1] Stale 데이터 감지 → Fail-safe 중립 ──
             now = time.time()
@@ -253,13 +250,9 @@ def control_parafoil():
                 log("Baro altitude not ready (0.0) – neutral", events.EventType.warning)
                 time.sleep(CONTROL_LOG_INTERVAL)
                 continue
-            # ── [수정] 고도별 비행 모드 세분화 ──
-            if _baro_m <= 10.0:
-                _patterned = False # 10m 이하에서는 패턴을 풀고 타겟으로 직진 (Final)
-            elif _baro_m <= 30.0:
-                _patterned = True  # 30~10m 구간에서는 체공을 위해 8자 비행 (Pattern)
-            else:
-                _patterned = False # 30m 이상에서는 타겟을 향해 호밍 (Homing)
+            # ── [/FIX-3] ──
+
+            _patterned = _resolve_patterned(_state, _baro_m)
 
             result = motor_guidance.guidance(
                 _imu, _gps, _fidelity, _target,

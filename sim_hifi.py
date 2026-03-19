@@ -307,23 +307,26 @@ mock_pi = _MockPi()
 E   = 0.0
 N   = 0.0
 alt = 600.0
-heading     = float(rng.uniform(0.0, 360.0))
+heading      = float(rng.uniform(0.0, 360.0))
 yaw_rate_phy = 0.0
 Va_curr      = VA_BASE
-patterned    = False
+flight_state = 3  # mirrors flightlogicapp: 3=descending, 4=pattern, 5=landed
 
 # History accumulators
 h_E     = []; h_N     = []; h_alt   = []; h_t     = []
 h_cmdyr = []; h_phyyr = []; h_imuyz = []; h_phase = []
 h_wE    = []; h_wN    = []; h_servo = []
+h_state = []  # flight_state per step
 
 # Phase colour map for legend (2-D figure)
 PHASE_COLOUR = {
-    'TURNING':     'royalblue',
-    'HOMING':      'royalblue',
-    'STRAIGHT':    'green',
-    'PATTERN':     'darkorange',
-    'GPS_INVALID': 'red',
+    'TURNING':        'royalblue',
+    'HOMING':         'royalblue',
+    'STRAIGHT':       'green',
+    'PATTERN':        'darkorange',
+    'GPS_INVALID':    'red',
+    'TARGET_REACHED': 'gold',
+    'BARO_INVALID':   'red',
 }
 
 print()
@@ -334,7 +337,7 @@ print(f"  Target: bearing {bearing_deg:.1f} deg  dist {distance_m:.0f} m  "
 print("=" * 88)
 print(f"  {'Step':>5}  {'t[s]':>6}  {'alt[m]':>7}  {'dist[m]':>8}  "
       f"{'Phase':<12}  {'cmd_yr':>7}  {'phy_yr':>7}  {'servo':>7}  "
-      f"{'hdg':>6}  {'E[m]':>8}  {'N[m]':>8}")
+      f"{'hdg':>6}  {'E[m]':>8}  {'N[m]':>8}  {'st':>2}")
 print("-" * 88)
 
 gps_invalid_count = 0
@@ -363,9 +366,11 @@ for step in range(MAX_STEPS):
     imu_data          = sensor_imu(heading, yaw_rate_phy, pend_phi)
     baro_m            = sensor_baro(alt)
 
-    # 5. Pattern activation
-    if baro_m <= 30.0:
-        patterned = True
+    # 5. Pattern activation — mirrors motorapp._resolve_patterned logic:
+    #    state==4, baro>10m → True (8자 비행)
+    #    state==4, baro<=10m → False (당근, Final)
+    #    state==3 → False (당근, 호밍)
+    patterned = (flight_state == 4) and (baro_m > 10.0)
 
     # 6. Guidance
     target_ns      = SimpleNamespace(lat=target_lat, lon=target_lon)
@@ -397,6 +402,14 @@ for step in range(MAX_STEPS):
     alt -= descent_rate * DT
     Va_curr = Va_fwd
 
+    # State transitions — mirrors flightlogicapp behaviour:
+    #   state 3→4 when alt drops below 50 m,
+    #   state 4→5 on touchdown (alt<=0)
+    if flight_state == 3 and alt < 50.0:
+        flight_state = 4
+    if alt <= 0.0:
+        flight_state = 5
+
     # 11. Statistics
     if phase == 'GPS_INVALID':
         gps_invalid_count += 1
@@ -409,6 +422,7 @@ for step in range(MAX_STEPS):
     h_imuyz.append(math.degrees(imu_data.gyrz))
     h_phase.append(phase); h_wE.append(wE); h_wN.append(wN)
     h_servo.append(servo_delta_actual)
+    h_state.append(flight_state)
 
     # 13. Console print (every 20 steps, or every 5 in PATTERN)
     print_interval = 5 if phase == 'PATTERN' else 20
@@ -416,12 +430,12 @@ for step in range(MAX_STEPS):
     if step % print_interval == 0:
         print(f"  {step:>5}  {t:>6.1f}  {alt:>7.1f}  {dist_to_tgt:>8.1f}  "
               f"{phase:<12}  {cmd_yr:>7.2f}  {yaw_rate_phy:>7.2f}  {servo_delta_actual:>7.2f}  "
-              f"{heading:>6.1f}  {E:>8.1f}  {N:>8.1f}")
+              f"{heading:>6.1f}  {E:>8.1f}  {N:>8.1f}  {'st':>2}:{flight_state}")
 
-    # 14. Termination
-    if alt <= 0.0:
-        alt = 0.0
-        print(f"\n  [LANDED] step={step}  t={t:.1f}s  E={E:.1f}m  N={N:.1f}m")
+    # 14. Termination — state 5 means touchdown confirmed
+    if flight_state == 5:
+        motor_control.set_motors_off(mock_pi)
+        print(f"\n  [LANDED/STOP] step={step}  t={t:.1f}s  E={E:.1f}m  N={N:.1f}m  final_state={flight_state}")
         break
 
 print("-" * 88)
@@ -453,6 +467,12 @@ if line_len > 0.01:
         drift = math.hypot(lat_E, lat_N)
         if drift > max_drift:
             max_drift = drift
+
+# Flight state step counts
+state_counts = {3: 0, 4: 0, 5: 0}
+for s in h_state:
+    if s in state_counts:
+        state_counts[s] += 1
 
 print()
 print("=" * 60)
@@ -502,6 +522,13 @@ wE_repr, wN_repr = wind_at_alt(50.0)
 Va_repr = VA_BASE
 crab_repr = math.degrees(math.atan2(wE_repr, Va_repr))
 print(f"      True wind crab (@ 50 m, Va={Va_repr} m/s) : {crab_repr:.3f} deg")
+
+print("\n  [6] Flight State Breakdown")
+state_labels = {3: 'DESCENDING (state 3)', 4: 'PATTERN/LANDING (state 4)', 5: 'LANDED (state 5)'}
+for s in (3, 4, 5):
+    cnt = state_counts[s]
+    pct = 100.0 * cnt / max(total_steps, 1)
+    print(f"      {state_labels[s]:<28} : {cnt:>5} steps  ({pct:.1f} %  /  {cnt * DT:.1f} s)")
 
 print()
 print("=" * 60)
@@ -578,8 +605,8 @@ ax2.plot(E,        N,        'x', color='black', ms=10, mew=2.5,  zorder=5, labe
 theta = np.linspace(0, 2 * math.pi, 200)
 ax2.plot(target_E + 5  * np.cos(theta), target_N + 5  * np.sin(theta),
          'r--', linewidth=1.2, label='5 m zone')
-ax2.plot(target_E + 30 * np.cos(theta), target_N + 30 * np.sin(theta),
-         color='orange', linestyle='--', linewidth=1.0, label='30 m pattern zone')
+ax2.plot(target_E + 40 * np.cos(theta), target_N + 40 * np.sin(theta),
+         color='orange', linestyle='--', linewidth=1.0, label='40 m pattern zone')
 
 # Phase legend entries
 from matplotlib.lines import Line2D
@@ -600,8 +627,8 @@ ax2.grid(True, alpha=0.3)
 # ── Figure 3: Control response ────────────────────────────────────────────────
 fig3, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
 
-# Pattern altitude threshold mask for orange shading
-pattern_mask = alt_arr <= 30.0
+# Pattern altitude threshold mask for orange shading (matches 40 m activation)
+pattern_mask = alt_arr <= 40.0
 
 # Subplot 1: commanded vs physical yaw rate
 ax = axes[0]

@@ -10,7 +10,7 @@ cascade_pi = types.SimpleNamespace(
     pi_integral=0.0,
     MAX_INTEGRAL=15.0,
     DEADBAND=5.0,
-    MAX_CMD=60.0
+    MAX_CMD=120.0  # ±60° from neutral (neutral=60°, range [0°, 120°])
 )
 
 target = types.SimpleNamespace(lat=0.0, lon=0.0)
@@ -23,10 +23,10 @@ L_DISTANCE_BASE = 25.0
 L_DISTANCE_HIGH = 40.0
 L_DISTANCE_LOW  = 10.0
 
-PATTERN_ENTRY_DIST = 40.0  # m — only enter figure-8 when this close to target
+PATTERN_ENTRY_DIST = 50.0  # m — only enter figure-8 when this close to target
 
-ALT_HIGH = 100.0
-ALT_LOW  = 30.0
+ALT_HIGH = 300
+ALT_LOW  = 150
 
 wind_effect = 0.0
 last_time = None
