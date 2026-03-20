@@ -218,7 +218,7 @@ def control_parafoil():
             _last_imu_t  = last_imu_time
         # ── [/FIX-4] ──
 
-        if _state >= 3 and _motor_en and pi is not None:
+        if _state >= 3 and _motor_en:
 
             # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
             if _state == 5:
@@ -296,20 +296,25 @@ def init() -> bool:
     try:
         Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
-        pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
-        threads["ControlLog_Thread"] = threading.Thread(
-            target=control_parafoil,
-            name="ControlLog_Thread",
-            daemon=True
-        )
-        threads["ControlLog_Thread"].start()
-        log("Motors initialized (parafoil, burnwire, solenoid)")
-        return True
     except Exception as e:
         log(f"Init failed: {e}", events.EventType.error)
         running = False
         return False
+
+    try:
+        pi = motor_control.init_control()
+        log("Motors initialized (parafoil, burnwire, solenoid)")
+    except Exception as e:
+        log(f"pigpio unavailable, running without servo output: {e}", events.EventType.warning)
+
+    threads["ControlLog_Thread"] = threading.Thread(
+        target=control_parafoil,
+        name="ControlLog_Thread",
+        daemon=True
+    )
+    threads["ControlLog_Thread"].start()
+    return True
 
 
 def terminate():
