@@ -44,7 +44,7 @@ pi = None
 target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
 altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
-baro_m = 0.0
+baro_m = 400
 GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
 GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
 
@@ -59,6 +59,7 @@ STALE_THRESHOLD = 1.5  # 1.5초 이상 갱신 없으면 stale 판정
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
 CONTROL_LOG_INTERVAL = 0.1
+DEBUG_GUIDANCE = True  # guidance 디버그 프린트 on/off
 
 APP = appargs.MotorAppArg.AppName
 
@@ -254,6 +255,16 @@ def control_parafoil():
 
             _patterned = _resolve_patterned(_state, _baro_m)
 
+            if DEBUG_GUIDANCE:
+                print(
+                    f"[GUIDANCE IN ] "
+                    f"state={_state} baro={_baro_m:.1f}m patterned={_patterned} | "
+                    f"yaw={_imu.yaw:.1f}° gyrz={_imu.gyrz:.2f} | "
+                    f"gps=({_gps.lat:.6f},{_gps.lon:.6f}) spd={_gps.speed:.1f} crs={_gps.course:.1f} | "
+                    f"fix={_fidelity.fix_quality} sats={_fidelity.sats} rmc={_fidelity.rmc_status} | "
+                    f"target=({_target.lat:.6f},{_target.lon:.6f})"
+                )
+
             result = motor_guidance.guidance(
                 _imu, _gps, _fidelity, _target,
                 baro_m=_baro_m, patterned=_patterned
@@ -262,6 +273,14 @@ def control_parafoil():
             motor_result = motor_control.control(
                 pi, result.commanded_yaw_rate
             )
+
+            if DEBUG_GUIDANCE and motor_result is not None:
+                print(
+                    f"[MOTOR] "
+                    f"L: {motor_result.left_cmd_deg:6.1f}°  pw={motor_result.left_pulse} | "
+                    f"R: {motor_result.right_cmd_deg:6.1f}°  pw={motor_result.right_pulse} | "
+                    f"delta={motor_result.actual_delta_deg:+.1f}°  exp_yr={motor_result.expected_yaw_rate:+.2f}°/s"
+                )
 
             log_control(result, motor_result)
 

@@ -31,6 +31,8 @@ ALT_LOW  = 150
 wind_effect = 0.0
 last_time = None
 
+DEBUG_GUIDANCE = True  # 제어 내부 변수 프린트 on/off
+
 _pattern = types.SimpleNamespace(
     lobe_sign=1,
     last_switch_time=0.0,
@@ -289,6 +291,19 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         # ── [/FIX-5] ──
         if phase == "HOMING":
             phase = "TURNING"
+
+    if DEBUG_GUIDANCE:
+        print(
+            f"[CTRL] phase={phase:<8} "
+            f"dist={distance:.1f}m  L={L_DISTANCE:.1f}m | "
+            f"pos=({my_E:.1f},{my_N:.1f})  tgt=({tgt_E:.1f},{tgt_N:.1f})  "
+            f"carrot=({guide_E:.1f},{guide_N:.1f}) | "
+            f"des_crs={desired_course:.1f}°  wind={wind_effect:.1f}°  "
+            f"des_hdg={desired_heading:.1f}°  hdg_err={heading_error:.1f}° | "
+            f"V={V:.1f}m/s  des_yr={desired_yaw_rate:.2f}°/s  "
+            f"pi_int={cascade_pi.pi_integral:.3f}  cmd_yr={commanded_yaw_rate:.2f}°/s"
+            + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
+        )
 
     # 꼭 필요한 제어 명령과 상태값만 간결하게 반환합니다.
     return types.SimpleNamespace(
