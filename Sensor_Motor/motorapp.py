@@ -13,6 +13,14 @@ log_dir = "./sensorlogs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
+simlogfile = open("0320_sim.txt", "a")
+
+def _dbg(line: str):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    full = f"[{ts}] {line}"
+    print(full)
+    simlogfile.write(full + "\n")
+    simlogfile.flush()
 
 def log_control(g, m):
     t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
@@ -256,7 +264,7 @@ def control_parafoil():
             _patterned = _resolve_patterned(_state, _baro_m)
 
             if DEBUG_GUIDANCE:
-                print(
+                _dbg(
                     f"[GUIDANCE IN ] "
                     f"state={_state} baro={_baro_m:.1f}m patterned={_patterned} | "
                     f"yaw={_imu.yaw:.1f}° gyrz={_imu.gyrz:.2f} | "
@@ -275,12 +283,14 @@ def control_parafoil():
             )
 
             if DEBUG_GUIDANCE and motor_result is not None:
-                print(
+                _dbg(
                     f"[MOTOR] "
                     f"L: {motor_result.left_cmd_deg:6.1f}°  pw={motor_result.left_pulse} | "
                     f"R: {motor_result.right_cmd_deg:6.1f}°  pw={motor_result.right_pulse} | "
                     f"delta={motor_result.actual_delta_deg:+.1f}°  exp_yr={motor_result.expected_yaw_rate:+.2f}°/s"
                 )
+                simlogfile.write("---\n")
+                simlogfile.flush()
 
             log_control(result, motor_result)
 

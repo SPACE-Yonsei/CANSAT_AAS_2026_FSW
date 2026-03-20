@@ -2,6 +2,16 @@
 import math
 import time
 import types
+from datetime import datetime
+
+_sim_log = open("0320_sim.txt", "a")
+
+def _dbg(line: str):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    full = f"[{ts}] {line}"
+    print(full)
+    _sim_log.write(full + "\n")
+    _sim_log.flush()
 
 cascade_pi = types.SimpleNamespace(
     Kp_outer=0.6,
@@ -293,7 +303,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
             phase = "TURNING"
 
     if DEBUG_GUIDANCE:
-        print(
+        _dbg(
             f"[CTRL] phase={phase:<8} "
             f"dist={distance:.1f}m  L={L_DISTANCE:.1f}m | "
             f"pos=({my_E:.1f},{my_N:.1f})  tgt=({tgt_E:.1f},{tgt_N:.1f})  "
