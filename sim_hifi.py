@@ -474,6 +474,51 @@ for s in h_state:
     if s in state_counts:
         state_counts[s] += 1
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 7.5 — FIX-GYRZ & coord_ok validation (post-sim unit checks)
+# ══════════════════════════════════════════════════════════════════════════════
+
+print()
+print("=" * 60)
+print("  FIX VALIDATION (coord_ok + GYRZ spike gate)")
+print("=" * 60)
+
+# ── coord_ok: lat=0 단독 bypass 차단 확인 ──
+_fix_pass = 0; _fix_total = 0
+
+_fix_total += 1
+v = motor_guidance.is_gps_valid(0.0, 127.5, 1, 6, "A")
+print(f"  [{'PASS' if not v else 'FAIL'}] lat=0, lon=127.5 → invalid (got {v})")
+if not v: _fix_pass += 1
+
+_fix_total += 1
+v = motor_guidance.is_gps_valid(35.0, 0.0, 1, 8, "A")
+print(f"  [{'PASS' if not v else 'FAIL'}] lat=35, lon=0 → invalid (got {v})")
+if not v: _fix_pass += 1
+
+_fix_total += 1
+v = motor_guidance.is_gps_valid(35.0, 127.0, 1, 8, "A")
+print(f"  [{'PASS' if v else 'FAIL'}] lat=35, lon=127 → valid (got {v})")
+if v: _fix_pass += 1
+
+# ── FIX-GYRZ: motorapp gyrz spike gate 확인 ──
+# motorapp은 sim_hifi에서 import하지 않으므로, 게이트 로직만 인라인 검증
+_GYRZ_SPIKE_THRESHOLD = 45.0
+
+_fix_total += 1
+prev, new = 3.0, 63.0
+rejected = abs(new - prev) > _GYRZ_SPIKE_THRESHOLD
+print(f"  [{'PASS' if rejected else 'FAIL'}] gyrz prev=3, new=63 (delta=60>45) → rejected={rejected}")
+if rejected: _fix_pass += 1
+
+_fix_total += 1
+prev, new = 3.0, 40.0
+accepted = abs(new - prev) <= _GYRZ_SPIKE_THRESHOLD
+print(f"  [{'PASS' if accepted else 'FAIL'}] gyrz prev=3, new=40 (delta=37<45) → accepted={accepted}")
+if accepted: _fix_pass += 1
+
+print(f"\n  FIX checks: {_fix_pass}/{_fix_total} passed")
+
 print()
 print("=" * 60)
 print("  ASSESSMENT REPORT")

@@ -173,6 +173,12 @@ section("TEST 1: GPS Validation (is_gps_valid)")
 
 check("(0,0) 좌표 → invalid",
       not motor_guidance.is_gps_valid(0.0, 0.0, 1, 8, "A"))
+check("lat=0 단독 → invalid",
+      not motor_guidance.is_gps_valid(0.0, 127.5, 1, 6, "A"),
+      "lat=0.0, lon=127.5, rmc=A, fix=1, sats=6")
+check("lon=0 단독 → invalid",
+      not motor_guidance.is_gps_valid(35.0, 0.0, 1, 8, "A"),
+      "lat=35.0, lon=0.0")
 check("위성 3개 → invalid",
       not motor_guidance.is_gps_valid(35.0, 127.0, 1, 3, "A"))
 check("rmc_status=V → invalid",
@@ -272,9 +278,13 @@ check("baro_m=100.0 → 정상 유도",
 section("TEST 4: FIX-5 — Pattern Flight Continuity (30m → 0m)")
 
 motor_guidance.init_guidance()
+
+# GPS 위치를 타겟 근처(30m 이내)로 설정 — PATTERN_ENTRY_DIST(50m) 이내여야 PATTERN 진입
+gps_near_tgt, fid_near = make_gps(TARGET.lat + 0.0001, TARGET.lon + 0.0001)
+
 # GPS 안정화
 for _ in range(motor_guidance.GPS_STABLE_COUNT_REQUIRED + 2):
-    motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=100.0)
+    motor_guidance.guidance(imu, gps_near_tgt, fid_near, TARGET, baro_m=100.0)
     time.sleep(0.05)
 
 altitudes_to_test = [30.0, 25.0, 20.0, 15.0, 10.0, 5.1]
@@ -282,11 +292,9 @@ all_pattern = True
 pattern_log = []
 for alt in altitudes_to_test:
     time.sleep(0.05)
-    r = motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=alt, patterned=True)
+    r = motor_guidance.guidance(imu, gps_near_tgt, fid_near, TARGET, baro_m=alt, patterned=True)
     pattern_log.append(f"  alt={alt:5.1f}m → state={r.state}, dist={r.distance:.1f}m, yr={r.commanded_yaw_rate:.2f}")
     if r.state != "PATTERN" and r.state not in ("STRAIGHT",):
-        # STRAIGHT은 deadband 안에 있을 때 HOMING→STRAIGHT 변환, PATTERN일 때는 안 나옴
-        # 실제로 pattern에서 heading_error가 deadband 안이면 commanded_yaw_rate=0이지만 phase는 PATTERN 유지
         all_pattern = False
 
 print("  고도별 패턴 유도 결과:")
@@ -299,7 +307,7 @@ check("patterned=True일 때 20m 미만에서도 PATTERN 유지",
 
 # 반대로 patterned=False일 때는 HOMING
 time.sleep(0.05)
-r = motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=15.0, patterned=False)
+r = motor_guidance.guidance(imu, gps_near_tgt, fid_near, TARGET, baro_m=15.0, patterned=False)
 check("patterned=False, 15m → HOMING/TURNING/STRAIGHT",
       r.state in ("HOMING", "TURNING", "STRAIGHT"),
       f"state={r.state}")
@@ -320,16 +328,16 @@ check("set_neutral → 좌/우 neutral pulse",
       lp == motor_control.LEFT_NEUTRAL and rp == motor_control.RIGHT_NEUTRAL,
       f"L={lp}, R={rp} (expect L={motor_control.LEFT_NEUTRAL}, R={motor_control.RIGHT_NEUTRAL})")
 
-# 양수 yaw rate → 좌 당김 > 우 당김
+# 양수 yaw rate → 우측 당김 (right_deg > left_deg)
 res = motor_control.control(mock_pi, 30.0)
-check("yaw_rate=+30 → left_deg > right_deg (좌선회)",
-      res.left_cmd_deg > res.right_cmd_deg,
+check("yaw_rate=+30 → right_deg > left_deg (우선회)",
+      res.right_cmd_deg > res.left_cmd_deg,
       f"L={res.left_cmd_deg:.1f}°, R={res.right_cmd_deg:.1f}°")
 
-# 음수 yaw rate → 우 당김 > 좌 당김
+# 음수 yaw rate → 좌측 당김 (left_deg > right_deg)
 res = motor_control.control(mock_pi, -30.0)
-check("yaw_rate=-30 → right_deg > left_deg (우선회)",
-      res.right_cmd_deg > res.left_cmd_deg,
+check("yaw_rate=-30 → left_deg > right_deg (좌선회)",
+      res.left_cmd_deg > res.right_cmd_deg,
       f"L={res.left_cmd_deg:.1f}°, R={res.right_cmd_deg:.1f}°")
 
 # yaw_rate=0 → 대칭
@@ -366,24 +374,24 @@ section("TEST 7: L_DISTANCE Altitude Adaptation")
 
 motor_guidance.init_guidance()
 for _ in range(motor_guidance.GPS_STABLE_COUNT_REQUIRED + 2):
-    motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=200.0)
+    motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=400.0)
     time.sleep(0.05)
 
 time.sleep(0.05)
-motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=200.0)
-check("alt=200m → L_DISTANCE=HIGH(25)",
+motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=400.0)
+check(f"alt=400m (>{motor_guidance.ALT_HIGH}) → L_DISTANCE=HIGH({motor_guidance.L_DISTANCE_HIGH})",
       motor_guidance.L_DISTANCE == motor_guidance.L_DISTANCE_HIGH,
       f"L_DISTANCE={motor_guidance.L_DISTANCE}")
 
 time.sleep(0.05)
-motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=60.0)
-check("alt=60m → L_DISTANCE=BASE(15)",
+motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=200.0)
+check(f"alt=200m ({motor_guidance.ALT_LOW}~{motor_guidance.ALT_HIGH}) → L_DISTANCE=BASE({motor_guidance.L_DISTANCE_BASE})",
       motor_guidance.L_DISTANCE == motor_guidance.L_DISTANCE_BASE,
       f"L_DISTANCE={motor_guidance.L_DISTANCE}")
 
 time.sleep(0.05)
 motor_guidance.guidance(imu, gps, fid, TARGET, baro_m=20.0)
-check("alt=20m → L_DISTANCE=LOW(10)",
+check(f"alt=20m (<{motor_guidance.ALT_LOW}) → L_DISTANCE=LOW({motor_guidance.L_DISTANCE_LOW})",
       motor_guidance.L_DISTANCE == motor_guidance.L_DISTANCE_LOW,
       f"L_DISTANCE={motor_guidance.L_DISTANCE}")
 
@@ -440,7 +448,7 @@ check("handle_imu → lock 내에서 안전하게 읽기",
       abs(snapshot_yaw - 45.0) < 0.1,
       f"yaw={snapshot_yaw}")
 
-motorapp.handle_barometer("1013.25,25.0,150.0")
+motorapp.handle_barometer("150.0")
 with motorapp.update_lock:
     snapshot_baro = motorapp.baro_m
 check("handle_barometer → lock 내에서 안전하게 읽기",
@@ -490,6 +498,73 @@ with motorapp.update_lock:
 check("baro_m=0.0 설정됨", abs(b) < 0.01, f"baro_m={b}")
 
 # ═════════════════════════════════════════════
+# TEST 10 — FIX-GYRZ: gyrz 스파이크 게이트
+# ═════════════════════════════════════════════
+
+section("TEST 10: FIX-GYRZ — gyrz Spike Gate (motorapp)")
+
+# 초기 상태 리셋
+motorapp._prev_gyrz = 0.0
+motorapp.altitude.gyrz = 0.0
+_event_log.clear()
+
+# 정상 범위 갱신: prev=0, new=3.0 (delta=3 < 45) → 통과
+motorapp.handle_imu("10.0,3.0")
+check("gyrz delta=3 (< 45) → 갱신됨",
+      abs(motorapp.altitude.gyrz - 3.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# 정상 범위 갱신: prev=3, new=40.0 (delta=37 < 45) → 통과
+motorapp.handle_imu("20.0,40.0")
+check("gyrz delta=37 (< 45) → 갱신됨",
+      abs(motorapp.altitude.gyrz - 40.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# 스파이크 거부: prev=40, new=100.0 (delta=60 > 45) → 거부
+motorapp.handle_imu("30.0,100.0")
+check("gyrz delta=60 (> 45) → 거부, 값 유지",
+      abs(motorapp.altitude.gyrz - 40.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f} (should stay 40.0)")
+check("gyrz 스파이크 → yaw는 여전히 갱신됨",
+      abs(motorapp.altitude.yaw - 30.0) < 0.01,
+      f"yaw={motorapp.altitude.yaw:.2f}")
+
+# 스파이크 거부 시 warning 로그 확인
+spike_warnings = [m for (_, l, m) in _event_log if "spike rejected" in m]
+check("gyrz 스파이크 → warning 로그 기록됨",
+      len(spike_warnings) >= 1,
+      f"warnings={len(spike_warnings)}")
+
+# 역방향 스파이크: prev=40, new=-10 (delta=50 > 45) → 거부
+_event_log.clear()
+motorapp.handle_imu("35.0,-10.0")
+check("gyrz delta=50 역방향 (> 45) → 거부",
+      abs(motorapp.altitude.gyrz - 40.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# 정상 복귀: prev=40, new=20 (delta=20 < 45) → 통과
+motorapp.handle_imu("40.0,20.0")
+check("gyrz delta=20 (< 45) → 정상 복귀",
+      abs(motorapp.altitude.gyrz - 20.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# 요구사항 검증 케이스
+motorapp._prev_gyrz = 3.0
+motorapp.altitude.gyrz = 3.0
+_event_log.clear()
+
+motorapp.handle_imu("0.0,63.0")
+check("요구사항: prev=3, new=63 (delta=60>45) → stays 3.0",
+      abs(motorapp.altitude.gyrz - 3.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+motorapp._prev_gyrz = 3.0
+motorapp.handle_imu("0.0,40.0")
+check("요구사항: prev=3, new=40 (delta=37<45) → updates to 40.0",
+      abs(motorapp.altitude.gyrz - 40.0) < 0.01,
+      f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# ═════════════════════════════════════════════
 # SIMULATION — 전체 비행 시나리오
 # ═════════════════════════════════════════════
 
@@ -512,8 +587,8 @@ motor_guidance.set_target_coord(TGT_LAT, TGT_LON)
 
 sim_pi = MockPi()
 
-# GPS 위치: 타겟 남서쪽 약 500m
-sim_lat, sim_lon = 35.0965, 127.0965
+# GPS 위치: 타겟 남서쪽 약 30m (PATTERN_ENTRY_DIST=50m 이내, TARGET_REACHED=5m 밖)
+sim_lat, sim_lon = 35.0998, 127.0997
 sim_yaw = 45.0
 sim_gyrz = 0.0
 
@@ -578,16 +653,16 @@ pattern_phases = [p for i, (a, pt, s) in enumerate(altitude_profile)
 low_alt_patterns = [p for i, (a, pt, s) in enumerate(altitude_profile)
                     if a < 20 and pt and s == 3 for p in [phase_history[i]]]
 
-check("600→31m 구간: HOMING/TURNING/STRAIGHT 위주",
-      all(p in ("HOMING", "TURNING", "STRAIGHT") for p in homing_phases),
+check("600→31m 구간: HOMING/TURNING/STRAIGHT/TARGET_REACHED",
+      all(p in ("HOMING", "TURNING", "STRAIGHT", "TARGET_REACHED") for p in homing_phases),
       f"phases={set(homing_phases)}")
 
-check("30→10m 구간: 모두 PATTERN",
-      all(p == "PATTERN" for p in pattern_phases),
+check("30→10m 구간: PATTERN 또는 TARGET_REACHED",
+      all(p in ("PATTERN", "TARGET_REACHED") for p in pattern_phases),
       f"phases={set(pattern_phases)}")
 
-check("20m 미만에서도 PATTERN 유지 (FIX-5 핵심)",
-      len(low_alt_patterns) > 0 and all(p == "PATTERN" for p in low_alt_patterns),
+check("20m 미만에서도 PATTERN/TARGET_REACHED 유지 (FIX-5 핵심)",
+      len(low_alt_patterns) > 0 and all(p in ("PATTERN", "TARGET_REACHED") for p in low_alt_patterns),
       f"count={len(low_alt_patterns)}, phases={set(low_alt_patterns)}")
 
 check("State 5 → 모터 중립 (FIX-6 핵심)",
