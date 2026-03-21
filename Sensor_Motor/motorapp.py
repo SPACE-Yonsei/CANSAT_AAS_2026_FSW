@@ -214,9 +214,10 @@ def dispatch(msg: msgstructure.MsgStructure):
 
 def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
     """고도와 state로 8자 비행 여부 결정."""
-    if flight_state == 4:
-        return alt_m > 10.0   # EGG: 10m 초과 → 8자, 10m 이하 → 당근 (Final)
-    return False               # state 3: 당근 제어 (호밍)
+    return False  # [TEST] 패턴 비활성화 — 당근(호밍) 제어만 사용
+    # if flight_state == 4:
+    #     return alt_m > 10.0   # EGG: 10m 초과 → 8자, 10m 이하 → 당근 (Final)
+    # return False               # state 3: 당근 제어 (호밍)
 
 
 def control_parafoil():
