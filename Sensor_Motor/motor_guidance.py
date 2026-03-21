@@ -94,7 +94,8 @@ def _wrap_180(a: float) -> float:
 def is_gps_valid(lat: float, lon: float,
                  fix_quality: int = 0, sats: int = 0,
                  rmc_status: str = "V") -> bool:
-    coord_ok = (not (lat == 0.0 and lon == 0.0)
+    coord_ok = (lat != 0.0
+                and lon != 0.0
                 and abs(lat) <= 90.0
                 and abs(lon) <= 180.0)
     fidelity_ok = fix_quality >= 1 and sats >= 4 and rmc_status == "A"

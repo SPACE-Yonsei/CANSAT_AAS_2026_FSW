@@ -64,6 +64,11 @@ last_imu_time = 0.0
 STALE_THRESHOLD = 1.5  # 1.5초 이상 갱신 없으면 stale 판정
 # ── [/FIX-1] ──
 
+# ── [FIX-GYRZ] gyrz 스파이크 게이트 ──
+GYRZ_SPIKE_THRESHOLD = 45.0  # °/s — 틱 간 최대 허용 델타
+_prev_gyrz = 0.0
+# ── [/FIX-GYRZ] ──
+
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
 CONTROL_LOG_INTERVAL = 0.1
@@ -102,15 +107,22 @@ def handle_gps(data: str):
 
 
 def handle_imu(data: str):
-    global last_imu_time
+    global last_imu_time, _prev_gyrz
     parts = data.split(",")
     if len(parts) == 2:
-        # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
-            altitude.yaw  = float(parts[0])
-            altitude.gyrz = float(parts[1])
-            last_imu_time = time.time()  # [FIX-1] 수신 시각 기록
-        # ── [/FIX-4] ──
+            new_yaw  = float(parts[0])
+            new_gyrz = float(parts[1])
+            # ── [FIX-GYRZ] ──
+            if abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
+                altitude.gyrz = new_gyrz
+                _prev_gyrz = new_gyrz
+            else:
+                log(f"gyrz spike rejected: {new_gyrz:.2f} deg/s (prev={_prev_gyrz:.2f})",
+                    events.EventType.warning)
+            # ── [/FIX-GYRZ] ──
+            altitude.yaw  = new_yaw
+            last_imu_time = time.time()
     else:
         log("IMU data format error", events.EventType.error)
 
