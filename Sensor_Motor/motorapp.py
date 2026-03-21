@@ -52,7 +52,7 @@ pi = None
 target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
 altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
-baro_m = 400
+baro_m = 0.0
 GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
 GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
 
@@ -121,7 +121,7 @@ def handle_barometer(data: str):
         parts = data.split(",")
         # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
-            baro_m = float(parts[2]) if len(parts) >= 3 else float(parts[0])
+            baro_m = float(parts[0])
         # ── [/FIX-4] ──
     except (ValueError, IndexError):
         log("Barometer data format error", events.EventType.error)
@@ -306,25 +306,20 @@ def init() -> bool:
     try:
         Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
+        pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
+        threads["ControlLog_Thread"] = threading.Thread(
+            target=control_parafoil,
+            name="ControlLog_Thread",
+            daemon=True
+        )
+        threads["ControlLog_Thread"].start()
+        log("Motors initialized (parafoil, burnwire, solenoid)")
+        return True
     except Exception as e:
         log(f"Init failed: {e}", events.EventType.error)
         running = False
         return False
-
-    try:
-        pi = motor_control.init_control()
-        log("Motors initialized (parafoil, burnwire, solenoid)")
-    except Exception as e:
-        log(f"pigpio unavailable, running without servo output: {e}", events.EventType.warning)
-
-    threads["ControlLog_Thread"] = threading.Thread(
-        target=control_parafoil,
-        name="ControlLog_Thread",
-        daemon=True
-    )
-    threads["ControlLog_Thread"].start()
-    return True
 
 
 def terminate():

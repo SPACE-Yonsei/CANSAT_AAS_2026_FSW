@@ -186,6 +186,15 @@ def send_barometer_data(Main_Queue : Queue):
             if status == False:
                 events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Flight Logic Message")
 
+            # Send altitude to Motor app for altitude-adaptive guidance
+            status = msgstructure.send_msg(Main_Queue,
+                                            appargs.BarometerAppArg.AppID,
+                                            appargs.MotorAppArg.AppID,
+                                            appargs.BarometerAppArg.MID_motor_alt,
+                                            f"{ALTITUDE}")
+            if status == False:
+                events.LogEvent(appargs.BarometerAppArg.AppName, events.EventType.error, "Error When sending Barometer Motor Message")
+
         if msg_send_count > 10 :
             # Send telemetry message to COMM app in 1Hz
             status = msgstructure.send_msg(Main_Queue,
