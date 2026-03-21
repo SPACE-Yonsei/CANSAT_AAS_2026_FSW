@@ -13,6 +13,7 @@ import sys
 import time
 import types
 import io
+import threading
 
 # Windows 콘솔 인코딩 문제 해결
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -563,6 +564,244 @@ motorapp.handle_imu("0.0,40.0")
 check("요구사항: prev=3, new=40 (delta=37<45) → updates to 40.0",
       abs(motorapp.altitude.gyrz - 40.0) < 0.01,
       f"gyrz={motorapp.altitude.gyrz:.2f}")
+
+# ═════════════════════════════════════════════
+# TEST 11 — FDIR Failsafe Gate (control_parafoil 통합)
+# ═════════════════════════════════════════════
+
+section("TEST 11: FDIR — Failsafe Gate (control_parafoil integration)")
+
+def _run_control_briefly(setup_fn, duration=0.35):
+    """control_parafoil을 짧게 실행하고 mock_pi / event_log 반환."""
+    _event_log.clear()
+    mock = MockPi()
+    motorapp.pi = mock
+    motorapp.running = True
+    motorapp.motor_enabled = True
+
+    setup_fn()
+
+    t = threading.Thread(target=motorapp.control_parafoil, daemon=True)
+    t.start()
+    time.sleep(duration)
+    motorapp.running = False
+    t.join(timeout=2.0)
+
+    return mock, list(_event_log)
+
+
+# ── FDIR-1a: GPS Timeout → Failsafe ──
+def setup_gps_timeout():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time() - 10.0   # 10초 전 → stale
+    motorapp.last_imu_time = time.time()           # fresh
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_gps_timeout)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "GPS stale" in m]
+lp = pi_m.get_pulse(motor_control.PARAFOIL_LEFT_MOTOR_PIN)
+rp = pi_m.get_pulse(motor_control.PARAFOIL_RIGHT_MOTOR_PIN)
+check("FDIR-1a: GPS timeout → Failsafe 로그 + 모터 중립",
+      len(fs_logs) > 0 and lp == motor_control.LEFT_NEUTRAL and rp == motor_control.RIGHT_NEUTRAL,
+      f"failsafe_logs={len(fs_logs)}, L={lp}, R={rp}")
+
+
+# ── FDIR-1b: IMU Timeout → Failsafe ──
+def setup_imu_timeout():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()           # fresh
+    motorapp.last_imu_time = time.time() - 10.0    # 10초 전 → stale
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_imu_timeout)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "IMU stale" in m]
+lp = pi_m.get_pulse(motor_control.PARAFOIL_LEFT_MOTOR_PIN)
+rp = pi_m.get_pulse(motor_control.PARAFOIL_RIGHT_MOTOR_PIN)
+check("FDIR-1b: IMU timeout → Failsafe 로그 + 모터 중립",
+      len(fs_logs) > 0 and lp == motor_control.LEFT_NEUTRAL and rp == motor_control.RIGHT_NEUTRAL,
+      f"failsafe_logs={len(fs_logs)}, L={lp}, R={rp}")
+
+
+# ── FDIR-1c: GPS+IMU 동시 Timeout → 복합 Failsafe ──
+def setup_both_timeout():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time() - 10.0
+    motorapp.last_imu_time = time.time() - 10.0
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_both_timeout)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "GPS+IMU stale" in m]
+check("FDIR-1c: GPS+IMU 동시 timeout → 복합 Failsafe 로그",
+      len(fs_logs) > 0,
+      f"failsafe_logs={len(fs_logs)}")
+
+
+# ── FDIR-2: GPS Data Integrity Error → Failsafe ──
+def setup_gps_invalid():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 100.0
+    # GPS 무효: lat=0 (is_gps_valid 실패 조건)
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 0.0, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_gps_invalid)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "GPS invalid" in m]
+lp = pi_m.get_pulse(motor_control.PARAFOIL_LEFT_MOTOR_PIN)
+rp = pi_m.get_pulse(motor_control.PARAFOIL_RIGHT_MOTOR_PIN)
+check("FDIR-2a: GPS lat=0 → Data Integrity Failsafe",
+      len(fs_logs) > 0 and lp == motor_control.LEFT_NEUTRAL and rp == motor_control.RIGHT_NEUTRAL,
+      f"failsafe_logs={len(fs_logs)}, L={lp}, R={rp}")
+
+
+# ── FDIR-2b: GPS 위성 부족 → Failsafe ──
+def setup_gps_low_sats():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality = 1
+    motorapp.GpsFidelity.sats = 2           # 위성 2개 → is_gps_valid 실패
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_gps_low_sats)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "GPS invalid" in m]
+check("FDIR-2b: 위성 2개 → Data Integrity Failsafe",
+      len(fs_logs) > 0,
+      f"failsafe_logs={len(fs_logs)}")
+
+
+# ── FDIR-3: Estimation Rate Error (gyrz runaway) → Failsafe ──
+def setup_gyrz_runaway():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw = 45.0
+    motorapp.altitude.gyrz = 150.0          # 150°/s > 100 임계값
+
+pi_m, logs = _run_control_briefly(setup_gyrz_runaway)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "rate error" in m]
+lp = pi_m.get_pulse(motor_control.PARAFOIL_LEFT_MOTOR_PIN)
+rp = pi_m.get_pulse(motor_control.PARAFOIL_RIGHT_MOTOR_PIN)
+check("FDIR-3a: gyrz=150°/s → Estimation Rate Failsafe + 모터 중립",
+      len(fs_logs) > 0 and lp == motor_control.LEFT_NEUTRAL and rp == motor_control.RIGHT_NEUTRAL,
+      f"failsafe_logs={len(fs_logs)}, L={lp}, R={rp}")
+
+
+# ── FDIR-3b: 음수 극한 gyrz도 차단 ──
+def setup_gyrz_runaway_neg():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw = 45.0
+    motorapp.altitude.gyrz = -120.0         # -120°/s → abs > 100
+
+pi_m, logs = _run_control_briefly(setup_gyrz_runaway_neg)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "rate error" in m]
+check("FDIR-3b: gyrz=-120°/s → 음수 극한도 Failsafe",
+      len(fs_logs) > 0,
+      f"failsafe_logs={len(fs_logs)}")
+
+
+# ── FDIR-3c: gyrz=99°/s (임계 미만) → 정상 통과 ──
+def setup_gyrz_borderline():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 100.0
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw = 45.0
+    motorapp.altitude.gyrz = 99.0           # 99°/s < 100 → 정상
+    motorapp.target.lat, motorapp.target.lon = 35.1000, 127.1000
+    motor_guidance.init_guidance()
+    motor_guidance.set_target_coord(35.1000, 127.1000)
+    motor_guidance.set_start_coordinates(35.095, 127.095)
+    # GPS 안정화 선처리
+    g, f = make_gps(35.096, 127.096)
+    for _ in range(motor_guidance.GPS_STABLE_COUNT_REQUIRED + 2):
+        motor_guidance.guidance(make_imu(45.0, 99.0), g, f,
+                               types.SimpleNamespace(lat=35.1, lon=127.1), baro_m=100.0)
+        time.sleep(0.03)
+
+pi_m, logs = _run_control_briefly(setup_gyrz_borderline)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m]
+# Failsafe가 발동하지 않아야 함 (guidance가 정상 호출됨)
+check("FDIR-3c: gyrz=99°/s (임계 미만) → Failsafe 미발동, 정상 제어",
+      len(fs_logs) == 0,
+      f"failsafe_logs={len(fs_logs)} (expect 0)")
+
+
+# ── FDIR-4: Baro invalid at control loop → Failsafe ──
+def setup_baro_invalid():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time()
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = -3.0                   # 음수 고도 → 무효
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 35.096, 127.096
+    motorapp.GpsVector.speed, motorapp.GpsVector.course = 5.0, 45.0
+    motorapp.GpsFidelity.fix_quality, motorapp.GpsFidelity.sats = 1, 8
+    motorapp.GpsFidelity.rmc_status = "A"
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 0.0
+
+pi_m, logs = _run_control_briefly(setup_baro_invalid)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m and "Baro" in m]
+check("FDIR-4: baro=-3.0 → Baro Integrity Failsafe",
+      len(fs_logs) > 0,
+      f"failsafe_logs={len(fs_logs)}")
+
+
+# ── FDIR 우선순위: 다중 이상 시 첫 번째 원인만 로깅 ──
+def setup_multi_fault():
+    motorapp.state = 3
+    motorapp.last_gps_time = time.time() - 10.0   # GPS stale
+    motorapp.last_imu_time = time.time()
+    motorapp.baro_m = 0.0                          # baro도 무효
+    motorapp.GpsVector.lat, motorapp.GpsVector.lon = 0.0, 0.0  # GPS도 무효
+    motorapp.altitude.yaw, motorapp.altitude.gyrz = 45.0, 200.0  # gyrz도 초과
+
+pi_m, logs = _run_control_briefly(setup_multi_fault, duration=0.25)
+fs_logs = [m for (_, _, m) in logs if "Failsafe triggered" in m]
+# 모든 로그가 첫 번째 원인(GPS stale = Watchdog)만 포함해야 함
+all_watchdog = all("Watchdog" in m for m in [l[2] for l in logs if "Failsafe triggered" in l[2]])
+check("FDIR 우선순위: 다중 이상 → 첫 감지 원인(Watchdog)만 로깅",
+      len(fs_logs) > 0 and all_watchdog,
+      f"failsafe_logs={len(fs_logs)}, all_watchdog={all_watchdog}")
+
 
 # ═════════════════════════════════════════════
 # SIMULATION — 전체 비행 시나리오
