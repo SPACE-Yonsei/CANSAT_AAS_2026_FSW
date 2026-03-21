@@ -114,41 +114,41 @@ def en_to_latlon(E_m: float, N_m: float):
 
 # ── Aerodynamics constants ────────────────────────────────────────────────────
 VA_BASE      = 8.0    # m/s, glide speed
-DESCENT_BASE = 3.0    # m/s, nominal sink rate
+DESCENT_BASE = 3.5    # m/s, nominal sink rate (↑ 빠른 하강 → 제어 시간 단축)
 
 # ── Wind model constants ──────────────────────────────────────────────────────
-WIND_U_REF = 5.0     # m/s at reference altitude
+WIND_U_REF = 8.0     # m/s at reference altitude (↑ 강풍: 5→8 m/s)
 WIND_Z_REF = 600.0    # m
-WIND_ALPHA  = 0.35    # power-law exponent
+WIND_ALPHA  = 0.30    # power-law exponent (↓ 저고도까지 강풍 유지)
 
 # ── Dryden turbulence constants ───────────────────────────────────────────────
-L_HOR   = 200.0       # horizontal length scale (m)
-L_VER   = 50.0        # vertical length scale (m)
-SIG_HOR = 2.5         # horizontal turbulence intensity (m/s)
-SIG_VER = 1.5         # vertical turbulence intensity (m/s)
+L_HOR   = 150.0       # horizontal length scale (↓ 짧은 주기 → 급격한 변화)
+L_VER   = 30.0        # vertical length scale (↓ 수직 난류 급변)
+SIG_HOR = 4.0         # horizontal turbulence intensity (↑ 2.5→4.0 m/s)
+SIG_VER = 2.5         # vertical turbulence intensity (↑ 1.5→2.5 m/s)
 
 # ── Pendulum constants ────────────────────────────────────────────────────────
 OMEGA_N  = math.sqrt(9.81 / 1.5)
-ZETA     = 0.12
-K_COUPLE = 0.06
+ZETA     = 0.08       # damping ratio (↓ 0.12→0.08 — 더 오래 진동)
+K_COUPLE = 0.10       # yaw-pendulum coupling (↑ 0.06→0.10 — 더 큰 흔들림)
 
 # ── Actuator constants ─────────────────────────────────────────────────────────
-SLEW_RATE_DEG_S = 300.0
-DEADBAND_MECH   = 3.0
+SLEW_RATE_DEG_S = 200.0  # servo speed (↓ 300→200 — 느린 응답)
+DEADBAND_MECH   = 5.0    # mechanical deadband (↑ 3→5 deg — 작은 명령 무효화)
 
 # ── GPS sensor constants ──────────────────────────────────────────────────────
-GPS_NOISE_M  = 2.5
-GPS_DELAY    = 3       # steps
-GPS_WARMUP   = 8       # steps
+GPS_NOISE_M  = 3.5    # position noise (↑ 2.5→3.5 m — 악조건 수신)
+GPS_DELAY    = 4       # steps (↑ 3→4 — 더 긴 지연)
+GPS_WARMUP   = 12      # steps (↑ 8→12 — 느린 초기 Fix)
 
 # ── IMU sensor constants ──────────────────────────────────────────────────────
-YAW_NOISE_DEG    = 2.0
-GYRZ_NOISE_RPS   = math.radians(0.5)
-BIAS_DRIFT_RATE  = math.radians(0.02)
-K_MAG_PEND       = 0.5
+YAW_NOISE_DEG    = 4.0              # yaw noise (↑ 2→4 deg — 자기장 왜곡)
+GYRZ_NOISE_RPS   = math.radians(1.5)  # gyro noise (↑ 0.5→1.5 deg/s)
+BIAS_DRIFT_RATE  = math.radians(0.06)  # bias drift (↑ 0.02→0.06 — 3x 빠른 드리프트)
+K_MAG_PEND       = 0.8             # magnetometer-pendulum coupling (↑ 0.5→0.8)
 
 # ── Barometer noise ────────────────────────────────────────────────────────────
-BARO_NOISE_M = 1.5
+BARO_NOISE_M = 3.0    # (↑ 1.5→3.0 m — 열적 불안정)
 
 # ── Simulation timing ─────────────────────────────────────────────────────────
 DT        = 0.1
@@ -158,10 +158,10 @@ MAX_STEPS = 3000
 # SECTION 3 — Random scenario (deterministic seed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-rng = np.random.default_rng(42)
+rng = np.random.default_rng(99)
 bearing_deg  = float(rng.uniform(30, 70))
-distance_m   = float(rng.uniform(500, 600))
-wind_dir_met = float(rng.uniform(280, 340))    # FROM direction (met convention)
+distance_m   = float(rng.uniform(550, 700))     # (↑ 더 먼 타겟: 500~600 → 550~700)
+wind_dir_met = float(rng.uniform(250, 360))     # (↑ 넓은 풍향 범위: 크로스윈드 가능성 증가)
 
 target_E = distance_m * math.sin(math.radians(bearing_deg))
 target_N = distance_m * math.cos(math.radians(bearing_deg))
@@ -292,10 +292,10 @@ motor_guidance.set_start_coordinates(REF_LAT, REF_LON)
 motor_guidance.set_target_coord(target_lat, target_lon)
 
 # ── Sim-level GPS jump threshold override ─────────────────────────────────────
-# GPS_NOISE_M=2.5m at 10Hz → adjacent noisy samples produce ~35 m/s RMS apparent
-# velocity; FSW threshold=50 m/s (designed for 1-5 Hz GPS) is borderline.
-# Real Multipath jumps are km-scale, so 100 m/s is still a tight guard.
-motor_guidance.GPS_JUMP_MAX_SPEED = 100.0
+# GPS_NOISE_M=3.5m at 10Hz → noise delta RMS ≈ 5m, speed RMS ≈ 50 m/s.
+# 99th percentile ≈ 150 m/s.  Real multipath jumps are km-scale (speed >> 500 m/s),
+# so 200 m/s catches genuine jumps while tolerating extreme noise tails.
+motor_guidance.GPS_JUMP_MAX_SPEED = 200.0
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 7 — Main simulation loop
