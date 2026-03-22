@@ -2,6 +2,17 @@
 import math
 import time
 import types
+from datetime import datetime
+
+_sim_log = open("0320_sim.txt", "a")
+DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
+
+def _dbg(line: str):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    full = f"[{ts}] {line}"
+    print(full)
+    _sim_log.write(full + "\n")
+    _sim_log.flush()
 
 
 PARAFOIL_LEFT_MOTOR_PIN  = 12
@@ -50,6 +61,11 @@ def actuator_mixer(commanded_yaw_rate: float) -> tuple:
 
     left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
     right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
+
+    # 클램핑 발생 감지 — 명령이 잘렸으면 경고
+    if DEBUG_CONTROL and (left_raw != left_cmd_deg or right_raw != right_cmd_deg):
+        _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw:.1f}→{left_cmd_deg:.1f}° "
+             f"R_raw={right_raw:.1f}→{right_cmd_deg:.1f}°")
 
     # 실제 각도 차이도 (오른쪽 - 왼쪽)으로 기준을 맞춤
     actual_delta_deg = right_cmd_deg - left_cmd_deg
@@ -103,6 +119,8 @@ def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
 
 
 def set_neutral(pi):
+    if DEBUG_CONTROL:
+        _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
@@ -110,6 +128,8 @@ def set_neutral(pi):
 
 def set_motors_off(pi):
     """서보 신호 완전 차단 (LANDED state용)"""
+    if DEBUG_CONTROL:
+        _dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)

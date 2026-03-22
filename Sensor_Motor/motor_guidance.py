@@ -238,15 +238,22 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
     if not is_gps_valid(gps_vector.lat, gps_vector.lon,
                         gps_fidelity.fix_quality, gps_fidelity.sats,
                         gps_fidelity.rmc_status):
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] GPS_INVALID — lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
+                 f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} rmc={gps_fidelity.rmc_status}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     # ── [FIX-2] GPS 순간 이동 / 초기 불안정 감지 ──
     if _is_gps_jump(gps_vector.lat, gps_vector.lon):
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] GPS_JUMP — lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
     # ── [/FIX-2] ──
 
     # ── [FIX-3] 기압계 고도 0.0 방어 (guidance 레벨) ──
     if baro_m <= 0.0:
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] BARO_INVALID — baro_m={baro_m:.1f}")
         return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
     # ── [/FIX-3] ──
 
@@ -255,6 +262,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
     if distance < 5.0:
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] TARGET_REACHED — dist={distance:.1f}m")
         return types.SimpleNamespace(state="TARGET_REACHED", distance=distance, commanded_yaw_rate=0.0)
 
     if baro_m > ALT_HIGH:
