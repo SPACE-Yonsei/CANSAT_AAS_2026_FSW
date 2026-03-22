@@ -137,7 +137,7 @@ def handle_barometer(data: str):
         parts = data.split(",")
         # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
-            baro_m = float(parts[0])
+            baro_m = 400.0  # DEBUG: fixed altitude for L_DISTANCE_HIGH test (original: float(parts[0]))
         # ── [/FIX-4] ──
     except (ValueError, IndexError):
         log("Barometer data format error", events.EventType.error)
