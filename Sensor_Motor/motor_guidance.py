@@ -111,7 +111,7 @@ def is_gps_valid(gps_vector, gps_fidelity) -> bool:
     return coord_ok and fidelity_ok
 
 
-def _is_gps_jump(lat: float, lon: float) -> bool:
+def is_gps_jump(lat: float, lon: float) -> bool:
     """
     Fix 직후 불안정 샘플 거부 + 비현실적 순간 이동 거부.
     True를 반환하면 이번 좌표를 사용하지 않아야 함.
@@ -188,7 +188,7 @@ def _carrot(my_E: float, my_N: float,
     return carrot_s * uE, carrot_s * uN
 
 
-def _figure_eight_target(my_E: float, my_N: float,
+def _eight(my_E: float, my_N: float,
                          tgt_E: float, tgt_N: float) -> tuple:
     now = time.time()
 
@@ -248,7 +248,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
                  f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} rmc={gps_fidelity.rmc_status}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
-    if _is_gps_jump(gps_vector.lat, gps_vector.lon):
+    if is_gps_jump(gps_vector.lat, gps_vector.lon):
         if DEBUG_GUIDANCE:
             _dbg(f"[CTRL] GPS_JUMP — lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
@@ -275,24 +275,24 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         L_DISTANCE = L_DISTANCE_BASE
 
     if patterned and distance < PATTERN_ENTRY_DIST:
-        guide_E, guide_N = _figure_eight_target(my_E, my_N, tgt_E, tgt_N)
+        guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
         phase = "PATTERN"
     else:
         guide_E, guide_N = _carrot(my_E, my_N, tgt_E, tgt_N)
         phase = "HOMING"
 
-    desired_course = math.degrees(
+    carrot_angl_north = math.degrees(
         math.atan2(guide_E - my_E, guide_N - my_N)
     )
-    desired_heading = _wrap_180(desired_course - wind_effect)
-    heading_error = _wrap_180(desired_heading - imu_data.yaw)
+    wind_carrot_angl_north = _wrap_180(carrot_angl_north - wind_effect)
+    angl_to_turn = _wrap_180(wind_carrot_angl_north - imu_data.yaw)
 
     V = max(gps_vector.speed, 1.0)
     desired_yaw_rate = math.degrees(
-        2.0 * (V / L_DISTANCE) * math.sin(math.radians(heading_error))
+        2.0 * (V / L_DISTANCE) * math.sin(math.radians(angl_to_turn))
     )
 
-    if abs(heading_error) <= cascade_pi.DEADBAND:
+    if abs(angl_to_turn) <= cascade_pi.DEADBAND:
         cascade_pi.pi_integral = 0.0
         commanded_yaw_rate = 0.0
         if phase == "HOMING":
@@ -315,14 +315,13 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
             f"dist={distance:.1f}m  L={L_DISTANCE:.1f}m | "
             f"pos=({my_E:.1f},{my_N:.1f})  tgt=({tgt_E:.1f},{tgt_N:.1f})  "
             f"carrot=({guide_E:.1f},{guide_N:.1f}) | "
-            f"des_crs={desired_course:.1f}°  wind={wind_effect:.1f}°  "
-            f"des_hdg={desired_heading:.1f}°  hdg_err={heading_error:.1f}° | "
+            f"des_crs={carrot_angl_north:.1f}°  wind={wind_effect:.1f}°  "
+            f"des_hdg={wind_carrot_angl_north:.1f}°  hdg_err={angl_to_turn:.1f}° | "
             f"V={V:.1f}m/s  des_yr={desired_yaw_rate:.2f}°/s  "
             f"pi_int={cascade_pi.pi_integral:.3f}  cmd_yr={commanded_yaw_rate:.2f}°/s"
             + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
         )
 
-    # 꼭 필요한 제어 명령과 상태값만 간결하게 반환합니다.
     return types.SimpleNamespace(
         state=phase,
         distance=distance,
