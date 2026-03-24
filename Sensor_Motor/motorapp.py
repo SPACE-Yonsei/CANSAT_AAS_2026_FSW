@@ -222,7 +222,7 @@ def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
     # return False               # state 3: 당근 제어 (호밍)
 
 
-def control_parafoil():
+def control_paraglider():
     motors_off = False
     while running:
         with update_lock:
@@ -357,7 +357,7 @@ def init() -> bool:
         pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
-            target=control_parafoil,
+            target=control_paraglider,
             name="ControlLog_Thread",
             daemon=True
         )
