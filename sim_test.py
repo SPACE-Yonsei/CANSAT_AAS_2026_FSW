@@ -581,7 +581,7 @@ def _run_control_briefly(setup_fn, duration=0.35):
 
     setup_fn()
 
-    t = threading.Thread(target=motorapp.control_paraglider, daemon=True)
+    t = threading.Thread(target=motorapp.ctrl_paragldr, daemon=True)
     t.start()
     time.sleep(duration)
     motorapp.running = False

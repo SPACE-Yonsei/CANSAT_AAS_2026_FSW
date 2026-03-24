@@ -222,28 +222,28 @@ def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
     # return False               # state 3: 당근 제어 (호밍)
 
 
-def control_paraglider():
+def ctrl_paragldr():
     motors_off = False
     while running:
         with update_lock:
             _state       = state
-            _motor_en    = motor_enabled
+            _motor_enabled    = motor_enabled
             _baro_m      = baro_m
-            _gps         = types.SimpleNamespace(
+            _GpsVector         = types.SimpleNamespace(
                 lat=GpsVector.lat, lon=GpsVector.lon,
                 speed=GpsVector.speed, course=GpsVector.course)
-            _fidelity    = types.SimpleNamespace(
+            _GpsFidelity    = types.SimpleNamespace(
                 rmc_status=GpsFidelity.rmc_status,
                 fix_quality=GpsFidelity.fix_quality,
                 sats=GpsFidelity.sats)
-            _imu         = types.SimpleNamespace(
+            _altitude         = types.SimpleNamespace(
                 yaw=altitude.yaw, gyrz=altitude.gyrz)
             _target      = types.SimpleNamespace(
                 lat=target.lat, lon=target.lon)
             _last_gps_t  = last_gps_time
             _last_imu_t  = last_imu_time
 
-        if _state >= 3 and _motor_en:
+        if _state >= 3 and _motor_enabled:
 
             # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
             if _state == 5:
@@ -260,10 +260,12 @@ def control_paraglider():
             failsafe_reason = None
 
             # FDIR-0: 센서 수신 여부
-            if _gps.lat is None or _imu.yaw is None or _baro_m is None:
+            if _GpsVector.lat is None or _GpsVector.lon is None or _altitude.yaw is None or _baro_m is None:
+
                 missing = []
-                if _gps.lat is None:  missing.append("GPS")
-                if _imu.yaw is None:  missing.append("IMU")
+                if _GpsVector.lat is None:  missing.append("GPS")
+                if _GpsVector.lon is None:  missing.append("GPS")
+                if _altitude.yaw is None:  missing.append("IMU")
                 if _baro_m is None:   missing.append("BARO")
                 failsafe_reason = f"No data received: {'+'.join(missing)}"
 
@@ -282,18 +284,18 @@ def control_paraglider():
 
             # FDIR-2: GPS 무결성
             if failsafe_reason is None:
-                if not motor_guidance.is_gps_valid(_gps, _fidelity):
+                if not motor_guidance.is_gps_valid(_GpsVector, _GpsFidelity):
                     failsafe_reason = (
-                        f"GPS invalid (lat={_gps.lat}, lon={_gps.lon}, "
-                        f"fix={_fidelity.fix_quality}, sats={_fidelity.sats}, "
-                        f"rmc={_fidelity.rmc_status})")
+                        f"GPS invalid (lat={_GpsVector.lat}, lon={_GpsVector.lon}, "
+                        f"fix={_GpsFidelity.fix_quality}, sats={_GpsFidelity.sats}, "
+                        f"rmc={_GpsFidelity.rmc_status})")
 
             # FDIR-3: 극한 회전 상태
             if failsafe_reason is None:
-                if abs(_imu.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
+                if abs(_altitude.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
                     failsafe_reason = (
-                        f"|gyrz|={abs(_imu.gyrz):.2f} rad/s "
-                        f"({math.degrees(abs(_imu.gyrz)):.1f}°/s) > "
+                        f"|gyrz|={abs(_altitude.gyrz):.2f} rad/s "
+                        f"({math.degrees(abs(_altitude.gyrz)):.1f}°/s) > "
                         f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s")
 
             # FDIR-4: 기압계 고도
@@ -317,14 +319,14 @@ def control_paraglider():
                     _dbg(
                         f"[GUIDANCE IN ] "
                         f"state={_state} baro={_baro_m:.1f}m patterned={_patterned} | "
-                        f"yaw={_imu.yaw:.1f}° gyrz={_imu.gyrz:.2f} | "
-                        f"gps=({_gps.lat:.6f},{_gps.lon:.6f}) spd={_gps.speed:.1f} crs={_gps.course:.1f} | "
-                        f"fix={_fidelity.fix_quality} sats={_fidelity.sats} rmc={_fidelity.rmc_status} | "
+                        f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
+                        f"gps=({_GpsVector.lat:.6f},{_GpsVector.lon:.6f}) spd={_GpsVector.speed:.1f} crs={_GpsVector.course:.1f} | "
+                        f"fix={_GpsFidelity.fix_quality} sats={_GpsFidelity.sats} rmc={_GpsFidelity.rmc_status} | "
                         f"target=({_target.lat:.6f},{_target.lon:.6f})"
                     )
 
                 result = motor_guidance.guidance(
-                    _imu, _gps, _fidelity, _target,
+                    _altitude, _GpsVector, _GpsFidelity, _target,
                     baro_m=_baro_m, patterned=_patterned
                 )
 
@@ -357,7 +359,7 @@ def init() -> bool:
         pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
-            target=control_paraglider,
+            target=ctrl_paragldr,
             name="ControlLog_Thread",
             daemon=True
         )
