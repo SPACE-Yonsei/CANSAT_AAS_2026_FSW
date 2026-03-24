@@ -15,24 +15,24 @@ def _dbg(line: str):
     _sim_log.flush()
 
 
-PARAFOIL_LEFT_MOTOR_PIN  = 12
-PARAFOIL_RIGHT_MOTOR_PIN = 13
+PARAFOIL_LEFT_MOTOR_PIN: int  = 12   # GPIO BCM pin
+PARAFOIL_RIGHT_MOTOR_PIN: int = 13   # GPIO BCM pin
 
-PULSE_PER_DEG = 2000.0 / 180.0
+PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg
 
-LEFT_ZERO  = 600
-RIGHT_ZERO = 2500
+LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
+RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
 
-MAX_ANGLE_SCOPE = 120
+MAX_ANGLE_SCOPE: int = 120  # deg, 서보 최대 각도
 
-NEUTRAL_DEG = 60.0
-LEFT_NEUTRAL  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)
-RIGHT_NEUTRAL = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)
+NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
+LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
+RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 
-PULSE_MIN = 500
-PULSE_MAX = 2500
+PULSE_MIN: int = 500   # μs
+PULSE_MAX: int = 2500  # μs
 
-K_delta = 1.0
+K_delta: float = 1.0   # (°/s)/deg, yaw rate ↔ 서보 각도 변환 계수
 
 
 def init_control():

@@ -3,6 +3,7 @@ import math
 import time
 import types
 from datetime import datetime
+from typing import Optional
 
 _sim_log = open("0320_sim.txt", "a")
 
@@ -14,47 +15,58 @@ def _dbg(line: str):
     _sim_log.flush()
 
 cascade_pi = types.SimpleNamespace(
-    Kp_outer=0.6,
-    Kp_inner=1.0,
-    Ki_inner=0.1,
-    pi_integral=0.0,
-    MAX_INTEGRAL=15.0,
-    DEADBAND=5.0,
-    MAX_CMD=120.0  # ±60° from neutral (neutral=60°, range [0°, 120°])
+    Kp_outer      = 0.6,   # unitless
+    Kp_inner      = 1.0,   # unitless
+    Ki_inner      = 0.1,   # 1/s
+    pi_integral   = 0.0,   # °/s·s, 적분 누적값
+    MAX_INTEGRAL  = 15.0,  # °/s·s, 적분 상한
+    DEADBAND      = 5.0,   # deg, heading error 허용 범위
+    MAX_CMD       = 120.0, # °/s, 최대 yaw rate 명령
 )
 
-target = types.SimpleNamespace(lat=0.0, lon=0.0)
-start_point = types.SimpleNamespace(lat=0.0, lon=0.0)
+target = types.SimpleNamespace(
+    lat  = None,  # Optional[float] — deg, decimal degrees
+    lon  = None,  # Optional[float] — deg, decimal degrees
+)
+start_point = types.SimpleNamespace(
+    lat  = None,  # Optional[float] — deg, decimal degrees
+    lon  = None,  # Optional[float] — deg, decimal degrees
+)
 
-LAT_TO_METER = 111320.0
+LAT_TO_METER: float = 111320.0  # m/deg
 
-L_DISTANCE      = 25.0
-L_DISTANCE_BASE = 25.0
-L_DISTANCE_HIGH = 40.0
-L_DISTANCE_LOW  = 10.0
+L_DISTANCE: float      = 25.0   # m, L1 추적 거리
+L_DISTANCE_BASE: float = 25.0   # m
+L_DISTANCE_HIGH: float = 40.0   # m, 고고도용
+L_DISTANCE_LOW: float  = 10.0   # m, 저고도용
 
-PATTERN_ENTRY_DIST = 50.0  # m — only enter figure-8 when this close to target
+PATTERN_ENTRY_DIST: float = 50.0  # m — figure-8 진입 거리
 
-ALT_HIGH = 300
-ALT_LOW  = 150
+ALT_HIGH: int = 300  # m
+ALT_LOW: int  = 150  # m
 
-wind_effect = 0.0
-last_time = None
+wind_effect: Optional[float] = None  # deg, 풍향 보정값
+last_time: Optional[float]   = None  # s, time.time() epoch
 
-DEBUG_GUIDANCE = True  # 제어 내부 변수 프린트 on/off
+DEBUG_GUIDANCE: bool = True
 
 _pattern = types.SimpleNamespace(
-    lobe_sign=1,
-    last_switch_time=0.0,
-    LOBE_PERIOD=25.0,
-    RADIUS=25.0,
+    lobe_sign       = 1,    # int   — +1 또는 -1
+    last_switch_time = 0.0, # s, time.time() epoch
+    LOBE_PERIOD     = 25.0, # s
+    RADIUS          = 25.0, # m
 )
 
 # ── [FIX-2] GPS 순간 이동 감지용 상태 ──
-_prev_gps = types.SimpleNamespace(lat=0.0, lon=0.0, time=0.0, initialized=False)
-GPS_JUMP_MAX_SPEED = 50.0  # m/s — 파라포일이 절대 낼 수 없는 속도 (≈180 km/h)
-GPS_STABLE_COUNT_REQUIRED = 2  # Fix 직후 안정화까지 무시할 샘플 수
-_gps_stable_count = 0
+_prev_gps = types.SimpleNamespace(
+    lat         = None,   # Optional[float] — deg
+    lon         = None,   # Optional[float] — deg
+    time        = None,   # Optional[float] — s, epoch
+    initialized = False,  # bool
+)
+GPS_JUMP_MAX_SPEED: float = 50.0        # m/s
+GPS_STABLE_COUNT_REQUIRED: int = 2      # 샘플 수
+_gps_stable_count: int = 0
 # ── [/FIX-2] ──
 
 # ── [FIX-5] FINAL_APPROACH 분기 제거 — 패턴은 state 5 또는 착지까지 유지 ──
@@ -72,13 +84,11 @@ def init_guidance():
     _pattern.lobe_sign = 1
     _pattern.last_switch_time = time.time()
     # ── [FIX-2] GPS 상태 초기화 ──
-    _prev_gps.lat = 0.0
-    _prev_gps.lon = 0.0
-    _prev_gps.time = 0.0
+    _prev_gps.lat = None
+    _prev_gps.lon = None
+    _prev_gps.time = None
     _prev_gps.initialized = False
     _gps_stable_count = 0
-    # ── [/FIX-2] ──
-
 
 def reset_control():
     global wind_effect, last_time
@@ -91,9 +101,11 @@ def _wrap_180(a: float) -> float:
     return (a + 180.0) % 360.0 - 180.0
 
 
-def is_gps_valid(lat: float, lon: float,
-                 fix_quality: int = 0, sats: int = 0,
-                 rmc_status: str = "V") -> bool:
+def is_gps_valid(lat, lon,
+                 fix_quality=None, sats=None,
+                 rmc_status=None) -> bool:
+    if lat is None or lon is None or fix_quality is None or sats is None or rmc_status is None:
+        return False
     coord_ok = (lat != 0.0
                 and lon != 0.0
                 and abs(lat) <= 90.0
@@ -159,6 +171,8 @@ def calculate_distance_haversine(lat1: float, lon1: float,
 
 
 def _llh_to_en(lat: float, lon: float) -> tuple:
+    if start_point.lat is None or start_point.lon is None:
+        return 0.0, 0.0
     N = (lat - start_point.lat) * LAT_TO_METER
     E = (lon - start_point.lon) * LAT_TO_METER * math.cos(math.radians(start_point.lat))
     return E, N

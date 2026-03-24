@@ -1,3 +1,4 @@
+import math
 import os
 import signal
 import threading
@@ -46,31 +47,50 @@ def log_control(g, m):
     controllogfile.write(line)
     controllogfile.flush()
 
-running = True
-motor_enabled = True
+from typing import Optional
+
+running: bool = True
+motor_enabled: bool = True
 pi = None
-target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
-altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
-baro_m = 0.0
-GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
-GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
+target = types.SimpleNamespace(
+    lat  = None,  # Optional[float] — deg, decimal degrees
+    lon  = None,  # Optional[float] — deg, decimal degrees
+)
 
-state = 0
+altitude = types.SimpleNamespace(
+    yaw  = None,  # Optional[float] — deg, 0-360
+    gyrz = None,  # Optional[float] — rad/s
+)
+baro_m: Optional[float] = None  # m, 기압계 고도
+
+GpsVector = types.SimpleNamespace(
+    lat    = None,  # Optional[float] — deg, decimal degrees
+    lon    = None,  # Optional[float] — deg, decimal degrees
+    speed  = None,  # Optional[float] — m/s
+    course = None,  # Optional[float] — deg, 0-360
+)
+GpsFidelity = types.SimpleNamespace(
+    rmc_status   = None,  # Optional[str]  — "A"(active) / "V"(void)
+    fix_quality  = None,  # Optional[int]  — 0=no fix, 1=GPS, 2=DGPS
+    sats         = None,  # Optional[int]  — 위성 수
+)
+
+state: int = 0
 
 # ── [FIX-1] Stale 데이터 감지용 타임스탬프 ──
-last_gps_time = 0.0
-last_imu_time = 0.0
-STALE_THRESHOLD = 1.5  # 1.5초 이상 갱신 없으면 stale 판정
+last_gps_time: Optional[float] = None  # s, time.time() epoch
+last_imu_time: Optional[float] = None  # s, time.time() epoch
+STALE_THRESHOLD: float = 1.5           # s, 이상 갱신 없으면 stale 판정
 # ── [/FIX-1] ──
 
 # ── [FIX-GYRZ] gyrz 스파이크 게이트 ──
-GYRZ_SPIKE_THRESHOLD = 45.0  # °/s — 틱 간 최대 허용 델타
-_prev_gyrz = 0.0
+GYRZ_SPIKE_THRESHOLD: float = math.radians(45.0)   # rad/s (=45°/s), 틱 간 최대 허용 델타
+_prev_gyrz: Optional[float] = None                  # rad/s
 # ── [/FIX-GYRZ] ──
 
 # ── [FDIR] Estimation Rate Error — 제어 불능 판정 임계값 ──
-GYRZ_RUNAWAY_THRESHOLD = 100.0  # °/s — 이 이상이면 센서 오류 또는 제어 불능
+GYRZ_RUNAWAY_THRESHOLD: float = math.radians(100.0) # rad/s (=100°/s), 제어 불능 판정
 # ── [/FDIR] ──
 
 threads: dict[str, threading.Thread] = {}
@@ -118,7 +138,7 @@ def handle_imu(data: str):
             new_yaw  = float(parts[0])
             new_gyrz = float(parts[1])
             # ── [FIX-GYRZ] ──
-            if abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
+            if _prev_gyrz is None or abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
                 altitude.gyrz = new_gyrz
                 _prev_gyrz = new_gyrz
             else:
@@ -161,7 +181,7 @@ def handle_flight_state(data: str):
     # ── [FIX-4] 핸들러에도 lock 적용 ──
     with update_lock:
         state = int(data)
-        if state == 3:
+        if state == 3 and GpsVector.lat is not None and GpsVector.lon is not None:
             motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
     # ── [/FIX-4] ──
     log(f"Flight state: {state}")
@@ -266,20 +286,26 @@ def control_parafoil():
             # ================================================================
             failsafe_reason = None  # None이면 정상, 문자열이면 Failsafe 진입
 
-            # ── FDIR-1: OBC Watchdog — 센서 통신 타임아웃 감지 ──
-            # ADCS에서 OBC-ADCS 간 Heartbeat/Watchdog이 timeout되면
-            # ConNone(무제어) 모드로 전환하듯, 센서 데이터가 STALE_THRESHOLD
-            # 이상 갱신되지 않으면 통신 두절로 간주한다.
-            now = time.time()
-            gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t > 0 else True
-            imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t > 0 else True
+            # ── FDIR-0: 센서 수신 여부 — 한 번도 데이터를 받지 못한 센서 차단 ──
+            if _gps.lat is None or _imu.yaw is None or _baro_m is None:
+                missing = []
+                if _gps.lat is None:  missing.append("GPS")
+                if _imu.yaw is None:  missing.append("IMU")
+                if _baro_m is None:   missing.append("BARO")
+                failsafe_reason = f"No data received: {'+'.join(missing)}"
 
-            if gps_stale and imu_stale:
-                failsafe_reason = "Sensor timeout: GPS+IMU stale (Watchdog)"
-            elif gps_stale:
-                failsafe_reason = "Sensor timeout: GPS stale (Watchdog)"
-            elif imu_stale:
-                failsafe_reason = "Sensor timeout: IMU stale (Watchdog)"
+            # ── FDIR-1: OBC Watchdog — 센서 통신 타임아웃 감지 ──
+            if failsafe_reason is None:
+                now = time.time()
+                gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t is not None else True
+                imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t is not None else True
+
+                if gps_stale and imu_stale:
+                    failsafe_reason = "Sensor timeout: GPS+IMU stale (Watchdog)"
+                elif gps_stale:
+                    failsafe_reason = "Sensor timeout: GPS stale (Watchdog)"
+                elif imu_stale:
+                    failsafe_reason = "Sensor timeout: IMU stale (Watchdog)"
 
             # ── FDIR-2: Data Integrity — GPS 데이터 무결성 검증 ──
             # ADCS가 OrbitError(궤도 데이터 이상) 감지 시 Safe-mode로
@@ -305,17 +331,22 @@ def control_parafoil():
             if failsafe_reason is None:
                 if abs(_imu.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
                     failsafe_reason = (
-                        f"Estimation rate error: |gyrz|={abs(_imu.gyrz):.1f} deg/s "
-                        f"> {GYRZ_RUNAWAY_THRESHOLD} (runaway)"
+                        f"Estimation rate error: |gyrz|={abs(_imu.gyrz):.2f} rad/s "
+                        f"({math.degrees(abs(_imu.gyrz)):.1f}°/s) > "
+                        f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s (runaway)"
                     )
 
             # ── FDIR-4: Baro Altitude Sanity — 기압계 고도 방어 ──
-            # 기압 고도가 0 이하이면 센서 미초기화 또는 오류로 간주.
             if failsafe_reason is None:
                 if _baro_m <= 0.0:
                     failsafe_reason = (
                         f"Data integrity: Baro altitude invalid ({_baro_m:.1f}m)"
                     )
+
+            # ── FDIR-5: Target 좌표 수신 여부 ──
+            if failsafe_reason is None:
+                if _target.lat is None or _target.lon is None:
+                    failsafe_reason = "No target coordinates received"
 
             # ── Failsafe 분기: 이상 감지 → 모터 중립 / 정상 → 유도 제어 ──
             if failsafe_reason is not None:
