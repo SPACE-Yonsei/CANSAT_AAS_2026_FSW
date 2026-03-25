@@ -5,7 +5,7 @@ import types
 from datetime import datetime
 from typing import Optional
 
-_sim_log = open("0320_sim.txt", "a")
+_sim_log = open("0320_sim.txt", "a", encoding="utf-8")
 
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -232,7 +232,7 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
     return u_sat
 
 
-def guidance(imu_data, gps_vector, gps_fidelity, target_data,
+def guidance(imu_data, gps_vector, gps_fidelity, target,
              baro_m: float = 0.0, patterned: bool = False) -> types.SimpleNamespace:
     global wind_effect, last_time, L_DISTANCE
 
@@ -259,7 +259,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target_data,
         return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
-    tgt_E, tgt_N = _llh_to_en(target_data.lat, target_data.lon)
+    tgt_E, tgt_N = _llh_to_en(target.lat, target.lon)
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
     if distance < 5.0:

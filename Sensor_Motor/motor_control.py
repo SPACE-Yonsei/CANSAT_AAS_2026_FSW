@@ -4,7 +4,7 @@ import time
 import types
 from datetime import datetime
 
-_sim_log = open("0320_sim.txt", "a")
+_sim_log = open("0320_sim.txt", "a", encoding="utf-8")
 DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
 
 def _dbg(line: str):
