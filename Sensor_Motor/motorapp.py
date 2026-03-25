@@ -214,13 +214,6 @@ def dispatch(msg: msgstructure.MsgStructure):
         log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
 
-def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
-    """고도와 state로 8자 비행 여부 결정."""
-    return False  # 패턴 비활성화 — 호밍 제어만 사용
-    # if flight_state == 4:
-    #     return alt_m > 10.0   # EGG: 10m 초과 → 8자, 10m 이하 → 당근 (Final)
-    # return False               # state 3: 당근 제어 (호밍)
-
 
 def ctrl_paragldr():
     motors_off = False
@@ -313,12 +306,10 @@ def ctrl_paragldr():
                 log(f"Failsafe: {failsafe_reason}", events.EventType.error)
                 motor_control.set_neutral(pi)
             else:
-                _patterned = _resolve_patterned(_state, _baro_m)
-
                 if DEBUG_GUIDANCE:
                     _dbg(
                         f"[GUIDANCE IN ] "
-                        f"state={_state} baro={_baro_m:.1f}m patterned={_patterned} | "
+                        f"state={_state} baro={_baro_m:.1f}m | "
                         f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
                         f"gps=({_GpsVector.lat:.6f},{_GpsVector.lon:.6f}) spd={_GpsVector.speed:.1f} crs={_GpsVector.course:.1f} | "
                         f"fix={_GpsFidelity.fix_quality} sats={_GpsFidelity.sats} rmc={_GpsFidelity.rmc_status} | "
@@ -327,7 +318,7 @@ def ctrl_paragldr():
 
                 result = motor_guidance.guidance(
                     _altitude, _GpsVector, _GpsFidelity, _target,
-                    baro_m=_baro_m, patterned=_patterned
+                    baro_m=_baro_m
                 )
 
                 motor_result = motor_control.control(pi, result.commanded_yaw_rate)

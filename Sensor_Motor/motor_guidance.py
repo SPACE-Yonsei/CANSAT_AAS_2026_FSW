@@ -233,7 +233,7 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
 
 
 def guidance(imu_data, gps_vector, gps_fidelity, target,
-             baro_m: float = 0.0, patterned: bool = False) -> types.SimpleNamespace:
+             baro_m: float = 0.0) -> types.SimpleNamespace:
     global wind_effect, last_time, L_DISTANCE
 
     now = time.time()
@@ -273,6 +273,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         L_DISTANCE = L_DISTANCE_LOW
     else:
         L_DISTANCE = L_DISTANCE_BASE
+
+    patterned = 10.0 < baro_m < 50.0
 
     if patterned and distance < PATTERN_ENTRY_DIST:
         guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
