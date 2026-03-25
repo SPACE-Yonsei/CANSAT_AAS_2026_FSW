@@ -116,8 +116,6 @@ def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
         left_pulse=left_pulse,
         right_pulse=right_pulse
     )
-
-
 def set_neutral(pi):
     if DEBUG_CONTROL:
         _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
