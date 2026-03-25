@@ -253,12 +253,11 @@ def ctrl_paragldr():
             failsafe_reason = None
 
             # FDIR-0: 센서 수신 여부
-            if _GpsVector.lat is None or _GpsVector.lon is None or _altitude.yaw is None or _baro_m is None:
+            if _GpsVector.lat is None or _GpsVector.lon is None or _altitude.yaw is None or _altitude.gyrz is None or _baro_m is None:
 
                 missing = []
-                if _GpsVector.lat is None:  missing.append("GPS")
-                if _GpsVector.lon is None:  missing.append("GPS")
-                if _altitude.yaw is None:  missing.append("IMU")
+                if _GpsVector.lat is None or _GpsVector.lon is None:  missing.append("GPS")
+                if _altitude.yaw is None or _altitude.gyrz is None:  missing.append("IMU")
                 if _baro_m is None:   missing.append("BARO")
                 failsafe_reason = f"No data received: {'+'.join(missing)}"
 
