@@ -297,6 +297,7 @@ def send_tlm(serial_instance):
 
         #events.LogEvent(appargs.CommAppArg.AppName, events.EventType.info,tlm_to_send)
 
+
         tlm_debug_text = f"\nID : {tlm_data.team_id} TIME : {tlm_data.mission_time}, PCK_CNT : {tlm_data.packet_count}, MODE : {tlm_data.mode}, STATE : {tlm_data.state}\n"\
                 f"Barometer : {tlm_data.altitude} , {tlm_data.temperature}, {tlm_data.pressure}\n" \
                  f"Elctro : {tlm_data.voltage}, {tlm_data.current}, {tlm_data.power}\n" \
