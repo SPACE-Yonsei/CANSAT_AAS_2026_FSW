@@ -487,17 +487,23 @@ print("=" * 60)
 _fix_pass = 0; _fix_total = 0
 
 _fix_total += 1
-v = motor_guidance.is_gps_valid(0.0, 127.5, 1, 6, "A")
+v = motor_guidance.is_gps_valid(
+    SimpleNamespace(lat=0.0, lon=127.5),
+    SimpleNamespace(fix_quality=1, sats=6, rmc_status="A"))
 print(f"  [{'PASS' if not v else 'FAIL'}] lat=0, lon=127.5 → invalid (got {v})")
 if not v: _fix_pass += 1
 
 _fix_total += 1
-v = motor_guidance.is_gps_valid(35.0, 0.0, 1, 8, "A")
+v = motor_guidance.is_gps_valid(
+    SimpleNamespace(lat=35.0, lon=0.0),
+    SimpleNamespace(fix_quality=1, sats=8, rmc_status="A"))
 print(f"  [{'PASS' if not v else 'FAIL'}] lat=35, lon=0 → invalid (got {v})")
 if not v: _fix_pass += 1
 
 _fix_total += 1
-v = motor_guidance.is_gps_valid(35.0, 127.0, 1, 8, "A")
+v = motor_guidance.is_gps_valid(
+    SimpleNamespace(lat=35.0, lon=127.0),
+    SimpleNamespace(fix_quality=1, sats=8, rmc_status="A"))
 print(f"  [{'PASS' if v else 'FAIL'}] lat=35, lon=127 → valid (got {v})")
 if v: _fix_pass += 1
 

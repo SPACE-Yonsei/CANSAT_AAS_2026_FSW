@@ -2,26 +2,37 @@
 import math
 import time
 import types
+from datetime import datetime
+
+_sim_log = open("0320_sim.txt", "a", encoding="utf-8")
+DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
+
+def _dbg(line: str):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    full = f"[{ts}] {line}"
+    print(full)
+    _sim_log.write(full + "\n")
+    _sim_log.flush()
 
 
-PARAFOIL_LEFT_MOTOR_PIN  = 12
-PARAFOIL_RIGHT_MOTOR_PIN = 13
+PARAFOIL_LEFT_MOTOR_PIN: int  = 12   # GPIO BCM pin
+PARAFOIL_RIGHT_MOTOR_PIN: int = 13   # GPIO BCM pin
 
-PULSE_PER_DEG = 2000.0 / 180.0
+PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg
 
-LEFT_ZERO  = 600
-RIGHT_ZERO = 2500
+LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
+RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
 
-MAX_ANGLE_SCOPE = 120
+MAX_ANGLE_SCOPE: int = 120  # deg, 서보 최대 각도
 
-NEUTRAL_DEG = 60.0
-LEFT_NEUTRAL  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)
-RIGHT_NEUTRAL = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)
+NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
+LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
+RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 
-PULSE_MIN = 500
-PULSE_MAX = 2500
+PULSE_MIN: int = 500   # μs
+PULSE_MAX: int = 2500  # μs
 
-K_delta = 1.0
+K_delta: float = 1.0   # (°/s)/deg, yaw rate ↔ 서보 각도 변환 계수
 
 
 def init_control():
@@ -50,6 +61,11 @@ def actuator_mixer(commanded_yaw_rate: float) -> tuple:
 
     left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
     right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
+
+    # 클램핑 발생 감지 — 명령이 잘렸으면 경고
+    if DEBUG_CONTROL and (left_raw != left_cmd_deg or right_raw != right_cmd_deg):
+        _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw:.1f}→{left_cmd_deg:.1f}° "
+             f"R_raw={right_raw:.1f}→{right_cmd_deg:.1f}°")
 
     # 실제 각도 차이도 (오른쪽 - 왼쪽)으로 기준을 맞춤
     actual_delta_deg = right_cmd_deg - left_cmd_deg
@@ -100,9 +116,9 @@ def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
         left_pulse=left_pulse,
         right_pulse=right_pulse
     )
-
-
 def set_neutral(pi):
+    if DEBUG_CONTROL:
+        _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
@@ -110,6 +126,8 @@ def set_neutral(pi):
 
 def set_motors_off(pi):
     """서보 신호 완전 차단 (LANDED state용)"""
+    if DEBUG_CONTROL:
+        _dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)

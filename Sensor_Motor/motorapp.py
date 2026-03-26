@@ -1,3 +1,4 @@
+import math
 import os
 import signal
 import threading
@@ -46,32 +47,45 @@ def log_control(g, m):
     controllogfile.write(line)
     controllogfile.flush()
 
-running = True
-motor_enabled = True
+from typing import Optional
+
+running: bool = True
+motor_enabled: bool = True
 pi = None
-target = types.SimpleNamespace(lat=0.0, lon=0.0)
 
-altitude = types.SimpleNamespace(yaw=0.0, gyrz=0.0)
-baro_m = 0.0
-GpsVector = types.SimpleNamespace(lat=0.0, lon=0.0, speed=0.0, course=0.0)
-GpsFidelity = types.SimpleNamespace(rmc_status="V", fix_quality=0, sats=0)
+target = types.SimpleNamespace(
+    lat  = None,  # Optional[float] — deg, decimal degrees
+    lon  = None,  # Optional[float] — deg, decimal degrees
+)
 
-state = 0
+altitude = types.SimpleNamespace(
+    yaw  = None,  # Optional[float] — deg, 0-360
+    gyrz = None,  # Optional[float] — rad/s
+)
+baro_m: Optional[float] = None  # m, 기압계 고도
 
-# ── [FIX-1] Stale 데이터 감지용 타임스탬프 ──
-last_gps_time = 0.0
-last_imu_time = 0.0
-STALE_THRESHOLD = 1.5  # 1.5초 이상 갱신 없으면 stale 판정
-# ── [/FIX-1] ──
+GpsVector = types.SimpleNamespace(
+    lat    = None,  # Optional[float] — deg, decimal degrees
+    lon    = None,  # Optional[float] — deg, decimal degrees
+    speed  = None,  # Optional[float] — m/s
+    course = None,  # Optional[float] — deg, 0-360
+)
+GpsFidelity = types.SimpleNamespace(
+    rmc_status   = None,  # Optional[str]  — "A"(active) / "V"(void)
+    fix_quality  = None,  # Optional[int]  — 0=no fix, 1=GPS, 2=DGPS
+    sats         = None,  # Optional[int]  — 위성 수
+)
 
-# ── [FIX-GYRZ] gyrz 스파이크 게이트 ──
-GYRZ_SPIKE_THRESHOLD = 45.0  # °/s — 틱 간 최대 허용 델타
-_prev_gyrz = 0.0
-# ── [/FIX-GYRZ] ──
+state: int = 0
 
-# ── [FDIR] Estimation Rate Error — 제어 불능 판정 임계값 ──
-GYRZ_RUNAWAY_THRESHOLD = 100.0  # °/s — 이 이상이면 센서 오류 또는 제어 불능
-# ── [/FDIR] ──
+last_gps_time: Optional[float] = None  # s, time.time() epoch
+last_imu_time: Optional[float] = None  # s, time.time() epoch
+STALE_THRESHOLD: float = 1.5           # s, 이상 갱신 없으면 stale 판정
+
+GYRZ_SPIKE_THRESHOLD: float = math.radians(45.0)   # rad/s (=45°/s), 틱 간 최대 허용 델타
+_prev_gyrz: Optional[float] = None                  # rad/s
+
+GYRZ_RUNAWAY_THRESHOLD: float = math.radians(100.0) # rad/s (=100°/s), 제어 불능 판정
 
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
@@ -95,7 +109,6 @@ def handle_gps(data: str):
     global last_gps_time
     parts = data.split(",")
     if len(parts) == 7:
-        # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
             GpsVector.lat    = float(parts[0])
             GpsVector.lon    = float(parts[1])
@@ -104,8 +117,7 @@ def handle_gps(data: str):
             GpsFidelity.fix_quality = int(parts[4])
             GpsFidelity.sats        = int(parts[5])
             GpsFidelity.rmc_status  = parts[6]
-            last_gps_time = time.time()  # [FIX-1] 수신 시각 기록
-        # ── [/FIX-4] ──
+            last_gps_time = time.time()
     else:
         log("GPS data format error", events.EventType.error)
 
@@ -117,14 +129,12 @@ def handle_imu(data: str):
         with update_lock:
             new_yaw  = float(parts[0])
             new_gyrz = float(parts[1])
-            # ── [FIX-GYRZ] ──
-            if abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
+            if _prev_gyrz is None or abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
                 altitude.gyrz = new_gyrz
                 _prev_gyrz = new_gyrz
             else:
-                log(f"gyrz spike rejected: {new_gyrz:.2f} deg/s (prev={_prev_gyrz:.2f})",
+                log(f"gyrz spike rejected: {new_gyrz:.2f} rad/s (prev={_prev_gyrz:.2f})",
                     events.EventType.warning)
-            # ── [/FIX-GYRZ] ──
             altitude.yaw  = new_yaw
             last_imu_time = time.time()
     else:
@@ -135,10 +145,8 @@ def handle_barometer(data: str):
     global baro_m
     try:
         parts = data.split(",")
-        # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
-            baro_m = float(parts[0])
-        # ── [/FIX-4] ──
+            baro_m = 400.0  # DEBUG: fixed altitude for L_DISTANCE_HIGH test (original: float(parts[0]))
     except (ValueError, IndexError):
         log("Barometer data format error", events.EventType.error)
 
@@ -146,10 +154,8 @@ def handle_barometer(data: str):
 def handle_target_coord(data: str):
     parts = data.split(",")
     if len(parts) == 2:
-        # ── [FIX-4] 핸들러에도 lock 적용 ──
         with update_lock:
             target.lat, target.lon = float(parts[0]), float(parts[1])
-        # ── [/FIX-4] ──
         motor_guidance.set_target_coord(target.lat, target.lon)
         log(f"Target set: ({target.lat:.6f}, {target.lon:.6f})")
     else:
@@ -158,12 +164,10 @@ def handle_target_coord(data: str):
 
 def handle_flight_state(data: str):
     global state
-    # ── [FIX-4] 핸들러에도 lock 적용 ──
     with update_lock:
         state = int(data)
-        if state == 3:
+        if state == 3 and GpsVector.lat is not None and GpsVector.lon is not None:
             motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
-    # ── [/FIX-4] ──
     log(f"Flight state: {state}")
 
 
@@ -180,7 +184,6 @@ def handle_egg_drop():
 def handle_mec(data: str):
     global motor_enabled
     log(f"MEC command: {data}")
-    # ── [FIX-4] 핸들러에도 lock 적용 ──
     with update_lock:
         if data == "ON":
             motor_enabled = True
@@ -188,7 +191,6 @@ def handle_mec(data: str):
             motor_enabled = False
         else:
             log(f"Invalid MEC option: {data}", events.EventType.error)
-    # ── [/FIX-4] ──
 
 
 MSG_HANDLERS = {
@@ -212,38 +214,29 @@ def dispatch(msg: msgstructure.MsgStructure):
         log(f"Unknown MID: {msg.MsgID}", events.EventType.error)
 
 
-def _resolve_patterned(flight_state: int, alt_m: float) -> bool:
-    """고도와 state로 8자 비행 여부 결정."""
-    return False  # [TEST] 패턴 비활성화 — 당근(호밍) 제어만 사용
-    # if flight_state == 4:
-    #     return alt_m > 10.0   # EGG: 10m 초과 → 8자, 10m 이하 → 당근 (Final)
-    # return False               # state 3: 당근 제어 (호밍)
 
-
-def control_parafoil():
+def ctrl_paragldr():
     motors_off = False
     while running:
-        # ── [FIX-4] lock 범위를 스냅샷 복사로 최소화 ──
         with update_lock:
             _state       = state
-            _motor_en    = motor_enabled
+            _motor_enabled    = motor_enabled
             _baro_m      = baro_m
-            _gps         = types.SimpleNamespace(
+            _GpsVector         = types.SimpleNamespace(
                 lat=GpsVector.lat, lon=GpsVector.lon,
                 speed=GpsVector.speed, course=GpsVector.course)
-            _fidelity    = types.SimpleNamespace(
+            _GpsFidelity    = types.SimpleNamespace(
                 rmc_status=GpsFidelity.rmc_status,
                 fix_quality=GpsFidelity.fix_quality,
                 sats=GpsFidelity.sats)
-            _imu         = types.SimpleNamespace(
+            _altitude         = types.SimpleNamespace(
                 yaw=altitude.yaw, gyrz=altitude.gyrz)
             _target      = types.SimpleNamespace(
                 lat=target.lat, lon=target.lon)
             _last_gps_t  = last_gps_time
             _last_imu_t  = last_imu_time
-        # ── [/FIX-4] ──
 
-        if _state >= 3 and _motor_en:
+        if _state >= 3 and _motor_enabled:
 
             # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
             if _state == 5:
@@ -256,97 +249,78 @@ def control_parafoil():
 
             motors_off = False
 
-            # ================================================================
-            #  FDIR (Fault Detection, Isolation & Recovery) 게이트
-            #  ── ADCS OBC Communications Watchdog / Failsafe 철학 적용 ──
-            #
-            #  정상 제어(guidance) 진입 전에 모든 이상 조건을 일괄 검사한다.
-            #  하나라도 이상이 감지되면 Failsafe(모터 중립)로 진입하고,
-            #  모든 검사를 통과한 경우에만 정상 제어 경로를 탄다.
-            # ================================================================
-            failsafe_reason = None  # None이면 정상, 문자열이면 Failsafe 진입
+            # FDIR 게이트
+            failsafe_reason = None
 
-            # ── FDIR-1: OBC Watchdog — 센서 통신 타임아웃 감지 ──
-            # ADCS에서 OBC-ADCS 간 Heartbeat/Watchdog이 timeout되면
-            # ConNone(무제어) 모드로 전환하듯, 센서 데이터가 STALE_THRESHOLD
-            # 이상 갱신되지 않으면 통신 두절로 간주한다.
-            now = time.time()
-            gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t > 0 else True
-            imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t > 0 else True
+            # FDIR-0: 센서 수신 여부
+            if _GpsVector.lat is None or _GpsVector.lon is None or _altitude.yaw is None or _altitude.gyrz is None or _baro_m is None:
 
-            if gps_stale and imu_stale:
-                failsafe_reason = "Sensor timeout: GPS+IMU stale (Watchdog)"
-            elif gps_stale:
-                failsafe_reason = "Sensor timeout: GPS stale (Watchdog)"
-            elif imu_stale:
-                failsafe_reason = "Sensor timeout: IMU stale (Watchdog)"
+                missing = []
+                if _GpsVector.lat is None or _GpsVector.lon is None:  missing.append("GPS")
+                if _altitude.yaw is None or _altitude.gyrz is None:  missing.append("IMU")
+                if _baro_m is None:   missing.append("BARO")
+                failsafe_reason = f"No data received: {'+'.join(missing)}"
 
-            # ── FDIR-2: Data Integrity — GPS 데이터 무결성 검증 ──
-            # ADCS가 OrbitError(궤도 데이터 이상) 감지 시 Safe-mode로
-            # 전환하듯, GPS 좌표·위성 수·Fix 품질이 신뢰 기준 미달이면
-            # 유도 계산 자체가 위험하므로 Failsafe 진입.
+            # FDIR-1: 센서 통신 타임아웃
             if failsafe_reason is None:
-                if not motor_guidance.is_gps_valid(
-                    _gps.lat, _gps.lon,
-                    _fidelity.fix_quality, _fidelity.sats,
-                    _fidelity.rmc_status
-                ):
-                    failsafe_reason = (
-                        f"Data integrity: GPS invalid "
-                        f"(lat={_gps.lat}, lon={_gps.lon}, "
-                        f"fix={_fidelity.fix_quality}, sats={_fidelity.sats}, "
-                        f"rmc={_fidelity.rmc_status})"
-                    )
+                now = time.time()
+                gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t is not None else True
+                imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t is not None else True
 
-            # ── FDIR-3: Estimation Rate Error — 극한 회전 상태 차단 ──
-            # ADCS가 자세 추정기(Estimator)의 각속도 오차가 임계를 초과하면
-            # 제어 불능으로 판단하여 Failsafe 전환하듯, gyrz가 비현실적으로
-            # 높으면 센서 오류이거나 텀블링 상태이므로 즉시 차단한다.
+                if gps_stale and imu_stale:
+                    failsafe_reason = "Sensor timeout: GPS+IMU stale"
+                elif gps_stale:
+                    failsafe_reason = "Sensor timeout: GPS stale"
+                elif imu_stale:
+                    failsafe_reason = "Sensor timeout: IMU stale"
+
+            # FDIR-2: GPS 무결성
             if failsafe_reason is None:
-                if abs(_imu.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
+                if not motor_guidance.is_gps_valid(_GpsVector, _GpsFidelity):
                     failsafe_reason = (
-                        f"Estimation rate error: |gyrz|={abs(_imu.gyrz):.1f} deg/s "
-                        f"> {GYRZ_RUNAWAY_THRESHOLD} (runaway)"
-                    )
+                        f"GPS invalid (lat={_GpsVector.lat}, lon={_GpsVector.lon}, "
+                        f"fix={_GpsFidelity.fix_quality}, sats={_GpsFidelity.sats}, "
+                        f"rmc={_GpsFidelity.rmc_status})")
 
-            # ── FDIR-4: Baro Altitude Sanity — 기압계 고도 방어 ──
-            # 기압 고도가 0 이하이면 센서 미초기화 또는 오류로 간주.
+            # FDIR-3: 극한 회전 상태
+            if failsafe_reason is None:
+                if abs(_altitude.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
+                    failsafe_reason = (
+                        f"|gyrz|={abs(_altitude.gyrz):.2f} rad/s "
+                        f"({math.degrees(abs(_altitude.gyrz)):.1f}°/s) > "
+                        f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s")
+
+            # FDIR-4: 기압계 고도
             if failsafe_reason is None:
                 if _baro_m <= 0.0:
-                    failsafe_reason = (
-                        f"Data integrity: Baro altitude invalid ({_baro_m:.1f}m)"
-                    )
+                    failsafe_reason = f"Baro altitude invalid ({_baro_m:.1f}m)"
 
-            # ── Failsafe 분기: 이상 감지 → 모터 중립 / 정상 → 유도 제어 ──
+            # FDIR-5: Target 좌표 수신
+            if failsafe_reason is None:
+                if _target.lat is None or _target.lon is None:
+                    failsafe_reason = "No target coordinates received"
+
+            # Failsafe 분기
             if failsafe_reason is not None:
-                # === FAILSAFE MODE (Safe-mode Action) ===
-                # ADCS Timeout 시 ConNone으로 복귀하듯, 모터를 중립으로 고정하여
-                # 잘못된 데이터로 인한 위험한 조종면 명령을 원천 차단한다.
-                log(f"Failsafe triggered: {failsafe_reason}", events.EventType.error)
+                log(f"Failsafe: {failsafe_reason}", events.EventType.error)
                 motor_control.set_neutral(pi)
             else:
-                # === NOMINAL CONTROL PATH ===
-                # 모든 FDIR 검증을 통과 — 정상 유도/제어 수행
-                _patterned = _resolve_patterned(_state, _baro_m)
-
                 if DEBUG_GUIDANCE:
                     _dbg(
                         f"[GUIDANCE IN ] "
-                        f"state={_state} baro={_baro_m:.1f}m patterned={_patterned} | "
-                        f"yaw={_imu.yaw:.1f}° gyrz={_imu.gyrz:.2f} | "
-                        f"gps=({_gps.lat:.6f},{_gps.lon:.6f}) spd={_gps.speed:.1f} crs={_gps.course:.1f} | "
-                        f"fix={_fidelity.fix_quality} sats={_fidelity.sats} rmc={_fidelity.rmc_status} | "
+                        f"state={_state} baro={_baro_m:.1f}m | "
+                        f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
+                        f"gps=({_GpsVector.lat:.6f},{_GpsVector.lon:.6f}) spd={_GpsVector.speed:.1f} crs={_GpsVector.course:.1f} | "
+                        f"fix={_GpsFidelity.fix_quality} sats={_GpsFidelity.sats} rmc={_GpsFidelity.rmc_status} | "
                         f"target=({_target.lat:.6f},{_target.lon:.6f})"
                     )
 
                 result = motor_guidance.guidance(
-                    _imu, _gps, _fidelity, _target,
-                    baro_m=_baro_m, patterned=_patterned
+                    _altitude, _GpsVector, _GpsFidelity, _target,
+                    baro_m=_baro_m
                 )
 
-                motor_result = motor_control.control(
-                    pi, result.commanded_yaw_rate
-                )
+                motor_result = motor_control.control(pi, result.commanded_yaw_rate)
 
                 if DEBUG_GUIDANCE and motor_result is not None:
                     _dbg(
@@ -372,10 +346,11 @@ def init() -> bool:
     try:
         Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
+        motor_guidance.set_start_coordinates(37.5364, 126.9040)
         pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
-            target=control_parafoil,
+            target=ctrl_paragldr,
             name="ControlLog_Thread",
             daemon=True
         )
