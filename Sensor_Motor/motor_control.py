@@ -51,22 +51,23 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
         pi.stop()
-
 def actuator_mixer(commanded_yaw_rate: float) -> tuple:
     desired_delta_deg = commanded_yaw_rate / K_delta
 
-    left_raw  = NEUTRAL_DEG + desired_delta_deg / 2.0
-    right_raw = NEUTRAL_DEG - desired_delta_deg / 2.0
+    # commanded_yaw_rate > 0 이면
+    # right_cmd_deg > NEUTRAL_DEG 가 되도록 부호 반전
+    left_raw  = NEUTRAL_DEG - desired_delta_deg / 2.0
+    right_raw = NEUTRAL_DEG + desired_delta_deg / 2.0
 
     left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
     right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
 
-    # 클램핑 발생 감지 — 명령이 잘렸으면 경고
     if DEBUG_CONTROL and (left_raw != left_cmd_deg or right_raw != right_cmd_deg):
         _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw:.1f}→{left_cmd_deg:.1f}° "
              f"R_raw={right_raw:.1f}→{right_cmd_deg:.1f}°")
 
-    actual_delta_deg = left_cmd_deg - right_cmd_deg
+    # 부호 일관성도 함께 수정
+    actual_delta_deg = right_cmd_deg - left_cmd_deg
     expected_yaw_rate = K_delta * actual_delta_deg
 
     return left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
