@@ -346,6 +346,7 @@ def init() -> bool:
     try:
         Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
+        motor_guidance.set_start_coordinates(37.5364, 126.9040)
         pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
