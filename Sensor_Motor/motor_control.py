@@ -15,8 +15,8 @@ def _dbg(line: str):
     _sim_log.flush()
 
 
-PARAFOIL_LEFT_MOTOR_PIN: int  = 12   # GPIO BCM pin
-PARAFOIL_RIGHT_MOTOR_PIN: int = 13   # GPIO BCM pin
+PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
+PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
 
 PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg
 
