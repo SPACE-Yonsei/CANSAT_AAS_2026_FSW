@@ -271,8 +271,8 @@ def gps_readdata(pi):
                 ground_speed_knots = 0.0
                 ground_speed_ms = 0.0
                 course_over_ground = 0.0
-        modified_gps_data = ["12:34:56", 120.5, 37.5665, 126.9780, 10, 1, "A", 3.2, 45.0]
-        # modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
+        # modified_gps_data = ["12:34:56", 120.5, 37.5665, 126.9780, 10, 1, "A", 3.2, 45.0]
+        modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
         #print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록
         if fix_quality == 0:
