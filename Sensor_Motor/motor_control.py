@@ -18,12 +18,10 @@ def _dbg(line: str):
 PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
 PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
 
-PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg
+PULSE_PER_DEG: float = 2000.0 / 180.0 * 2  # μs/deg*2
 
 LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
 RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
-
-MAX_ANGLE_SCOPE: int = 120  # deg, 서보 최대 각도
 
 NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
 LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
@@ -32,7 +30,7 @@ RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 PULSE_MIN: int = 500   # μs
 PULSE_MAX: int = 2500  # μs
 
-K_delta: float = 1.0   # (°/s)/deg, yaw rate ↔ 서보 각도 변환 계수
+K_pulse: float = PULSE_PER_DEG  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수
 
 
 def init_control():
@@ -52,43 +50,33 @@ def terminate_parafoil_motor(pi):
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
         pi.stop()
 def actuator_mixer(commanded_yaw_rate: float) -> tuple:
-    desired_delta_deg = commanded_yaw_rate / K_delta
+    # cmd_yr > 0 (오른쪽 회전): 두 펄스 모두 중립에서 증가
+    #   LEFT:  팔 위로 → 왼쪽 당김 해제
+    #   RIGHT: 팔 아래로(2500 방향) → 오른쪽 당김
+    pulse_offset = commanded_yaw_rate / 2.0 * K_pulse
 
-    # commanded_yaw_rate > 0 이면
-    # right_cmd_deg > NEUTRAL_DEG 가 되도록 부호 반전
-    left_raw  = NEUTRAL_DEG - desired_delta_deg / 2.0
-    right_raw = NEUTRAL_DEG + desired_delta_deg / 2.0
+    left_raw_pw  = LEFT_NEUTRAL  + pulse_offset
+    right_raw_pw = RIGHT_NEUTRAL + pulse_offset
 
-    left_cmd_deg  = max(0.0, min(float(MAX_ANGLE_SCOPE), left_raw))
-    right_cmd_deg = max(0.0, min(float(MAX_ANGLE_SCOPE), right_raw))
+    left_pulse  = max(PULSE_MIN, min(PULSE_MAX, int(left_raw_pw)))
+    right_pulse = max(PULSE_MIN, min(PULSE_MAX, int(right_raw_pw)))
 
-    if DEBUG_CONTROL and (left_raw != left_cmd_deg or right_raw != right_cmd_deg):
-        _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw:.1f}→{left_cmd_deg:.1f}° "
-             f"R_raw={right_raw:.1f}→{right_cmd_deg:.1f}°")
+    if DEBUG_CONTROL and (int(left_raw_pw) != left_pulse or int(right_raw_pw) != right_pulse):
+        _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw_pw:.0f}→{left_pulse}μs "
+             f"R_raw={right_raw_pw:.0f}→{right_pulse}μs")
 
-    # 부호 일관성도 함께 수정
-    actual_delta_deg = right_cmd_deg - left_cmd_deg
-    expected_yaw_rate = K_delta * actual_delta_deg
+    left_cmd_deg  = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
+    right_cmd_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
+    actual_delta_deg  = right_cmd_deg - left_cmd_deg
+    actual_offset     = ((left_pulse - LEFT_NEUTRAL) + (right_pulse - RIGHT_NEUTRAL)) / 2.0
+    expected_yaw_rate = actual_offset / K_pulse * 2.0
 
-    return left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
-
-
-def _servo_pulse_left(angle_deg: float) -> int:
-    pulse = int(LEFT_ZERO + angle_deg * PULSE_PER_DEG)
-    return max(PULSE_MIN, min(PULSE_MAX, pulse))
-
-
-def _servo_pulse_right(angle_deg: float) -> int:
-    pulse = int(RIGHT_ZERO - angle_deg * PULSE_PER_DEG)
-    return max(PULSE_MIN, min(PULSE_MAX, pulse))
+    return left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
 
 
 def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
-    left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate = \
+    left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate = \
         actuator_mixer(commanded_yaw_rate)
-
-    left_pulse  = _servo_pulse_left(left_cmd_deg)
-    right_pulse = _servo_pulse_right(right_cmd_deg)
 
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)

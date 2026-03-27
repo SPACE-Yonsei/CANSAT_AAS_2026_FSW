@@ -85,6 +85,8 @@ STALE_THRESHOLD: float = 1.5           # s, 이상 갱신 없으면 stale 판정
 GYRZ_SPIKE_THRESHOLD: float = math.radians(45.0)   # rad/s (=45°/s), 틱 간 최대 허용 델타
 _prev_gyrz: Optional[float] = None                  # rad/s
 
+GYRZ_LPF_ALPHA: float = 0.3   # EMA 계수 (0=완전 평탄, 1=필터 없음)
+
 GYRZ_RUNAWAY_THRESHOLD: float = math.radians(100.0) # rad/s (=100°/s), 제어 불능 판정
 
 threads: dict[str, threading.Thread] = {}
@@ -130,7 +132,10 @@ def handle_imu(data: str):
             new_yaw  = float(parts[0])
             new_gyrz = float(parts[1])
             if _prev_gyrz is None or abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
-                altitude.gyrz = new_gyrz
+                if altitude.gyrz is None:
+                    altitude.gyrz = new_gyrz
+                else:
+                    altitude.gyrz = (1.0 - GYRZ_LPF_ALPHA) * altitude.gyrz + GYRZ_LPF_ALPHA * new_gyrz
                 _prev_gyrz = new_gyrz
             else:
                 log(f"gyrz spike rejected: {new_gyrz:.2f} rad/s (prev={_prev_gyrz:.2f})",
