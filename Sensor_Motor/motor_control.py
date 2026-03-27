@@ -14,7 +14,6 @@ def _dbg(line: str):
     _sim_log.write(full + "\n")
     _sim_log.flush()
 
-
 PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
 PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
 
