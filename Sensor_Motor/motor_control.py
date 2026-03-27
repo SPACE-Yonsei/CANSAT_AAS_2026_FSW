@@ -18,19 +18,24 @@ def _dbg(line: str):
 PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
 PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
 
-PULSE_PER_DEG: float = 2000.0 / 180.0 * 2  # μs/deg*2
+PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg, 서보 물리 보정값 (고정)
 
 LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
 RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
+
+MAX_ANGLE_SCOPE: int = 120  # deg, 서보 기계적 최대 각도
 
 NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
 LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 
+LEFT_MAX_PULSE:  int = int(LEFT_ZERO  + MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, LEFT 120°
+RIGHT_MIN_PULSE: int = int(RIGHT_ZERO - MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, RIGHT 120°
+
 PULSE_MIN: int = 500   # μs
 PULSE_MAX: int = 2500  # μs
 
-K_pulse: float = PULSE_PER_DEG  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수
+K_pulse: float = PULSE_PER_DEG * 2  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수 (×2 튜닝)
 
 
 def init_control():
@@ -58,12 +63,13 @@ def actuator_mixer(commanded_yaw_rate: float) -> tuple:
     left_raw_pw  = LEFT_NEUTRAL  + pulse_offset
     right_raw_pw = RIGHT_NEUTRAL + pulse_offset
 
-    left_pulse  = max(PULSE_MIN, min(PULSE_MAX, int(left_raw_pw)))
-    right_pulse = max(PULSE_MIN, min(PULSE_MAX, int(right_raw_pw)))
+    left_pulse  = max(PULSE_MIN,       min(LEFT_MAX_PULSE,  int(left_raw_pw)))
+    right_pulse = max(RIGHT_MIN_PULSE, min(PULSE_MAX,       int(right_raw_pw)))
 
     if DEBUG_CONTROL and (int(left_raw_pw) != left_pulse or int(right_raw_pw) != right_pulse):
-        _dbg(f"[ACTUATOR] CLAMP — L_raw={left_raw_pw:.0f}→{left_pulse}μs "
-             f"R_raw={right_raw_pw:.0f}→{right_pulse}μs")
+        l_deg = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
+        r_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
+        _dbg(f"[ACTUATOR] CLAMP — L={left_pulse}μs({l_deg:.1f}°) R={right_pulse}μs({r_deg:.1f}°)")
 
     left_cmd_deg  = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
     right_cmd_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
