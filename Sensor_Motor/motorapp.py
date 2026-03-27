@@ -151,7 +151,7 @@ def handle_barometer(data: str):
     try:
         parts = data.split(",")
         with update_lock:
-            baro_m = 400.0  # DEBUG: fixed altitude for L_DISTANCE_HIGH test (original: float(parts[0]))
+            baro_m = float(parts[0])
     except (ValueError, IndexError):
         log("Barometer data format error", events.EventType.error)
 
