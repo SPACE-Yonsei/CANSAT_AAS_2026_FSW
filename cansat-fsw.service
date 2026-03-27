@@ -6,8 +6,8 @@ After=network.target pigpiod.service
 Type=simple
 User=root
 WorkingDirectory=/home/pi/CANSAT_AAS_2026_FSW
-Environment="PATH=/home/pi/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/bin/bash /home/pi/CANSAT_AAS_2026_FSW/startup.sh
+Environment="PATH=/root/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/bin/bash /root/CANSAT_AAS_2026_FSW/startup.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
