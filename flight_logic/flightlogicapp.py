@@ -267,8 +267,9 @@ def barometer_logic(queue: Queue, alt: float):
             cnt_release += 1
         else:
             cnt_release = max(0, cnt_release - 2)
-        #if cnt_release >= 3:
+        if cnt_release >= 3:
             #to_egg(queue)
+            to_egg(queue)
     
     # === EGG (4) ===
     elif state == STATE["EGG"]:
