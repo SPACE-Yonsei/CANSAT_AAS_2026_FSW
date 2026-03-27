@@ -324,14 +324,15 @@ def send_imu_data(Main_Queue : Queue):
 
         send_counter += 1
 
-        # Send IMU data directly to motor app (10Hz)
-        msgstructure.send_msg(
-            Main_Queue,
-            appargs.ImuAppArg.AppID,
-            appargs.MotorAppArg.AppID,
-            appargs.ImuAppArg.MID_motor_imu,
-            f"{IMU_YAW:.2f},{IMU_GYRZ:.2f}"
-        )
+        # Send IMU data directly to motor app (10Hz) — stale 시 전송 차단
+        if not IMU_DATA_STALE:
+            msgstructure.send_msg(
+                Main_Queue,
+                appargs.ImuAppArg.AppID,
+                appargs.MotorAppArg.AppID,
+                appargs.ImuAppArg.MID_motor_imu,
+                f"{IMU_YAW:.2f},{IMU_GYRZ:.2f}"
+            )
 
 
         if send_counter >= 10 :

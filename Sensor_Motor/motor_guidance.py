@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import math
+import os
 import time
 import types
 from datetime import datetime
 from typing import Optional
 
-_sim_log = open("0320_sim.txt", "a", encoding="utf-8")
+_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
+_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
 
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -68,6 +70,15 @@ GPS_JUMP_MAX_SPEED: float = 50.0        # m/s
 GPS_STABLE_COUNT_REQUIRED: int = 2      # 샘플 수
 _gps_stable_count: int = 0
 
+TARGET_REACHED_RADIUS: float = 5.0    # m, 목표 도달 판정 반경
+PATTERN_ALT_MIN: float       = 10.0   # m, 패턴 비행 진입 최소 고도
+PATTERN_ALT_MAX: float       = 50.0   # m, 패턴 비행 진입 최대 고도
+WIND_LEARN_MIN_SPEED: float  = 2.5    # m/s, wind 학습 최소 GPS 속도
+WIND_EMA_ALPHA: float        = 0.15   # wind EMA 학습률 (0=고정, 1=즉시 반영)
+WIND_MAX_DEG: float          = 45.0   # deg, wind_effect 최대 보정각
+DT_MIN: float = 0.02                  # s, guidance dt 하한
+DT_MAX: float = 0.5                   # s, guidance dt 상한
+
 
 
 def init_guidance():
@@ -78,11 +89,13 @@ def init_guidance():
     last_time = time.time()
     _pattern.lobe_sign = 1
     _pattern.last_switch_time = time.time()
-    _prev_gps.lat = None
-    _prev_gps.lon = None
-    _prev_gps.time = None
+    _prev_gps.lat         = None
+    _prev_gps.lon         = None
+    _prev_gps.time        = None
     _prev_gps.initialized = False
     _gps_stable_count = 0
+    start_point.lat = None
+    start_point.lon = None
 
 def reset_control():
     global wind_effect, last_time
@@ -166,6 +179,7 @@ def calculate_distance_haversine(lat1: float, lon1: float,
 
 
 def _llh_to_en(lat: float, lon: float) -> tuple:
+    """위도/경도 → start_point 기준 East/North (m) 변환."""
     if start_point.lat is None or start_point.lon is None:
         return 0.0, 0.0
     N = (lat - start_point.lat) * LAT_TO_METER
@@ -175,17 +189,26 @@ def _llh_to_en(lat: float, lon: float) -> tuple:
 
 def _carrot(my_E: float, my_N: float,
             tgt_E: float, tgt_N: float) -> tuple:
-    rope_len = math.hypot(tgt_E, tgt_N)
-    if rope_len < 0.01:
+    """
+    L1 경로추적: start_point(원점) → target 기준선 위에서
+    차량 투영점 기준 L_DISTANCE 전방에 carrot 배치.
+    """
+    # 기준선 방향 단위벡터 (원점 = start_point = EN 원점)
+    line_len = math.hypot(tgt_E, tgt_N)
+    if line_len < 0.01:
         return tgt_E, tgt_N
+    uE = tgt_E / line_len
+    uN = tgt_N / line_len
 
-    uE = tgt_E / rope_len
-    uN = tgt_N / rope_len
+    # 차량의 기준선 위 투영 거리
+    s = my_E * uE + my_N * uN
 
-    s = max(0.0, min(my_E * uE + my_N * uN, rope_len))
-
-    carrot_s = s + L_DISTANCE
-    return carrot_s * uE, carrot_s * uN
+    # carrot = 투영점에서 L_DISTANCE 전방, [origin, target] 범위로 클램프
+    # max(0.0,...): 기체가 start_point 뒤에 있을 때 carrot이 역방향으로 배치되는 것 방지
+    s_carrot = max(0.0, min(s + L_DISTANCE, line_len))
+    if s < 0.0:
+        _dbg(f"[CARROT] vehicle behind origin: s={s:.1f}m → clamped to {s_carrot:.1f}m")
+    return s_carrot * uE, s_carrot * uN
 
 
 def _eight(my_E: float, my_N: float,
@@ -232,13 +255,18 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
     return u_sat
 
 
+_guidance_tick = 0
+
+
 def guidance(imu_data, gps_vector, gps_fidelity, target,
              baro_m: float = 0.0) -> types.SimpleNamespace:
-    global wind_effect, last_time, L_DISTANCE
+    global wind_effect, last_time, L_DISTANCE, _guidance_tick
+    _guidance_tick += 1
+    commanded_yaw_rate: float = 0.0  # 미초기화 참조 방지
 
     now = time.time()
     dt = now - last_time if last_time else 0.1
-    if dt <= 0.02 or dt > 0.5:
+    if dt <= DT_MIN or dt > DT_MAX:
         dt = 0.1
     last_time = now
 
@@ -249,8 +277,9 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] GPS_JUMP — lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f}")
+        _dbg(f"[CTRL] GPS_JUMP — lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
+             f"pi_int_before={cascade_pi.pi_integral:.3f}")
+        cascade_pi.pi_integral = 0.0
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
     
     if baro_m <= 0.0:
@@ -260,9 +289,14 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
 
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(target.lat, target.lon)
+
+    if start_point.lat is None or start_point.lon is None:
+        _dbg(f"[CTRL] START_POINT_UNSET — waiting for valid GPS fix to set origin")
+        return types.SimpleNamespace(state="START_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
-    if distance < 5.0:
+    if distance < TARGET_REACHED_RADIUS:
         if DEBUG_GUIDANCE:
             _dbg(f"[CTRL] TARGET_REACHED — dist={distance:.1f}m")
         return types.SimpleNamespace(state="TARGET_REACHED", distance=distance, commanded_yaw_rate=0.0)
@@ -274,7 +308,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     else:
         L_DISTANCE = L_DISTANCE_BASE
 
-    patterned = 10.0 < baro_m < 50.0
+    patterned = PATTERN_ALT_MIN < baro_m < PATTERN_ALT_MAX
 
     if patterned and distance < PATTERN_ENTRY_DIST:
         guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
@@ -300,10 +334,11 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         if phase == "HOMING":
             phase = "STRAIGHT"
         # Wind learning only when flying straight — no turn contamination
-        if gps_vector.speed > 1.0:
+        # 2.5 m/s 미만에서는 GPS course 노이즈가 커서 wind 학습 차단
+        if gps_vector.speed > WIND_LEARN_MIN_SPEED:
             current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
-            wind_effect = 0.85 * wind_effect + 0.15 * current_crab
-            wind_effect = max(-45.0, min(45.0, wind_effect))
+            wind_effect = (1.0 - WIND_EMA_ALPHA) * wind_effect + WIND_EMA_ALPHA * current_crab
+            wind_effect = max(-WIND_MAX_DEG, min(WIND_MAX_DEG, wind_effect))
     else:
         commanded_yaw_rate = _yaw_rate_pi_control(
             desired_yaw_rate, math.degrees(imu_data.gyrz), dt
@@ -322,6 +357,13 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             f"V={V:.1f}m/s  des_yr={desired_yaw_rate:.2f}°/s  "
             f"pi_int={cascade_pi.pi_integral:.3f}  cmd_yr={commanded_yaw_rate:.2f}°/s"
             + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
+        )
+    elif _guidance_tick % 10 == 0:
+        # 실비행 진단용 compact 로그 (1s 주기, DEBUG_GUIDANCE 무관)
+        _dbg(
+            f"[CTRL/{_guidance_tick}] {phase} dist={distance:.1f}m "
+            f"err={angl_to_turn:.1f}° wind={wind_effect:.1f}° "
+            f"pi_int={cascade_pi.pi_integral:.3f} cmd_yr={commanded_yaw_rate:.2f}°/s"
         )
 
     return types.SimpleNamespace(

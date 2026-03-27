@@ -122,7 +122,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_LON  = float(rcv_data[3])
                 GPS_SATS = int(rcv_data[4])
                 GPS_FIX_QUALITY = int(rcv_data[5]) if len(rcv_data) > 5 else 0
-                GPS_RMC_STATUS = str(rcv_data[6]) if len(rcv_data) > 6 else "V"
+                GPS_RMC_STATUS = str(rcv_data[6]).strip() if len(rcv_data) > 6 else "V"
                 GPS_SPEED_MS = float(rcv_data[7]) if len(rcv_data) > 7 else 0.0
                 GPS_COURSE = float(rcv_data[8]) if len(rcv_data) > 8 else 0.0
                 # Print GPS data for debugging (disabled)
@@ -144,13 +144,14 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             # 로그 출력 비활성화
             pass
 
-        # gps->motor, GPS data (lat, lon, speed_ms, course, fix_quality, sats, rmc_status)
-        msgstructure.send_msg(
-            Main_Queue,
-            appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-            appargs.GpsAppArg.MID_motor_gps,
-            f"{GPS_LAT},{GPS_LON},{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f},{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
-        )
+        # gps->motor: 새 NMEA 문장이 수신된 경우에만 전송 (stale 재전송 방지)
+        if rcv_data and len(rcv_data) >= 5:
+            msgstructure.send_msg(
+                Main_Queue,
+                appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+                appargs.GpsAppArg.MID_motor_gps,
+                f"{GPS_LAT},{GPS_LON},{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f},{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
+            )
 
         send_counter += 1
         if send_counter >= 10:

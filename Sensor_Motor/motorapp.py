@@ -14,7 +14,8 @@ log_dir = "./sensorlogs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
-simlogfile = open("0320_sim.txt", "a")
+_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
+simlogfile = open(_SIM_LOG_PATH, "a")
 
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -77,10 +78,11 @@ GpsFidelity = types.SimpleNamespace(
 )
 
 state: int = 0
+_start_point_locked: bool = False  # True once a valid-GPS start_point is committed
 
 last_gps_time: Optional[float] = None  # s, time.time() epoch
 last_imu_time: Optional[float] = None  # s, time.time() epoch
-STALE_THRESHOLD: float = 1.5           # s, 이상 갱신 없으면 stale 판정
+STALE_THRESHOLD: float = 3.0           # s, 이상 갱신 없으면 stale 판정 (GPS ~1Hz 기준 2~3프레임 여유)
 
 GYRZ_SPIKE_THRESHOLD: float = math.radians(45.0)   # rad/s (=45°/s), 틱 간 최대 허용 델타
 _prev_gyrz: Optional[float] = None                  # rad/s
@@ -108,42 +110,71 @@ def handle_terminate(data: str):
 
 
 def handle_gps(data: str):
-    global last_gps_time
+    global last_gps_time, _start_point_locked
     parts = data.split(",")
-    if len(parts) == 7:
-        with update_lock:
-            GpsVector.lat    = float(parts[0])
-            GpsVector.lon    = float(parts[1])
-            GpsVector.speed  = float(parts[2])
-            GpsVector.course = float(parts[3])
-            GpsFidelity.fix_quality = int(parts[4])
-            GpsFidelity.sats        = int(parts[5])
-            GpsFidelity.rmc_status  = parts[6]
-            last_gps_time = time.time()
-    else:
-        log("GPS data format error", events.EventType.error)
+    if len(parts) != 7:
+        log(f"GPS data format error: expected 7 fields, got {len(parts)}", events.EventType.error)
+        return
+    try:
+        new_lat    = float(parts[0])
+        new_lon    = float(parts[1])
+        new_speed  = float(parts[2])
+        new_course = float(parts[3])
+        new_fix    = int(parts[4])
+        new_sats   = int(parts[5])
+        new_rmc    = parts[6].strip()
+    except (ValueError, IndexError) as e:
+        log(f"GPS parse error: {e} raw={data!r}", events.EventType.error)
+        return
+    if not (math.isfinite(new_lat) and math.isfinite(new_lon)
+            and math.isfinite(new_speed) and math.isfinite(new_course)):
+        log(f"GPS NaN/Inf rejected: lat={new_lat} lon={new_lon} spd={new_speed} crs={new_course}",
+            events.EventType.error)
+        return
+    with update_lock:
+        GpsVector.lat    = new_lat
+        GpsVector.lon    = new_lon
+        GpsVector.speed  = new_speed
+        GpsVector.course = new_course
+        GpsFidelity.fix_quality = new_fix
+        GpsFidelity.sats        = new_sats
+        GpsFidelity.rmc_status  = new_rmc
+        last_gps_time = time.time()
+        # state=3 진입 후 유효 GPS가 처음 도착하면 start_point 확정
+        if state == 3 and not _start_point_locked and motor_guidance.is_gps_valid(GpsVector, GpsFidelity):
+            motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
+            _start_point_locked = True
+            log(f"start_point confirmed: ({GpsVector.lat:.6f}, {GpsVector.lon:.6f}) "
+                f"fix={GpsFidelity.fix_quality} sats={GpsFidelity.sats}")
 
 
 def handle_imu(data: str):
     global last_imu_time, _prev_gyrz
     parts = data.split(",")
-    if len(parts) == 2:
-        with update_lock:
-            new_yaw  = float(parts[0])
-            new_gyrz = float(parts[1])
-            if _prev_gyrz is None or abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
-                if altitude.gyrz is None:
-                    altitude.gyrz = new_gyrz
-                else:
-                    altitude.gyrz = (1.0 - GYRZ_LPF_ALPHA) * altitude.gyrz + GYRZ_LPF_ALPHA * new_gyrz
-                _prev_gyrz = new_gyrz
+    if len(parts) != 2:
+        log(f"IMU data format error: expected 2 fields, got {len(parts)}", events.EventType.error)
+        return
+    try:
+        new_yaw  = float(parts[0])
+        new_gyrz = float(parts[1])
+    except (ValueError, IndexError) as e:
+        log(f"IMU parse error: {e} raw={data!r}", events.EventType.error)
+        return
+    if not (math.isfinite(new_yaw) and math.isfinite(new_gyrz)):
+        log(f"IMU NaN/Inf rejected: yaw={new_yaw} gyrz={new_gyrz}", events.EventType.error)
+        return
+    with update_lock:
+        if _prev_gyrz is None or abs(new_gyrz - _prev_gyrz) <= GYRZ_SPIKE_THRESHOLD:
+            if altitude.gyrz is None:
+                altitude.gyrz = new_gyrz
             else:
-                log(f"gyrz spike rejected: {new_gyrz:.2f} rad/s (prev={_prev_gyrz:.2f})",
-                    events.EventType.warning)
-            altitude.yaw  = new_yaw
-            last_imu_time = time.time()
-    else:
-        log("IMU data format error", events.EventType.error)
+                altitude.gyrz = (1.0 - GYRZ_LPF_ALPHA) * altitude.gyrz + GYRZ_LPF_ALPHA * new_gyrz
+            _prev_gyrz = new_gyrz
+        else:
+            log(f"gyrz spike rejected: {new_gyrz:.2f} rad/s (prev={_prev_gyrz:.2f})",
+                events.EventType.warning)
+        altitude.yaw  = new_yaw
+        last_imu_time = time.time()
 
 
 def handle_barometer(data: str):
@@ -158,21 +189,49 @@ def handle_barometer(data: str):
 
 def handle_target_coord(data: str):
     parts = data.split(",")
-    if len(parts) == 2:
-        with update_lock:
-            target.lat, target.lon = float(parts[0]), float(parts[1])
-        motor_guidance.set_target_coord(target.lat, target.lon)
-        log(f"Target set: ({target.lat:.6f}, {target.lon:.6f})")
-    else:
-        log("Target coords format error", events.EventType.error)
+    if len(parts) != 2:
+        log(f"Target coords format error: expected 2 fields, got {len(parts)}", events.EventType.error)
+        return
+    try:
+        new_lat = float(parts[0])
+        new_lon = float(parts[1])
+    except (ValueError, IndexError) as e:
+        log(f"Target coord parse error: {e} raw={data!r}", events.EventType.error)
+        return
+    if not (math.isfinite(new_lat) and math.isfinite(new_lon)):
+        log(f"Target NaN/Inf rejected: lat={new_lat} lon={new_lon}", events.EventType.error)
+        return
+    if not (-90.0 <= new_lat <= 90.0 and -180.0 <= new_lon <= 180.0):
+        log(f"Target coord out of range: lat={new_lat} lon={new_lon}", events.EventType.error)
+        return
+    with update_lock:
+        target.lat, target.lon = new_lat, new_lon
+    motor_guidance.set_target_coord(new_lat, new_lon)
+    log(f"Target set: ({new_lat:.6f}, {new_lon:.6f})")
 
 
 def handle_flight_state(data: str):
-    global state
+    global state, _start_point_locked
+    try:
+        new_state = int(data.strip())
+    except (ValueError, AttributeError) as e:
+        log(f"Flight state parse error: {e} raw={data!r}", events.EventType.error)
+        return
+    if not (0 <= new_state <= 5):
+        log(f"Flight state out of range: {new_state}", events.EventType.error)
+        return
     with update_lock:
-        state = int(data)
-        if state == 3 and GpsVector.lat is not None and GpsVector.lon is not None:
-            motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
+        state = new_state
+        if state == 3:
+            _start_point_locked = False  # 새 state=3 진입마다 재확정 허용
+            if motor_guidance.is_gps_valid(GpsVector, GpsFidelity):
+                motor_guidance.set_start_coordinates(GpsVector.lat, GpsVector.lon)
+                _start_point_locked = True
+                log(f"start_point set: ({GpsVector.lat:.6f}, {GpsVector.lon:.6f}) "
+                    f"fix={GpsFidelity.fix_quality} sats={GpsFidelity.sats} rmc={GpsFidelity.rmc_status}")
+            else:
+                log("state=3: GPS not valid yet, waiting for first valid fix to set start_point",
+                    events.EventType.warning)
     log(f"Flight state: {state}")
 
 
@@ -222,124 +281,154 @@ def dispatch(msg: msgstructure.MsgStructure):
 
 def ctrl_paragldr():
     motors_off = False
+    _fdir_last_reason = None
+    _fdir_repeat_count = 0
+    _ctrl_tick = 0
     while running:
-        with update_lock:
-            _state       = state
-            _motor_enabled    = motor_enabled
-            _baro_m      = baro_m
-            _GpsVector         = types.SimpleNamespace(
-                lat=GpsVector.lat, lon=GpsVector.lon,
-                speed=GpsVector.speed, course=GpsVector.course)
-            _GpsFidelity    = types.SimpleNamespace(
-                rmc_status=GpsFidelity.rmc_status,
-                fix_quality=GpsFidelity.fix_quality,
-                sats=GpsFidelity.sats)
-            _altitude         = types.SimpleNamespace(
-                yaw=altitude.yaw, gyrz=altitude.gyrz)
-            _target      = types.SimpleNamespace(
-                lat=target.lat, lon=target.lon)
-            _last_gps_t  = last_gps_time
-            _last_imu_t  = last_imu_time
+        try:
+            with update_lock:
+                _state       = state
+                _motor_enabled    = motor_enabled
+                _baro_m      = baro_m
+                _GpsVector         = types.SimpleNamespace(
+                    lat=GpsVector.lat, lon=GpsVector.lon,
+                    speed=GpsVector.speed, course=GpsVector.course)
+                _GpsFidelity    = types.SimpleNamespace(
+                    rmc_status=GpsFidelity.rmc_status,
+                    fix_quality=GpsFidelity.fix_quality,
+                    sats=GpsFidelity.sats)
+                _altitude         = types.SimpleNamespace(
+                    yaw=altitude.yaw, gyrz=altitude.gyrz)
+                _target      = types.SimpleNamespace(
+                    lat=target.lat, lon=target.lon)
+                _last_gps_t  = last_gps_time
+                _last_imu_t  = last_imu_time
 
-        if _state >= 3 and _motor_enabled:
+            if _state >= 3 and _motor_enabled:
 
-            # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
-            if _state == 5:
-                if not motors_off:
-                    motor_control.set_motors_off(pi)
-                    motors_off = True
-                    log("State 5: motors off", events.EventType.warning)
-                time.sleep(CONTROL_LOG_INTERVAL)
-                continue
+                # State 5: 서보 신호 완전 차단 후 루프 유지 (재진입 방지)
+                if _state == 5:
+                    if not motors_off:
+                        motor_control.set_motors_off(pi)
+                        motors_off = True
+                        log("State 5: motors off", events.EventType.warning)
+                    time.sleep(CONTROL_LOG_INTERVAL)
+                    continue
 
-            motors_off = False
+                motors_off = False
 
-            # FDIR 게이트
-            failsafe_reason = None
+                # FDIR 게이트
+                failsafe_reason = None
 
-            # FDIR-0: 센서 수신 여부
-            if _GpsVector.lat is None or _GpsVector.lon is None or _altitude.yaw is None or _altitude.gyrz is None or _baro_m is None:
+                # FDIR-0: 센서 수신 여부 + NaN/Inf 체크 (float("nan")은 ValueError가 아닌 유효한 float)
+                _gps_missing  = (_GpsVector.lat is None or _GpsVector.lon is None
+                                 or not math.isfinite(_GpsVector.lat) or not math.isfinite(_GpsVector.lon))
+                _imu_missing  = (_altitude.yaw is None or _altitude.gyrz is None
+                                 or not math.isfinite(_altitude.yaw) or not math.isfinite(_altitude.gyrz))
+                _baro_missing = (_baro_m is None or not math.isfinite(_baro_m))
+                if _gps_missing or _imu_missing or _baro_missing:
+                    missing = []
+                    if _gps_missing:  missing.append("GPS")
+                    if _imu_missing:  missing.append("IMU")
+                    if _baro_missing: missing.append("BARO")
+                    failsafe_reason = f"No data received: {'+'.join(missing)}"
 
-                missing = []
-                if _GpsVector.lat is None or _GpsVector.lon is None:  missing.append("GPS")
-                if _altitude.yaw is None or _altitude.gyrz is None:  missing.append("IMU")
-                if _baro_m is None:   missing.append("BARO")
-                failsafe_reason = f"No data received: {'+'.join(missing)}"
+                # FDIR-1: 센서 통신 타임아웃
+                if failsafe_reason is None:
+                    now = time.time()
+                    gps_age = (now - _last_gps_t) if _last_gps_t is not None else float("inf")
+                    imu_age = (now - _last_imu_t) if _last_imu_t is not None else float("inf")
+                    gps_stale = gps_age > STALE_THRESHOLD
+                    imu_stale = imu_age > STALE_THRESHOLD
 
-            # FDIR-1: 센서 통신 타임아웃
-            if failsafe_reason is None:
-                now = time.time()
-                gps_stale = (now - _last_gps_t) > STALE_THRESHOLD if _last_gps_t is not None else True
-                imu_stale = (now - _last_imu_t) > STALE_THRESHOLD if _last_imu_t is not None else True
+                    if gps_stale and imu_stale:
+                        failsafe_reason = f"Sensor timeout: GPS+IMU stale (gps={gps_age:.2f}s imu={imu_age:.2f}s)"
+                    elif gps_stale:
+                        failsafe_reason = f"Sensor timeout: GPS stale ({gps_age:.2f}s)"
+                    elif imu_stale:
+                        failsafe_reason = f"Sensor timeout: IMU stale ({imu_age:.2f}s)"
 
-                if gps_stale and imu_stale:
-                    failsafe_reason = "Sensor timeout: GPS+IMU stale"
-                elif gps_stale:
-                    failsafe_reason = "Sensor timeout: GPS stale"
-                elif imu_stale:
-                    failsafe_reason = "Sensor timeout: IMU stale"
+                # FDIR-2: GPS 무결성
+                if failsafe_reason is None:
+                    if not motor_guidance.is_gps_valid(_GpsVector, _GpsFidelity):
+                        failsafe_reason = (
+                            f"GPS invalid (lat={_GpsVector.lat}, lon={_GpsVector.lon}, "
+                            f"fix={_GpsFidelity.fix_quality}, sats={_GpsFidelity.sats}, "
+                            f"rmc={_GpsFidelity.rmc_status})")
 
-            # FDIR-2: GPS 무결성
-            if failsafe_reason is None:
-                if not motor_guidance.is_gps_valid(_GpsVector, _GpsFidelity):
-                    failsafe_reason = (
-                        f"GPS invalid (lat={_GpsVector.lat}, lon={_GpsVector.lon}, "
-                        f"fix={_GpsFidelity.fix_quality}, sats={_GpsFidelity.sats}, "
-                        f"rmc={_GpsFidelity.rmc_status})")
+                # FDIR-3: 극한 회전 상태
+                if failsafe_reason is None:
+                    if abs(_altitude.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
+                        failsafe_reason = (
+                            f"|gyrz|={abs(_altitude.gyrz):.2f} rad/s "
+                            f"({math.degrees(abs(_altitude.gyrz)):.1f}°/s) > "
+                            f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s")
 
-            # FDIR-3: 극한 회전 상태
-            if failsafe_reason is None:
-                if abs(_altitude.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
-                    failsafe_reason = (
-                        f"|gyrz|={abs(_altitude.gyrz):.2f} rad/s "
-                        f"({math.degrees(abs(_altitude.gyrz)):.1f}°/s) > "
-                        f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s")
+                # FDIR-4: 기압계 고도
+                if failsafe_reason is None:
+                    if _baro_m <= 0.0:
+                        failsafe_reason = f"Baro altitude invalid ({_baro_m:.1f}m)"
 
-            # FDIR-4: 기압계 고도
-            if failsafe_reason is None:
-                if _baro_m <= 0.0:
-                    failsafe_reason = f"Baro altitude invalid ({_baro_m:.1f}m)"
+                # FDIR-5: Target 좌표 수신
+                if failsafe_reason is None:
+                    if _target.lat is None or _target.lon is None:
+                        failsafe_reason = "No target coordinates received"
 
-            # FDIR-5: Target 좌표 수신
-            if failsafe_reason is None:
-                if _target.lat is None or _target.lon is None:
-                    failsafe_reason = "No target coordinates received"
+                # Failsafe 분기
+                if failsafe_reason is not None:
+                    # rate limiting: 동일 원인 반복 시 10사이클(1s)마다 한 번만 로그
+                    if failsafe_reason != _fdir_last_reason:
+                        _fdir_last_reason = failsafe_reason
+                        _fdir_repeat_count = 1
+                        log(f"Failsafe: {failsafe_reason}", events.EventType.error)
+                    else:
+                        _fdir_repeat_count += 1
+                        if _fdir_repeat_count % 10 == 0:
+                            log(f"Failsafe x{_fdir_repeat_count}: {failsafe_reason}", events.EventType.error)
+                    motor_control.set_neutral(pi)
+                else:
+                    if DEBUG_GUIDANCE:
+                        _dbg(
+                            f"[GUIDANCE IN ] "
+                            f"state={_state} baro={_baro_m:.1f}m | "
+                            f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
+                            f"gps=({_GpsVector.lat:.6f},{_GpsVector.lon:.6f}) spd={_GpsVector.speed:.1f} crs={_GpsVector.course:.1f} | "
+                            f"fix={_GpsFidelity.fix_quality} sats={_GpsFidelity.sats} rmc={_GpsFidelity.rmc_status} | "
+                            f"target=({_target.lat:.6f},{_target.lon:.6f})"
+                        )
 
-            # Failsafe 분기
-            if failsafe_reason is not None:
-                log(f"Failsafe: {failsafe_reason}", events.EventType.error)
+                    result = motor_guidance.guidance(
+                        _altitude, _GpsVector, _GpsFidelity, _target,
+                        baro_m=_baro_m
+                    )
+
+                    motor_result = motor_control.control(pi, result.commanded_yaw_rate)
+
+                    if DEBUG_GUIDANCE and motor_result is not None:
+                        _dbg(
+                            f"[MOTOR] "
+                            f"L: {motor_result.left_cmd_deg:6.1f}°  pw={motor_result.left_pulse} | "
+                            f"R: {motor_result.right_cmd_deg:6.1f}°  pw={motor_result.right_pulse} | "
+                            f"delta={motor_result.actual_delta_deg:+.1f}°  exp_yr={motor_result.expected_yaw_rate:+.2f}°/s"
+                        )
+                        simlogfile.write("---\n")
+                        simlogfile.flush()
+
+                    log_control(result, motor_result)
+
+            _ctrl_tick += 1
+            if _ctrl_tick % 10 == 0:
+                log(f"[HB] tick={_ctrl_tick} state={_state} baro={_baro_m} motor={_motor_enabled}")
+
+            time.sleep(CONTROL_LOG_INTERVAL)
+
+        except Exception as e:
+            log(f"ctrl_paragldr CRASHED: {e}", events.EventType.error)
+            try:
                 motor_control.set_neutral(pi)
-            else:
-                if DEBUG_GUIDANCE:
-                    _dbg(
-                        f"[GUIDANCE IN ] "
-                        f"state={_state} baro={_baro_m:.1f}m | "
-                        f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
-                        f"gps=({_GpsVector.lat:.6f},{_GpsVector.lon:.6f}) spd={_GpsVector.speed:.1f} crs={_GpsVector.course:.1f} | "
-                        f"fix={_GpsFidelity.fix_quality} sats={_GpsFidelity.sats} rmc={_GpsFidelity.rmc_status} | "
-                        f"target=({_target.lat:.6f},{_target.lon:.6f})"
-                    )
-
-                result = motor_guidance.guidance(
-                    _altitude, _GpsVector, _GpsFidelity, _target,
-                    baro_m=_baro_m
-                )
-
-                motor_result = motor_control.control(pi, result.commanded_yaw_rate)
-
-                if DEBUG_GUIDANCE and motor_result is not None:
-                    _dbg(
-                        f"[MOTOR] "
-                        f"L: {motor_result.left_cmd_deg:6.1f}°  pw={motor_result.left_pulse} | "
-                        f"R: {motor_result.right_cmd_deg:6.1f}°  pw={motor_result.right_pulse} | "
-                        f"delta={motor_result.actual_delta_deg:+.1f}°  exp_yr={motor_result.expected_yaw_rate:+.2f}°/s"
-                    )
-                    simlogfile.write("---\n")
-                    simlogfile.flush()
-
-                log_control(result, motor_result)
-
-        time.sleep(CONTROL_LOG_INTERVAL)
+            except Exception:
+                pass
+            time.sleep(CONTROL_LOG_INTERVAL)
 
 
 def init() -> bool:
@@ -351,7 +440,6 @@ def init() -> bool:
     try:
         Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
-        motor_guidance.set_start_coordinates(37.5364, 126.9040)
         pi = motor_control.init_control()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
