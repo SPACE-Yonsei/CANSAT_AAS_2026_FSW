@@ -13,14 +13,14 @@ BURNWIRE_DEACTIVATE_LEVEL = GPIO.LOW
 BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)
 
 def init_burnwire():
-    """Configure burnwire pin as output and drive safe (off) level immediately."""
+    """Do not drive burnwire at startup: input + pull-down only; OUTPUT only in activate_burnwire()."""
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(BURNWIRE_PIN, GPIO.OUT)
-    GPIO.output(BURNWIRE_PIN, BURNWIRE_DEACTIVATE_LEVEL)
+    GPIO.setup(BURNWIRE_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
 def activate_burnwire():
     """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
     try:
+        GPIO.setup(BURNWIRE_PIN, GPIO.OUT)
         GPIO.output(BURNWIRE_PIN, BURNWIRE_ACTIVATE_LEVEL)        
         time.sleep(BURNWIRE_DURATION) 
         GPIO.output(BURNWIRE_PIN, BURNWIRE_DEACTIVATE_LEVEL)
