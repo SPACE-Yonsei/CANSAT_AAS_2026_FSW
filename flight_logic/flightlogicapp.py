@@ -151,6 +151,7 @@ def handle_reset_alt(data: str, queue: Queue):
     global max_alt, recent_alt
     max_alt = 0
     recent_alt.clear()
+    prevstate.update_maxalt(0)
 
 
 MSG_HANDLERS = {
@@ -313,6 +314,7 @@ def to_launch_pad(queue: Queue, force: bool = False):
     recent_alt.clear()
     log("STATE → LAUNCH_PAD")
     prevstate.update_prevstate(state)
+    prevstate.update_maxalt(0)
     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
 
 
