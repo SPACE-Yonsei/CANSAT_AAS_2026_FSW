@@ -15,7 +15,7 @@ SOLENOID_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
 SOLENOID_DURATION = 0.5  # 솔레노이드 작동 시간 (초)
 
 def init_solenoid():
-    """Idle = HIGH so active-low relay stays off (LOW would energize coil)."""
+    """Idle = LOW so high-trigger relay stays off (HIGH energizes coil)."""
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
 

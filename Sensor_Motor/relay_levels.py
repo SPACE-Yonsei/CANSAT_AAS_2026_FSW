@@ -2,6 +2,6 @@
 
 import RPi.GPIO as GPIO
 
-# Active-low IN: GPIO LOW energizes coil, HIGH = idle/off
-RELAY_ACTIVATE_LEVEL = GPIO.LOW
-RELAY_DEACTIVATE_LEVEL = GPIO.HIGH
+# High-level trigger IN: GPIO HIGH = coil/on, GPIO LOW = idle/off
+RELAY_ACTIVATE_LEVEL = GPIO.HIGH
+RELAY_DEACTIVATE_LEVEL = GPIO.LOW
