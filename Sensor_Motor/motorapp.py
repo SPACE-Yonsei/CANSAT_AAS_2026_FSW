@@ -438,9 +438,10 @@ def init() -> bool:
     log("Initializing motorapp")
 
     try:
-        Motor_Release.init_burnwire()
         motor_guidance.init_guidance()
         pi = motor_control.init_control()
+        # RPi.GPIO 릴레이 핀은 pigpio(pi) 연결 이후에 설정 (초기화 순서로 레벨이 흔들리는 것 방지)
+        Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()
         threads["ControlLog_Thread"] = threading.Thread(
             target=ctrl_paragldr,

@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """
 Solenoid control for Payload-Egg drop
-GPIO 5: Solenoid (솔레노이드로 계란 사출)
+BCM 6: Egg 릴레이/솔레노이드 — 번와이어와 동일 릴레이 보드(relay_levels).
 """
 
 import time
-import RPi.GPIO as GPIO 
+import RPi.GPIO as GPIO
+
+from Sensor_Motor.relay_levels import RELAY_ACTIVATE_LEVEL, RELAY_DEACTIVATE_LEVEL
 
 SOLENOID_PIN = 6
-SOLENOID_ACTIVATE_LEVEL = GPIO.HIGH
-SOLENOID_DEACTIVATE_LEVEL = GPIO.LOW
+SOLENOID_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
+SOLENOID_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
 SOLENOID_DURATION = 0.5  # 솔레노이드 작동 시간 (초)
 
 def init_solenoid():
-    """Initialize solenoid for egg drop (GPIO setup)."""
+    """Idle = HIGH so active-low relay stays off (LOW would energize coil)."""
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
 
 def activate_solenoid():
     """Activate solenoid to drop egg (솔레노이드로 계란 사출)."""
     try:
-        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)        
+        GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
+        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)
         time.sleep(SOLENOID_DURATION) 
         GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
     except Exception as e:

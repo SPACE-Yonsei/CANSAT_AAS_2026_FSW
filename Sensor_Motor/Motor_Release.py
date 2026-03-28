@@ -2,15 +2,17 @@
 """
 Burnwire control for Container-Payload release
 BCM 5: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
-일반적인 저가 릴레이 모듈: IN이 LOW일 때 릴레이 코일 ON (액티브 로우).
+에그 릴레이와 동일 보드 — 레벨은 relay_levels.py 한 곳에서만 정의.
 """
 
 import time
-import RPi.GPIO as GPIO 
+import RPi.GPIO as GPIO
+
+from Sensor_Motor.relay_levels import RELAY_ACTIVATE_LEVEL, RELAY_DEACTIVATE_LEVEL
 
 BURNWIRE_PIN = 5
-BURNWIRE_ACTIVATE_LEVEL = GPIO.LOW
-BURNWIRE_DEACTIVATE_LEVEL = GPIO.HIGH
+BURNWIRE_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
+BURNWIRE_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
 BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)
 
 def init_burnwire():
