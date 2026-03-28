@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Burnwire control for Container-Payload release
-GPIO 6: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
+BCM 5: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
 """
 
 import time
@@ -13,9 +13,10 @@ BURNWIRE_DEACTIVATE_LEVEL = GPIO.LOW
 BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)
 
 def init_burnwire():
-    """Initialize burnwire for container-payload release (GPIO setup)."""
+    """Configure burnwire pin as output and drive safe (off) level immediately."""
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(BURNWIRE_PIN, GPIO.OUT, initial=BURNWIRE_DEACTIVATE_LEVEL)
+    GPIO.setup(BURNWIRE_PIN, GPIO.OUT)
+    GPIO.output(BURNWIRE_PIN, BURNWIRE_DEACTIVATE_LEVEL)
 
 def activate_burnwire():
     """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
