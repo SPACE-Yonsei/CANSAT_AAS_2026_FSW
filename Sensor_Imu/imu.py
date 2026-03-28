@@ -31,6 +31,31 @@ YAW_CORRECTION_GAIN = float(os.getenv("IMU_YAW_CORRECTION_GAIN", "0.02"))
 MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
 REPORT_INTERVAL_US = int(os.getenv("IMU_REPORT_INTERVAL_US", "100000"))
 
+# BNO085 nRST on GPIO 22 (active low). Set IMU_BNO085_RST_ENABLE=0 on hosts without GPIO.
+BNO085_RST_USE = os.getenv("IMU_BNO085_RST_ENABLE", "1").strip().lower() not in ("0", "false", "no", "")
+
+
+def pulse_bno085_reset():
+    """Assert BNO085 nRESET (active low on GPIO 22), then release after boot delay."""
+    if not BNO085_RST_USE:
+        return
+    import board
+    import digitalio
+
+    rst = digitalio.DigitalInOut(board.D22)
+    rst.direction = digitalio.Direction.OUTPUT
+    rst.value = True
+    time.sleep(0.002)
+    rst.value = False
+    time.sleep(0.01)
+    rst.value = True
+    time.sleep(0.65)
+    try:
+        rst.deinit()
+    except Exception:
+        pass
+
+
 # Hampel filter configuration
 HAMPEL_WINDOW_SIZE = int(os.getenv("IMU_HAMPEL_WINDOW_SIZE", "7"))
 HAMPEL_THRESHOLD = float(os.getenv("IMU_HAMPEL_THRESHOLD", "3.0"))
@@ -174,6 +199,8 @@ def init_imu(i2c=None):
         BNO_REPORT_GYROSCOPE,
     )
 
+    pulse_bno085_reset()
+
     max_retries = 5
     last_error = None
     if i2c is None:
@@ -181,6 +208,8 @@ def init_imu(i2c=None):
 
     for attempt in range(max_retries):
         try:
+            if attempt > 0:
+                pulse_bno085_reset()
             with I2CLock():
                 t0 = time.time()
                 while not i2c.try_lock():
