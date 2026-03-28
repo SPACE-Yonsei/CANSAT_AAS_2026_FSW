@@ -228,7 +228,7 @@ def barometer_logic(queue: Queue, alt: float):
     
     # === LAUNCH_PAD (0) ===
     if state == STATE["LAUNCH_PAD"]:
-        if alt > 50:
+        if alt > 200:
             cnt_ascent += 1
         else:
             cnt_ascent -= 2
