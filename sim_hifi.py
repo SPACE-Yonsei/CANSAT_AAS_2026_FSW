@@ -1,35 +1,33 @@
 #!/usr/bin/env python3
 """
-CanSat Parafoil — High-Fidelity 3DOF Aerodynamic Simulation Testbench
+CanSat Parafoil — Fault-Injection Integrated High-Fidelity Simulation
 ======================================================================
-Mocks all hardware dependencies then imports the REAL motor_guidance.py
-and motor_control.py from Sensor_Motor/ to close the loop.
+정밀 3DOF 물리 엔진 + 비행 중 고장 주입(Fault Injection) 통합 테스트
+하드웨어 없이 로컬 PC에서 실행 가능.
 
-Run:  python sim_hifi.py   (from C:\\workspace\\CANSAT_AAS_2026_FSW\\)
+Run:  python sim_integrated.py
 """
 
-# ── stdout/stderr encoding (Windows console) ──────────────────────────────────
 import io, sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-# ── standard library ──────────────────────────────────────────────────────────
 import math
 import os
 import types as _t
 from collections import deque
 from types import SimpleNamespace
-
 import numpy as np
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — Hardware mocks (must be in sys.modules before any FSW import)
+# SECTION 1 — Hardware & Library Mocks
 # ══════════════════════════════════════════════════════════════════════════════
 
 class _MockPi:
     def __init__(self): self._p = {}
     def set_servo_pulsewidth(self, pin, pw): self._p[pin] = pw
     def stop(self): pass
+    def get_pulse(self, pin): return self._p.get(pin, 0)
 
 sys.modules['pigpio'] = _t.ModuleType('pigpio')
 sys.modules['pigpio'].pi = _MockPi
@@ -52,7 +50,6 @@ for _a in ('BCM', 'OUT', 'HIGH', 'LOW', 'setmode', 'setup', 'output', 'cleanup')
 sys.modules['RPi.GPIO'] = _rpigpio
 
 _lib = _t.ModuleType('lib'); sys.modules['lib'] = _lib
-
 _appargs = _t.ModuleType('lib.appargs')
 class _NS:
     def __init__(self, **kw): self.__dict__.update(kw)
@@ -75,647 +72,251 @@ sys.modules['lib.events'] = _events; _lib.events = _events
 _msgmod = _t.ModuleType('lib.msgstructure')
 sys.modules['lib.msgstructure'] = _msgmod; _lib.msgstructure = _msgmod
 
-# ── FSW imports ────────────────────────────────────────────────────────────────
+# ── FSW imports ──
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from Sensor_Motor import motor_guidance, motor_control  # noqa: E402
+from Sensor_Motor import motor_guidance, motor_control
 
-# ── Simulation clock: patch motor_guidance.time so wall-clock calls return
-#    our stepped sim time.  Without this, _is_gps_jump sees microsecond dt,
-#    computes enormous apparent velocity, and rejects every GPS fix.
+# ── Simulation clock patch ──
 import time as _real_time
-_sim_clock = [0.0]  # mutable container so loop can write via index (no global needed)
-
+_sim_clock = [0.0]
 class _SimTimeMod:
-    """Thin wrapper: time.time() → sim clock; everything else → real time."""
     @staticmethod
-    def time() -> float:
-        return _sim_clock[0]
+    def time() -> float: return _sim_clock[0]
     @staticmethod
-    def sleep(s):
-        pass  # no-op in simulation
-    def __getattr__(self, name):
-        return getattr(_real_time, name)
-
-motor_guidance.time = _SimTimeMod()  # type: ignore[attr-defined]
+    def sleep(s): pass
+    def __getattr__(self, name): return getattr(_real_time, name)
+motor_guidance.time = _SimTimeMod()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — Coordinate helpers & constants
+# SECTION 2 — Physics & Constants
 # ══════════════════════════════════════════════════════════════════════════════
 
-REF_LAT  = 35.0950
-REF_LON  = 127.0950
-LAT2M    = 111320.0
-COS_LAT  = math.cos(math.radians(REF_LAT))
+REF_LAT, REF_LON = 35.0950, 127.0950
+LAT2M, COS_LAT = 111320.0, math.cos(math.radians(REF_LAT))
 
 def en_to_latlon(E_m: float, N_m: float):
-    lat = REF_LAT + N_m / LAT2M
-    lon = REF_LON + E_m / (LAT2M * COS_LAT)
-    return lat, lon
+    return REF_LAT + N_m / LAT2M, REF_LON + E_m / (LAT2M * COS_LAT)
 
-# ── Aerodynamics constants ────────────────────────────────────────────────────
-VA_BASE      = 8.0    # m/s, glide speed
-DESCENT_BASE = 3.5    # m/s, nominal sink rate (↑ 빠른 하강 → 제어 시간 단축)
-
-# ── Wind model constants ──────────────────────────────────────────────────────
-WIND_U_REF = 8.0     # m/s at reference altitude (↑ 강풍: 5→8 m/s)
-WIND_Z_REF = 600.0    # m
-WIND_ALPHA  = 0.30    # power-law exponent (↓ 저고도까지 강풍 유지)
-
-# ── Dryden turbulence constants ───────────────────────────────────────────────
-L_HOR   = 150.0       # horizontal length scale (↓ 짧은 주기 → 급격한 변화)
-L_VER   = 30.0        # vertical length scale (↓ 수직 난류 급변)
-SIG_HOR = 4.0         # horizontal turbulence intensity (↑ 2.5→4.0 m/s)
-SIG_VER = 2.5         # vertical turbulence intensity (↑ 1.5→2.5 m/s)
-
-# ── Pendulum constants ────────────────────────────────────────────────────────
-OMEGA_N  = math.sqrt(9.81 / 1.5)
-ZETA     = 0.08       # damping ratio (↓ 0.12→0.08 — 더 오래 진동)
-K_COUPLE = 0.10       # yaw-pendulum coupling (↑ 0.06→0.10 — 더 큰 흔들림)
-
-# ── Actuator constants ─────────────────────────────────────────────────────────
-SLEW_RATE_DEG_S = 200.0  # servo speed (↓ 300→200 — 느린 응답)
-DEADBAND_MECH   = 5.0    # mechanical deadband (↑ 3→5 deg — 작은 명령 무효화)
-
-# ── GPS sensor constants ──────────────────────────────────────────────────────
-GPS_NOISE_M  = 3.5    # position noise (↑ 2.5→3.5 m — 악조건 수신)
-GPS_DELAY    = 4       # steps (↑ 3→4 — 더 긴 지연)
-GPS_WARMUP   = 12      # steps (↑ 8→12 — 느린 초기 Fix)
-
-# ── IMU sensor constants ──────────────────────────────────────────────────────
-YAW_NOISE_DEG    = 4.0              # yaw noise (↑ 2→4 deg — 자기장 왜곡)
-GYRZ_NOISE_RPS   = math.radians(1.5)  # gyro noise (↑ 0.5→1.5 deg/s)
-BIAS_DRIFT_RATE  = math.radians(0.06)  # bias drift (↑ 0.02→0.06 — 3x 빠른 드리프트)
-K_MAG_PEND       = 0.8             # magnetometer-pendulum coupling (↑ 0.5→0.8)
-
-# ── Barometer noise ────────────────────────────────────────────────────────────
-BARO_NOISE_M = 3.0    # (↑ 1.5→3.0 m — 열적 불안정)
-
-# ── Simulation timing ─────────────────────────────────────────────────────────
-DT        = 0.1
-MAX_STEPS = 3000
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — Random scenario (deterministic seed)
-# ══════════════════════════════════════════════════════════════════════════════
+VA_BASE, DESCENT_BASE = 8.0, 3.5
+WIND_U_REF, WIND_Z_REF, WIND_ALPHA = 8.0, 600.0, 0.30
+L_HOR, L_VER, SIG_HOR, SIG_VER = 150.0, 30.0, 4.0, 2.5
+OMEGA_N, ZETA, K_COUPLE = math.sqrt(9.81 / 1.5), 0.08, 0.10
+SLEW_RATE_DEG_S, DEADBAND_MECH = 200.0, 5.0
+GPS_NOISE_M, GPS_DELAY, GPS_WARMUP = 3.5, 4, 12
+YAW_NOISE_DEG, GYRZ_NOISE_RPS, BIAS_DRIFT_RATE, K_MAG_PEND = 4.0, math.radians(1.5), math.radians(0.06), 0.8
+BARO_NOISE_M = 3.0
+DT, MAX_STEPS = 0.1, 3000
 
 rng = np.random.default_rng(99)
-bearing_deg  = float(rng.uniform(30, 70))
-distance_m   = float(rng.uniform(550, 700))     # (↑ 더 먼 타겟: 500~600 → 550~700)
-wind_dir_met = float(rng.uniform(250, 360))     # (↑ 넓은 풍향 범위: 크로스윈드 가능성 증가)
-
-target_E = distance_m * math.sin(math.radians(bearing_deg))
-target_N = distance_m * math.cos(math.radians(bearing_deg))
+bearing_deg = float(rng.uniform(30, 70))
+distance_m = float(rng.uniform(550, 700))
+wind_dir_met = float(rng.uniform(250, 360))
+target_E, target_N = distance_m * math.sin(math.radians(bearing_deg)), distance_m * math.cos(math.radians(bearing_deg))
 target_lat, target_lon = en_to_latlon(target_E, target_N)
+WIND_UNIT_E, WIND_UNIT_N = math.sin(math.radians(wind_dir_met + 180.0)), math.cos(math.radians(wind_dir_met + 180.0))
 
-wind_toward_rad = math.radians(wind_dir_met + 180.0)
-WIND_UNIT_E = math.sin(wind_toward_rad)
-WIND_UNIT_N = math.cos(wind_toward_rad)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — Global simulation state
-# ══════════════════════════════════════════════════════════════════════════════
-
-turb_u           = 0.0   # E-axis turbulence (m/s)
-turb_v           = 0.0   # N-axis turbulence (m/s)
-turb_w           = 0.0   # vertical turbulence (m/s)
-servo_delta_actual = 0.0  # current servo position (deg, signed)
-pend_phi         = 0.0   # pendulum angle (deg)
-pend_phidot      = 0.0   # pendulum angular rate (deg/s)
-imu_bias_gyrz    = 0.0   # gyro z-axis bias (rad/s)
-
-# GPS delay buffers
-_E_buf   = deque(maxlen=GPS_DELAY)
-_N_buf   = deque(maxlen=GPS_DELAY)
-_spd_buf = deque(maxlen=GPS_DELAY)
-_crs_buf = deque(maxlen=GPS_DELAY)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — Physics model functions
-# ══════════════════════════════════════════════════════════════════════════════
+turb_u = turb_v = turb_w = servo_delta_actual = pend_phi = pend_phidot = imu_bias_gyrz = 0.0
+_E_buf, _N_buf, _spd_buf, _crs_buf = deque(maxlen=GPS_DELAY), deque(maxlen=GPS_DELAY), deque(maxlen=GPS_DELAY), deque(maxlen=GPS_DELAY)
 
 def wind_at_alt(alt_m: float):
-    """Power-law wind profile → (wE, wN) in m/s."""
-    z = max(alt_m, 1.0)
-    U = WIND_U_REF * (z / WIND_Z_REF) ** WIND_ALPHA
+    U = WIND_U_REF * (max(alt_m, 1.0) / WIND_Z_REF) ** WIND_ALPHA
     return U * WIND_UNIT_E, U * WIND_UNIT_N
 
-
 def step_turbulence(Va: float, dt: float):
-    """Update Dryden Gauss-Markov turbulence states in-place."""
     global turb_u, turb_v, turb_w
-    rho_h = math.exp(-Va * dt / L_HOR)
-    rho_v = math.exp(-Va * dt / L_VER)
-    sig_h = SIG_HOR * math.sqrt(max(0.0, 1.0 - rho_h ** 2))
-    sig_v = SIG_VER * math.sqrt(max(0.0, 1.0 - rho_v ** 2))
-    turb_u = rho_h * turb_u + sig_h * rng.standard_normal()
-    turb_v = rho_h * turb_v + sig_h * rng.standard_normal()
-    turb_w = rho_v * turb_w + sig_v * rng.standard_normal()
-
+    rho_h, rho_v = math.exp(-Va * dt / L_HOR), math.exp(-Va * dt / L_VER)
+    sig_h, sig_v = SIG_HOR * math.sqrt(max(0.0, 1.0 - rho_h ** 2)), SIG_VER * math.sqrt(max(0.0, 1.0 - rho_v ** 2))
+    turb_u, turb_v, turb_w = rho_h * turb_u + sig_h * rng.standard_normal(), rho_h * turb_v + sig_h * rng.standard_normal(), rho_v * turb_w + sig_v * rng.standard_normal()
 
 def step_servo(delta_target: float, dt: float) -> float:
-    """Slew-rate-limited servo model. Returns effective aerodynamic delta (deg)."""
     global servo_delta_actual
     max_slew = SLEW_RATE_DEG_S * dt
     servo_delta_actual += max(-max_slew, min(max_slew, delta_target - servo_delta_actual))
-    # Apply mechanical deadband
-    effective = math.copysign(max(0.0, abs(servo_delta_actual) - DEADBAND_MECH), servo_delta_actual)
-    return effective
-
+    return math.copysign(max(0.0, abs(servo_delta_actual) - DEADBAND_MECH), servo_delta_actual)
 
 def step_pendulum(yaw_rate_phy: float, dt: float):
-    """Second-order pendulum dynamics coupled to yaw rate."""
     global pend_phi, pend_phidot
-    ddphi_rad = (
-        -2.0 * ZETA * OMEGA_N * math.radians(pend_phidot)
-        - OMEGA_N ** 2 * math.radians(pend_phi)
-        + math.radians(K_COUPLE * yaw_rate_phy)
-    )
+    ddphi_rad = -2.0 * ZETA * OMEGA_N * math.radians(pend_phidot) - OMEGA_N ** 2 * math.radians(pend_phi) + math.radians(K_COUPLE * yaw_rate_phy)
     pend_phidot += math.degrees(ddphi_rad) * dt
-    pend_phi    += pend_phidot * dt
-
+    pend_phi += pend_phidot * dt
 
 def sensor_gps(E: float, N: float, V_E_gnd: float, V_N_gnd: float, step: int):
-    """
-    Returns (gps_vector SimpleNamespace, gps_fidelity SimpleNamespace).
-    Applies Gaussian position noise, GPS_DELAY steps of latency, and warmup mask.
-    """
-    # Noisy measurements pushed into delay buffer
-    E_noisy = E + rng.normal(0.0, GPS_NOISE_M)
-    N_noisy = N + rng.normal(0.0, GPS_NOISE_M)
-    spd = math.hypot(V_E_gnd, V_N_gnd)
-    crs = math.degrees(math.atan2(V_E_gnd, V_N_gnd)) % 360.0
-
-    _E_buf.append(E_noisy)
-    _N_buf.append(N_noisy)
-    _spd_buf.append(spd)
-    _crs_buf.append(crs)
-
+    _E_buf.append(E + rng.normal(0.0, GPS_NOISE_M))
+    _N_buf.append(N + rng.normal(0.0, GPS_NOISE_M))
+    _spd_buf.append(math.hypot(V_E_gnd, V_N_gnd))
+    _crs_buf.append(math.degrees(math.atan2(V_E_gnd, V_N_gnd)) % 360.0)
     warm = step >= GPS_WARMUP and len(_E_buf) == GPS_DELAY
-
-    if warm:
-        E_out = _E_buf[0]
-        N_out = _N_buf[0]
-        spd_out = _spd_buf[0]
-        crs_out = _crs_buf[0]
-        fix_quality = 1; sats = 8; rmc_status = "A"
-    else:
-        E_out = 0.0; N_out = 0.0; spd_out = 0.0; crs_out = 0.0
-        fix_quality = 0; sats = 0; rmc_status = "V"
-
+    E_out, N_out, spd_out, crs_out = (_E_buf[0], _N_buf[0], _spd_buf[0], _crs_buf[0]) if warm else (0.0, 0.0, 0.0, 0.0)
     lat_out, lon_out = en_to_latlon(E_out, N_out)
-
-    gps_vec = SimpleNamespace(lat=lat_out, lon=lon_out, speed=spd_out, course=crs_out)
-    gps_fid = SimpleNamespace(fix_quality=fix_quality, sats=sats, rmc_status=rmc_status)
-    return gps_vec, gps_fid
-
+    return SimpleNamespace(lat=lat_out, lon=lon_out, speed=spd_out, course=crs_out), SimpleNamespace(fix_quality=1 if warm else 0, sats=8 if warm else 0, rmc_status="A" if warm else "V")
 
 def sensor_imu(heading_true: float, yaw_rate_true: float, pend_phi_deg: float):
-    """Returns SimpleNamespace(yaw=deg, gyrz=rad/s) with noise and bias."""
     global imu_bias_gyrz
-    yaw_meas = heading_true + K_MAG_PEND * pend_phi_deg + rng.normal(0.0, YAW_NOISE_DEG)
-    imu_bias_gyrz += rng.normal(0.0, BIAS_DRIFT_RATE * math.sqrt(DT))
-    imu_bias_gyrz  = max(-0.2, min(0.2, imu_bias_gyrz))
-    gyrz_meas = math.radians(yaw_rate_true) + imu_bias_gyrz + rng.normal(0.0, GYRZ_NOISE_RPS)
-    return SimpleNamespace(yaw=yaw_meas, gyrz=gyrz_meas)
-
+    imu_bias_gyrz = max(-0.2, min(0.2, imu_bias_gyrz + rng.normal(0.0, BIAS_DRIFT_RATE * math.sqrt(DT))))
+    return SimpleNamespace(yaw=heading_true + K_MAG_PEND * pend_phi_deg + rng.normal(0.0, YAW_NOISE_DEG), gyrz=math.radians(yaw_rate_true) + imu_bias_gyrz + rng.normal(0.0, GYRZ_NOISE_RPS))
 
 def sensor_baro(alt_true: float) -> float:
     return alt_true + rng.normal(0.0, BARO_NOISE_M)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — FSW initialisation
+# SECTION 3 — Initialization & Fault Injection Setup
 # ══════════════════════════════════════════════════════════════════════════════
 
-# init_guidance sets last_time = time.time() which now hits our sim clock
 motor_guidance.init_guidance()
 motor_guidance.set_start_coordinates(REF_LAT, REF_LON)
 motor_guidance.set_target_coord(target_lat, target_lon)
-
-# ── Sim-level GPS jump threshold override ─────────────────────────────────────
-# GPS_NOISE_M=3.5m at 10Hz → noise delta RMS ≈ 5m, speed RMS ≈ 50 m/s.
-# 99th percentile ≈ 150 m/s.  Real multipath jumps are km-scale (speed >> 500 m/s),
-# so 200 m/s catches genuine jumps while tolerating extreme noise tails.
 motor_guidance.GPS_JUMP_MAX_SPEED = 200.0
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — Main simulation loop
-# ══════════════════════════════════════════════════════════════════════════════
-
 mock_pi = _MockPi()
+E, N, alt, heading, yaw_rate_phy, Va_curr, flight_state = 0.0, 0.0, 600.0, float(rng.uniform(0.0, 360.0)), 0.0, VA_BASE, 3
 
-# Initial flight state
-E   = 0.0
-N   = 0.0
-alt = 600.0
-heading      = float(rng.uniform(0.0, 360.0))
-yaw_rate_phy = 0.0
-Va_curr      = VA_BASE
-flight_state = 3  # mirrors flightlogicapp: 3=descending, 4=pattern, 5=landed
+h_E, h_N, h_alt, h_t, h_cmdyr, h_phyyr, h_imuyz, h_phase, h_wE, h_wN, h_servo, h_state = ([] for _ in range(12))
+gps_invalid_count, pattern_steps = 0, 0
 
-# History accumulators
-h_E     = []; h_N     = []; h_alt   = []; h_t     = []
-h_cmdyr = []; h_phyyr = []; h_imuyz = []; h_phase = []
-h_wE    = []; h_wN    = []; h_servo = []
-h_state = []  # flight_state per step
+fault_flags = {"gps_jump": False, "gyrz_spike": False, "baro_zero": False}
 
-# Phase colour map for legend (2-D figure)
-PHASE_COLOUR = {
-    'TURNING':        'royalblue',
-    'HOMING':         'royalblue',
-    'STRAIGHT':       'green',
-    'PATTERN':        'darkorange',
-    'GPS_INVALID':    'red',
-    'TARGET_REACHED': 'gold',
-    'BARO_INVALID':   'red',
-}
-
-print()
+print("\n" + "=" * 88)
+print("  🚀 CanSat Parafoil Integrated Simulation (w/ Fault Injection)")
 print("=" * 88)
-print("  CanSat Parafoil Hi-Fi 3DOF Simulation")
-print(f"  Target: bearing {bearing_deg:.1f} deg  dist {distance_m:.0f} m  "
-      f"| Wind FROM {wind_dir_met:.0f} deg  {WIND_U_REF} m/s @ {WIND_Z_REF:.0f} m")
-print("=" * 88)
-print(f"  {'Step':>5}  {'t[s]':>6}  {'alt[m]':>7}  {'dist[m]':>8}  "
-      f"{'Phase':<12}  {'cmd_yr':>7}  {'phy_yr':>7}  {'servo':>7}  "
-      f"{'hdg':>6}  {'E[m]':>8}  {'N[m]':>8}  {'st':>2}")
-print("-" * 88)
 
-gps_invalid_count = 0
-pattern_steps     = 0
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 4 — Main Simulation Loop
+# ══════════════════════════════════════════════════════════════════════════════
 
 for step in range(MAX_STEPS):
     t = step * DT
-    _sim_clock[0] = t  # advance sim clock → motor_guidance.time.time() returns t
+    _sim_clock[0] = t  
 
-    # 1. Wind
+    # 1. 환경 및 물리 업데이트
     wE, wN = wind_at_alt(alt)
-
-    # 2. Turbulence
     step_turbulence(Va_curr, DT)
+    hdg_rad = math.radians(heading)
+    Va_fwd = max(VA_BASE - 0.06 * abs(servo_delta_actual), 4.0)
+    wE_total, wN_total = wE + turb_u, wN + turb_v
+    V_E_gnd, V_N_gnd = Va_fwd * math.sin(hdg_rad) + wE_total, Va_fwd * math.cos(hdg_rad) + wN_total
 
-    # 3. Ground velocity components (used for GPS course/speed)
-    hdg_rad   = math.radians(heading)
-    Va_fwd    = max(VA_BASE - 0.06 * abs(servo_delta_actual), 4.0)
-    wE_total  = wE + turb_u
-    wN_total  = wN + turb_v
-    V_E_gnd   = Va_fwd * math.sin(hdg_rad) + wE_total
-    V_N_gnd   = Va_fwd * math.cos(hdg_rad) + wN_total
-
-    # 4. Sensors
+    # 2. 센서 리딩
     gps_vec, gps_fid = sensor_gps(E, N, V_E_gnd, V_N_gnd, step)
-    imu_data          = sensor_imu(heading, yaw_rate_phy, pend_phi)
-    baro_m            = sensor_baro(alt)
+    imu_data = sensor_imu(heading, yaw_rate_phy, pend_phi)
+    baro_m = sensor_baro(alt)
 
-    # 5. Pattern activation — mirrors motorapp._resolve_patterned logic:
-    #    state==4, baro>10m → True (8자 비행)
-    #    state==4, baro<=10m → False (당근, Final)
-    #    state==3 → False (당근, 호밍)
+    # 🚨 3. 고장 주입 (Fault Injection) 🚨
+    # 고장 1: 고도 450m 부근에서 GPS 1km 튐 (3초 지속)
+    if 450.0 >= alt > 430.0:
+        if not fault_flags["gps_jump"]:
+            print(f"\n[💥 FAULT] 고도 {alt:.1f}m: GPS 1km Multipath 점프 발생! (Guidance가 거부해야 함)")
+            fault_flags["gps_jump"] = True
+        gps_vec.lat += 0.01
+        gps_vec.lon += 0.01
+
+    # 고장 2: 고도 300m 부근에서 자이로센서 스파이크
+    if 300.0 >= alt > 298.0:
+        if not fault_flags["gyrz_spike"]:
+            print(f"\n[💥 FAULT] 고도 {alt:.1f}m: IMU 자이로 스파이크 발생 (150 deg/s)!")
+            fault_flags["gyrz_spike"] = True
+        imu_data.gyrz = math.radians(150.0)
+
+    # 고장 3: 고도 150m 부근에서 기압계 0.0 에러 (2초 지속)
+    if 150.0 >= alt > 140.0:
+        if not fault_flags["baro_zero"]:
+            print(f"\n[💥 FAULT] 고도 {alt:.1f}m: Barometer 센서 0.0m 출력 발생!")
+            fault_flags["baro_zero"] = True
+        baro_m = 0.0
+
+    # 4. 제어 로직 실행 (Motor Guidance & Control)
     patterned = (flight_state == 4) and (baro_m > 10.0)
-
-    # 6. Guidance
-    target_ns      = SimpleNamespace(lat=target_lat, lon=target_lon)
-    guidance_result = motor_guidance.guidance(
-        imu_data, gps_vec, gps_fid, target_ns,
-        baro_m=baro_m, patterned=patterned
-    )
+    target_ns = SimpleNamespace(lat=target_lat, lon=target_lon)
+    
+    guidance_result = motor_guidance.guidance(imu_data, gps_vec, gps_fid, target_ns, baro_m=baro_m)
     cmd_yr = guidance_result.commanded_yaw_rate
-    phase  = guidance_result.state
+    phase = guidance_result.state
 
-    # 7. Motor control (actuator mixer + servo command)
-    motor_result   = motor_control.control(mock_pi, cmd_yr)
+    motor_result = motor_control.control(mock_pi, cmd_yr)
     effective_delta = step_servo(motor_result.actual_delta_deg, DT)
 
-    # 8. Aerodynamics update
-    Va_fwd       = max(VA_BASE - 0.03 * abs(effective_delta), 4.0)
+    # 5. 비행체 동역학 업데이트
+    Va_fwd = max(VA_BASE - 0.03 * abs(effective_delta), 4.0)
     descent_rate = max(DESCENT_BASE + 0.001 * effective_delta ** 2 + turb_w * 0.3, 1.0)
     yaw_rate_phy = effective_delta * (Va_fwd / VA_BASE)
 
-    # 9. Pendulum
     step_pendulum(yaw_rate_phy, DT)
 
-    # 10. Integrate position & heading
-    heading += yaw_rate_phy * DT
-    heading  = heading % 360.0
-    hdg_rad  = math.radians(heading)
-    E   += (Va_fwd * math.sin(hdg_rad) + wE_total) * DT
-    N   += (Va_fwd * math.cos(hdg_rad) + wN_total) * DT
+    heading = (heading + yaw_rate_phy * DT) % 360.0
+    hdg_rad = math.radians(heading)
+    E += (Va_fwd * math.sin(hdg_rad) + wE_total) * DT
+    N += (Va_fwd * math.cos(hdg_rad) + wN_total) * DT
     alt -= descent_rate * DT
     Va_curr = Va_fwd
 
-    # State transitions — mirrors flightlogicapp behaviour:
-    #   state 3→4 when alt drops below 50 m,
-    #   state 4→5 on touchdown (alt<=0)
-    if flight_state == 3 and alt < 50.0:
-        flight_state = 4
-    if alt <= 0.0:
-        flight_state = 5
+    # 상태 전이
+    if flight_state == 3 and alt < 50.0: flight_state = 4
+    if alt <= 0.0: flight_state = 5
 
-    # 11. Statistics
-    if phase == 'GPS_INVALID':
-        gps_invalid_count += 1
-    if phase == 'PATTERN':
-        pattern_steps += 1
+    # 6. 통계 및 로깅
+    if phase == 'GPS_INVALID': gps_invalid_count += 1
+    if phase == 'PATTERN': pattern_steps += 1
 
-    # 12. History
     h_E.append(E); h_N.append(N); h_alt.append(alt); h_t.append(t)
-    h_cmdyr.append(cmd_yr); h_phyyr.append(yaw_rate_phy)
-    h_imuyz.append(math.degrees(imu_data.gyrz))
-    h_phase.append(phase); h_wE.append(wE); h_wN.append(wN)
-    h_servo.append(servo_delta_actual)
-    h_state.append(flight_state)
+    h_cmdyr.append(cmd_yr); h_phyyr.append(yaw_rate_phy); h_imuyz.append(math.degrees(imu_data.gyrz))
+    h_phase.append(phase); h_wE.append(wE); h_wN.append(wN); h_servo.append(servo_delta_actual); h_state.append(flight_state)
 
-    # 13. Console print (every 20 steps, or every 5 in PATTERN)
-    print_interval = 5 if phase == 'PATTERN' else 20
-    dist_to_tgt = math.hypot(target_E - E, target_N - N)
-    if step % print_interval == 0:
-        print(f"  {step:>5}  {t:>6.1f}  {alt:>7.1f}  {dist_to_tgt:>8.1f}  "
-              f"{phase:<12}  {cmd_yr:>7.2f}  {yaw_rate_phy:>7.2f}  {servo_delta_actual:>7.2f}  "
-              f"{heading:>6.1f}  {E:>8.1f}  {N:>8.1f}  {'st':>2}:{flight_state}")
+    if step % (5 if phase == 'PATTERN' else 20) == 0:
+        print(f"  {step:>5}  {t:>6.1f}s  {alt:>7.1f}m  | Phase: {phase:<12} | Cmd_Yr: {cmd_yr:>6.1f}  Phy_Yr: {yaw_rate_phy:>6.1f} | Servo: {servo_delta_actual:>5.1f}")
 
-    # 14. Termination — state 5 means touchdown confirmed
     if flight_state == 5:
         motor_control.set_motors_off(mock_pi)
-        print(f"\n  [LANDED/STOP] step={step}  t={t:.1f}s  E={E:.1f}m  N={N:.1f}m  final_state={flight_state}")
+        print(f"\n  🛬 [LANDED] 비행 종료! (시간: {t:.1f}s, 최종 고도: {alt:.1f}m)")
         break
 
-print("-" * 88)
-
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — Assessment Report
-# ══════════════════════════════════════════════════════════════════════════════
-
-final_dist = math.hypot(target_E - E, target_N - N)
-total_steps = len(h_t)
-total_time  = h_t[-1] if h_t else 0.0
-
-# Wind speeds at key altitudes
-wE_600, wN_600 = wind_at_alt(600.0)
-wE_10,  wN_10  = wind_at_alt(10.0)
-wind_spd_600 = math.hypot(wE_600, wN_600)
-wind_spd_10  = math.hypot(wE_10,  wN_10)
-
-# Max lateral drift from straight-line path (start → target)
-line_E = target_E; line_N = target_N
-line_len = math.hypot(line_E, line_N)
-max_drift = 0.0
-if line_len > 0.01:
-    uE = line_E / line_len; uN = line_N / line_len
-    for e, n in zip(h_E, h_N):
-        proj  = e * uE + n * uN
-        lat_E = e - proj * uE
-        lat_N = n - proj * uN
-        drift = math.hypot(lat_E, lat_N)
-        if drift > max_drift:
-            max_drift = drift
-
-# Flight state step counts
-state_counts = {3: 0, 4: 0, 5: 0}
-for s in h_state:
-    if s in state_counts:
-        state_counts[s] += 1
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 7.5 — FIX-GYRZ & coord_ok validation (post-sim unit checks)
-# ══════════════════════════════════════════════════════════════════════════════
-
-print()
-print("=" * 60)
-print("  FIX VALIDATION (coord_ok + GYRZ spike gate)")
-print("=" * 60)
-
-# ── coord_ok: lat=0 단독 bypass 차단 확인 ──
-_fix_pass = 0; _fix_total = 0
-
-_fix_total += 1
-v = motor_guidance.is_gps_valid(
-    SimpleNamespace(lat=0.0, lon=127.5),
-    SimpleNamespace(fix_quality=1, sats=6, rmc_status="A"))
-print(f"  [{'PASS' if not v else 'FAIL'}] lat=0, lon=127.5 → invalid (got {v})")
-if not v: _fix_pass += 1
-
-_fix_total += 1
-v = motor_guidance.is_gps_valid(
-    SimpleNamespace(lat=35.0, lon=0.0),
-    SimpleNamespace(fix_quality=1, sats=8, rmc_status="A"))
-print(f"  [{'PASS' if not v else 'FAIL'}] lat=35, lon=0 → invalid (got {v})")
-if not v: _fix_pass += 1
-
-_fix_total += 1
-v = motor_guidance.is_gps_valid(
-    SimpleNamespace(lat=35.0, lon=127.0),
-    SimpleNamespace(fix_quality=1, sats=8, rmc_status="A"))
-print(f"  [{'PASS' if v else 'FAIL'}] lat=35, lon=127 → valid (got {v})")
-if v: _fix_pass += 1
-
-# ── FIX-GYRZ: motorapp gyrz spike gate 확인 ──
-# motorapp은 sim_hifi에서 import하지 않으므로, 게이트 로직만 인라인 검증
-_GYRZ_SPIKE_THRESHOLD = 45.0
-
-_fix_total += 1
-prev, new = 3.0, 63.0
-rejected = abs(new - prev) > _GYRZ_SPIKE_THRESHOLD
-print(f"  [{'PASS' if rejected else 'FAIL'}] gyrz prev=3, new=63 (delta=60>45) → rejected={rejected}")
-if rejected: _fix_pass += 1
-
-_fix_total += 1
-prev, new = 3.0, 40.0
-accepted = abs(new - prev) <= _GYRZ_SPIKE_THRESHOLD
-print(f"  [{'PASS' if accepted else 'FAIL'}] gyrz prev=3, new=40 (delta=37<45) → accepted={accepted}")
-if accepted: _fix_pass += 1
-
-print(f"\n  FIX checks: {_fix_pass}/{_fix_total} passed")
-
-print()
-print("=" * 60)
-print("  ASSESSMENT REPORT")
-print("=" * 60)
-
-print("\n  [1] Environment")
-print(f"      Wind from {wind_dir_met:.1f} deg (met)")
-print(f"      Speed @ 600 m : {wind_spd_600:.2f} m/s  "
-      f"(E={wE_600:.2f}, N={wN_600:.2f})")
-print(f"      Speed @  10 m : {wind_spd_10:.2f} m/s  "
-      f"(E={wE_10:.2f}, N={wN_10:.2f})")
-print(f"      Target : bearing {bearing_deg:.1f} deg, "
-      f"dist {distance_m:.0f} m  (E={target_E:.1f}, N={target_N:.1f})")
-print(f"      Initial heading : {h_E[0] and heading:.1f} deg (random)")
-
-print("\n  [2] Flight Statistics")
-print(f"      Total steps : {total_steps}  ({total_time:.1f} s)")
-gps_inv_pct = 100.0 * gps_invalid_count / max(total_steps, 1)
-print(f"      GPS_INVALID : {gps_invalid_count} steps  ({gps_inv_pct:.1f} %)")
-pat_time = pattern_steps * DT
-print(f"      PATTERN     : {pattern_steps} steps  ({pat_time:.1f} s)")
-print(f"      Max lateral drift from straight path : {max_drift:.1f} m")
-
-print("\n  [3] Final Result")
-print(f"      Landing  E={E:.2f} m  N={N:.2f} m  alt={alt:.2f} m")
-print(f"      Distance to target : {final_dist:.2f} m")
-
-print("\n  [4] Verdict")
-if final_dist < 10.0:
-    verdict = "EXCELLENT  (< 10 m)"
-elif final_dist < 50.0:
-    verdict = "GOOD       (< 50 m)"
-elif final_dist < 150.0:
-    verdict = "MARGINAL   (< 150 m)"
-else:
-    verdict = "FAIL       (>= 150 m)"
-print(f"      {verdict}")
-
-print("\n  [5] Wind Compensation")
-print(f"      motor_guidance.wind_effect (learned) : {motor_guidance.wind_effect:.3f} deg")
-true_crab = math.degrees(math.atan2(wE_10, wN_10)) - (
-    math.degrees(math.atan2(wE_10 + V_E_gnd, wN_10 + V_N_gnd)) if False else 0.0
-)
-# Compute representative crab angle at low altitude
-wE_repr, wN_repr = wind_at_alt(50.0)
-Va_repr = VA_BASE
-crab_repr = math.degrees(math.atan2(wE_repr, Va_repr))
-print(f"      True wind crab (@ 50 m, Va={Va_repr} m/s) : {crab_repr:.3f} deg")
-
-print("\n  [6] Flight State Breakdown")
-state_labels = {3: 'DESCENDING (state 3)', 4: 'PATTERN/LANDING (state 4)', 5: 'LANDED (state 5)'}
-for s in (3, 4, 5):
-    cnt = state_counts[s]
-    pct = 100.0 * cnt / max(total_steps, 1)
-    print(f"      {state_labels[s]:<28} : {cnt:>5} steps  ({pct:.1f} %  /  {cnt * DT:.1f} s)")
-
-print()
-print("=" * 60)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# SECTION 9 — Visualisation
+# SECTION 5 — Plotting & Results
 # ══════════════════════════════════════════════════════════════════════════════
 
 try:
-    import matplotlib
-    matplotlib.use('TkAgg')
-except Exception:
-    pass
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+    
+    PHASE_COLOUR = {'TURNING': 'royalblue', 'HOMING': 'royalblue', 'STRAIGHT': 'green', 'PATTERN': 'darkorange', 'GPS_INVALID': 'red', 'TARGET_REACHED': 'gold', 'BARO_INVALID': 'red'}
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    
+    # 2D 궤적 그래프
+    ax1 = axes[0]
+    for i in range(len(h_E) - 1):
+        ax1.plot(h_E[i:i+2], h_N[i:i+2], color=PHASE_COLOUR.get(h_phase[i], 'gray'), linewidth=1.5)
+    
+    ax1.plot(0, 0, '^', color='green', ms=12, label='Start (0,0)')
+    ax1.plot(target_E, target_N, '*', color='red', ms=18, label='Target')
+    ax1.plot(E, N, 'X', color='black', ms=12, label='Landing Point')
+    
+    theta = np.linspace(0, 2 * math.pi, 100)
+    ax1.plot(target_E + 5 * np.cos(theta), target_N + 5 * np.sin(theta), 'r--', label='5m Success Zone')
+    
+    ax1.set_title("2D Ground Track (Top-Down View)")
+    ax1.set_xlabel("East (m)"); ax1.set_ylabel("North (m)")
+    ax1.grid(True, alpha=0.3)
+    ax1.axis('equal')
+    ax1.legend()
 
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+    # 제어 반응 그래프
+    ax2 = axes[1]
+    ax2.plot(h_t, h_cmdyr, 'b-', label='Commanded Yaw Rate', alpha=0.7)
+    ax2.plot(h_t, h_phyyr, 'r--', label='Physical Yaw Rate')
+    ax2.plot(h_t, h_imuyz, 'orange', label='IMU Gyro Reading', alpha=0.5)
+    
+    # 예외 상황 표시
+    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 450) & (np.array(h_alt) > 430), color='red', alpha=0.2, label='GPS Fault Injected')
+    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 150) & (np.array(h_alt) > 140), color='gray', alpha=0.2, label='Baro Fault Injected')
 
-E_arr   = np.array(h_E)
-N_arr   = np.array(h_N)
-alt_arr = np.array(h_alt)
-t_arr   = np.array(h_t)
-cmdyr_arr  = np.array(h_cmdyr)
-phyyr_arr  = np.array(h_phyyr)
-imuyz_arr  = np.array(h_imuyz)
-servo_arr  = np.array(h_servo)
-phases_arr = h_phase
+    ax2.set_title("Control Response & Fault Injection")
+    ax2.set_xlabel("Time (s)"); ax2.set_ylabel("Yaw Rate (deg/s)")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
 
-# ── Figure 1: 3D trajectory ───────────────────────────────────────────────────
-fig1 = plt.figure(figsize=(10, 7))
-ax3  = fig1.add_subplot(111, projection='3d')
+    plt.tight_layout()
+    plt.show()
 
-sc = ax3.scatter(E_arr, N_arr, alt_arr, c=t_arr, cmap='viridis', s=2, alpha=0.7)
-fig1.colorbar(sc, ax=ax3, label='Time (s)', shrink=0.6)
+except ImportError:
+    print("\n[알림] matplotlib이 설치되어 있지 않아 그래프를 생략합니다. (pip install matplotlib)")
 
-ax3.scatter([0],       [0],       [600],      color='green', marker='^', s=120, zorder=5, label='Start')
-ax3.scatter([target_E],[target_N],[0],         color='red',   marker='*', s=200, zorder=5, label='Target')
-ax3.scatter([E],       [N],       [alt],       color='black', marker='x', s=150, zorder=5, label='Landing')
-
-# Wind arrow at mid altitude (300 m)
-wE_mid, wN_mid = wind_at_alt(300.0)
-ax3.quiver(0, 0, 300, wE_mid * 5, wN_mid * 5, 0,
-           color='cyan', linewidth=2, arrow_length_ratio=0.2, label='Wind x5')
-
-ax3.set_xlabel('East (m)'); ax3.set_ylabel('North (m)'); ax3.set_zlabel('Alt (m)')
-ax3.set_title(
-    f'3D Trajectory | Wind FROM {wind_dir_met:.0f}° @ {WIND_U_REF} m/s | '
-    f'Target dist={distance_m:.0f} m bear={bearing_deg:.0f}°'
-)
-ax3.legend(loc='upper left')
-
-# ── Figure 2: 2D XY + wind field ──────────────────────────────────────────────
-fig2, ax2 = plt.subplots(figsize=(9, 9))
-
-# Trajectory coloured by guidance phase
-phase_colours = [PHASE_COLOUR.get(p, 'gray') for p in phases_arr]
-for i in range(len(E_arr) - 1):
-    ax2.plot(E_arr[i:i+2], N_arr[i:i+2], color=phase_colours[i], linewidth=1.2)
-
-# Wind quiver grid at 100 m altitude
-grid_res = 10
-e_lin = np.linspace(E_arr.min() - 50, E_arr.max() + 50, grid_res)
-n_lin = np.linspace(N_arr.min() - 50, N_arr.max() + 50, grid_res)
-Eg, Ng = np.meshgrid(e_lin, n_lin)
-wE_100, wN_100 = wind_at_alt(100.0)
-ax2.quiver(Eg, Ng, np.full_like(Eg, wE_100), np.full_like(Ng, wN_100),
-           alpha=0.25, color='steelblue', scale=50, label='Wind @ 100 m')
-
-# Markers
-ax2.plot(0,        0,        '^', color='green', ms=10, zorder=5, label='Start')
-ax2.plot(target_E, target_N, '*', color='red',   ms=14, zorder=5, label='Target')
-ax2.plot(E,        N,        'x', color='black', ms=10, mew=2.5,  zorder=5, label='Landing')
-
-# Landing zone circles
-theta = np.linspace(0, 2 * math.pi, 200)
-ax2.plot(target_E + 5  * np.cos(theta), target_N + 5  * np.sin(theta),
-         'r--', linewidth=1.2, label='5 m zone')
-ax2.plot(target_E + 40 * np.cos(theta), target_N + 40 * np.sin(theta),
-         color='orange', linestyle='--', linewidth=1.0, label='40 m pattern zone')
-
-# Phase legend entries
-from matplotlib.lines import Line2D
-legend_phase = [
-    Line2D([0],[0], color='royalblue', lw=2, label='TURNING / HOMING'),
-    Line2D([0],[0], color='green',     lw=2, label='STRAIGHT'),
-    Line2D([0],[0], color='darkorange',lw=2, label='PATTERN'),
-    Line2D([0],[0], color='red',       lw=2, label='GPS_INVALID'),
-]
-handles, labels = ax2.get_legend_handles_labels()
-ax2.legend(handles=handles + legend_phase, loc='upper left', fontsize=8)
-
-ax2.set_aspect('equal')
-ax2.set_xlabel('East (m)'); ax2.set_ylabel('North (m)')
-ax2.set_title('2D Ground Track with Phase Colouring and Wind Field')
-ax2.grid(True, alpha=0.3)
-
-# ── Figure 3: Control response ────────────────────────────────────────────────
-fig3, axes = plt.subplots(3, 1, figsize=(12, 9), sharex=True)
-
-# Pattern altitude threshold mask for orange shading (matches 40 m activation)
-pattern_mask = alt_arr <= 40.0
-
-# Subplot 1: commanded vs physical yaw rate
-ax = axes[0]
-ax.plot(t_arr, cmdyr_arr,  color='blue',       lw=1.2, label='cmd_yr (deg/s)')
-ax.plot(t_arr, phyyr_arr,  color='red',  ls='--', lw=1.0, label='phy_yr (deg/s)')
-ax.set_ylabel('Yaw rate (deg/s)')
-ax.set_title('Control Command vs Physical Response vs IMU Reading')
-ax.legend(loc='upper right', fontsize=8); ax.grid(True, alpha=0.3)
-
-# Subplot 2: IMU gyro reading vs physical
-ax = axes[1]
-ax.plot(t_arr, imuyz_arr,  color='orange',     lw=1.0, label='imu_gyrz (deg/s)')
-ax.plot(t_arr, phyyr_arr,  color='red',  ls='--', lw=1.0, label='phy_yr (deg/s)')
-ax.set_ylabel('Yaw rate (deg/s)')
-ax.legend(loc='upper right', fontsize=8); ax.grid(True, alpha=0.3)
-
-# Subplot 3: servo deflection (left) + altitude (right twin)
-ax  = axes[2]
-ax2b = ax.twinx()
-ax.plot(t_arr, servo_arr, color='purple', lw=1.2, label='servo delta (deg)')
-ax.axhline( DEADBAND_MECH, color='red', ls=':', lw=0.8, label=f'+{DEADBAND_MECH}° deadband')
-ax.axhline(-DEADBAND_MECH, color='red', ls=':', lw=0.8, label=f'-{DEADBAND_MECH}° deadband')
-
-# Orange shading for pattern phase region
-if pattern_mask.any():
-    ax.fill_between(t_arr, ax.get_ylim()[0] if False else -70, 70,
-                    where=pattern_mask, color='orange', alpha=0.15, label='Pattern region')
-
-ax.set_ylabel('Servo delta (deg)'); ax.set_xlabel('Time (s)')
-ax.legend(loc='upper left', fontsize=8); ax.grid(True, alpha=0.3)
-
-ax2b.plot(t_arr, alt_arr, color='gray', ls=':', lw=1.0, label='Altitude (m)')
-ax2b.set_ylabel('Altitude (m)')
-ax2b.legend(loc='upper right', fontsize=8)
-
-fig3.tight_layout()
-fig3.suptitle('Control vs Physical Response', y=1.01)
-
-plt.show()
+print("\n🚀 통합 시뮬레이션 및 검증 완료!")
