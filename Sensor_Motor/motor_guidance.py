@@ -310,12 +310,12 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
 
     patterned = PATTERN_ALT_MIN < baro_m < PATTERN_ALT_MAX
 
-    # if patterned and distance < PATTERN_ENTRY_DIST:
-    #     guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
-    #     phase = "PATTERN"
-    # else:
-    guide_E, guide_N = _carrot(my_E, my_N, tgt_E, tgt_N)
-    phase = "HOMING"
+    if patterned and distance < PATTERN_ENTRY_DIST:
+        guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
+        phase = "PATTERN"
+    else:
+        guide_E, guide_N = _carrot(my_E, my_N, tgt_E, tgt_N)
+        phase = "HOMING"
 
     carrot_angl_north = math.degrees(
         math.atan2(guide_E - my_E, guide_N - my_N)
