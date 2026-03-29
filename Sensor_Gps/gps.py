@@ -13,7 +13,6 @@ READ_SIZE   = 32
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 
-
 class I2CLock:
     def __init__(self, path=I2C_LOCK_PATH):
         self.path = path
