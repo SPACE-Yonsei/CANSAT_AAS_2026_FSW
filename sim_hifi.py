@@ -183,16 +183,50 @@ print("=" * 88)
 # SECTION 4 — Main Simulation Loop
 # ══════════════════════════════════════════════════════════════════════════════
 
+## ── Real-time plot setup ──
+try:
+    import matplotlib
+    matplotlib.use('TkAgg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    plt.ion()
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    ax1, ax2 = axes
+
+    # 2D 궤적
+    ax1.plot(0, 0, '^', color='green', ms=12, label='Start (0,0)')
+    ax1.plot(target_E, target_N, '*', color='red', ms=18, label='Target')
+    theta = np.linspace(0, 2 * math.pi, 100)
+    ax1.plot(target_E + 5 * np.cos(theta), target_N + 5 * np.sin(theta), 'r--', label='5m Zone')
+    trail_line, = ax1.plot([], [], 'b-', linewidth=1.2, label='Track')
+    pos_dot, = ax1.plot([], [], 'ko', ms=6)
+    ax1.set_title("2D Ground Track"); ax1.set_xlabel("East (m)"); ax1.set_ylabel("North (m)")
+    ax1.grid(True, alpha=0.3); ax1.legend(); ax1.axis('equal')
+
+    # 제어 반응
+    cmd_line, = ax2.plot([], [], 'b-', label='Cmd Yaw Rate', alpha=0.7)
+    phy_line, = ax2.plot([], [], 'r--', label='Phy Yaw Rate')
+    ax2.set_title("Control Response"); ax2.set_xlabel("Time (s)"); ax2.set_ylabel("Yaw Rate (deg/s)")
+    ax2.grid(True, alpha=0.3); ax2.legend()
+
+    PLOT_LIVE = True
+    PLOT_INTERVAL = 5  # 5 step마다 갱신
+except ImportError:
+    PLOT_LIVE = False
+
+PHASE_COLOUR = {'TURNING': 'royalblue', 'HOMING': 'royalblue', 'STRAIGHT': 'green',
+                'PATTERN': 'darkorange', 'GPS_INVALID': 'red', 'TARGET_REACHED': 'gold', 'BARO_INVALID': 'red'}
+
 for step in range(MAX_STEPS):
     t = step * DT
-    _sim_clock[0] = t  
+    _sim_clock[0] = t
 
-    # 1. 환경 및 물리 업데이트
-    wE, wN = wind_at_alt(alt)
-    step_turbulence(Va_curr, DT)
+    # 1. 환경 및 물리 업데이트 (바람 비활성화)
+    wE, wN = 0.0, 0.0
     hdg_rad = math.radians(heading)
     Va_fwd = max(VA_BASE - 0.06 * abs(servo_delta_actual), 4.0)
-    wE_total, wN_total = wE + turb_u, wN + turb_v
+    wE_total, wN_total = 0.0, 0.0
     V_E_gnd, V_N_gnd = Va_fwd * math.sin(hdg_rad) + wE_total, Va_fwd * math.cos(hdg_rad) + wN_total
 
     # 2. 센서 리딩
@@ -237,7 +271,10 @@ for step in range(MAX_STEPS):
     # 5. 비행체 동역학 업데이트
     Va_fwd = max(VA_BASE - 0.03 * abs(effective_delta), 4.0)
     descent_rate = max(DESCENT_BASE + 0.001 * effective_delta ** 2 + turb_w * 0.3, 1.0)
-    yaw_rate_phy = effective_delta * (Va_fwd / VA_BASE)
+    
+    # [핵심 수정] effective_delta가 음수일 때 우선회(+)이므로 부호를 반전(-)합니다!
+    # 곱해지는 상수(1.5)는 기체의 실제 회전 민감도입니다. (필요시 조절 가능)
+    yaw_rate_phy = -effective_delta * 1.5 * (Va_fwd / VA_BASE)
 
     step_pendulum(yaw_rate_phy, DT)
 
@@ -263,6 +300,27 @@ for step in range(MAX_STEPS):
     if step % (5 if phase == 'PATTERN' else 20) == 0:
         print(f"  {step:>5}  {t:>6.1f}s  {alt:>7.1f}m  | Phase: {phase:<12} | Cmd_Yr: {cmd_yr:>6.1f}  Phy_Yr: {yaw_rate_phy:>6.1f} | Servo: {servo_delta_actual:>5.1f}")
 
+    # ── Real-time plot update ──
+    if PLOT_LIVE and step % PLOT_INTERVAL == 0:
+        trail_line.set_data(h_E, h_N)
+        pos_dot.set_data([E], [N])
+        all_E = h_E + [target_E, 0.0]
+        all_N = h_N + [target_N, 0.0]
+        margin = 50
+        ax1.set_xlim(min(all_E) - margin, max(all_E) + margin)
+        ax1.set_ylim(min(all_N) - margin, max(all_N) + margin)
+
+        cmd_line.set_data(h_t, h_cmdyr)
+        phy_line.set_data(h_t, h_phyyr)
+        ax2.set_xlim(0, t + 5)
+        if h_cmdyr:
+            yr_min = min(min(h_cmdyr), min(h_phyyr)) - 10
+            yr_max = max(max(h_cmdyr), max(h_phyyr)) + 10
+            ax2.set_ylim(yr_min, yr_max)
+
+        fig.canvas.draw_idle()
+        fig.canvas.flush_events()
+
     if flight_state == 5:
         motor_control.set_motors_off(mock_pi)
         print(f"\n  🛬 [LANDED] 비행 종료! (시간: {t:.1f}s, 최종 고도: {alt:.1f}m)")
@@ -272,51 +330,25 @@ for step in range(MAX_STEPS):
 # SECTION 5 — Plotting & Results
 # ══════════════════════════════════════════════════════════════════════════════
 
-try:
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
-    
-    PHASE_COLOUR = {'TURNING': 'royalblue', 'HOMING': 'royalblue', 'STRAIGHT': 'green', 'PATTERN': 'darkorange', 'GPS_INVALID': 'red', 'TARGET_REACHED': 'gold', 'BARO_INVALID': 'red'}
-    
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # 2D 궤적 그래프
-    ax1 = axes[0]
+if PLOT_LIVE:
+    # 최종 궤적: phase별 색상으로 다시 그리기
+    trail_line.set_visible(False)
+    pos_dot.set_visible(False)
     for i in range(len(h_E) - 1):
         ax1.plot(h_E[i:i+2], h_N[i:i+2], color=PHASE_COLOUR.get(h_phase[i], 'gray'), linewidth=1.5)
-    
-    ax1.plot(0, 0, '^', color='green', ms=12, label='Start (0,0)')
-    ax1.plot(target_E, target_N, '*', color='red', ms=18, label='Target')
-    ax1.plot(E, N, 'X', color='black', ms=12, label='Landing Point')
-    
-    theta = np.linspace(0, 2 * math.pi, 100)
-    ax1.plot(target_E + 5 * np.cos(theta), target_N + 5 * np.sin(theta), 'r--', label='5m Success Zone')
-    
-    ax1.set_title("2D Ground Track (Top-Down View)")
-    ax1.set_xlabel("East (m)"); ax1.set_ylabel("North (m)")
-    ax1.grid(True, alpha=0.3)
-    ax1.axis('equal')
+    ax1.plot(E, N, 'X', color='black', ms=12, label='Landing')
     ax1.legend()
 
-    # 제어 반응 그래프
-    ax2 = axes[1]
-    ax2.plot(h_t, h_cmdyr, 'b-', label='Commanded Yaw Rate', alpha=0.7)
-    ax2.plot(h_t, h_phyyr, 'r--', label='Physical Yaw Rate')
-    ax2.plot(h_t, h_imuyz, 'orange', label='IMU Gyro Reading', alpha=0.5)
-    
-    # 예외 상황 표시
-    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 450) & (np.array(h_alt) > 430), color='red', alpha=0.2, label='GPS Fault Injected')
-    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 150) & (np.array(h_alt) > 140), color='gray', alpha=0.2, label='Baro Fault Injected')
-
-    ax2.set_title("Control Response & Fault Injection")
-    ax2.set_xlabel("Time (s)"); ax2.set_ylabel("Yaw Rate (deg/s)")
-    ax2.grid(True, alpha=0.3)
+    # 제어 그래프에 IMU + Fault 영역 추가
+    ax2.plot(h_t, h_imuyz, 'orange', label='IMU Gyro', alpha=0.5)
+    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 450) & (np.array(h_alt) > 430), color='red', alpha=0.2, label='GPS Fault')
+    ax2.fill_between(h_t, -100, 100, where=(np.array(h_alt) <= 150) & (np.array(h_alt) > 140), color='gray', alpha=0.2, label='Baro Fault')
     ax2.legend()
 
+    plt.ioff()
     plt.tight_layout()
     plt.show()
-
-except ImportError:
-    print("\n[알림] matplotlib이 설치되어 있지 않아 그래프를 생략합니다. (pip install matplotlib)")
+else:
+    print("\n[알림] matplotlib이 설치되어 있지 않아 그래프를 생략합니다.")
 
 print("\n🚀 통합 시뮬레이션 및 검증 완료!")
