@@ -395,6 +395,10 @@ def init(queue: Queue):
     log("Initializing flightlogicapp")
     
     try:
+        # 비행 로직은 별도 프로세스에서 실행되므로, 여기서 다시 읽어야 main과 동일한
+        # lib/prevstate.txt 내용을 쓴다(spawn 방식·경로 혼동 시에도 일치).
+        prevstate.init_prevstate()
+
         # 상태 복원
         if config.STATE_OVERRIDE is not None:
             state = int(config.STATE_OVERRIDE)
@@ -409,9 +413,10 @@ def init(queue: Queue):
             transitions[state](queue, force=True)
         
         # 이전 데이터 복원
-        max_alt = float(prevstate.PREV_MAX_ALT)
-        target_lat = float(prevstate.Target_lat)
-        target_lon = float(prevstate.Target_lon)
+        if state > 0:
+            max_alt = float(prevstate.PREV_MAX_ALT)
+            target_lat = float(prevstate.Target_lat)
+            target_lon = float(prevstate.Target_lon)
         
         # 목표 좌표 전송
         if target_lat != 0.0 or target_lon != 0.0:

@@ -22,7 +22,7 @@ def _dbg(line: str):
     full = f"[{ts}] {line}"
     print(full)
     simlogfile.write(full + "\n")
-    simlogfile.flush()
+    # simlogfile.flush()
 
 def log_control(g, m):
     t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
@@ -46,7 +46,7 @@ def log_control(g, m):
         f"R_pw:{m.right_pulse}\n"
     )
     controllogfile.write(line)
-    controllogfile.flush()
+    # controllogfile.flush()
 
 from typing import Optional
 

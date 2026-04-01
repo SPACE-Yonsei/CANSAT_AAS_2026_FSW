@@ -18,8 +18,8 @@ def _dbg(line: str):
 
 cascade_pi = types.SimpleNamespace(
     Kp_outer      = 0.6,   # unitless
-    Kp_inner      = 1.0,   # unitless
-    Ki_inner      = 0.1,   # 1/s
+    Kp_inner      = 0.4,   # unitless
+    Ki_inner      = 0.05,   # 1/s
     pi_integral   = 0.0,   # °/s·s, 적분 누적값
     MAX_INTEGRAL  = 15.0,  # °/s·s, 적분 상한
     DEADBAND      = 5.0,   # deg, heading error 허용 범위

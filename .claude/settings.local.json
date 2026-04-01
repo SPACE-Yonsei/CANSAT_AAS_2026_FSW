@@ -12,7 +12,9 @@
       "Bash(pip install:*)",
       "Bash(.venv/Scripts/python.exe sim_hifi.py)",
       "Bash(python3 sim_test.py)",
-      "Bash(.venv/Scripts/python sim_hifi.py)"
+      "Bash(.venv/Scripts/python sim_hifi.py)",
+      "Read(//c/workspace/CANSAT_AAS_2026_FSW/**)",
+      "Bash(bash /tmp/count_files.sh)"
     ]
   }
 }
