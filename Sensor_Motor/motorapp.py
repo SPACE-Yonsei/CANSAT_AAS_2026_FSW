@@ -9,7 +9,6 @@ from multiprocessing import connection
 from lib import appargs, msgstructure, events
 from Sensor_Motor import motor_guidance, motor_control, Motor_Release, Motor_Egg
 
-
 log_dir = "./sensorlogs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
