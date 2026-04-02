@@ -97,8 +97,8 @@ LAT2M, COS_LAT = 111320.0, math.cos(math.radians(REF_LAT))
 def en_to_latlon(E_m: float, N_m: float):
     return REF_LAT + N_m / LAT2M, REF_LON + E_m / (LAT2M * COS_LAT)
 
-VA_BASE, DESCENT_BASE = 8.0, 3.5
-WIND_U_REF, WIND_Z_REF, WIND_ALPHA = 8.0, 600.0, 0.30
+VA_BASE, DESCENT_BASE = 5.5, 5.0
+WIND_U_REF, WIND_Z_REF, WIND_ALPHA = 3.0, 600.0, 0.30
 L_HOR, L_VER, SIG_HOR, SIG_VER = 150.0, 30.0, 4.0, 2.5
 OMEGA_N, ZETA, K_COUPLE = math.sqrt(9.81 / 1.5), 0.08, 0.10
 SLEW_RATE_DEG_S, DEADBAND_MECH = 200.0, 5.0
@@ -109,7 +109,7 @@ DT, MAX_STEPS = 0.1, 3000
 
 rng = np.random.default_rng(99)
 bearing_deg = float(rng.uniform(30, 70))
-distance_m = float(rng.uniform(550, 700))
+distance_m = float(rng.uniform(250, 400))
 wind_dir_met = float(rng.uniform(250, 360))
 target_E, target_N = distance_m * math.sin(math.radians(bearing_deg)), distance_m * math.cos(math.radians(bearing_deg))
 target_lat, target_lon = en_to_latlon(target_E, target_N)
