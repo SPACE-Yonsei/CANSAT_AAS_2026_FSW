@@ -222,11 +222,12 @@ for step in range(MAX_STEPS):
     t = step * DT
     _sim_clock[0] = t
 
-    # 1. 환경 및 물리 업데이트 (바람 비활성화)
-    wE, wN = 0.0, 0.0
+    # 1. 환경 및 물리 업데이트
+    wE, wN = wind_at_alt(alt)
+    step_turbulence(Va_curr, DT)
     hdg_rad = math.radians(heading)
     Va_fwd = max(VA_BASE - 0.06 * abs(servo_delta_actual), 4.0)
-    wE_total, wN_total = 0.0, 0.0
+    wE_total, wN_total = wE + turb_u, wN + turb_v
     V_E_gnd, V_N_gnd = Va_fwd * math.sin(hdg_rad) + wE_total, Va_fwd * math.cos(hdg_rad) + wN_total
 
     # 2. 센서 리딩
@@ -272,9 +273,9 @@ for step in range(MAX_STEPS):
     Va_fwd = max(VA_BASE - 0.03 * abs(effective_delta), 4.0)
     descent_rate = max(DESCENT_BASE + 0.001 * effective_delta ** 2 + turb_w * 0.3, 1.0)
     
-    # [핵심 수정] effective_delta가 음수일 때 우선회(+)이므로 부호를 반전(-)합니다!
-    # 곱해지는 상수(1.5)는 기체의 실제 회전 민감도입니다. (필요시 조절 가능)
-    yaw_rate_phy = -effective_delta * 1.5 * (Va_fwd / VA_BASE)
+    # effective_delta 음수 → 우선회(+) → 부호 반전
+    # 회전 민감도: 모터 1° 차이 = 기체 1°/s 회전 (하드웨어 실측 기반)
+    yaw_rate_phy = -effective_delta * 1.0 * (Va_fwd / VA_BASE)
 
     step_pendulum(yaw_rate_phy, DT)
 

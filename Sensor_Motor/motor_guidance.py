@@ -18,12 +18,14 @@ def _dbg(line: str):
 
 cascade_pi = types.SimpleNamespace(
     Kp_outer      = 0.6,   # unitless
-    Kp_inner      = 1.0,   # unitless
-    Ki_inner      = 0.05,   # 1/s
+    Kp_inner      = 1.3,   # unitless
+    Ki_inner      = 0.05,  # 1/s
     pi_integral   = 0.0,   # °/s·s, 적분 누적값
     MAX_INTEGRAL  = 15.0,  # °/s·s, 적분 상한
     DEADBAND      = 5.0,   # deg, heading error 허용 범위
     MAX_CMD       = 120.0, # °/s, 최대 yaw rate 명령
+    last_cmd      = 0.0,   # °/s, 이전 사이클의 최종 명령값 저장 (추가됨)
+    MAX_ACCEL     = 400.0, # °/s², 허용되는 최대 명령 변화율 (추가됨)
 )
 
 target = types.SimpleNamespace(
@@ -37,10 +39,10 @@ start_point = types.SimpleNamespace(
 
 LAT_TO_METER: float = 111320.0  # m/deg
 
-L_DISTANCE: float      = 25.0   # m, L1 추적 거리
 L_DISTANCE_BASE: float = 25.0   # m
 L_DISTANCE_HIGH: float = 40.0   # m, 고고도용
-L_DISTANCE_LOW: float  = 10.0   # m, 저고도용
+L_DISTANCE_LOW: float  = 15.0   # m, 저고도용
+L_DISTANCE: float      = L_DISTANCE_BASE   # m, L1 추적 거리
 
 PATTERN_ENTRY_DIST: float = 50.0  # m — figure-8 진입 거리
 
@@ -66,11 +68,11 @@ _prev_gps = types.SimpleNamespace(
     time        = None,   # Optional[float] — s, epoch
     initialized = False,  # bool
 )
-GPS_JUMP_MAX_SPEED: float = 50.0        # m/s
+GPS_JUMP_MAX_SPEED: float = 120.0        # m/s
 GPS_STABLE_COUNT_REQUIRED: int = 2      # 샘플 수
 _gps_stable_count: int = 0
 
-TARGET_REACHED_RADIUS: float = 5.0    # m, 목표 도달 판정 반경
+TARGET_REACHED_RADIUS: float = 10.0    # m, 목표 도달 판정 반경
 PATTERN_ALT_MIN: float       = 10.0   # m, 패턴 비행 진입 최소 고도
 PATTERN_ALT_MAX: float       = 50.0   # m, 패턴 비행 진입 최대 고도
 WIND_LEARN_MIN_SPEED: float  = 2.5    # m/s, wind 학습 최소 GPS 속도
@@ -86,6 +88,7 @@ def init_guidance():
     wind_effect = 0.0
     L_DISTANCE = L_DISTANCE_BASE
     cascade_pi.pi_integral = 0.0
+    cascade_pi.last_cmd = 0.0  # Slew Rate 초기화 추가
     last_time = time.time()
     _pattern.lobe_sign = 1
     _pattern.last_switch_time = time.time()
@@ -101,8 +104,8 @@ def reset_control():
     global wind_effect, last_time
     wind_effect = 0.0
     cascade_pi.pi_integral = 0.0
+    cascade_pi.last_cmd = 0.0  # Slew Rate 초기화 추가
     last_time = time.time()
-
 
 def _wrap_180(a: float) -> float:
     return (a + 180.0) % 360.0 - 180.0
@@ -238,7 +241,6 @@ def set_target_coord(lat: float, lon: float):
     target.lat = lat
     target.lon = lon
 
-
 def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
     rate_error = desired_yaw_rate - measured_yaw_rate
     max_cmd = cascade_pi.MAX_CMD
@@ -252,8 +254,22 @@ def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
         u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
 
     u_sat = max(-max_cmd, min(max_cmd, u))
-    return u_sat
+    
+    # ----------------------------------------------------
+    # Slew Rate Limiter (변화율 제한기) 추가
+    # ----------------------------------------------------
+    max_delta = cascade_pi.MAX_ACCEL * dt
+    cmd_delta = u_sat - cascade_pi.last_cmd
 
+    if cmd_delta > max_delta:
+        u_sat = cascade_pi.last_cmd + max_delta
+    elif cmd_delta < -max_delta:
+        u_sat = cascade_pi.last_cmd - max_delta
+
+    cascade_pi.last_cmd = u_sat
+    # ----------------------------------------------------
+
+    return u_sat
 
 _guidance_tick = 0
 
@@ -328,24 +344,23 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     desired_yaw_rate = math.degrees(2.0 * (V / L_DISTANCE) * sin_err)
     if abs(angl_to_turn) > 90.0:
         desired_yaw_rate = math.copysign(cascade_pi.MAX_CMD, angl_to_turn)
-    
-    if abs(angl_to_turn) <= cascade_pi.DEADBAND:
-        cascade_pi.pi_integral = 0.0
-        commanded_yaw_rate = 0.0
-        if phase == "HOMING":
+
+    commanded_yaw_rate = _yaw_rate_pi_control(
+        desired_yaw_rate, math.degrees(imu_data.gyrz), dt
+    )
+
+    if phase == "HOMING":
+        # 오차가 15도 이내로 안정화되면 직선/바람 학습 페이즈로 간주
+        if abs(angl_to_turn) <= 15.0:
             phase = "STRAIGHT"
-        # Wind learning only when flying straight — no turn contamination
-        # 2.5 m/s 미만에서는 GPS course 노이즈가 커서 wind 학습 차단
-        if gps_vector.speed > WIND_LEARN_MIN_SPEED:
-            current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
-            wind_effect = (1.0 - WIND_EMA_ALPHA) * wind_effect + WIND_EMA_ALPHA * current_crab
-            wind_effect = max(-WIND_MAX_DEG, min(WIND_MAX_DEG, wind_effect))
-    else:
-        commanded_yaw_rate = _yaw_rate_pi_control(
-            desired_yaw_rate, math.degrees(imu_data.gyrz), dt
-        )
-        if phase == "HOMING":
+        else:
             phase = "TURNING"
+
+    # 바람 학습 (Wind Learning) 조건 완화 (제어 끄는 로직 제거)
+    if phase == "STRAIGHT" and gps_vector.speed > WIND_LEARN_MIN_SPEED:
+        current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
+        wind_effect = (1.0 - WIND_EMA_ALPHA) * wind_effect + WIND_EMA_ALPHA * current_crab
+        wind_effect = max(-WIND_MAX_DEG, min(WIND_MAX_DEG, wind_effect))
 
     if DEBUG_GUIDANCE:
         _dbg(

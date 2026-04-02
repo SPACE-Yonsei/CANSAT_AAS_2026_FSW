@@ -361,7 +361,7 @@ def _run_sim(init_heading: float,
             descent_rate = max(descent_rate + phys.turb_w * 0.3, 1.0)
 
         # Yaw rate (corrected sign: negative delta → positive/right turn)
-        yaw_rate_phy = -effective_delta * 1.5 * (Va_fwd / VA_BASE)
+        yaw_rate_phy = -effective_delta * 1.0 * (Va_fwd / VA_BASE)
         phys.step_pendulum(yaw_rate_phy, DT)
 
         heading = (heading + yaw_rate_phy * DT) % 360.0
@@ -1162,8 +1162,7 @@ def main():
     print("=" * width)
     print()
     print("  KNOWN DISCREPANCIES:")
-    print("  [!] Physics yaw gain: 1.5 (sim_hifi) — matches documented tuning")
-    print("  [!] sim_hifi.py has wind disabled (lines 226-228) — enabled here")
+    print("  [!] Physics yaw gain: 1.0 (both sim_hifi & sim_verify) — hw-measured")
     print("  [!] GPS_JUMP_MAX_SPEED set to 200.0 to prevent warmup false positives")
     print("  [!] motor_guidance uses module-level globals — init_guidance() per run")
 
