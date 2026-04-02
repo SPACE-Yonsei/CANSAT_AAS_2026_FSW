@@ -18,7 +18,7 @@ def _dbg(line: str):
 
 cascade_pi = types.SimpleNamespace(
     Kp_outer      = 0.6,   # unitless
-    Kp_inner      = 0.4,   # unitless
+    Kp_inner      = 1.0,   # unitless
     Ki_inner      = 0.05,   # 1/s
     pi_integral   = 0.0,   # °/s·s, 적분 누적값
     MAX_INTEGRAL  = 15.0,  # °/s·s, 적분 상한
@@ -324,10 +324,11 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     angl_to_turn = _wrap_180(wind_carrot_angl_north - imu_data.yaw)
 
     V = max(gps_vector.speed, 1.0)
-    desired_yaw_rate = math.degrees(
-        2.0 * (V / L_DISTANCE) * math.sin(math.radians(angl_to_turn))
-    )
-
+    sin_err = math.sin(math.radians(angl_to_turn))
+    desired_yaw_rate = math.degrees(2.0 * (V / L_DISTANCE) * sin_err)
+    if abs(angl_to_turn) > 90.0:
+        desired_yaw_rate = math.copysign(cascade_pi.MAX_CMD, angl_to_turn)
+    
     if abs(angl_to_turn) <= cascade_pi.DEADBAND:
         cascade_pi.pi_integral = 0.0
         commanded_yaw_rate = 0.0
