@@ -4,6 +4,7 @@ Solenoid control for Payload-Egg drop
 BCM 6: Egg 릴레이/솔레노이드 — 번와이어와 동일 릴레이 보드(relay_levels).
 """
 
+import atexit
 import time
 import RPi.GPIO as GPIO
 
@@ -19,6 +20,7 @@ def init_solenoid():
     """Idle = LOW so high-trigger relay stays off (HIGH energizes coil)."""
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
+    atexit.register(terminate_solenoid)
 
 
 def activate_solenoid():
@@ -37,6 +39,7 @@ def activate_solenoid():
 def terminate_solenoid():
     """Terminate solenoid (cleanup GPIO)."""
     try:
+        GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
         GPIO.cleanup(SOLENOID_PIN)
     except Exception as e:
         pass

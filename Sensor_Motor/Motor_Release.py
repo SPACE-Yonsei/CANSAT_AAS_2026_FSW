@@ -5,6 +5,7 @@ BCM 5: Burnwire (번와이어로 페이로드가 컨테이너에서 탈출)
 에그 릴레이와 동일 보드 — 레벨은 relay_levels.py 한 곳에서만 정의 (HIGH=작동, LOW=대기).
 """
 
+import atexit
 import time
 import RPi.GPIO as GPIO
 
@@ -19,6 +20,7 @@ def init_burnwire():
     """Hold relay OFF: high-trigger module idle at LOW; OUTPUT avoids floating."""
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(BURNWIRE_PIN, GPIO.OUT, initial=BURNWIRE_DEACTIVATE_LEVEL)
+    atexit.register(terminate_burnwire)
 
 def activate_burnwire():
     """Activate burnwire to release payload from container (번와이어로 컨테이너-페이로드 사출)."""
@@ -33,6 +35,7 @@ def activate_burnwire():
 def terminate_burnwire():
     """Terminate burnwire (cleanup GPIO)."""
     try:
+        GPIO.output(BURNWIRE_PIN, BURNWIRE_DEACTIVATE_LEVEL)
         GPIO.cleanup(BURNWIRE_PIN)
     except Exception as e:
         pass
