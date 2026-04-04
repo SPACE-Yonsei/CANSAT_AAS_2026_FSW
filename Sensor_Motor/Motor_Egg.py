@@ -45,7 +45,6 @@ if __name__ == "__main__":
     init_solenoid()
     try:
         print("\n=== Solenoid Test (Egg Drop) ===")
-        input("Enter를 눌러 솔레노이드 작동")
         activate_solenoid()
         print("완료. 종료합니다.")
 
