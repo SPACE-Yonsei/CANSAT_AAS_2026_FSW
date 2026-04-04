@@ -33,8 +33,9 @@ def activate_solenoid():
             GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
             time.sleep(SOLENOID_DURATION)
             print(f"솔레노이드 작동 완료 (반복: {i+1}/{SOLENOID_REPEAT})")
+        print("솔레노이드 작동 종료")
     except Exception as e:
-        pass
+        print(f"솔레노이드 작동 중 오류 발생: {e}")
 
 def terminate_solenoid():
     """Terminate solenoid (cleanup GPIO)."""
