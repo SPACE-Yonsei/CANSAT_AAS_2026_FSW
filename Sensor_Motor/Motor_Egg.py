@@ -13,6 +13,7 @@ SOLENOID_PIN = 6
 SOLENOID_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
 SOLENOID_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
 SOLENOID_DURATION = 0.5  # 솔레노이드 작동 시간 (초)
+SOLENOID_REPEAT = 3      # 솔레노이드 반복 횟수
 
 def init_solenoid():
     """Idle = LOW so high-trigger relay stays off (HIGH energizes coil)."""
@@ -23,9 +24,11 @@ def activate_solenoid():
     """Activate solenoid to drop egg (솔레노이드로 계란 사출)."""
     try:
         GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
-        GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)
-        time.sleep(SOLENOID_DURATION) 
-        GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
+        for _ in range(SOLENOID_REPEAT):
+            GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)
+            time.sleep(SOLENOID_DURATION)
+            GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
+            time.sleep(SOLENOID_DURATION)
     except Exception as e:
         pass
 
