@@ -45,12 +45,9 @@ if __name__ == "__main__":
     init_solenoid()
     try:
         print("\n=== Solenoid Test (Egg Drop) ===")
-        input("Enter를 눌러 테스트 시작")
-        for i in range(3):
-            print(f"[{i+1}/3] 사이클 시작")
-            activate_solenoid()
-            print(f"[{i+1}/3] 사이클 완료")
-        print("\n모든 사이클 완료. 종료합니다.")
+        input("Enter를 눌러 솔레노이드 작동")
+        activate_solenoid()
+        print("완료. 종료합니다.")
 
     except KeyboardInterrupt:
         print("\n프로그램 종료 요청 (Ctrl+C)")
