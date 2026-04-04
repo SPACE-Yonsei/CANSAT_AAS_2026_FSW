@@ -13,7 +13,7 @@ from Sensor_Motor.relay_levels import RELAY_ACTIVATE_LEVEL, RELAY_DEACTIVATE_LEV
 BURNWIRE_PIN = 5
 BURNWIRE_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
 BURNWIRE_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
-BURNWIRE_DURATION = 3.0  # 번와이어 작동 시간 (초)
+BURNWIRE_DURATION = 5.0  # 번와이어 작동 시간 (초)
 
 def init_burnwire():
     """Hold relay OFF: high-trigger module idle at LOW; OUTPUT avoids floating."""
