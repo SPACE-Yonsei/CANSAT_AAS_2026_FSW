@@ -25,12 +25,12 @@ def activate_solenoid():
     """Activate solenoid to drop egg (솔레노이드로 계란 사출)."""
     try:
         GPIO.setup(SOLENOID_PIN, GPIO.OUT, initial=SOLENOID_DEACTIVATE_LEVEL)
-        for _ in range(SOLENOID_REPEAT):
+        for i in range(SOLENOID_REPEAT):
             GPIO.output(SOLENOID_PIN, SOLENOID_ACTIVATE_LEVEL)
             time.sleep(SOLENOID_DURATION)
             GPIO.output(SOLENOID_PIN, SOLENOID_DEACTIVATE_LEVEL)
             time.sleep(SOLENOID_DURATION)
-            print("솔레노이드 작동 완료")
+            print(f"솔레노이드 작동 완료 (반복: {i+1}/{SOLENOID_REPEAT})")
     except Exception as e:
         pass
 
