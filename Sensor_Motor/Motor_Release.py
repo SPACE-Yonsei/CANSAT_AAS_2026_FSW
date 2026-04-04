@@ -40,12 +40,9 @@ def terminate_burnwire():
 if __name__ == "__main__":
     init_burnwire()
     try:
-        print("\n=== Burnwire Test (Container-Payload Release) ===")
-        input("Enter를 눌러 번와이어 작동 (3초)")
+        print("번와이어 작동 시작")
         activate_burnwire()
-        print("번와이어 작동 완료")
-        
-        input("Enter를 눌러 종료")
+        print("번와이어 작동 종료")
 
     except KeyboardInterrupt:
         print("\n프로그램 종료 요청 (Ctrl+C)")
