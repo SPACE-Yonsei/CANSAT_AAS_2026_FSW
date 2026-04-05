@@ -86,11 +86,20 @@ def init_barometer():
     import adafruit_bmp3xx
     import board
     import busio
+    from adafruit_bus_device import i2c_device
 
-    # I2C setup - 100kHz: BMP390 probe failure workaround (Errno 121/5 at 400kHz)
-    i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
-    with I2CLock():
-        bmp = adafruit_bmp3xx.BMP3XX_I2C(i2c)
+    i2c = busio.I2C(board.SCL, board.SDA)
+
+    # BMP390 은 zero-length write probe 를 NACK 하고(Errno 121),
+    # 그 후 RPi I2C 컨트롤러가 stuck 되어 read probe 도 실패(Errno 5)한다.
+    # i2cdetect 로 0x77 존재는 이미 확인됐으므로 probe 단계를 우회한다.
+    _orig_probe = i2c_device.I2CDevice._I2CDevice__probe_for_device
+    i2c_device.I2CDevice._I2CDevice__probe_for_device = lambda _: None
+    try:
+        with I2CLock():
+            bmp = adafruit_bmp3xx.BMP3XX_I2C(i2c)
+    finally:
+        i2c_device.I2CDevice._I2CDevice__probe_for_device = _orig_probe
     bmp.pressure_oversampling = 8
     bmp.temperature_oversampling = 2
     bmp.sea_level_pressure = SEA_LEVEL_PRESSURE_HPA
