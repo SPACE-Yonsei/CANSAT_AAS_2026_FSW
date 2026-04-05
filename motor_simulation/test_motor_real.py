@@ -10,8 +10,8 @@ pulse_per_degree = 2000/180
 
 left_zero = 600
 right_zero = 2500
-left_neutral = int(left_zero + 60 * pulse_per_degree)
-right_neutral = int(right_zero - 60 * pulse_per_degree)
+left_neutral = int(left_zero + 120 * pulse_per_degree)
+right_neutral = int(right_zero - 120 * pulse_per_degree)
 
 print(f"left_neutral: {left_neutral}μs")
 print(f"right_neutral: {right_neutral}μs")
@@ -25,7 +25,7 @@ print("LEFT 모터 0(600) 이동..")
 pi.set_servo_pulsewidth(LEFT_PIN, 600)
 time.sleep(7)
 
-print("LEFT 모터 60 이동...")
+print("LEFT 모터 120 이동...")
 pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
 time.sleep(7)
 
@@ -34,7 +34,7 @@ print("RIGHT 모터 0(2500) 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
 time.sleep(7)
 
-print("RIGHT 모터 60 이동...")
+print("RIGHT 모터 120 이동...")
 pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
 time.sleep(7)
 
