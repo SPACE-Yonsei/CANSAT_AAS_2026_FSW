@@ -14,7 +14,7 @@ from io import StringIO
 angle_window = [[], [], []]  # (YAW, ROLL, PITCH)
 WINDOW_SIZE = 5
 READ_FAIL_REINIT_THRESHOLD = 5
-I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "400000"))
+I2C_FREQUENCY = int(os.getenv("IMU_I2C_FREQUENCY", "100000"))
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 

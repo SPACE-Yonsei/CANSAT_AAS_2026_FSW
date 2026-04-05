@@ -85,9 +85,10 @@ def log_barometer(text):
 def init_barometer():
     import adafruit_bmp3xx
     import board
+    import busio
 
-    # I2C setup
-    i2c = board.I2C()
+    # I2C setup - 100kHz: BMP390 probe failure workaround (Errno 121/5 at 400kHz)
+    i2c = busio.I2C(board.SCL, board.SDA, frequency=100000)
     with I2CLock():
         bmp = adafruit_bmp3xx.BMP3XX_I2C(i2c)
     bmp.pressure_oversampling = 8
