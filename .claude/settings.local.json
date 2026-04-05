@@ -16,7 +16,17 @@
       "Read(//c/workspace/CANSAT_AAS_2026_FSW/**)",
       "Bash(bash /tmp/count_files.sh)",
       "Bash(grep -r \"shareddata\\\\|shared_data\\\\|from shared\\\\|import shared\" /c/workspace/CANSAT_AAS_2026_FSW --include=*.py)",
-      "Bash(grep -r \"class.*Vector\\\\|class.*Fidelity\\\\|SimpleNamespace\" /c/workspace/CANSAT_AAS_2026_FSW/Sensor_Motor --include=*.py)"
+      "Bash(grep -r \"class.*Vector\\\\|class.*Fidelity\\\\|SimpleNamespace\" /c/workspace/CANSAT_AAS_2026_FSW/Sensor_Motor --include=*.py)",
+      "Read(//c/Users/ms kang/Desktop/**)",
+      "Read(//tmp/**)",
+      "Bash(PYTHONIOENCODING=utf-8 python _physics_analysis.py)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 50 --target-bearing 45 --target-distance 500 --plot)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 200 --init-heading 90)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 300 --init-heading 45)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 56 --target-distance 400 --init-heading 56)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 200 --init-heading 180)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 700 --init-heading 180)",
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 100 --target-bearing 45 --target-distance 350 --init-heading 45)"
     ]
   }
 }

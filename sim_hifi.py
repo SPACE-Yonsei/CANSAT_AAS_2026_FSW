@@ -155,8 +155,8 @@ def _load_local_module(mod_name: str, filename: str):
 _sensor_motor = _t.ModuleType("Sensor_Motor")
 sys.modules["Sensor_Motor"] = _sensor_motor
 
-motor_control = _load_local_module("Sensor_Motor.motor_control", "motor_control.py")
-motor_guidance = _load_local_module("Sensor_Motor.motor_guidance", "motor_guidance.py")
+motor_control = _load_local_module("Sensor_Motor.motor_control", "Sensor_Motor/motor_control.py")
+motor_guidance = _load_local_module("Sensor_Motor.motor_guidance", "Sensor_Motor/motor_guidance.py")
 _sensor_motor.motor_control = motor_control
 _sensor_motor.motor_guidance = motor_guidance
 
@@ -188,7 +188,7 @@ motor_guidance.time = _SimTimeMod()
 # ------------------------------------------------------------------------------
 # Section 5 — environment / coordinate constants
 # ------------------------------------------------------------------------------
-REF_LAT, REF_LON = 35.0950, 127.0950
+REF_LAT, REF_LON = 37.248909, 126.676795   # 2026-04-05 drop test site
 LAT2M = 111320.0
 COS_LAT = math.cos(math.radians(REF_LAT))
 DT = 0.1
@@ -218,23 +218,25 @@ class ServoSideModel:
 
 @dataclass
 class HiFiConfig:
-    va_trim: float = 5.5
-    descent_trim: float = 5.0
-    mass_kg: float = 0.42
+    # -- from 2026-04-05 drop test extraction --
+    va_trim: float = 5.5            # forward airspeed [m/s], L/D ~1.8
+    descent_trim: float = 3.06      # terminal Vz from baro [m/s]
+    mass_kg: float = 0.55           # measured total mass [kg]
+    cda: float = 0.94               # drag area from terminal-V fit [m^2]
 
-    # sensor models
+    # sensor models (tuned to drop test noise floor)
     gps_noise_m: float = 3.5
     gps_delay: int = 4
     gps_warmup: int = 12
     yaw_noise_deg: float = 4.0
-    gyrz_noise_rps: float = math.radians(1.5)
-    bias_drift_rate: float = math.radians(0.06)
+    gyrz_noise_rps: float = math.radians(2.0)   # observed ~1.84 rad/s spikes
+    bias_drift_rate: float = math.radians(0.08)
     mag_pend_gain: float = 0.8
-    baro_noise_m: float = 3.0
+    baro_noise_m: float = 2.0       # baro was relatively clean in test
 
     # atmosphere
-    wind_z_ref: float = 600.0
-    wind_alpha: float = 0.30
+    wind_z_ref: float = 500.0       # release altitude [m]
+    wind_alpha: float = 0.25        # power-law exponent (suburban terrain)
     l_hor: float = 150.0
     l_ver: float = 30.0
     sig_hor: float = 4.0
@@ -425,7 +427,7 @@ def run_hifi_once(
     wind_dir_met: float,
     seed: int,
     cfg: HiFiConfig = DEFAULT_CFG,
-    start_alt: float = 600.0,
+    start_alt: float = 500.0,
     enable_turbulence: bool = True,
 ):
     rng = np.random.default_rng(seed)
@@ -502,7 +504,9 @@ def run_hifi_once(
 
         m_result = motor_control.control(mock_pi, cmd_yr)
 
-        left_brake_cmd = max(0.0, (m_result.left_pulse - motor_control.LEFT_NEUTRAL) / motor_control.PULSE_PER_DEG)
+        # LEFT servo: lower pulse = deeper brake pull (toward LEFT_ZERO=600)
+        # RIGHT servo: higher pulse = deeper brake pull (toward RIGHT_ZERO=2500)
+        left_brake_cmd = max(0.0, (motor_control.LEFT_NEUTRAL - m_result.left_pulse) / motor_control.PULSE_PER_DEG)
         right_brake_cmd = max(0.0, (m_result.right_pulse - motor_control.RIGHT_NEUTRAL) / motor_control.PULSE_PER_DEG)
 
         left_eff, right_eff = phys.step_servos(left_brake_cmd, right_brake_cmd, DT)
@@ -605,7 +609,7 @@ def run_monte_carlo(
             wind_dir_met=(wind_dir_met + rng.normal(0.0, 12.0)) % 360.0,
             seed=int(rng.integers(0, 2**31 - 1)),
             cfg=cfg,
-            start_alt=max(420.0, 600.0 + rng.normal(0.0, 20.0)),
+            start_alt=max(350.0, 500.0 + rng.normal(0.0, 20.0)),
             enable_turbulence=True,
         )
         results.append(run)
@@ -713,9 +717,9 @@ def parse_args():
     ap.add_argument("--single", action="store_true", help="run one nominal trajectory")
     ap.add_argument("--runs", type=int, default=30, help="Monte Carlo run count")
     ap.add_argument("--target-bearing", type=float, default=45.0, help="target bearing from release point [deg]")
-    ap.add_argument("--target-distance", type=float, default=700.0, help="target distance from release point [m]")
-    ap.add_argument("--wind-speed", type=float, default=4.5, help="reference wind speed at z_ref [m/s]")
-    ap.add_argument("--wind-dir", type=float, default=240.0, help="meteorological wind FROM direction [deg]")
+    ap.add_argument("--target-distance", type=float, default=500.0, help="target distance from release point [m]")
+    ap.add_argument("--wind-speed", type=float, default=5.3, help="reference wind speed at z_ref [m/s] (drop test: 5.3)")
+    ap.add_argument("--wind-dir", type=float, default=236.0, help="meteorological wind FROM direction [deg] (drop test: 236)")
     ap.add_argument("--init-heading", type=float, default=180.0, help="single-run initial heading [deg]")
     ap.add_argument("--plot", action="store_true", help="save png plots")
     return ap.parse_args()
@@ -741,7 +745,7 @@ def main():
         wind_dir_met=args.wind_dir,
         seed=7,
         cfg=DEFAULT_CFG,
-        start_alt=600.0,
+        start_alt=500.0,
         enable_turbulence=True,
     )
     summarize_single(single_run)
