@@ -6,52 +6,15 @@ import time
 import types
 from datetime import datetime
 from multiprocessing import connection
+from typing import Optional
 from lib import appargs, msgstructure, events
 from Sensor_Motor import motor_guidance, motor_control, Motor_Release, Motor_Egg
-
-log_dir = "./sensorlogs"
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-controllogfile = open(os.path.join(log_dir, "control.txt"), "a")
-_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
-simlogfile = open(_SIM_LOG_PATH, "a")
-
-def _dbg(line: str):
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    full = f"[{ts}] {line}"
-    print(full)
-    simlogfile.write(full + "\n")
-    # simlogfile.flush()
-
-def log_control(g, m):
-    t = datetime.now().isoformat(sep=" ", timespec="milliseconds")
-
-    if m is None:
-        m = types.SimpleNamespace(
-            left_cmd_deg=0.0, right_cmd_deg=0.0,
-            actual_delta_deg=0.0, expected_yaw_rate=0.0,
-            left_pulse=0, right_pulse=0
-        )
-
-    # g 데이터는 state, distance, commanded_yaw_rate 3개만 존재함
-    line = (
-        f"{t},"
-        f"state:{g.state},"
-        f"dist:{g.distance:.2f},"
-        f"cmd_yr:{g.commanded_yaw_rate:.2f},"
-        f"L_deg:{m.left_cmd_deg:.1f},"
-        f"R_deg:{m.right_cmd_deg:.1f},"
-        f"L_pw:{m.left_pulse},"
-        f"R_pw:{m.right_pulse}\n"
-    )
-    controllogfile.write(line)
-    # controllogfile.flush()
-
-from typing import Optional
+from Sensor_Motor.motor_logger import MotorLogger
 
 running: bool = True
 motor_enabled: bool = True
 pi = None
+logger: Optional[MotorLogger] = None
 
 target = types.SimpleNamespace(
     lat  = None,  # Optional[float] — deg, decimal degrees
@@ -387,7 +350,7 @@ def ctrl_paragldr():
                     motor_control.set_neutral(pi)
                 else:
                     if DEBUG_GUIDANCE:
-                        _dbg(
+                        logger.dbg(
                             f"[GUIDANCE IN ] "
                             f"state={_state} baro={_baro_m:.1f}m | "
                             f"yaw={_altitude.yaw:.1f}° gyrz={_altitude.gyrz:.2f} | "
@@ -404,16 +367,14 @@ def ctrl_paragldr():
                     motor_result = motor_control.control(pi, result.commanded_yaw_rate)
 
                     if DEBUG_GUIDANCE and motor_result is not None:
-                        _dbg(
+                        logger.dbg(
                             f"[MOTOR] "
                             f"L: {motor_result.left_cmd_deg:6.1f}°  pw={motor_result.left_pulse} | "
                             f"R: {motor_result.right_cmd_deg:6.1f}°  pw={motor_result.right_pulse} | "
                             f"delta={motor_result.actual_delta_deg:+.1f}°  exp_yr={motor_result.expected_yaw_rate:+.2f}°/s"
                         )
-                        simlogfile.write("---\n")
-                        simlogfile.flush()
 
-                    log_control(result, motor_result)
+                    logger.control(result, motor_result)
 
             _ctrl_tick += 1
             if _ctrl_tick % 10 == 0:
@@ -431,14 +392,17 @@ def ctrl_paragldr():
 
 
 def init() -> bool:
-    global pi, running
+    global pi, running, logger
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     log("Initializing motorapp")
 
     try:
-        motor_guidance.init_guidance()
-        pi = motor_control.init_control()
+        logger = MotorLogger(
+            sim_log_path=os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt")),
+        )
+        motor_guidance.init_guidance(logger)
+        pi = motor_control.init_control(logger)
         # RPi.GPIO 릴레이 핀은 pigpio(pi) 연결 이후에 설정 (초기화 순서로 레벨이 흔들리는 것 방지)
         Motor_Release.init_burnwire()
         Motor_Egg.init_solenoid()
@@ -461,10 +425,8 @@ def terminate():
     running = False
     log("Terminating motorapp")
 
-    try:
-        controllogfile.close()
-    except Exception:
-        pass
+    if logger:
+        logger.close()
 
     if pi:
         motor_control.terminate_parafoil_motor(pi)

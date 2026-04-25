@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 import math
-import os
 import time
 import types
-from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
-_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
+if TYPE_CHECKING:
+    from Sensor_Motor.motor_logger import MotorLogger
 
-def _dbg(line: str):
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    full = f"[{ts}] {line}"
-    print(full)
-    _sim_log.write(full + "\n")
-    _sim_log.flush()
+_logger: Optional['MotorLogger'] = None
 
 # ── Outer-loop 파라미터 ────────────────────────────────────────────
 # tanh 포화 기반 heading error → desired_yaw_rate 변환
@@ -90,8 +83,9 @@ WIND_MAX_DEG: float          = 45.0   # deg, wind_effect 최대 보정각
 DT_MIN: float = 0.02                  # s, guidance dt 하한
 DT_MAX: float = 0.5                   # s, guidance dt 상한
 
-def init_guidance():
-    global wind_effect, last_time, L_DISTANCE, _gps_stable_count
+def init_guidance(logger: 'MotorLogger') -> None:
+    global wind_effect, last_time, L_DISTANCE, _gps_stable_count, _logger
+    _logger = logger
     wind_effect = 0.0
     L_DISTANCE = L_DISTANCE_BASE
     cascade_pi.pi_integral = 0.0
@@ -217,7 +211,7 @@ def _carrot(my_E: float, my_N: float,
     # max(0.0,...): 기체가 start_point 뒤에 있을 때 carrot이 역방향으로 배치되는 것 방지
     s_carrot = max(0.0, min(s + L_DISTANCE, line_len))
     if s < 0.0:
-        _dbg(f"[CARROT] vehicle behind origin: s={s:.1f}m -> clamped to {s_carrot:.1f}m")
+        _logger.dbg(f"[CARROT] vehicle behind origin: s={s:.1f}m -> clamped to {s_carrot:.1f}m")
     return s_carrot * uE, s_carrot * uN
 
 
@@ -313,33 +307,33 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
 
     if not is_gps_valid(gps_vector, gps_fidelity):
         if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
+            _logger.dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
                  f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} rmc={gps_fidelity.rmc_status}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        _dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
+        _logger.dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
              f"pi_int_before={cascade_pi.pi_integral:.3f}")
         cascade_pi.pi_integral = 0.0
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
     
     if baro_m <= 0.0:
         if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
+            _logger.dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
         return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(target.lat, target.lon)
 
     if start_point.lat is None or start_point.lon is None:
-        _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
+        _logger.dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
         return types.SimpleNamespace(state="START_UNSET", distance=0.0, commanded_yaw_rate=0.0)
 
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 
     if distance < TARGET_REACHED_RADIUS:
         if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] TARGET_REACHED - dist={distance:.1f}m")
+            _logger.dbg(f"[CTRL] TARGET_REACHED - dist={distance:.1f}m")
         return types.SimpleNamespace(state="TARGET_REACHED", distance=distance, commanded_yaw_rate=0.0)
 
     if baro_m > ALT_HIGH:
@@ -407,7 +401,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     landing_mode = baro_m <= LANDING_ALT
 
     if DEBUG_GUIDANCE:
-        _dbg(
+        _logger.dbg(
             f"[CTRL] phase={phase:<8} "
             f"dist={distance:.1f}m  L={L_DISTANCE:.1f}m | "
             f"pos=({my_E:.1f},{my_N:.1f})  tgt=({tgt_E:.1f},{tgt_N:.1f})  "
@@ -422,7 +416,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
         )
     elif _guidance_tick % 10 == 0:
-        _dbg(
+        _logger.dbg(
             f"[CTRL/{_guidance_tick}] {phase} dist={distance:.1f}m "
             f"err={angl_to_turn:.1f}° wind={wind_effect:.1f}° "
             f"pi_int={cascade_pi.pi_integral:.3f} cmd_yr={commanded_yaw_rate:.2f}°/s"

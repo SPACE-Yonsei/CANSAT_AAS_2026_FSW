@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 import math
-import os
 import time
 import types
-from datetime import datetime
+from typing import Optional, TYPE_CHECKING
 
-_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
-_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
+if TYPE_CHECKING:
+    from Sensor_Motor.motor_logger import MotorLogger
+
+_logger: Optional['MotorLogger'] = None
 DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
-
-def _dbg(line: str):
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    full = f"[{ts}] {line}"
-    print(full)
-    _sim_log.write(full + "\n")
-    _sim_log.flush()
 
 PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
 PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
@@ -39,7 +33,9 @@ PULSE_MAX: int = 2500  # μs
 K_pulse: float = PULSE_PER_DEG * 2  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수 (×2 튜닝)
 
 
-def init_control():
+def init_control(logger: 'MotorLogger'):
+    global _logger
+    _logger = logger
     import pigpio
     pi = pigpio.pi()
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
@@ -70,7 +66,7 @@ def actuator_mixer(commanded_yaw_rate: float) -> tuple:
     if DEBUG_CONTROL and (int(left_raw_pw) != left_pulse or int(right_raw_pw) != right_pulse):
         l_deg = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
         r_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
-        _dbg(f"[ACTUATOR] CLAMP — L={left_pulse}μs({l_deg:.1f}°) R={right_pulse}μs({r_deg:.1f}°)")
+        _logger.dbg(f"[ACTUATOR] CLAMP — L={left_pulse}μs({l_deg:.1f}°) R={right_pulse}μs({r_deg:.1f}°)")
 
     left_cmd_deg  = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
     right_cmd_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
@@ -99,7 +95,7 @@ def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
     )
 def set_neutral(pi):
     if DEBUG_CONTROL:
-        _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
+        _logger.dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
@@ -108,7 +104,7 @@ def set_neutral(pi):
 def set_motors_off(pi):
     """서보 신호 완전 차단 (LANDED state용)"""
     if DEBUG_CONTROL:
-        _dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
+        _logger.dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
     if pi is not None:
         pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
         pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)

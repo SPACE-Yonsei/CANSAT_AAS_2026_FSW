@@ -26,7 +26,9 @@
       "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 56 --target-distance 400 --init-heading 56)",
       "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 200 --init-heading 180)",
       "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 700 --init-heading 180)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 100 --target-bearing 45 --target-distance 350 --init-heading 45)"
+      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 100 --target-bearing 45 --target-distance 350 --init-heading 45)",
+      "mcp__notion__API-retrieve-a-page",
+      "Bash(git stash *)"
     ]
   }
 }
