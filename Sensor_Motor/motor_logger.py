@@ -9,6 +9,24 @@ class MotorLogger:
         self._sim  = open(sim_log_path, "a", encoding="utf-8")
         self._ctrl = open(os.path.join(control_log_dir, "control.txt"), "a", encoding="utf-8")
 
+    def guidance_in(self, state, baro_m, imu, gps, fidelity, target) -> None:
+        self.dbg(
+            f"[GUIDANCE IN ] "
+            f"state={state} baro={baro_m:.1f}m | "
+            f"yaw={imu.yaw:.1f}° gyrz={imu.gyrz:.2f} | "
+            f"gps=({gps.lat:.6f},{gps.lon:.6f}) spd={gps.speed:.1f} crs={gps.course:.1f} | "
+            f"fix={fidelity.fix_quality} sats={fidelity.sats} rmc={fidelity.rmc_status} | "
+            f"target=({target.lat:.6f},{target.lon:.6f})"
+        )
+
+    def motor_out(self, m) -> None:
+        self.dbg(
+            f"[MOTOR] "
+            f"L: {m.left_cmd_deg:6.1f}°  pw={m.left_pulse} | "
+            f"R: {m.right_cmd_deg:6.1f}°  pw={m.right_pulse} | "
+            f"delta={m.actual_delta_deg:+.1f}°  exp_yr={m.expected_yaw_rate:+.2f}°/s"
+        )
+
     def dbg(self, line: str) -> None:
         ts   = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         full = f"[{ts}] {line}"
