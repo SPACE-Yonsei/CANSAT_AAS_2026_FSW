@@ -305,23 +305,6 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         dt = 0.1
     last_time = now
 
-    if not is_gps_valid(gps_vector, gps_fidelity):
-        if DEBUG_GUIDANCE:
-            _logger.dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
-                 f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} rmc={gps_fidelity.rmc_status}")
-        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
-
-    if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        _logger.dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
-             f"pi_int_before={cascade_pi.pi_integral:.3f}")
-        cascade_pi.pi_integral = 0.0
-        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
-    
-    if baro_m <= 0.0:
-        if DEBUG_GUIDANCE:
-            _logger.dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
-        return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
-
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(target.lat, target.lon)
 

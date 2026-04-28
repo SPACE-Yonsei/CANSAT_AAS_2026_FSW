@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+from typing import Optional
 try:
     import fcntl
 except Exception:
@@ -60,6 +61,27 @@ def pulse_bno085_reset():
 HAMPEL_WINDOW_SIZE = int(os.getenv("IMU_HAMPEL_WINDOW_SIZE", "7"))
 HAMPEL_THRESHOLD = float(os.getenv("IMU_HAMPEL_THRESHOLD", "3.0"))
 HAMPEL_MIN_MAD = float(os.getenv("IMU_HAMPEL_MIN_MAD", "2.0"))
+
+# GyrZ spike-rejection + EMA filter
+GYRZ_SPIKE_THRESHOLD_RADS: float = math.radians(45.0)   # rad/s — tick-to-tick max delta
+GYRZ_LPF_ALPHA: float = 0.3                              # EMA coefficient (0=flat, 1=no filter)
+_gyrz_ema: float = 0.0
+_gyrz_prev: Optional[float] = None
+
+
+def _apply_gyrz_filter(raw: float) -> float:
+    """Reject spike then apply EMA. Returns filtered gyrZ (rad/s)."""
+    global _gyrz_ema, _gyrz_prev
+    if _gyrz_prev is None:
+        _gyrz_prev = raw
+        _gyrz_ema = raw
+        return raw
+    if abs(raw - _gyrz_prev) > GYRZ_SPIKE_THRESHOLD_RADS:
+        # spike — discard sample, return last good EMA
+        return _gyrz_ema
+    _gyrz_ema = (1.0 - GYRZ_LPF_ALPHA) * _gyrz_ema + GYRZ_LPF_ALPHA * raw
+    _gyrz_prev = raw
+    return _gyrz_ema
 
 class I2CLock:
     def __init__(self, path=I2C_LOCK_PATH):
@@ -332,6 +354,7 @@ def read_sensor_data(sensor):
 
         if gyr and None not in gyr:
             gyrX, gyrY, gyrZ = gyr
+            gyrZ = _apply_gyrz_filter(gyrZ)
             LAST_VALID_SENSORS["gyr"] = (gyrX, gyrY, gyrZ)
         else:
             gyrX, gyrY, gyrZ = LAST_VALID_SENSORS["gyr"]

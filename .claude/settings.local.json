@@ -32,7 +32,12 @@
       "Bash(git branch *)",
       "Bash(git push *)",
       "Bash(rm .vscode/settings.json)",
-      "Bash(rmdir .vscode)"
+      "Bash(rmdir .vscode)",
+      "WebFetch(domain:faculty.nps.edu)",
+      "WebSearch",
+      "WebFetch(domain:digitalcommons.georgefox.edu)",
+      "WebFetch(domain:arc.aiaa.org)",
+      "WebFetch(domain:www.researchgate.net)"
     ]
   }
 }
