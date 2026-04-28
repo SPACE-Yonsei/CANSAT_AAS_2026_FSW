@@ -123,6 +123,27 @@ def read_gps(pi, timeout: float = 1.0):
     return NMEA_lines
 
 
+def _validate_nmea_checksum(sentence: str) -> bool:
+    """NMEA XOR 체크섬 검증. '$'~'*' 사이 문자 XOR == '*' 뒤 2자리 hex 여야 통과."""
+    try:
+        star_idx = sentence.rfind('*')
+        if star_idx < 0 or star_idx + 3 > len(sentence):
+            return False          # 체크섬 없음 → 거부
+        checksum_str = sentence[star_idx + 1: star_idx + 3]
+        if len(checksum_str) != 2:
+            return False
+        expected = int(checksum_str, 16)
+        dollar_idx = sentence.find('$')
+        if dollar_idx < 0:
+            return False
+        calc = 0
+        for ch in sentence[dollar_idx + 1: star_idx]:
+            calc ^= ord(ch)
+        return calc == expected
+    except (ValueError, IndexError):
+        return False
+
+
 def parse_gps_data(NMEA_lines):
     gga_data = None
     rmc_data = None
@@ -135,6 +156,11 @@ def parse_gps_data(NMEA_lines):
             else:
                 decoded_line = line.strip()
         except UnicodeDecodeError:
+            continue
+
+        # 체크섬 불일치 문장 즉시 폐기 (부패된 NMEA 수신 방어)
+        if not _validate_nmea_checksum(decoded_line):
+            #print(f"[DEBUG][parse] checksum FAIL, discarding: {decoded_line}")
             continue
 
         # GGA
@@ -205,33 +231,46 @@ def gps_readdata(pi):
         except (ValueError, IndexError):
             alt = 0
 
-        # 위도
+        # 위도 — DDMM.MMMM 형식, 유효 범위 [0, 9000]
         try:
-            lat = unit_convert_deg(float(gga[2])) if gga[2] else 0
+            raw_lat = float(gga[2]) if gga[2] else 0.0
+            if not (0.0 <= raw_lat <= 9000.0):
+                log_gps(f"LAT_RANGE_ERR raw={raw_lat}")
+                raw_lat = 0.0
+            lat = unit_convert_deg(raw_lat)
             # gga[3]가 'S'(남위)이면 음수, 'N'(북위)이면 양수
             if len(gga) > 3 and gga[3] == 'S':
                 lat = lat * -1
         except (ValueError, IndexError):
             lat = 0
 
-        # 경도
+        # 경도 — DDDMM.MMMM 형식, 유효 범위 [0, 18000]
         try:
-            lon = unit_convert_deg(float(gga[4])) if gga[4] else 0
+            raw_lon = float(gga[4]) if gga[4] else 0.0
+            if not (0.0 <= raw_lon <= 18000.0):
+                log_gps(f"LON_RANGE_ERR raw={raw_lon}")
+                raw_lon = 0.0
+            lon = unit_convert_deg(raw_lon)
             # gga[5]가 'W'(서경)이면 음수, 'E'(동경)이면 양수
             if len(gga) > 5 and gga[5] == 'W':
                 lon = lon * -1
         except (ValueError, IndexError):
             lon = 0
 
-        # 사용 위성 수
+        # 사용 위성 수 (GGA[7])
         try:
             fixed_sat = int(gga[7]) if gga[7] else 0
         except (ValueError, IndexError):
             fixed_sat = 0
-        
-        # Fix quality 확인 (디버깅용)
+
+        # Fix quality (GGA[6]): 0=no fix, 1=GPS, 2=DGPS. 범위 이탈 시 무효 처리
         try:
             fix_quality = int(gga[6]) if len(gga) > 6 and gga[6] else 0
+            if fix_quality > 8:
+                # fix/sats 필드 스왑 → 데이터 신뢰 불가
+                log_gps(f"FIX_QUALITY_ERR fix={fix_quality} sats={fixed_sat} — treating as no fix")
+                fix_quality = 0
+                fixed_sat = 0
         except (ValueError, IndexError):
             fix_quality = 0
 
@@ -246,8 +285,12 @@ def gps_readdata(pi):
         if rmc is not None and len(rmc) > 8:
             try:
                 # 상태 추출 (RMC[2] = Status, A=active, V=void)
-                if rmc[2]:
+                # "A" / "V" 이외 값은 void 처리 (부패 문장 방어 2차 guard)
+                if rmc[2] in ("A", "V"):
                     rmc_status = rmc[2]
+                elif rmc[2]:
+                    log_gps(f"RMC_STATUS_ERR rmc[2]={rmc[2]!r} — treating as V")
+                    rmc_status = "V"
 
                 # 속도 추출 (RMC[7] = Speed over ground in knots)
                 if rmc[7]:
