@@ -46,7 +46,7 @@ L_DISTANCE_HIGH: float = 40.0   # m, 고고도용
 L_DISTANCE_LOW: float  = 15.0   # m, 저고도용
 L_DISTANCE: float      = L_DISTANCE_BASE   # m, L1 추적 거리
 
-PATTERN_ENTRY_DIST: float = 50.0  # m - figure-8 진입 거리
+PATTERN_ENTRY_DIST: float = 20.0  # m - figure-8 진입 거리
 
 ALT_HIGH: int = 300  # m
 ALT_LOW: int  = 150  # m
