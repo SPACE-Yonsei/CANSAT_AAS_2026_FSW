@@ -6,11 +6,32 @@ import logging
 import math
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 from lib import i2c_bus
 
 logger = logging.getLogger(__name__)
+
+_BNO_FEATURE_NAMES = {
+    0x01: "accelerometer",
+    0x02: "gyroscope",
+    0x03: "magnetometer",
+    0x05: "rotation_vector",
+}
+
+
+def _enable_feature_retry(bno: Any, feature_id: int, attempts: int = 5) -> None:
+    """BNO08x often needs a short settle + retries right after power-up (Blinka / Pi)."""
+    name = _BNO_FEATURE_NAMES.get(feature_id, f"id={feature_id:#04x}")
+    last: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            bno.enable_feature(feature_id)
+            return
+        except Exception as exc:
+            last = exc
+            time.sleep(0.06 * (i + 1))
+    raise RuntimeError(f"BNO08x: enable {name} failed after {attempts} tries: {last}") from last
 
 
 def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[float, float, float]:
@@ -34,23 +55,34 @@ def init_imu() -> tuple[Any, Any]:
 
     addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
     lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
+    post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.25"))
+
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
         bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
-        # Adafruit driver prints verbose SHTP "Packet" dumps when debug is on; force off unless BNO08X_DEBUG=1.
         if not lib_debug:
             try:
                 bno._debug = False  # type: ignore[attr-defined]
             except Exception:
                 pass
             bno._dbg = lambda *_a, **_k: None  # type: ignore[method-assign]
-        for feat in (
-            BNO_REPORT_ACCELEROMETER,
-            BNO_REPORT_GYROSCOPE,
-            BNO_REPORT_MAGNETOMETER,
-            BNO_REPORT_ROTATION_VECTOR,
-        ):
-            bno.enable_feature(feat)
+        for _ in range(4):
+            if hasattr(bno, "_process_available_packets"):
+                bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
+
+    time.sleep(post_open_delay)
+
+    # Rotation vector first helps fusion wake; accel was failing as feature 0x01 when enabled first on some boards.
+    report_order = (
+        BNO_REPORT_ROTATION_VECTOR,
+        BNO_REPORT_ACCELEROMETER,
+        BNO_REPORT_GYROSCOPE,
+        BNO_REPORT_MAGNETOMETER,
+    )
+    for feat in report_order:
+        with i2c_bus.i2c_lock():
+            _enable_feature_retry(bno, feat)
+
     logger.info("IMU BNO08x OK at 0x%02x", addr)
     return i2c, bno
 

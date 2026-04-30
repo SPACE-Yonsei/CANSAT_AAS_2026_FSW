@@ -52,9 +52,13 @@ def _read_sensor() -> Optional[tuple[float, float, float]]:
             try:
                 _reader = electro_driver.init_INA228()
             except Exception as exc:
+                hint = ""
+                if isinstance(exc, ImportError) and "ina228" in str(exc).lower():
+                    hint = " Install: pip install adafruit-circuitpython-ina228"
                 logger.warning(
-                    "Electro: power monitor init failed (%s); using synthetic V/I/P",
+                    "Electro: power monitor init failed (%s); using synthetic V/I/P.%s",
                     exc,
+                    hint,
                 )
                 _reader = False
         if _reader is False:

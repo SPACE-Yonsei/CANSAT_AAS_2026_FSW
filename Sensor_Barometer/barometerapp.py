@@ -88,7 +88,8 @@ def read_barometer_data() -> None:
                         _baro_hw = baro_driver.init_bmp()
                     except Exception as exc:
                         logger.warning(
-                            "Barometer: hardware init failed (%s); using synthetic pressure/temp/alt",
+                            "Barometer: hardware init failed (%s); using synthetic. "
+                            "If BMP390 uses SDO=GND try BARO_I2C_ADDR=0x76; run i2cdetect -y 1",
                             exc,
                         )
                         _baro_hw = False
