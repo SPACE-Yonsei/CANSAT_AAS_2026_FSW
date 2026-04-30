@@ -1,0 +1,16 @@
+[Unit]
+Description=CANSAT AAS 2026 Flight Software
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/cansat-fsw
+ExecStart=/opt/cansat-fsw/startup.sh
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

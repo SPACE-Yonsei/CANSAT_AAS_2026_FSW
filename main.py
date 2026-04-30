@@ -204,6 +204,20 @@ app_launchers = {
     appargs.DistanceAppArg.AppID: distanceapp_launcher,
 }
 
+# Launcher argument factory map
+# Camera/Motor do not take main_queue, while others do.
+app_launcher_args = {
+    appargs.BarometerAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.CameraAppArg.AppID: lambda child_pipe: (child_pipe, log_queue),
+    appargs.GpsAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.ImuAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.CommAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.ElectroAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.FlightlogicAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+    appargs.MotorAppArg.AppID: lambda child_pipe: (child_pipe, log_queue),
+    appargs.DistanceAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
+}
+
 
 #########################################################
 # Application Management                                #
@@ -268,11 +282,15 @@ def terminate_FSW():
 # 프로세스 재시작 함수
 def restart_app(appID: int):
     """죽은 프로세스를 재시작합니다."""
-    global app_dict, app_launchers, main_queue, log_queue
+    global app_dict, app_launchers, app_launcher_args
     
     if appID not in app_dict or appID not in app_launchers:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, 
                        f"Cannot restart AppID {appID}: not in dictionary")
+        return False
+    if appID not in app_launcher_args:
+        events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error,
+                       f"Cannot restart AppID {appID}: launcher args not configured")
         return False
     
     try:
@@ -288,7 +306,8 @@ def restart_app(appID: int):
         
         # 새 프로세스 생성
         launcher = app_launchers[appID]
-        new_process = Process(target=launcher, args=(main_queue, child_pipe, log_queue))
+        launcher_args = app_launcher_args[appID](child_pipe)
+        new_process = Process(target=launcher, args=launcher_args)
         
         # app_dict 업데이트
         new_elements = app_elements()

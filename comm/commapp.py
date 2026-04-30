@@ -1,0 +1,336 @@
+"""Comm app: command parsing + telemetry aggregation/sending."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+import os
+import re
+import threading
+import time
+from typing import Optional
+
+from lib import appargs, msgstructure, prevstate
+from comm import uartserial
+
+
+COMMAPP_RUNSTATUS = True
+TELEMETRY_ENABLE = True
+ST_timedelta = timedelta(seconds=0)
+
+_RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
+
+
+@dataclass
+class TelemetryData:
+    mode: str = "F"
+    state: str = "0"
+    altitude: float = 0.0
+    temperature: float = 0.0
+    pressure: float = 0.0
+    voltage: float = 0.0
+    current: float = 0.0
+    power: float = 0.0
+    distance: float = 0.0
+    gyro_roll: float = 0.0
+    gyro_pitch: float = 0.0
+    gyro_yaw: float = 0.0
+    acc_roll: float = 0.0
+    acc_pitch: float = 0.0
+    acc_yaw: float = 0.0
+    mag_roll: float = 0.0
+    mag_pitch: float = 0.0
+    mag_yaw: float = 0.0
+    gps_time: str = ""
+    gps_alt: float = 0.0
+    gps_lat: float = 0.0
+    gps_lon: float = 0.0
+    gps_sats: int = 0
+    cmd_echo: str = ""
+    filtered_roll: float = 0.0
+    filtered_pitch: float = 0.0
+    filtered_yaw: float = 0.0
+    packet_count: int = 0
+
+
+tlm_data = TelemetryData()
+TEAM_ID = "1070"
+
+
+def set_cmdecho(cmd_str: str) -> None:
+    tlm_data.cmd_echo = cmd_str.replace(",", "")
+
+
+def get_current_time() -> str:
+    return (datetime.now() - ST_timedelta).strftime("%H:%M:%S")
+
+
+def set_timedelta(timestr: str) -> bool:
+    global ST_timedelta
+
+    if timestr.upper() == "GPS":
+        ST_timedelta = timedelta(seconds=0)
+        prevstate.update_st_timedelta(0.0)
+        return True
+
+    try:
+        target = datetime.strptime(timestr, "%H:%M:%S")
+    except ValueError:
+        return False
+
+    now = datetime.now()
+    today_target = now.replace(
+        hour=target.hour, minute=target.minute, second=target.second, microsecond=0
+    )
+    ST_timedelta = now - today_target
+    prevstate.update_st_timedelta(ST_timedelta.total_seconds())
+    return True
+
+
+def _send_route(main_queue, receiver: int, msg_id: int, payload: str) -> bool:
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        receiver,
+        msg_id,
+        payload,
+    )
+
+
+def cmd_cx(option: str, _main_queue) -> bool:
+    global TELEMETRY_ENABLE
+    upper = option.strip().upper()
+    if upper == "ON":
+        TELEMETRY_ENABLE = True
+        return True
+    if upper == "OFF":
+        TELEMETRY_ENABLE = False
+        return True
+    return False
+
+
+def cmd_st(option: str, _main_queue) -> bool:
+    return set_timedelta(option.strip())
+
+
+def cmd_sim(option: str, main_queue) -> bool:
+    option = option.strip().upper()
+    if option not in {"ENABLE", "ACTIVATE", "DISABLE"}:
+        return False
+    return _send_route(
+        main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIM, option
+    )
+
+
+def cmd_simp(option: str, main_queue) -> bool:
+    try:
+        value = float(option)
+    except ValueError:
+        return False
+    tlm_data.altitude = value
+    return _send_route(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SIMP,
+        f"{value}",
+    )
+
+
+def cmd_cal(option: str, main_queue) -> bool:
+    return _send_route(
+        main_queue, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, option.strip()
+    )
+
+
+def cmd_mec(option: str, main_queue) -> bool:
+    option = option.strip().upper()
+    if option not in {"ON", "OFF"}:
+        return False
+    return _send_route(
+        main_queue, appargs.MotorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option
+    )
+
+
+def cmd_ss(option: str, main_queue) -> bool:
+    try:
+        state = int(option)
+    except ValueError:
+        return False
+    if state < 0 or state > 5:
+        return False
+    return _send_route(
+        main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SS, str(state)
+    )
+
+
+def cmd_rbt(option: str, _main_queue) -> bool:
+    token = option.strip()
+    if not _RBT_AUTH_TOKEN or token != _RBT_AUTH_TOKEN:
+        return False
+    os.system("systemctl reboot -i")
+    return True
+
+
+def cmd_cam(option: str, main_queue) -> bool:
+    option = option.strip().upper()
+    if option not in {"ON", "OFF"}:
+        return False
+    return _send_route(
+        main_queue, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, option
+    )
+
+
+def cmd_tc(option: str, main_queue) -> bool:
+    parts = [x.strip() for x in option.split(",")]
+    if len(parts) != 2:
+        return False
+    try:
+        lat = float(parts[0])
+        lon = float(parts[1])
+    except ValueError:
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    return _send_route(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_TC,
+        f"{lat},{lon}",
+    )
+
+
+def command_handler(recv_msg: str) -> None:
+    global COMMAPP_RUNSTATUS
+    unpacked = msgstructure.unpack_msg(recv_msg)
+    if unpacked is False:
+        return
+
+    mid = unpacked.msg_id
+    fields = unpacked.data.split(",") if unpacked.data else []
+
+    if mid == appargs.MainAppArg.MID_TerminateProcess:
+        COMMAPP_RUNSTATUS = False
+    elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
+        tlm_data.pressure = float(fields[0])
+        tlm_data.temperature = float(fields[1])
+        tlm_data.altitude = float(fields[2])
+    elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
+        tlm_data.filtered_roll = float(fields[0])
+        tlm_data.filtered_pitch = float(fields[1])
+        tlm_data.filtered_yaw = float(fields[2])
+        tlm_data.acc_roll = float(fields[3])
+        tlm_data.acc_pitch = float(fields[4])
+        tlm_data.acc_yaw = float(fields[5])
+        tlm_data.mag_roll = float(fields[6])
+        tlm_data.mag_pitch = float(fields[7])
+        tlm_data.mag_yaw = float(fields[8])
+        tlm_data.gyro_roll = float(fields[9])
+        tlm_data.gyro_pitch = float(fields[10])
+        tlm_data.gyro_yaw = float(fields[11])
+    elif mid == appargs.GpsAppArg.MID_comm_gga and len(fields) >= 5:
+        tlm_data.gps_time = fields[0]
+        tlm_data.gps_alt = float(fields[1])
+        tlm_data.gps_lat = float(fields[2])
+        tlm_data.gps_lon = float(fields[3])
+        tlm_data.gps_sats = int(float(fields[4]))
+    elif mid == appargs.ElectroAppArg.MID_comm_volt and len(fields) >= 3:
+        tlm_data.voltage = float(fields[0])
+        tlm_data.current = float(fields[1])
+        tlm_data.power = float(fields[2])
+    elif mid == appargs.DistanceAppArg.MID_comm_dis and len(fields) >= 1:
+        tlm_data.distance = float(fields[0])
+    elif mid == appargs.FlightlogicAppArg.MID_comm_state and len(fields) >= 1:
+        tlm_data.state = fields[0]
+    elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
+        tlm_data.mode = fields[0]
+
+
+def send_tlm(serial_instance) -> None:
+    if not TELEMETRY_ENABLE:
+        return
+
+    tlm_data.packet_count += 1
+    prevstate.update_packet_count(tlm_data.packet_count)
+    line = (
+        f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
+        f"{tlm_data.mode},{tlm_data.state},"
+        f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure:.2f},"
+        f"{tlm_data.voltage:.3f},{tlm_data.current:.3f},{tlm_data.power:.3f},"
+        f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
+        f"{tlm_data.acc_roll:.3f},{tlm_data.acc_pitch:.3f},{tlm_data.acc_yaw:.3f},"
+        f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
+        f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
+        f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
+        f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f}\n"
+    )
+    uartserial.send_serial_data(serial_instance, line)
+
+
+def _dispatch_command(line: str, main_queue) -> bool:
+    # Normalize command "CMD,1070,<body>"
+    line = line.strip()
+    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Z]+),(.*)", line)
+    if not m:
+        return False
+    cmd = m.group(1)
+    option = m.group(2).strip()
+    set_cmdecho(f"{cmd},{option}")
+
+    if cmd == "CX":
+        return cmd_cx(option, main_queue)
+    if cmd == "ST":
+        return cmd_st(option, main_queue)
+    if cmd == "SIM":
+        return cmd_sim(option, main_queue)
+    if cmd == "SIMP":
+        return cmd_simp(option, main_queue)
+    if cmd == "CAL":
+        return cmd_cal(option, main_queue)
+    if cmd == "MEC":
+        return cmd_mec(option, main_queue)
+    if cmd == "SS":
+        return cmd_ss(option, main_queue)
+    if cmd == "RBT":
+        return cmd_rbt(option, main_queue)
+    if cmd == "CAM":
+        return cmd_cam(option, main_queue)
+    if cmd == "TC":
+        return cmd_tc(option, main_queue)
+    return False
+
+
+def read_cmd(main_queue, serial_instance) -> None:
+    while COMMAPP_RUNSTATUS:
+        line = uartserial.receive_serial_data(serial_instance)
+        if not line or line == "OK":
+            time.sleep(0.05)
+            continue
+        _dispatch_command(line, main_queue)
+        time.sleep(0.01)
+
+
+def _tlm_sender(serial_instance) -> None:
+    while COMMAPP_RUNSTATUS:
+        send_tlm(serial_instance)
+        time.sleep(1.0)
+
+
+def commapp_main(main_queue, main_pipe) -> None:
+    global ST_timedelta
+    prevstate.init_prevstate()
+    ST_timedelta = timedelta(seconds=prevstate.PREV_ST_TIMEDELTA)
+    tlm_data.packet_count = prevstate.PREV_PACKET_COUNT
+
+    serial_instance = uartserial.init_serial()
+    sender = threading.Thread(target=_tlm_sender, args=(serial_instance,), daemon=True)
+    reader = threading.Thread(target=read_cmd, args=(main_queue, serial_instance), daemon=True)
+    sender.start()
+    reader.start()
+
+    try:
+        while COMMAPP_RUNSTATUS:
+            if main_pipe.poll(0.1):
+                recv_msg = main_pipe.recv()
+                command_handler(recv_msg)
+    finally:
+        uartserial.terminate_serial(serial_instance)

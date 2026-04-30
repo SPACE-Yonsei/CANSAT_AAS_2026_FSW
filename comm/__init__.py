@@ -1,0 +1,2 @@
+"""Communication app package."""
+
