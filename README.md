@@ -172,3 +172,12 @@ which includes graceful `pipe.poll()` shutdown guards in all app runloops.
 
 This is a serial backend edge case seen during shutdown on some environments.
 Latest `comm/uartserial.py` treats this transient case as "no data" to reduce log noise.
+
+### 4) TLM is too noisy/quiet in console
+
+- Default is now console ON (`FSW_LOG_TLM=1` behavior).
+- To silence local TLM prints while keeping UART transmit, run:
+
+```bash
+FSW_LOG_TLM=0 python3 main.py
+```

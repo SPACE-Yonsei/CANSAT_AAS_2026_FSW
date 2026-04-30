@@ -21,7 +21,7 @@ COMMAPP_RUNSTATUS = True
 TELEMETRY_ENABLE = True
 ST_timedelta = timedelta(seconds=0)
 
-_LOG_TLM_TO_CONSOLE = os.environ.get("FSW_LOG_TLM", "").strip() == "1"
+_LOG_TLM_TO_CONSOLE = os.environ.get("FSW_LOG_TLM", "1").strip() != "0"
 _TLM_SEND_FAIL_LOGGED = False
 
 _RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
