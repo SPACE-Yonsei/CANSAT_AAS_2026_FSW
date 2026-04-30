@@ -30,8 +30,8 @@ The flight software uses Adafruit CircuitPython modules
 
     pip3 install adafruit-circuitpython-bmp3xx
     pip3 install adafruit-circuitpython-gps
-    pip3 install adafruit-circuitpython-bno055
-    pip install adafruit-circuitpython-ina23x
+    pip3 install adafruit-circuitpython-bno08x
+    pip install adafruit-circuitpython-ina22x
     pip3 install adafruit-circuitpython-motor
 
 ## 3. Install Video Related modules
