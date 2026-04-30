@@ -3,10 +3,12 @@ import unittest
 from types import SimpleNamespace
 
 from Sensor_Motor import motorapp
+from Sensor_Motor import motor_guidance
 
 
 class TestMotorApp(unittest.TestCase):
     def setUp(self):
+        motor_guidance.init_guidance()
         motorapp.last_gps_update = time.time()
         motorapp.sensor.yaw = 10.0
         motorapp.sensor.gyrz = 1.0
@@ -22,6 +24,9 @@ class TestMotorApp(unittest.TestCase):
         motorapp.sensor.baro_m = 120.0
         motorapp.target.lat = 37.6
         motorapp.target.lon = 127.0
+        # Prime GPS jump validator so _check_fdir can evaluate next conditions.
+        motor_guidance.is_gps_jump(motorapp.sensor.lat, motorapp.sensor.lon)
+        motor_guidance.is_gps_jump(motorapp.sensor.lat, motorapp.sensor.lon)
 
     def test_check_fdir_ok(self):
         snap = motorapp._snapshot_sensors()
