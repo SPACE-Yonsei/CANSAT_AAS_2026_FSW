@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 import threading
 from collections import deque
@@ -26,6 +27,7 @@ _alt_window = deque(maxlen=5)
 _tmp_window = deque(maxlen=5)
 _prs_window = deque(maxlen=5)
 _baro_hw = None
+_last_baro_read_warn_ts = 0.0
 
 
 def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None:
@@ -75,6 +77,7 @@ def _synthetic_raw():
 
 def read_barometer_data() -> None:
     global ALTITUDE, TEMPERATURE, PRESSURE, BAROMETER_HEALTH, _last_sample_ts, _baro_hw
+    global _last_baro_read_warn_ts
     while BAROMETERAPP_RUNSTATUS:
         try:
             try:
@@ -93,7 +96,14 @@ def read_barometer_data() -> None:
                     try:
                         prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
                     except Exception as exc:
-                        logger.debug("Barometer read error (one frame skipped): %s", exc)
+                        now = time.time()
+                        if now - _last_baro_read_warn_ts >= 3.0:
+                            logger.warning(
+                                "Barometer: BMP read failed (%s); synthetic frame (check I2C/addr %s)",
+                                exc,
+                                os.environ.get("BARO_I2C_ADDR", "0x77"),
+                            )
+                            _last_baro_read_warn_ts = now
                         prs_raw, tmp_raw, alt_raw = _synthetic_raw()
                 else:
                     prs_raw, tmp_raw, alt_raw = _synthetic_raw()

@@ -8,6 +8,8 @@ import os
 import time
 from typing import Any
 
+from lib import i2c_bus
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,8 +24,6 @@ def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[floa
 
 
 def init_imu() -> tuple[Any, Any]:
-    import board  # type: ignore
-    import busio  # type: ignore
     from adafruit_bno08x import (  # type: ignore
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
@@ -33,23 +33,24 @@ def init_imu() -> tuple[Any, Any]:
     from adafruit_bno08x.i2c import BNO08X_I2C  # type: ignore
 
     addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
-    i2c = busio.I2C(board.SCL, board.SDA)
     lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
-    bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
-    # Adafruit driver prints verbose SHTP "Packet" dumps when debug is on; force off unless BNO08X_DEBUG=1.
-    if not lib_debug:
-        try:
-            bno._debug = False  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        bno._dbg = lambda *_a, **_k: None  # type: ignore[method-assign]
-    for feat in (
-        BNO_REPORT_ACCELEROMETER,
-        BNO_REPORT_GYROSCOPE,
-        BNO_REPORT_MAGNETOMETER,
-        BNO_REPORT_ROTATION_VECTOR,
-    ):
-        bno.enable_feature(feat)
+    with i2c_bus.i2c_lock():
+        i2c = i2c_bus.get_i2c()
+        bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
+        # Adafruit driver prints verbose SHTP "Packet" dumps when debug is on; force off unless BNO08X_DEBUG=1.
+        if not lib_debug:
+            try:
+                bno._debug = False  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            bno._dbg = lambda *_a, **_k: None  # type: ignore[method-assign]
+        for feat in (
+            BNO_REPORT_ACCELEROMETER,
+            BNO_REPORT_GYROSCOPE,
+            BNO_REPORT_MAGNETOMETER,
+            BNO_REPORT_ROTATION_VECTOR,
+        ):
+            bno.enable_feature(feat)
     logger.info("IMU BNO08x OK at 0x%02x", addr)
     return i2c, bno
 
@@ -59,13 +60,14 @@ def read_sensor_data(bno) -> Any:
     r2d = 180.0 / math.pi
     for _ in range(4):
         try:
-            if hasattr(bno, "_process_available_packets"):
-                bno._process_available_packets(max_packets=12)  # type: ignore[attr-defined]
-            qi, qj, qk, qr = bno.quaternion
-            roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
-            ax, ay, az = bno.acceleration
-            mx, my, mz = bno.magnetic
-            gx, gy, gz = bno.gyro
+            with i2c_bus.i2c_lock():
+                if hasattr(bno, "_process_available_packets"):
+                    bno._process_available_packets(max_packets=6)  # type: ignore[attr-defined]
+                qi, qj, qk, qr = bno.quaternion
+                roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
+                ax, ay, az = bno.acceleration
+                mx, my, mz = bno.magnetic
+                gx, gy, gz = bno.gyro
             return (
                 roll,
                 pitch,
@@ -85,18 +87,11 @@ def read_sensor_data(bno) -> Any:
     return False
 
 
-def reinit_imu(i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
-    try:
-        if i2c_old is not None:
-            i2c_old.deinit()
-    except Exception:
-        pass
+def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
+    """Drop the cached bus so ``init_imu`` opens a fresh handle (``deinit`` alone left a dead singleton)."""
+    i2c_bus.reset_i2c()
     return init_imu()
 
 
-def imu_terminate(i2c: Any) -> None:
-    try:
-        if i2c is not None:
-            i2c.deinit()
-    except Exception:
-        pass
+def imu_terminate(_i2c: Any) -> None:
+    i2c_bus.reset_i2c()

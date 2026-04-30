@@ -22,6 +22,7 @@ ELECTRO_STALE_TIMEOUT_SEC = 2.5
 _last_update_ts = 0.0
 _reader = None  # dict (hardware) | False (synthetic-only) | None (not probed yet)
 _electro_lock = threading.Lock()
+_last_electro_read_warn_ts = 0.0
 
 
 def command_handler(recv_msg: str) -> None:
@@ -43,7 +44,7 @@ def _synthetic_read() -> tuple[float, float, float]:
 
 
 def _read_sensor() -> Optional[tuple[float, float, float]]:
-    global _reader
+    global _reader, _last_electro_read_warn_ts
     try:
         from Sensor_Electro import electro as electro_driver  # type: ignore
 
@@ -58,11 +59,13 @@ def _read_sensor() -> Optional[tuple[float, float, float]]:
                 _reader = False
         if _reader is False:
             return _synthetic_read()
-        volt = electro_driver.read_voltage(_reader)
-        curr = electro_driver.read_current(_reader)
-        pwr = electro_driver.read_power(_reader)
+        volt, curr, pwr = electro_driver.read_voltage_current_power(_reader)
         return float(volt), float(curr), float(pwr)
-    except Exception:
+    except Exception as exc:
+        now = time.time()
+        if _reader is not False and now - _last_electro_read_warn_ts >= 3.0:
+            logger.warning("Electro: INA228 read failed (%s); using synthetic V/I/P this cycle", exc)
+            _last_electro_read_warn_ts = now
         return _synthetic_read()
 
 

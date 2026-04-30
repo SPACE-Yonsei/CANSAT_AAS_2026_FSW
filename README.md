@@ -30,12 +30,9 @@ pip install --upgrade pip
 
 ```bash
 pip install adafruit-circuitpython-bmp3xx
-pip install adafruit-circuitpython-bmp280
-pip install adafruit-circuitpython-bme280
 pip install adafruit-circuitpython-gps
 pip install adafruit-circuitpython-bno08x
 pip install adafruit-circuitpython-ina228
-pip install adafruit-circuitpython-ina219
 pip install adafruit-circuitpython-vl53l0x
 pip install pigpio
 ```
@@ -188,13 +185,14 @@ FSW_LOG_TLM=0 python3 main.py
 
 ### 5) Real sensors vs synthetic data
 
-- **Barometer**: uses `Sensor_Barometer/barometer.py` — tries **BMP3xx**, then **BMP280**, then **BME280** on I2C (default address `0x77`). Install the matching pip package. Force one chip with `BARO_CHIP=bmp280` (or `bmp3xx` / `bme280`). If all probes fail, check `BARO_I2C_ADDR` and wiring; the app logs the error and uses synthetic data.
+- **Barometer**: **BMP3xx only** (e.g. **BMP390**) via `Sensor_Barometer/barometer.py`, I2C `BARO_I2C_ADDR` (default `0x77`), package `adafruit-circuitpython-bmp3xx`. On failure the app logs and falls back to synthetic data.
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
 - **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists.
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: `Sensor_Distance/distance.py` uses **VL53L0X** (default I2C `0x29`) when `adafruit-circuitpython-vl53l0x` works; otherwise synthetic. Set `DISTANCE_I2C_ADDR` if needed.
-- **Power**: `Sensor_Electro/electro.py` tries **INA228** then **INA219** (`ELECTRO_I2C_ADDR`, default `0x40`; `ELECTRO_CHIP=ina219` to skip INA228).
-- Env hints: `BARO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+- **Power**: **INA228** only via `Sensor_Electro/electro.py`, `ELECTRO_I2C_ADDR` (default `0x40`), package `adafruit-circuitpython-ina228`.
+- Env hints: `BARO_I2C_ADDR`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+- **I2C multiprocessing**: baro / power / IMU / distance each run in a separate process; by default Linux uses `flock` on `FSW_I2C_LOCK_FILE` (default `/tmp/fsw_i2c.lock`) so SMBus transactions do not interleave. Set `FSW_I2C_FLOCK=0` only if you know you do not need it.
 
 ### 6) XBee “not connected” / ground station sees nothing
 
