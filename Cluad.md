@@ -57,7 +57,7 @@
   - `Sensor_Motor/motorapp.py`, `motor_control.py`, `motor_guidance.py`, `Motor_Egg.py`, `Motor_Release.py`: 패러포일/번와이어/솔레노이드 제어
   - `Sensor_Camera/cameraapp.py`, `picam.py`: 카메라 녹화 제어
   - 노이즈 제거 방안.
-        - 
+        - 이동평균필터 적용
 - **운영 스크립트**
   - `startup.sh`, `cansat-fsw.service`, `setup_systemd_service.sh`
 
@@ -357,3 +357,7 @@ CommApp->>UART: send_tlm() 1Hz CSV
 - Telemetry는 CommApp이 앱별 `MID_comm_*` 데이터를 `tlm_data`로 집계해 1Hz UART 송신합니다.
 - I2C 충돌 완화를 위해 여러 센서 드라이버가 `/tmp/i2c-1.lock + fcntl.flock`을 사용합니다.
 - cFS 관련 문자열/연동 코드는 저장소 검색 기준 확인되지 않았습니다.
+
+
+# 고려해야할 점.
+tlm에 distance print 추가.
