@@ -15,12 +15,10 @@
   - `lib/events.py`: 멀티프로세스 로깅 큐 (`QueueListener/QueueHandler`)
         - 로그는 전체로그(print.csv), 각 앱별 로그(센서와 카메라 데이터 포함)
   - `lib/config.py`: 
-        - 운용 모드(0: LAUNCH_PAD, 1: ASCENT, 2: APOGEE, 3: RELEASE, 4: EGG, 5: LANDED)
-        - 상태 오버라이드: STATE를 상태로 강제 구동하는 기능이다. 고도로 STATE를 구별하고, 변환하는 기능을 끈다.
         - GPIO 정의(5: release 솔레노이드, 6: egg 모터, 12, 13: 파라포일 조종 모터 left, right)
         - 센서 통신 속도 정의(I2c hz)
             bmp390: 10 
-            bno085: 10(100hz로 읽고고 평균내서 10번 -> 10hz)
+            bno085: 10(100hz로 읽고 평균내서 10번 -> 10hz)
             gnss 7 click: 10
             ina228: 1
             tf-luna: 10
@@ -28,6 +26,8 @@
             camera: 30fps
 
   - `lib/prevstate.py`: 상태/보정값//IMU yaw 오프셋/타깃좌표/카운터 영속화
+        - 운용 모드(0: LAUNCH_PAD, 1: ASCENT, 2: APOGEE, 3: RELEASE, 4: EGG, 5: LANDED)
+        - 상태 오버라이드: STATE를 상태로 강제 구동하는 기능이다. 고도로 STATE를 구별하고, 변환하는 기능을 끈다.
 - **통신**
   - `comm/commapp.py`: UART 명령 수신, 정규식 명령 파싱/분기, TLM 집계/송신
   - `comm/uartserial.py`: `/dev/serial0` 기반 UART I/O
