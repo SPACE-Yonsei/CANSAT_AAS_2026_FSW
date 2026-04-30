@@ -154,6 +154,30 @@ def handle_reset_alt(data: str, queue: Queue):
     prevstate.update_maxalt(0)
 
 
+def handle_target_coord(data: str, queue: Queue):
+    """지상국 TC 명령: 'lat,lon' → prevstate 저장 + motor 전달."""
+    global target_lat, target_lon
+    parts = data.split(",")
+    if len(parts) != 2:
+        log(f"TC format error: expected 'lat,lon', got {data!r}", events.EventType.error)
+        return
+    try:
+        new_lat = float(parts[0])
+        new_lon = float(parts[1])
+    except ValueError as e:
+        log(f"TC parse error: {e} raw={data!r}", events.EventType.error)
+        return
+    if not (-90.0 <= new_lat <= 90.0 and -180.0 <= new_lon <= 180.0):
+        log(f"TC out of range: lat={new_lat} lon={new_lon}", events.EventType.error)
+        return
+    target_lat = new_lat
+    target_lon = new_lon
+    prevstate.update_target_gps(new_lat, new_lon)
+    msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID,
+                          appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{new_lat},{new_lon}")
+    log(f"Target set: ({new_lat:.6f}, {new_lon:.6f})")
+
+
 MSG_HANDLERS = {
     appargs.MainAppArg.MID_TerminateProcess: handleterminate,
     appargs.CommAppArg.MID_RouteCmd_SIM: handle_sim,
@@ -163,6 +187,7 @@ MSG_HANDLERS = {
     appargs.DistanceAppArg.MID_flight_dis: handle_distance,
     appargs.CommAppArg.MID_RouteCmd_SS: handle_ss,
     appargs.BarometerAppArg.MID_flight_ResetMaxAlt: handle_reset_alt,
+    appargs.CommAppArg.MID_RouteCmd_TC: handle_target_coord,
 }
 
 
@@ -340,13 +365,21 @@ def to_apogee(queue: Queue, force: bool = False):
 
 def to_release(queue: Queue, force: bool = False):
     global state
-    if not can_transition(force): 
+    if not can_transition(force):
         return
     state = STATE["RELEASE"]
     log("STATE → RELEASE (burnwire activate)")
     prevstate.update_prevstate(state)
     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
     msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_burnwire, "")
+    # target 좌표 재전송: motor 프로세스가 init 메시지를 놓쳤거나 재시작된 경우를 대비
+    if target_lat != 0.0 or target_lon != 0.0:
+        msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID,
+                              appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{target_lat},{target_lon}")
+        log(f"Target resent on RELEASE: ({target_lat:.6f}, {target_lon:.6f})")
+    else:
+        log("CRITICAL: RELEASE without target coordinates — GNC will failsafe. "
+            "Set target before flight via 'CMD,XXXX,TC,lat,lon'", events.EventType.error)
 
 
 def to_egg(queue: Queue, force: bool = False):
@@ -420,8 +453,14 @@ def init(queue: Queue):
         
         # 목표 좌표 전송
         if target_lat != 0.0 or target_lon != 0.0:
-            msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{target_lat},{target_lon}")
-        
+            msgstructure.send_msg(queue, appargs.FlightlogicAppArg.AppID, appargs.MotorAppArg.AppID,
+                                  appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{target_lat},{target_lon}")
+            log(f"Target restored from prevstate: ({target_lat:.6f}, {target_lon:.6f})")
+        else:
+            log("WARNING: Target coordinates are (0,0) — GNC will failsafe at RELEASE. "
+                "Send 'CMD,XXXX,TC,lat,lon' before launch or set TARGET_LAT/LON in prevstate.txt",
+                events.EventType.warning)
+
         log(f"Initialized with state={state}")
         
     except Exception as e:

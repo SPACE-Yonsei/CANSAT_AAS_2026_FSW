@@ -41,7 +41,7 @@ start_point = types.SimpleNamespace(
 
 LAT_TO_METER: float = 111320.0  # m/deg
 
-L_DISTANCE_BASE: float = 25.0   # m
+L_DISTANCE_BASE: float = 30.0   # m — raised from 25: L1 stability req 2*6.7*2=26.8m (drop test GPS median)
 L_DISTANCE_HIGH: float = 40.0   # m, 고고도용
 L_DISTANCE_LOW: float  = 15.0   # m, 저고도용
 L_DISTANCE: float      = L_DISTANCE_BASE   # m, L1 추적 거리

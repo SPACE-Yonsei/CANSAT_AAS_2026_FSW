@@ -46,6 +46,11 @@ _start_point_locked: bool = False  # True once a valid-GPS start_point is commit
 
 GYRZ_RUNAWAY_THRESHOLD: float = math.radians(100.0) # rad/s (=100°/s), 제어 불능 판정
 
+GPS_STALE_TIMEOUT: float       = 10.0   # s — drop test max valid gap was 9.0 s
+GPS_MAX_PLAUSIBLE_SPEED: float = 15.0   # m/s — parafoil physical airspeed ceiling
+_gps_last_received_time: float = 0.0    # epoch, 0 = never received
+_last_valid_gps_speed: float   = 1.0    # m/s, hold-last on implausible GPS speed
+
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
 CONTROL_LOG_INTERVAL = 0.1
@@ -65,7 +70,7 @@ def handle_terminate(data: str):
 
 
 def handle_gps(data: str):
-    global _start_point_locked
+    global _start_point_locked, _gps_last_received_time, _last_valid_gps_speed
     parts = data.split(",")
     if len(parts) != 7:
         log(f"GPS data format error: expected 7 fields, got {len(parts)}", events.EventType.error)
@@ -86,6 +91,14 @@ def handle_gps(data: str):
         log(f"GPS NaN/Inf rejected: lat={new_lat} lon={new_lon} spd={new_speed} crs={new_course}",
             events.EventType.error)
         return
+    # GPS speed plausibility gate: parafoil cannot exceed GPS_MAX_PLAUSIBLE_SPEED
+    if new_speed > GPS_MAX_PLAUSIBLE_SPEED:
+        log(f"GPS speed implausible ({new_speed:.1f} m/s > {GPS_MAX_PLAUSIBLE_SPEED} m/s), holding last={_last_valid_gps_speed:.1f} m/s",
+            events.EventType.warning)
+        new_speed = _last_valid_gps_speed
+    else:
+        _last_valid_gps_speed = new_speed
+    _gps_last_received_time = time.time()
     # Evaluate GPS jump before acquiring the lock (pure computation, no shared state write)
     new_jump_rejected = motor_guidance.is_gps_jump(new_lat, new_lon)
     with update_lock:
@@ -181,6 +194,10 @@ def handle_flight_state(data: str):
             else:
                 log("state=3: GPS not valid yet, waiting for first valid fix to set start_point",
                     events.EventType.warning)
+            if target.lat is None or target.lon is None:
+                log("CRITICAL: state=3 (RELEASE) but target coordinates not set — "
+                    "GNC will failsafe. Send 'CMD,XXXX,TC,lat,lon' or set prevstate.txt TARGET_LAT/LON",
+                    events.EventType.error)
     log(f"Flight state: {state}")
 
 
@@ -267,13 +284,19 @@ def _check_fdir(snap: types.SimpleNamespace) -> Optional[str]:
     if not snap.imu.healthy:
         return "IMU stale (sensor-reported)"
 
-    # FDIR-2: GPS 무결성
+    # FDIR-2: GPS 수신 freshness (마지막 수신 후 GPS_STALE_TIMEOUT 초 초과)
+    if _gps_last_received_time > 0:
+        gps_age = time.time() - _gps_last_received_time
+        if gps_age > GPS_STALE_TIMEOUT:
+            return f"GPS stale ({gps_age:.1f}s since last fix, limit={GPS_STALE_TIMEOUT}s)"
+
+    # FDIR-2b: GPS 무결성
     if not motor_guidance.is_gps_valid(snap.gps, snap.gps_fidelity):
         return (f"GPS invalid (lat={snap.gps.lat}, lon={snap.gps.lon}, "
                 f"fix={snap.gps_fidelity.fix_quality}, sats={snap.gps_fidelity.sats}, "
                 f"rmc={snap.gps_fidelity.rmc_status})")
 
-    # FDIR-2b: GPS 순간 이동 거부
+    # FDIR-2c: GPS 순간 이동 거부
     if snap.gps_fidelity.jump_rejected:
         return (f"GPS jump rejected (lat={snap.gps.lat:.6f}, lon={snap.gps.lon:.6f})")
 

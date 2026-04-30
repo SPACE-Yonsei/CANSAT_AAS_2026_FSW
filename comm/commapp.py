@@ -401,6 +401,12 @@ def cmd_cam(option:str, Main_Queue:Queue):
     msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, option)
     return
 
+def cmd_tc(option: str, Main_Queue: Queue):
+    """Target Coordinates: route 'lat,lon' to flight logic."""
+    msgstructure.send_msg(Main_Queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.AppID,
+                          appargs.CommAppArg.MID_RouteCmd_TC, option)
+    return
+
 # This fuction reads command from Ground Station
 def read_cmd(Main_Queue:Queue, serial_instance):
     global COMMAPP_RUNSTATUS
@@ -443,6 +449,10 @@ def read_cmd(Main_Queue:Queue, serial_instance):
     # Camera Control
     cam_re_header = f"CMD,{TEAMID},CAM,"
     cam_re_option = "(ON|OFF)$"
+
+    # Target Coordinates: CMD,XXXX,TC,-34.123456,150.123456
+    tc_re_header = f"CMD,{TEAMID},TC,"
+    tc_re_option = r"-?\d{1,3}\.\d+,-?\d{1,3}\.\d+$"
 
     while COMMAPP_RUNSTATUS:
         try:
@@ -575,6 +585,16 @@ def read_cmd(Main_Queue:Queue, serial_instance):
                     option = option_match.group()
                     # Activate Camera
                     cmd_cam(option, Main_Queue)
+                else:
+                    events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"Failed to parse option from command: {rcv_cmd}")
+
+            elif re.fullmatch(tc_re_header+tc_re_option, rcv_cmd):
+                set_cmdecho(rcv_cmd)
+
+                option_match = re.search(tc_re_option, rcv_cmd)
+                if option_match:
+                    option = option_match.group()
+                    cmd_tc(option, Main_Queue)
                 else:
                     events.LogEvent(appargs.CommAppArg.AppName, events.EventType.error, f"Failed to parse option from command: {rcv_cmd}")
 

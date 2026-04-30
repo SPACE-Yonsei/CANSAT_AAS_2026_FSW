@@ -37,6 +37,7 @@ class CommAppArg:
     MID_RouteCmd_MEC : int = 1607
     MID_RouteCmd_SS : int = 1608
     MID_RouteCmd_CAM : int = 1609
+    MID_RouteCmd_TC  : int = 1610  # Target Coordinates uplink: "lat,lon"
 
 class BarometerAppArg:
     AppID : int = 13
