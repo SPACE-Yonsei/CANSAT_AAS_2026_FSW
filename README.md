@@ -188,7 +188,7 @@ FSW_LOG_TLM=0 python3 main.py
 
 - **Barometer**: **BMP3xx only** (e.g. **BMP390**) via `Sensor_Barometer/barometer.py`, I2C `BARO_I2C_ADDR` (default `0x77`), package `adafruit-circuitpython-bmp3xx`. On failure the app logs and falls back to synthetic data.
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
-- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists.
+- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio (NMEA over serial). Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists. **I2C `0x42` on `i2cdetect` is often a MikroE GNSS board (e.g. GNSS 7 Click)** — that path is not the same as `GPS_DEVICE`; wire the module’s **UART** to the Pi (or USB–serial) and point `GPS_DEVICE` at that tty. **Do not** set `ELECTRO_I2C_ADDR=0x42` for that chip; **INA228** is normally `0x40` unless ADDR pins say otherwise.
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: `Sensor_Distance/distance.py` uses **VL53L0X** (default I2C `0x29`) when `adafruit-circuitpython-vl53l0x` works; otherwise synthetic. Set `DISTANCE_I2C_ADDR` if needed.
 - **Power**: **INA228** only via `Sensor_Electro/electro.py`, `ELECTRO_I2C_ADDR` (default `0x40`), package `adafruit-circuitpython-ina228`.
@@ -204,7 +204,7 @@ FSW_LOG_TLM=0 python3 main.py
 | `No module named 'adafruit_ina228'` | In the **same venv** you use for `python3 main.py`: `pip install adafruit-circuitpython-ina228` |
 | `No module named 'adafruit_vl53l0x'` | Optional distance sensor: `pip install adafruit-circuitpython-vl53l0x` or ignore synthetic distance |
 | `No I2C device at address: 0x77` but `i2cdetect -y 1` shows `77` | Force the same bus Python uses: `pip install adafruit-extended-bus` then `export FSW_I2C_BUS=1`. If SDO=GND use `BARO_I2C_ADDR=0x76`. |
-| `i2cdetect` shows power IC at `42` (not `40`) | `export ELECTRO_I2C_ADDR=0x42` after installing `adafruit-circuitpython-ina228` |
+| `i2cdetect` shows `42` | Often **MikroE GNSS (GNSS 7 Click)** on I2C, **not** INA228. FSW GPS uses **UART** → set `GPS_DEVICE` to the GNSS serial port. INA228 stays typically `ELECTRO_I2C_ADDR=0x40`. |
 | GPS `No such file /dev/ttyUSB0` | `ls /dev/ttyUSB* /dev/ttyAMA* /dev/serial*` then `export GPS_DEVICE=...` |
 | Baro TLM looks like ~1013 hPa and temp toggling ±0.2 °C | That is **synthetic** fallback after BMP init/read failure — fix I2C address/hardware first |
 | Power TLM stepping 7.35–7.38 V in a 4-step pattern | **Synthetic** electro — usually missing `ina228` pip package or INA init error |

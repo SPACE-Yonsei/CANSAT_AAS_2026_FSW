@@ -91,7 +91,7 @@ def read_barometer_data() -> None:
                             "Barometer: hardware init failed (%s); using synthetic. "
                             "If i2cdetect shows 0x77 on bus 1 but this fails, try: "
                             "pip install adafruit-extended-bus && export FSW_I2C_BUS=1. "
-                            "Also BARO_I2C_ADDR=0x76 if SDO=GND; INA at 0x42 needs ELECTRO_I2C_ADDR=0x42.",
+                            "BARO_I2C_ADDR=0x76 if BMP SDO=GND. (i2c 0x42 is often GNSS Click, not INA.)",
                             exc,
                         )
                         _baro_hw = False
