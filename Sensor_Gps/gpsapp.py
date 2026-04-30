@@ -79,6 +79,8 @@ def _read_gps():
 
         if not hasattr(_read_gps, "_inst"):
             _read_gps._inst = gps_driver.init_gps()  # type: ignore[attr-defined]
+        if _read_gps._inst is None:  # type: ignore[attr-defined]
+            return _synthetic_read()
         data = gps_driver.gps_readdata(_read_gps._inst)  # type: ignore[attr-defined]
         if data is None:
             return None

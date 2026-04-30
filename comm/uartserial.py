@@ -51,11 +51,14 @@ def _port_candidates(explicit: str | None) -> list[str]:
     return out
 
 
-def init_serial(port: str | None = None, baudrate: int = 9600):
+def init_serial(port: str | None = None, baudrate: int | None = None):
     """Initialize serial transport.
 
     Tries multiple common Raspberry Pi UART device paths unless `UART_DEVICE`
     is set (comma-separated list, highest priority).
+
+    Baud rate: pass `baudrate` or set env `UART_BAUD` (default 9600). Match the
+    XBee module XCTU "Interface Data Rate".
 
     If pyserial is not installed or no port could be opened, returns a dummy
     serial object to keep non-hardware tests runnable.
@@ -65,6 +68,12 @@ def init_serial(port: str | None = None, baudrate: int = 9600):
     except Exception as exc:
         logger.warning("pyserial unavailable; using DummySerial (%s)", exc)
         return DummySerial()
+
+    if baudrate is None:
+        try:
+            baudrate = int(os.environ.get("UART_BAUD", "9600"))
+        except ValueError:
+            baudrate = 9600
 
     candidates = _port_candidates(port or "/dev/serial0")
     last_exc: Exception | None = None

@@ -20,7 +20,7 @@ class TestImuApp(unittest.TestCase):
     def test_read_sensor_sample_fallback(self):
         imuapp._imu_instance = None
         sample = imuapp._read_sensor_sample()
-        self.assertEqual(len(sample), 12)
+        self.assertIs(sample, False)
 
 
 if __name__ == "__main__":

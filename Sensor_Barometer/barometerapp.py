@@ -21,6 +21,7 @@ _baro_lock = threading.Lock()
 _alt_window = deque(maxlen=5)
 _tmp_window = deque(maxlen=5)
 _prs_window = deque(maxlen=5)
+_baro_hw = None
 
 
 def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None:
@@ -69,10 +70,22 @@ def _synthetic_raw():
 
 
 def read_barometer_data() -> None:
-    global ALTITUDE, TEMPERATURE, PRESSURE, BAROMETER_HEALTH, _last_sample_ts
+    global ALTITUDE, TEMPERATURE, PRESSURE, BAROMETER_HEALTH, _last_sample_ts, _baro_hw
     while BAROMETERAPP_RUNSTATUS:
         try:
-            prs_raw, tmp_raw, alt_raw = _synthetic_raw()
+            try:
+                from Sensor_Barometer import barometer as baro_driver  # type: ignore
+
+                if _baro_hw is None:
+                    _baro_hw = baro_driver.init_bmp()
+                if _baro_hw is not False:
+                    prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
+                else:
+                    prs_raw, tmp_raw, alt_raw = _synthetic_raw()
+            except Exception:
+                _baro_hw = False
+                prs_raw, tmp_raw, alt_raw = _synthetic_raw()
+
             _prs_window.append(float(prs_raw))
             _tmp_window.append(float(tmp_raw))
             _alt_window.append(float(alt_raw))

@@ -181,3 +181,18 @@ Latest `comm/uartserial.py` treats this transient case as "no data" to reduce lo
 ```bash
 FSW_LOG_TLM=0 python3 main.py
 ```
+
+### 5) Real sensors vs synthetic data
+
+- **Barometer**: uses `Sensor_Barometer/barometer.py` (BMP3xx on I2C, default `0x77`) when Blinka + `adafruit-circuitpython-bmp3xx` work; otherwise the app falls back to synthetic altitude/pressure.
+- **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
+- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track.
+- **Distance**: still uses the built-in synthetic rangefinder in `distanceapp.py` unless you add a real sensor module and wire it there.
+- Env hints: `BARO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+
+### 6) XBee “not connected” / ground station sees nothing
+
+- **One UART, one peripheral**: if the Pi’s primary UART (`/dev/serial0`) is wired to the XBee, a UART GPS cannot share that same port; use USB GPS (`/dev/ttyUSB0`) or a second UART.
+- **Baud match**: set XCTU **Interface Data Rate** to the same value as FSW `UART_BAUD` (default `9600`). Example: `UART_BAUD=115200 python3 main.py`.
+- **Wiring**: XBee DIN → Pi TX, DOUT → Pi RX, common GND; logic is 3.3 V.
+- **Sanity check**: loop back or use another PC serial monitor at the same baud to confirm bytes leave the Pi when TLM logging is on.
