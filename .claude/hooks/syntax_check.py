@@ -1,4 +1,14 @@
+<<<<<<< HEAD
 ﻿import json, sys, ast, os
+=======
+"""
+PostToolUse hook - Write/Edit 후 Python 파일 문법 검사.
+stdin: {"tool_name": "Write", "tool_input": {"file_path": "..."}, "tool_result": ...}
+exit 2 → 문법 오류 시 Claude에게 전달
+exit 0 → 통과 또는 비Python 파일
+"""
+import json, sys, ast, os
+>>>>>>> 8a94f4a (skill, agent, hanes)
 
 payload = json.load(sys.stdin)
 file_path = payload.get("tool_input", {}).get("file_path", "")
