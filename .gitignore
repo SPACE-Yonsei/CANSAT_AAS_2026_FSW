@@ -20,4 +20,5 @@ PICAM_Video/
 __pycache__/
 *.pyc
 lib/prevstate.txt
+lib/prevstate.json
 sensorlogs/

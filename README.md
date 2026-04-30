@@ -146,3 +146,29 @@ sudo usermod -aG video $USER
 - Current app layer is operational and tested.
 - Some low-level hardware driver modules still include shim/fallback paths for non-hardware development.
 - See `Cluad.md` and `fsw_step12_audit.md` for phased implementation/audit status.
+
+## Troubleshooting
+
+### 1) `git pull` fails due to `lib/prevstate.json`
+
+`lib/prevstate.json` is a runtime state file and should not be version-controlled.
+If your older branch still tracks it, run:
+
+```bash
+git rm --cached lib/prevstate.json
+echo "lib/prevstate.json" >> .gitignore
+git add .gitignore
+```
+
+Then commit once and retry pull/merge.
+
+### 2) Ctrl+C shutdown prints many child tracebacks
+
+If you still see repeated `KeyboardInterrupt` stack traces in subprocesses,
+you are likely running older app modules. Update to latest `claude` branch code,
+which includes graceful `pipe.poll()` shutdown guards in all app runloops.
+
+### 3) `receive_serial_data failed: 'NoneType' object cannot be interpreted as an integer`
+
+This is a serial backend edge case seen during shutdown on some environments.
+Latest `comm/uartserial.py` treats this transient case as "no data" to reduce log noise.
