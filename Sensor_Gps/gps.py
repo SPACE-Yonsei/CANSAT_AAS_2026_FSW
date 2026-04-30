@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -154,9 +155,17 @@ def _gps_build_return(dev: dict) -> Optional[list]:
 
 
 def _ublox_ddc_bytes_available(i2c: Any, address: int) -> int:
-    buf = bytearray(2)
-    i2c.writeto_then_readfrom(address, bytes([0xFD]), buf, out_end=1, in_end=2)
-    return int(buf[0]) | (int(buf[1]) << 8)
+    """RX FIFO length: u-blox uses **separate** regs 0xFD (MSB) and 0xFE (LSB).
+
+    A single writeto+read of 2 bytes assumes subaddress auto-increment; many u-blox
+    modules do **not** do that for these regs and return ``EIO`` on Pi/Blinka.
+    """
+    one = bytearray(1)
+    i2c.writeto_then_readfrom(address, bytes([0xFD]), one, out_end=1, in_end=1)
+    msb = int(one[0])
+    i2c.writeto_then_readfrom(address, bytes([0xFE]), one, out_end=1, in_end=1)
+    lsb = int(one[0])
+    return (msb << 8) | lsb
 
 
 def _ublox_ddc_read_stream(i2c: Any, address: int, nbytes: int) -> bytes:
@@ -175,21 +184,35 @@ def _init_gps_i2c_ublox() -> Any:
     from lib import i2c_bus
 
     addr = int(os.environ.get("GPS_I2C_ADDR", "0x42"), 0)
-    try:
-        with i2c_bus.i2c_lock():
-            i2c = i2c_bus.get_i2c()
-            n = _ublox_ddc_bytes_available(i2c, addr)
-        logger.info("GPS u-blox DDC I2C at 0x%02x (rx queue ~%d bytes)", addr, n)
-    except Exception as exc:
-        logger.warning("GPS u-blox I2C probe failed at 0x%02x: %s", addr, exc)
-        return None
-    return {
-        "kind": "i2c_ublox",
-        "addr": addr,
-        "gga": None,
-        "rmc": None,
-        "_nmea_tail": b"",
-    }
+    attempts = max(1, int(os.environ.get("GPS_I2C_INIT_RETRIES", "5"), 0))
+    delay = float(os.environ.get("GPS_I2C_INIT_DELAY_SEC", "0.08"))
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            with i2c_bus.i2c_lock():
+                i2c = i2c_bus.get_i2c()
+                n = _ublox_ddc_bytes_available(i2c, addr)
+            logger.info("GPS u-blox DDC I2C at 0x%02x (rx queue ~%d bytes)", addr, n)
+            return {
+                "kind": "i2c_ublox",
+                "addr": addr,
+                "gga": None,
+                "rmc": None,
+                "_nmea_tail": b"",
+            }
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "GPS u-blox I2C probe attempt %d/%d at 0x%02x: %s",
+                i + 1,
+                attempts,
+                addr,
+                exc,
+            )
+            if i + 1 < attempts:
+                time.sleep(delay)
+    logger.warning("GPS u-blox I2C probe failed at 0x%02x (last: %s)", addr, last_exc)
+    return None
 
 
 def _init_gps_uart() -> Any:
