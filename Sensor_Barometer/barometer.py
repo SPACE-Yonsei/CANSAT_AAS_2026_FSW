@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Any
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import i2c_bus
 
@@ -48,3 +54,11 @@ def read_bmp(dev: dict) -> tuple[float, float, float]:
 
 def terminate_bmp(_dev: dict) -> None:
     """Bus is shared; do not deinit here."""
+
+
+if __name__ == "__main__":
+    # From repo root: python3 -m Sensor_Barometer.barometer
+    # Or from anywhere: python3 Sensor_Barometer/barometer.py
+    d = init_bmp()
+    p, t, a = read_bmp(d)
+    print(f"pressure_hPa={p:.2f} temp_C={t:.2f} alt_m={a:.2f}")

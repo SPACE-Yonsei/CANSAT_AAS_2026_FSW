@@ -135,6 +135,14 @@ python -m unittest
 python -m unittest tests/test_main_smoke.py
 ```
 
+### Sensor driver one-liners (repo root)
+
+```bash
+# BMP390: imports `lib` automatically even if you run the file path directly
+FSW_I2C_BUS=1 python3 Sensor_Barometer/barometer.py
+# or: python3 -m Sensor_Barometer.barometer
+```
+
 ## Optional Permissions (non-root user)
 
 ```bash
@@ -188,11 +196,14 @@ FSW_LOG_TLM=0 python3 main.py
 
 - **Barometer**: **BMP3xx only** (e.g. **BMP390**) via `Sensor_Barometer/barometer.py`, I2C `BARO_I2C_ADDR` (default `0x77`), package `adafruit-circuitpython-bmp3xx`. On failure the app logs and falls back to synthetic data.
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
-- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio (NMEA over serial). Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists. **I2C `0x42` on `i2cdetect` is often a MikroE GNSS board (e.g. GNSS 7 Click)** — that path is not the same as `GPS_DEVICE`; wire the module’s **UART** to the Pi (or USB–serial) and point `GPS_DEVICE` at that tty. **Do not** set `ELECTRO_I2C_ADDR=0x42` for that chip; **INA228** is normally `0x40` unless ADDR pins say otherwise.
+- **GPS**: `Sensor_Gps/gps.py` supports **UART NMEA** or **u-blox DDC I2C** (NMEA over I2C), e.g. **MikroE GNSS 7 Click (NEO-M9N)** at **`0x42`**.
+  - **UART** (default): separate port from the radio. Set `GPS_DEVICE` and `GPS_BAUD`. Check `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*`.
+  - **I2C**: `export GPS_USE_I2C=1` and optional `GPS_I2C_ADDR=0x42`. Use the same I2C bus as other sensors (`FSW_I2C_BUS=1` + `adafruit-extended-bus` if needed). NMEA is read via u-blox registers `0xFD`/`0xFE` (length) and `0xFF` (stream).
+  - **INA228** is **not** at `0x42`; keep `ELECTRO_I2C_ADDR=0x40` unless your shunt board uses another address.
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: `Sensor_Distance/distance.py` uses **VL53L0X** (default I2C `0x29`) when `adafruit-circuitpython-vl53l0x` works; otherwise synthetic. Set `DISTANCE_I2C_ADDR` if needed.
 - **Power**: **INA228** only via `Sensor_Electro/electro.py`, `ELECTRO_I2C_ADDR` (default `0x40`), package `adafruit-circuitpython-ina228`.
-- Env hints: `BARO_I2C_ADDR`, `BARO_INIT_RETRIES`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+- Env hints: `BARO_I2C_ADDR`, `BARO_INIT_RETRIES`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`, `GPS_USE_I2C`, `GPS_I2C_ADDR`.
 - **`FSW_I2C_BUS`**: if `sudo i2cdetect -y 1` shows your sensors but Python reports `No I2C device at address`, Blinka may be using a different bus than `i2c-1`. Run `pip install adafruit-extended-bus` and e.g. `export FSW_I2C_BUS=1` before `main.py`.
 - **I2C multiprocessing**: baro / power / IMU / distance each run in a separate process; by default Linux uses `flock` on `FSW_I2C_LOCK_FILE` (default `/tmp/fsw_i2c.lock`) so SMBus transactions do not interleave. Set `FSW_I2C_FLOCK=0` only if you know you do not need it.
 - **IMU init**: if logs show `Was not able to enable feature` / feature `1` (accelerometer), try `IMU_POST_OPEN_DELAY_SEC=0.5`, confirm `IMU_I2C_ADDR` (`0x4A` vs `0x4B`), wiring, and `i2cdetect`. `BNO08X_DEBUG=1` enables verbose driver output.
@@ -204,8 +215,8 @@ FSW_LOG_TLM=0 python3 main.py
 | `No module named 'adafruit_ina228'` | In the **same venv** you use for `python3 main.py`: `pip install adafruit-circuitpython-ina228` |
 | `No module named 'adafruit_vl53l0x'` | Optional distance sensor: `pip install adafruit-circuitpython-vl53l0x` or ignore synthetic distance |
 | `No I2C device at address: 0x77` but `i2cdetect -y 1` shows `77` | Force the same bus Python uses: `pip install adafruit-extended-bus` then `export FSW_I2C_BUS=1`. If SDO=GND use `BARO_I2C_ADDR=0x76`. |
-| `i2cdetect` shows `42` | Often **MikroE GNSS (GNSS 7 Click)** on I2C, **not** INA228. FSW GPS uses **UART** → set `GPS_DEVICE` to the GNSS serial port. INA228 stays typically `ELECTRO_I2C_ADDR=0x40`. |
-| GPS `No such file /dev/ttyUSB0` | `ls /dev/ttyUSB* /dev/ttyAMA* /dev/serial*` then `export GPS_DEVICE=...` |
+| `i2cdetect` shows `42` | Often **u-blox GNSS (e.g. GNSS 7 Click)**. Use `GPS_USE_I2C=1` and `GPS_I2C_ADDR=0x42` (not `ELECTRO_I2C_ADDR`). |
+| GPS `No such file /dev/ttyUSB0` | If GNSS is **I2C**: `GPS_USE_I2C=1`. Else UART: `export GPS_DEVICE=...` from `ls /dev/ttyUSB* /dev/ttyAMA* /dev/serial*` |
 | Baro TLM looks like ~1013 hPa and temp toggling ±0.2 °C | That is **synthetic** fallback after BMP init/read failure — fix I2C address/hardware first |
 | Power TLM stepping 7.35–7.38 V in a 4-step pattern | **Synthetic** electro — usually missing `ina228` pip package or INA init error |
 

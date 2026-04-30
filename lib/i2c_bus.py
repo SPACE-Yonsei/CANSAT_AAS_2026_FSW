@@ -10,8 +10,16 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import warnings
 from contextlib import contextmanager
 from typing import Any
+
+# Blinka always warns when CircuitPython code sets I2C frequency; Linux SMBus ignores it.
+warnings.filterwarnings(
+    "ignore",
+    message="I2C frequency is not settable in python, ignoring!",
+    category=RuntimeWarning,
+)
 
 logger = logging.getLogger(__name__)
 
