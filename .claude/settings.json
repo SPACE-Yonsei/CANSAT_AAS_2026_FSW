@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "PowerShell(& cmd /c \"dir C:\\\\workspace\\\\CANSAT_AAS_2026_FSW\\\\.claude /s /b 2>&1\")",
+      "Bash(git commit -m ' *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -34,11 +40,6 @@
           }
         ]
       }
-    ]
-  },
-  "permissions": {
-    "allow": [
-      "PowerShell(& cmd /c \"dir C:\\\\workspace\\\\CANSAT_AAS_2026_FSW\\\\.claude /s /b 2>&1\")"
     ]
   }
 }
