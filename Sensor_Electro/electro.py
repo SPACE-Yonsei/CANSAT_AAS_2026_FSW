@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import time
+from pathlib import Path
 from typing import Any
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import i2c_bus
 
@@ -47,3 +54,20 @@ def read_power(dev: dict) -> float:
 
 def terminate_INA228(_dev: dict | None) -> None:
     """Bus is shared; do not deinit here."""
+
+
+if __name__ == "__main__":
+    import logging
+
+    from lib.sensor_cli import cli_period_sec
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    dev = init_INA228()
+    period = cli_period_sec()
+    try:
+        while True:
+            v, c, p = read_voltage_current_power(dev)
+            print(f"bus_V={v:.4f} A={c:.4f} W={p:.4f}", flush=True)
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print("", flush=True)

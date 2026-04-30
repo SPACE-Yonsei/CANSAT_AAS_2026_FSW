@@ -135,12 +135,20 @@ python -m unittest
 python -m unittest tests/test_main_smoke.py
 ```
 
-### Sensor driver one-liners (repo root)
+### Sensor driver CLI (repo root, stream until Ctrl+C)
+
+Default rate is **10 Hz**; override with `SENSOR_CLI_HZ` (e.g. `5` for 5 Hz). Folder name is **`Sensor_Imu`** (capital **I**), not `Sensor_IMU`.
 
 ```bash
-# BMP390: imports `lib` automatically even if you run the file path directly
-FSW_I2C_BUS=1 python3 Sensor_Barometer/barometer.py
-# or: python3 -m Sensor_Barometer.barometer
+export FSW_I2C_BUS=1   # on Pi if needed
+export SENSOR_CLI_HZ=10
+
+python3 -m Sensor_Barometer.barometer
+python3 -m Sensor_Imu.imu
+python3 -m Sensor_Electro.electro
+python3 -m Sensor_Distance.distance
+# GPS: UART and/or GPS_USE_I2C=1 as in main README
+python3 -m Sensor_Gps.gps
 ```
 
 ## Optional Permissions (non-root user)

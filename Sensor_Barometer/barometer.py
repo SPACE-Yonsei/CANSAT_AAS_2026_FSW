@@ -57,8 +57,17 @@ def terminate_bmp(_dev: dict) -> None:
 
 
 if __name__ == "__main__":
-    # From repo root: python3 -m Sensor_Barometer.barometer
-    # Or from anywhere: python3 Sensor_Barometer/barometer.py
+    import logging
+
+    from lib.sensor_cli import cli_period_sec
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     d = init_bmp()
-    p, t, a = read_bmp(d)
-    print(f"pressure_hPa={p:.2f} temp_C={t:.2f} alt_m={a:.2f}")
+    period = cli_period_sec()
+    try:
+        while True:
+            p, t, a = read_bmp(d)
+            print(f"pressure_hPa={p:.2f} temp_C={t:.2f} alt_m={a:.2f}", flush=True)
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print("", flush=True)

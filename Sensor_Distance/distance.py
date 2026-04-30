@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import time
+from pathlib import Path
 from typing import Any
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import i2c_bus
 
@@ -32,3 +39,23 @@ def read_range_mm(dev: dict) -> int:
 
 def terminate_vl53(_dev: dict) -> None:
     """Bus is shared; do not deinit here."""
+
+
+if __name__ == "__main__":
+    import logging
+
+    from lib.sensor_cli import cli_period_sec
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    d = init_vl53()
+    period = cli_period_sec()
+    try:
+        while True:
+            try:
+                mm = read_range_mm(d)
+                print(f"range_mm={mm}", flush=True)
+            except Exception as exc:
+                print(f"range error: {exc}", flush=True)
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print("", flush=True)

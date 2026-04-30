@@ -5,8 +5,14 @@ from __future__ import annotations
 import logging
 import math
 import os
+import sys
 import time
+from pathlib import Path
 from typing import Any, Optional
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import i2c_bus
 
@@ -127,3 +133,32 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
 
 def imu_terminate(_i2c: Any) -> None:
     i2c_bus.reset_i2c()
+
+
+if __name__ == "__main__":
+    import logging
+
+    from lib.sensor_cli import cli_period_sec
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    _i2c, bno = init_imu()
+    period = cli_period_sec()
+    try:
+        while True:
+            s = read_sensor_data(bno)
+            if s is False:
+                print("imu read failed", flush=True)
+            else:
+                r, p, y, ax, ay, az, mx, my, mz, gx, gy, gz = s
+                print(
+                    f"rpy_deg={r:.2f},{p:.2f},{y:.2f} "
+                    f"acc={ax:.3f},{ay:.3f},{az:.3f} "
+                    f"mag={mx:.2f},{my:.2f},{mz:.2f} "
+                    f"gyr_deg_s={gx:.3f},{gy:.3f},{gz:.3f}",
+                    flush=True,
+                )
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print("", flush=True)
+    finally:
+        imu_terminate(_i2c)

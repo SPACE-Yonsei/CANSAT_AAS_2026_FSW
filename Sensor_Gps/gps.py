@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, Optional
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 logger = logging.getLogger(__name__)
 
@@ -250,3 +256,36 @@ def gps_terminate(dev: dict) -> None:
         dev["ser"].close()
     except Exception:
         pass
+
+
+if __name__ == "__main__":
+    import time
+
+    from lib.sensor_cli import cli_period_sec
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    dev = init_gps()
+    period = cli_period_sec()
+    if dev is None:
+        print(
+            "GPS init failed. UART: set GPS_DEVICE. I2C u-blox: GPS_USE_I2C=1, GPS_I2C_ADDR=0x42",
+            flush=True,
+        )
+        raise SystemExit(1)
+    try:
+        while True:
+            row = gps_readdata(dev)
+            if row is None:
+                print("fix=no (sky view / baud / I2C / NMEA)", flush=True)
+            else:
+                gt, alt, lat, lon, sats, fixq, st, spd, crs = row[:9]
+                print(
+                    f"time={gt} lat={lat:.6f} lon={lon:.6f} alt_m={alt:.1f} "
+                    f"sats={sats} fix={fixq} rmc={st} v_ms={spd:.2f} crs={crs:.1f}",
+                    flush=True,
+                )
+            time.sleep(period)
+    except KeyboardInterrupt:
+        print("", flush=True)
+    finally:
+        gps_terminate(dev)
