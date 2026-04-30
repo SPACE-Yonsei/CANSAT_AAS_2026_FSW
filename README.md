@@ -34,7 +34,9 @@ pip install adafruit-circuitpython-bmp280
 pip install adafruit-circuitpython-bme280
 pip install adafruit-circuitpython-gps
 pip install adafruit-circuitpython-bno08x
-pip install adafruit-circuitpython-ina22x
+pip install adafruit-circuitpython-ina228
+pip install adafruit-circuitpython-ina219
+pip install adafruit-circuitpython-vl53l0x
 pip install pigpio
 ```
 
@@ -190,7 +192,8 @@ FSW_LOG_TLM=0 python3 main.py
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
 - **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists.
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
-- **Distance**: still uses the built-in synthetic rangefinder in `distanceapp.py` unless you add a real sensor module and wire it there.
+- **Distance**: `Sensor_Distance/distance.py` uses **VL53L0X** (default I2C `0x29`) when `adafruit-circuitpython-vl53l0x` works; otherwise synthetic. Set `DISTANCE_I2C_ADDR` if needed.
+- **Power**: `Sensor_Electro/electro.py` tries **INA228** then **INA219** (`ELECTRO_I2C_ADDR`, default `0x40`; `ELECTRO_CHIP=ina219` to skip INA228).
 - Env hints: `BARO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
 
 ### 6) XBee “not connected” / ground station sees nothing

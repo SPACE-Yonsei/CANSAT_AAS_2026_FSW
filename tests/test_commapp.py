@@ -75,6 +75,13 @@ class TestCommApp(unittest.TestCase):
         line = ser.writes[-1].decode("utf-8")
         self.assertIn(",4321.0,", line)
 
+    def test_tlm_multiline_for_console(self):
+        line = "$1070," + ",".join(str(i) for i in range(29)) + "\n"
+        pretty = commapp._tlm_multiline_for_console(line)
+        self.assertIn("\n", pretty)
+        self.assertIn("meta", pretty)
+        self.assertIn("gps", pretty)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -300,6 +300,36 @@ def command_handler(recv_msg: str) -> None:
         tlm_data.mode = fields[0]
 
 
+def _tlm_multiline_for_console(line: str) -> str:
+    """Pretty multi-line TLM for local logs only (radio line stays one CSV row)."""
+    parts = line.rstrip("\n\r").split(",")
+    if len(parts) >= 30:
+        hdr = ",".join(parts[0:5])
+        baro = ",".join(parts[5:8])
+        elec = ",".join(parts[8:11])
+        gyro = ",".join(parts[11:14])
+        acc = ",".join(parts[14:17])
+        mag = ",".join(parts[17:20])
+        gps = ",".join(parts[20:25])
+        extra = ",".join(parts[25:30])
+        return (
+            "TLM\n"
+            f"  meta   : {hdr}\n"
+            f"  baro   : {baro}\n"
+            f"  power  : {elec}\n"
+            f"  gyro   : {gyro}\n"
+            f"  acc    : {acc}\n"
+            f"  mag    : {mag}\n"
+            f"  gps    : {gps}\n"
+            f"  extra  : {extra}"
+        )
+    # Unusual field count (e.g. cmd_echo with comma): wrap every 5 fields
+    lines = []
+    for i in range(0, len(parts), 5):
+        lines.append(",".join(parts[i : i + 5]))
+    return "TLM\n" + "\n".join(f"  {ln}" for ln in lines)
+
+
 def send_tlm(serial_instance) -> None:
     global _TLM_SEND_FAIL_LOGGED
     if not TELEMETRY_ENABLE:
@@ -321,7 +351,7 @@ def send_tlm(serial_instance) -> None:
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if _LOG_TLM_TO_CONSOLE:
-        logger.info("TLM %s", line.rstrip("\n"))
+        logger.info("%s", _tlm_multiline_for_console(line))
     if not ok and not _TLM_SEND_FAIL_LOGGED:
         logger.warning(
             "TLM UART write failed (no bytes will reach the radio/USB adapter). "

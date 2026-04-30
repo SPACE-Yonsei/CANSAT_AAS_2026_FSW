@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
 
 from lib import appargs, msgstructure
+
+
+logger = logging.getLogger(__name__)
 
 
 DISTANCEAPP_RUNSTATUS = True
@@ -19,6 +23,7 @@ DISTANCE_MAX_MM = 8000
 _last_update_ts = 0.0
 _distance_window = deque(maxlen=5)
 _distance_lock = threading.Lock()
+_dist_hw = None
 
 
 def command_handler(recv_msg: str) -> None:
@@ -50,10 +55,32 @@ def _synthetic_read_distance() -> float:
 
 
 def read_distance_data() -> None:
-    global DISTANCE_MM, DISTANCE_HEALTH, _last_update_ts
+    global DISTANCE_MM, DISTANCE_HEALTH, _last_update_ts, _dist_hw
     while DISTANCEAPP_RUNSTATUS:
         try:
-            raw = _synthetic_read_distance()
+            raw: float
+            try:
+                from Sensor_Distance import distance as dist_driver  # type: ignore
+
+                if _dist_hw is None:
+                    try:
+                        _dist_hw = dist_driver.init_vl53()
+                    except Exception as exc:
+                        logger.warning(
+                            "Distance: VL53L0X init failed (%s); using synthetic rangefinder",
+                            exc,
+                        )
+                        _dist_hw = False
+                if _dist_hw is not False:
+                    try:
+                        raw = float(dist_driver.read_range_mm(_dist_hw))
+                    except Exception:
+                        raw = _synthetic_read_distance()
+                else:
+                    raw = _synthetic_read_distance()
+            except Exception:
+                raw = _synthetic_read_distance()
+
             if _is_valid_distance(raw):
                 _distance_window.append(float(raw))
                 filtered = _median_mm(_distance_window)

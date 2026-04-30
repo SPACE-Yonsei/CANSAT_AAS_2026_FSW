@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Optional
 
 from lib import appargs, msgstructure
+
+
+logger = logging.getLogger(__name__)
 
 
 ELECTROAPP_RUNSTATUS = True
@@ -16,7 +20,7 @@ PWR = 5.92
 ELECTRO_HEALTH = 0
 ELECTRO_STALE_TIMEOUT_SEC = 2.5
 _last_update_ts = 0.0
-_reader = None
+_reader = None  # dict (hardware) | False (synthetic-only) | None (not probed yet)
 _electro_lock = threading.Lock()
 
 
@@ -44,7 +48,16 @@ def _read_sensor() -> Optional[tuple[float, float, float]]:
         from Sensor_Electro import electro as electro_driver  # type: ignore
 
         if _reader is None:
-            _reader = electro_driver.init_INA228()
+            try:
+                _reader = electro_driver.init_INA228()
+            except Exception as exc:
+                logger.warning(
+                    "Electro: power monitor init failed (%s); using synthetic V/I/P",
+                    exc,
+                )
+                _reader = False
+        if _reader is False:
+            return _synthetic_read()
         volt = electro_driver.read_voltage(_reader)
         curr = electro_driver.read_current(_reader)
         pwr = electro_driver.read_power(_reader)
@@ -96,7 +109,7 @@ def electroapp_terminate() -> None:
     try:
         from Sensor_Electro import electro as electro_driver  # type: ignore
 
-        if _reader is not None:
+        if _reader is not None and _reader is not False:
             electro_driver.terminate_INA228(_reader)
     except Exception:
         pass
