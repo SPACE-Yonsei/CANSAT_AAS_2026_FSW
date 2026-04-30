@@ -19,6 +19,11 @@ TELEMETRY_ENABLE = True
 ST_timedelta = timedelta(seconds=0)
 
 _RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
+_RBT_REQUIRE_SEQ = os.environ.get("RBT_REQUIRE_SEQ", "1").strip() != "0"
+_RBT_SAFE_STATES = {x.strip() for x in os.environ.get("RBT_SAFE_STATES", "0,5").split(",") if x.strip()}
+_RBT_LAST_SEQ = -1
+_RBT_RECENT_NONCES: list[str] = []
+_RBT_NONCE_WINDOW = 32
 
 
 @dataclass
@@ -164,11 +169,55 @@ def cmd_ss(option: str, main_queue) -> bool:
 
 
 def cmd_rbt(option: str, _main_queue) -> bool:
-    token = option.strip()
+    global _RBT_LAST_SEQ, _RBT_RECENT_NONCES
+    token, seq, nonce = _parse_rbt_auth(option)
+
     if not _RBT_AUTH_TOKEN or token != _RBT_AUTH_TOKEN:
         return False
-    os.system("systemctl reboot -i")
+    if _RBT_SAFE_STATES and str(tlm_data.state) not in _RBT_SAFE_STATES:
+        return False
+    if _RBT_REQUIRE_SEQ:
+        if seq is None or seq <= _RBT_LAST_SEQ:
+            return False
+        _RBT_LAST_SEQ = seq
+    if nonce:
+        if nonce in _RBT_RECENT_NONCES:
+            return False
+        _RBT_RECENT_NONCES.append(nonce)
+        if len(_RBT_RECENT_NONCES) > _RBT_NONCE_WINDOW:
+            _RBT_RECENT_NONCES = _RBT_RECENT_NONCES[-_RBT_NONCE_WINDOW:]
+
+    _execute_reboot()
     return True
+
+
+def _execute_reboot() -> None:
+    os.system("systemctl reboot -i")
+
+
+def _parse_rbt_auth(option: str) -> tuple[str, Optional[int], Optional[str]]:
+    # Supported forms:
+    # - token
+    # - token,seq
+    # - token,seq,nonce
+    # - token:seq:nonce
+    opt = option.strip()
+    parts = [p.strip() for p in (opt.split(":") if ":" in opt else opt.split(","))]
+    parts = [p for p in parts if p != ""]
+    if not parts:
+        return "", None, None
+
+    token = parts[0]
+    seq = None
+    nonce = None
+    if len(parts) >= 2:
+        try:
+            seq = int(parts[1])
+        except ValueError:
+            seq = None
+    if len(parts) >= 3:
+        nonce = parts[2]
+    return token, seq, nonce
 
 
 def cmd_cam(option: str, main_queue) -> bool:
@@ -329,8 +378,14 @@ def commapp_main(main_queue, main_pipe) -> None:
 
     try:
         while COMMAPP_RUNSTATUS:
-            if main_pipe.poll(0.1):
+            try:
+                has_msg = main_pipe.poll(0.1)
+            except (KeyboardInterrupt, EOFError, OSError):
+                break
+            if has_msg:
                 recv_msg = main_pipe.recv()
                 command_handler(recv_msg)
+    except KeyboardInterrupt:
+        pass
     finally:
         uartserial.terminate_serial(serial_instance)

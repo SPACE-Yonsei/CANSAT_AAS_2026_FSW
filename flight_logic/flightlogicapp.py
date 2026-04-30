@@ -286,7 +286,14 @@ def flightlogicapp_main(main_queue, main_pipe) -> None:
     )
     state_thread.start()
 
-    while FLIGHTLOGIC_RUNSTATUS:
-        if main_pipe.poll(0.1):
-            msg = main_pipe.recv()
-            dispatch(msg, main_queue)
+    try:
+        while FLIGHTLOGIC_RUNSTATUS:
+            try:
+                has_msg = main_pipe.poll(0.1)
+            except (KeyboardInterrupt, EOFError, OSError):
+                break
+            if has_msg:
+                msg = main_pipe.recv()
+                dispatch(msg, main_queue)
+    except KeyboardInterrupt:
+        pass

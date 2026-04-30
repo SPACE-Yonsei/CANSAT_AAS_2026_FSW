@@ -1,106 +1,148 @@
-FLIGHT SOFTWARE FOR CANSAT AAS 2026
+# CANSAT AAS 2026 FSW
 
-To make a new app, copy from sample app and replace 'sample' to app name (case sensitive)
+Python multiprocessing flight software for Yonsei Space-Y CANSAT.
 
-# Prerequisities
+## Current Architecture
 
-## 0. Clone directory
-Please clone this FSW in /home/pi for smooth automatic initialization! Set the raspberry pi name as pi!
-    
-    sudo apt update
-    sudo apt install git
-    ssh-keygen -t rsa -b 4096 -C "jmpark3972@yonsei.ac.kr" # Enter 3번
-    cat ~/.ssh/id_rsa.pub # 키 복사, github 세팅 -> SSH and GPG key -> New SSH Key -> Title 아무거나, key 그대로 붙여넣기
-    git clone git@github.com:SPACE-Yonsei/CANSAT_AAS_2026_FSW.git
+- `main.py`: process orchestration, queue/pipe routing, restart/terminate handling
+- IPC bus: `sender|receiver|MsgID|data`
+- Core apps: Comm, FlightLogic, Motor, Barometer, IMU, GPS, Distance, Electro, Camera
+- Unit + smoke tests are in `tests/`
 
-    pi@spacey:~/CANSAT_AAS_2026_FSW $
-    python3 -m venv venv # 가상환경 설치
-    source venv/bin/activate # 가상환경 실행
+## Environment Setup (Raspberry Pi)
 
-    sudo apt update
-    sudo apt install python3.13-dev
+### 1) Base packages
 
-
-## 1. Install Adafruit Blinka
-Before installing Adafruit modules, follow the steps provided in the link below to install adafruit-blinka
-https://learn.adafruit.com/circuitpython-on-raspberrypi-linux/installing-circuitpython-on-raspberry-pi
-
-## 2. Install sensor libraries
-The flight software uses Adafruit CircuitPython modules
-
-    pip3 install adafruit-circuitpython-bmp3xx
-    pip3 install adafruit-circuitpython-gps
-    pip3 install adafruit-circuitpython-bno08x
-    pip install adafruit-circuitpython-ina22x
-    pip3 install adafruit-circuitpython-motor
-
-## 3. Install Video Related modules
-
-Picamera2 module is used in Raspberry Pi Camera recording
-It is pre-installed on Rapsberry Pi OS images
-
-    sudo apt install python3-picamera2
-    
-    sudo apt install -y libcamera-apps libcamera-tools
-
-    sudo nano /boot/firmware/config.txt
-    camera_auto_detect=0
-    [all]
-    dtoverlay=imx708
-
-## 4. Install Basic modules
-Other basic modules should be installed too
-
-    pip3 install numpy==1.26.4
-## 5. Install Pigpio
-
-    pip3 install pigpio
-    sudo systemctl enable pigpiod
-
-# Run Flight software
-## Update Submodules
-
-    git submodule init
-    git submodule update
-
-## SELECT CONFIG
-when initially running flight software, you will get the error
-
-    #################################################################
-    Config file does not exist: lib/config.txt, Configure the config file to run FSW!
-    #################################################################
-
-you should specify the operation mode of the FSW by editing the lib/config.txt file
-
-# Force flight-logic state (for bench tests)
-Add the optional `STATE_OVERRIDE` entry in `lib/config.txt` when you need the software
-to boot directly into a specific flight state (e.g., to spin the parafoil motors while
-on the bench). Valid options are `LAUNCHPAD`, `ASCENT`, `APOGEE`, `DESCENT`,
-`PROBE_RELEASE`, `LANDED`, or `NONE` to disable the override:
-
-```
-SELECTED=PAYLOAD
-STATE_OVERRIDE=DESCENT
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-dev
 ```
 
-The override only affects startup; once running, the state machine continues normally.
+### 2) Python venv
 
-# Optional Configuraton
-## Granting permission to interface (Not Root)
-When not running on root, permission to interfaces should be given
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+```
 
-    sudo usermod -aG i2c {user_name}
-    sudo usermod -aG gpio {user_name}
-    sudo usermod -aG video {user_name}
+### 3) Sensor/IO dependencies
 
-## Optimizations
-I2C clock stretching is recommended for stable use of sensors that use I2C
-https://learn.adafruit.com/circuitpython-on-raspberrypi-linux/i2c-clock-stretching
+```bash
+pip install adafruit-circuitpython-bmp3xx
+pip install adafruit-circuitpython-gps
+pip install adafruit-circuitpython-bno08x
+pip install adafruit-circuitpython-ina22x
+pip install pigpio
+```
 
-## When running on Raspberry Pi 5 Family (Raspberry Pi 5, Raspberry Pi Compute Module 5)
-There is a bug with adafruit board library (https://forums.raspberrypi.com/viewtopic.php?t=386485) on raspberry pi 5 family, so firmware downgrade is needed until the developers fix that bug
+### 4) Camera dependencies
 
-    sudo rpi-update 0ccee17
+```bash
+sudo apt install -y python3-picamera2 libcamera-apps libcamera-tools
+```
 
-## Camera Configuration
-Currently using Pi Cam v3 (CSI) only. USB camera (FIT0892) support has been removed.
+## Camera Configuration (Important)
+
+The current implementation uses `Sensor_Camera/picam.py` and `Sensor_Camera/cameraapp.py`.
+
+### Hardware config example (Pi Cam v3 / IMX708)
+
+Edit `/boot/firmware/config.txt`:
+
+```ini
+camera_auto_detect=0
+[all]
+dtoverlay=imx708
+```
+
+Then reboot.
+
+### Runtime camera behavior
+
+- Camera init tries `picamera2` first.
+- Recording config (current code):
+  - video format: `RGB888`
+  - resolution: `640x480`
+  - segmented recording via `cameraapp` (`SEGMENT_SEC=1.0`)
+- Output directory: `PICAM_Video/`
+- Output filename format: `P_MMDD_HHMMSS_microsec.*`
+- If camera backend is unavailable:
+  - system falls back gracefully
+  - placeholder segment files are created so pipeline/test does not break
+
+### Camera command path
+
+- `CMD,1070,CAM,ON` -> start recording
+- `CMD,1070,CAM,OFF` -> stop recording
+- FlightLogic release flow can trigger `MID_cam_activate` to force start
+
+## Security Notes (Comm)
+
+`RBT` command now supports token + anti-replay checks.
+
+- supported auth payload formats:
+  - `token`
+  - `token,seq`
+  - `token,seq,nonce`
+  - `token:seq:nonce`
+- env vars:
+  - `RBT_AUTH_TOKEN` (required)
+  - `RBT_REQUIRE_SEQ` (`1` default)
+  - `RBT_SAFE_STATES` (`0,5` default)
+
+Example:
+
+```bash
+export RBT_AUTH_TOKEN="YOUR_SECRET"
+export RBT_REQUIRE_SEQ=1
+export RBT_SAFE_STATES="0,5"
+```
+
+## Run
+
+### Local run
+
+```bash
+source .venv/bin/activate
+python main.py
+```
+
+### systemd run
+
+Use included scripts:
+
+```bash
+chmod +x startup.sh setup_systemd_service.sh
+./setup_systemd_service.sh
+sudo systemctl start cansat-fsw.service
+sudo systemctl status cansat-fsw.service
+```
+
+## Test
+
+### Full test suite
+
+```bash
+python -m unittest
+```
+
+### Main process smoke test
+
+```bash
+python -m unittest tests/test_main_smoke.py
+```
+
+## Optional Permissions (non-root user)
+
+```bash
+sudo usermod -aG i2c $USER
+sudo usermod -aG gpio $USER
+sudo usermod -aG video $USER
+```
+
+## Notes
+
+- Current app layer is operational and tested.
+- Some low-level hardware driver modules still include shim/fallback paths for non-hardware development.
+- See `Cluad.md` and `fsw_step12_audit.md` for phased implementation/audit status.

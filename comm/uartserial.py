@@ -68,6 +68,10 @@ def receive_serial_data(ser) -> Optional[str]:
         if not raw:
             return None
         return raw.decode("utf-8", errors="ignore").strip()
+    except (TypeError, ValueError):
+        # Some serial backends may transiently surface invalid timeout state.
+        # Treat as "no data" instead of noisy error during shutdown.
+        return None
     except Exception as exc:
         logger.error("receive_serial_data failed: %s", exc)
         return None

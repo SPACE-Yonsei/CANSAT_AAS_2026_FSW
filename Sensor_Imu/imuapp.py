@@ -201,7 +201,13 @@ def imuapp_main(main_queue, main_pipe) -> None:
     t2.start()
     try:
         while IMUAPP_RUNSTATUS:
-            if main_pipe.poll(0.1):
+            try:
+                has_msg = main_pipe.poll(0.1)
+            except (KeyboardInterrupt, EOFError, OSError):
+                break
+            if has_msg:
                 command_handler(main_pipe.recv())
+    except KeyboardInterrupt:
+        pass
     finally:
         imuapp_terminate()

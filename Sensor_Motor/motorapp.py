@@ -245,7 +245,14 @@ def motorapp_main(main_pipe) -> None:
     ctrl_thread = threading.Thread(target=ctrl_paragldr, daemon=True, name="MotorControlLoop")
     ctrl_thread.start()
 
-    while MOTORAPP_RUNSTATUS:
-        if main_pipe.poll(0.1):
-            msg = main_pipe.recv()
-            dispatch(msg)
+    try:
+        while MOTORAPP_RUNSTATUS:
+            try:
+                has_msg = main_pipe.poll(0.1)
+            except (KeyboardInterrupt, EOFError, OSError):
+                break
+            if has_msg:
+                msg = main_pipe.recv()
+                dispatch(msg)
+    except KeyboardInterrupt:
+        pass
