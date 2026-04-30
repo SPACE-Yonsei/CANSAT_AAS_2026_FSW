@@ -50,6 +50,8 @@ GPS_STALE_TIMEOUT: float       = 10.0   # s — drop test max valid gap was 9.0 
 GPS_MAX_PLAUSIBLE_SPEED: float = 15.0   # m/s — parafoil physical airspeed ceiling
 _gps_last_received_time: float = 0.0    # epoch, 0 = never received
 _last_valid_gps_speed: float   = 1.0    # m/s, hold-last on implausible GPS speed
+FORCE_GPS_SPEED_MPS: Optional[float] = None  # e.g. 4.0 to force fixed speed for debugging
+_force_speed_logged: bool = False
 
 threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
@@ -70,7 +72,7 @@ def handle_terminate(data: str):
 
 
 def handle_gps(data: str):
-    global _start_point_locked, _gps_last_received_time, _last_valid_gps_speed
+    global _start_point_locked, _gps_last_received_time, _last_valid_gps_speed, _force_speed_logged
     parts = data.split(",")
     if len(parts) != 7:
         log(f"GPS data format error: expected 7 fields, got {len(parts)}", events.EventType.error)
@@ -98,6 +100,11 @@ def handle_gps(data: str):
         new_speed = _last_valid_gps_speed
     else:
         _last_valid_gps_speed = new_speed
+    if FORCE_GPS_SPEED_MPS is not None:
+        new_speed = FORCE_GPS_SPEED_MPS
+        if not _force_speed_logged:
+            log(f"DEBUG: forcing GPS speed to fixed {FORCE_GPS_SPEED_MPS:.2f} m/s", events.EventType.warning)
+            _force_speed_logged = True
     _gps_last_received_time = time.time()
     # Evaluate GPS jump before acquiring the lock (pure computation, no shared state write)
     new_jump_rejected = motor_guidance.is_gps_jump(new_lat, new_lon)
