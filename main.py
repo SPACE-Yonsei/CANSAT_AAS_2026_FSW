@@ -38,6 +38,7 @@ prevstate.init_prevstate()
 # Set maxsize to prevent unbounded memory growth (1000 messages ~ few MB)
 main_queue = Queue(maxsize=1000)
 
+
 # When the main app receives the message entry from the queue
 # It checks the message ID and destination application then routes the message
 # Each application should establish a pipe with main app to receive routed message
