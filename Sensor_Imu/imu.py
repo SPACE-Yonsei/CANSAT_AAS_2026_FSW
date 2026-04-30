@@ -71,7 +71,10 @@ def init_imu() -> tuple[Any, Any]:
                 bno._debug = False  # type: ignore[attr-defined]
             except Exception:
                 pass
-            bno._dbg = lambda *_a, **_k: None  # type: ignore[method-assign]
+            def _noop_dbg(*_a: Any, **_k: Any) -> None:
+                return None
+
+            bno._dbg = _noop_dbg  # type: ignore[method-assign]
         for _ in range(4):
             if hasattr(bno, "_process_available_packets"):
                 bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
@@ -141,13 +144,30 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    _i2c, bno = init_imu()
+    print(
+        "IMU: initializing BNO08x (often 15–60 s: I2C flock, enable_feature); "
+        "stop other FSW sensor CLIs or main.py if stuck.",
+        flush=True,
+    )
+    try:
+        _i2c, bno = init_imu()
+    except Exception as exc:
+        print(f"IMU: init failed: {exc}", flush=True)
+        raise SystemExit(1) from exc
+    print("IMU: OK, streaming...", flush=True)
     period = cli_period_sec()
+    _last_fail_log = 0.0
     try:
         while True:
             s = read_sensor_data(bno)
             if s is False:
-                print("imu read failed", flush=True)
+                now = time.monotonic()
+                if now - _last_fail_log >= 2.0:
+                    print(
+                        "IMU: read failed (move module, check 0x4A/0x4B, BNO08X_DEBUG=1)",
+                        flush=True,
+                    )
+                    _last_fail_log = now
             else:
                 r, p, y, ax, ay, az, mx, my, mz, gx, gy, gz = s
                 print(

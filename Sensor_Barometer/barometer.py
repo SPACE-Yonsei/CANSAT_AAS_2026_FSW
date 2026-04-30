@@ -62,7 +62,13 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    d = init_bmp()
+    print("Barometer: initializing BMP3xx...", flush=True)
+    try:
+        d = init_bmp()
+    except Exception as exc:
+        print(f"Barometer: init failed: {exc}", flush=True)
+        raise SystemExit(1) from exc
+    print("Barometer: OK, streaming...", flush=True)
     period = cli_period_sec()
     try:
         while True:

@@ -64,10 +64,10 @@ def read_distance_data() -> None:
 
                 if _dist_hw is None:
                     try:
-                        _dist_hw = dist_driver.init_vl53()
+                        _dist_hw = dist_driver.init_tfluna()
                     except Exception as exc:
                         logger.warning(
-                            "Distance: VL53L0X init failed (%s); using synthetic rangefinder",
+                            "Distance: TF-Luna I2C init failed (%s); using synthetic rangefinder",
                             exc,
                         )
                         _dist_hw = False

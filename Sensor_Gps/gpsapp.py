@@ -88,9 +88,9 @@ def _read_gps():
         if _read_gps._inst is None:  # type: ignore[attr-defined]
             if not _GPS_SYNTH_WARNED:
                 logger.warning(
-                    "GPS: no backend opened; TLM lat/lon are SYNTHETIC. "
-                    "UART: set GPS_DEVICE. u-blox I2C (e.g. GNSS 7 Click): GPS_USE_I2C=1, GPS_I2C_ADDR=0x42. "
-                    "See README."
+                    "GPS: I2C u-blox init failed; TLM lat/lon are SYNTHETIC. "
+                    "Check FSW_I2C_BUS, GPS_I2C_ADDR (default 0x42), antenna. "
+                    "USB NMEA only with GPS_USE_UART=1."
                 )
                 _GPS_SYNTH_WARNED = True
             return _synthetic_read()

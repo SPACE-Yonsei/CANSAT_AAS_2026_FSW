@@ -1,9 +1,10 @@
-"""GPS / GNSS for `gpsapp`: UART NMEA or u-blox DDC (I2C) NMEA (e.g. GNSS 7 Click / NEO-M9N).
+"""GPS / GNSS for `gpsapp`: **u-blox DDC I2C** NMEA (e.g. GNSS 7 Click / NEO-M9N).
 
-UART uses a **separate** serial device from the XBee/comm link.
+FSW assumes **GNSS on I2C**; the flight radio uses UART (`comm`), not the GPS.
 
-I2C uses the u-blox register map: length at 0xFD/0xFE, stream bytes from 0xFF
-(see NEO-M9N integration manual §3.7.2). Default address **0x42**.
+Optional **UART NMEA** only if ``GPS_USE_UART=1`` (e.g. USB dongle), separate from XBee.
+
+I2C: length at 0xFD/0xFE, stream from 0xFF (NEO-M9N integration manual §3.7.2). Default **0x42**.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ def _port_candidates() -> list[str]:
     return ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyS0", "/dev/ttyAMA0"]
 
 
-def _use_i2c_gnss() -> bool:
-    v = os.environ.get("GPS_USE_I2C", "").strip().lower()
+def _use_uart_gnss() -> bool:
+    """Rare: USB/UART NMEA. Default is I2C u-blox only."""
+    v = os.environ.get("GPS_USE_UART", "").strip().lower()
     return v in ("1", "true", "yes", "on")
 
 
@@ -190,10 +192,7 @@ def _init_gps_i2c_ublox() -> Any:
     }
 
 
-def init_gps() -> Any:
-    if _use_i2c_gnss():
-        return _init_gps_i2c_ublox()
-
+def _init_gps_uart() -> Any:
     import serial  # type: ignore
 
     baud = int(os.environ.get("GPS_BAUD", "9600"))
@@ -206,8 +205,15 @@ def init_gps() -> Any:
         except Exception as exc:
             last_exc = exc
             logger.warning("GPS open failed for %s: %s", port, exc)
-    logger.warning("GPS UART unavailable (last error: %s); gpsapp will use synthetic", last_exc)
+    logger.warning("GPS UART unavailable (last error: %s)", last_exc)
     return None
+
+
+def init_gps() -> Any:
+    """Open GNSS: **I2C u-blox by default**; UART only when ``GPS_USE_UART=1``."""
+    if _use_uart_gnss():
+        return _init_gps_uart()
+    return _init_gps_i2c_ublox()
 
 
 def _gps_readdata_uart(dev: dict) -> Optional[list]:
@@ -264,14 +270,19 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if _use_uart_gnss():
+        print("GPS: UART mode (GPS_USE_UART=1)", flush=True)
+    else:
+        print("GPS: I2C u-blox (default). Set GPS_I2C_ADDR if not 0x42.", flush=True)
     dev = init_gps()
     period = cli_period_sec()
     if dev is None:
         print(
-            "GPS init failed. UART: set GPS_DEVICE. I2C u-blox: GPS_USE_I2C=1, GPS_I2C_ADDR=0x42",
+            "GPS init failed. I2C: FSW_I2C_BUS, wiring, 0x42. UART: GPS_USE_UART=1 and GPS_DEVICE.",
             flush=True,
         )
         raise SystemExit(1)
+    print("GPS: OK, streaming...", flush=True)
     try:
         while True:
             row = gps_readdata(dev)

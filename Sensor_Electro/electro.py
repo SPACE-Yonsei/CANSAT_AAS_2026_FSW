@@ -62,7 +62,17 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    dev = init_INA228()
+    print("Electro: initializing INA228...", flush=True)
+    try:
+        dev = init_INA228()
+    except ImportError as exc:
+        if "ina228" in str(exc).lower():
+            print("Install: pip install adafruit-circuitpython-ina228", flush=True)
+        raise SystemExit(1) from exc
+    except Exception as exc:
+        print(f"Electro: init failed: {exc}", flush=True)
+        raise SystemExit(1) from exc
+    print("Electro: OK, streaming...", flush=True)
     period = cli_period_sec()
     try:
         while True:
