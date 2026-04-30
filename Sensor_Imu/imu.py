@@ -47,6 +47,19 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
     raise RuntimeError(f"BNO08x: enable {name} failed after {attempts} tries: {last}") from last
 
 
+def _drain_bno_packets(bno: Any, seconds: float) -> None:
+    """Drain SHTP boot / advertisement traffic before ``enable_feature`` (reduces early NAKs)."""
+    deadline = time.monotonic() + max(0.0, seconds)
+    while time.monotonic() < deadline:
+        try:
+            with i2c_bus.i2c_lock():
+                if hasattr(bno, "_process_available_packets"):
+                    bno._process_available_packets(max_packets=48)  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        time.sleep(0.02)
+
+
 def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[float, float, float]:
     """Vector part (i,j,k) + real (r) → roll, pitch, yaw in degrees."""
     sinp = 2.0 * (qr * qj - qk * qi)
@@ -57,7 +70,7 @@ def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[floa
     return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
 
-def init_imu() -> tuple[Any, Any]:
+def _init_imu_once() -> tuple[Any, Any]:
     from adafruit_bno08x import (  # type: ignore
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GAME_ROTATION_VECTOR,
@@ -69,7 +82,8 @@ def init_imu() -> tuple[Any, Any]:
 
     addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
     lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
-    post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.25"))
+    post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.5"))
+    boot_drain = float(os.environ.get("IMU_BOOT_DRAIN_SEC", "1.0"))
 
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
@@ -87,14 +101,15 @@ def init_imu() -> tuple[Any, Any]:
             if hasattr(bno, "_process_available_packets"):
                 bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
 
+    _drain_bno_packets(bno, boot_drain)
     time.sleep(post_open_delay)
 
-    # Accel / gyro / mag first so fusion has data; then rotation_vector (mag-aided).
-    # If that fails (common without mag calibration / EMI), fall back to game_rotation_vector (gyro+accel only).
+    # Gyro before accel works better on some BNO08x + Pi I2C bring-ups; then mag, then fusion report.
+    # If rotation_vector fails (mag / EMI), fall back to game_rotation_vector.
     bno._fsw_use_game_quat = False  # type: ignore[attr-defined]
     for feat in (
-        BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
+        BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_MAGNETOMETER,
     ):
         with i2c_bus.i2c_lock():
@@ -112,6 +127,25 @@ def init_imu() -> tuple[Any, Any]:
 
     logger.info("IMU BNO08x OK at 0x%02x", addr)
     return i2c, bno
+
+
+def init_imu() -> tuple[Any, Any]:
+    try:
+        rounds = int(os.environ.get("IMU_INIT_ROUNDS", "2"), 0)
+    except ValueError:
+        rounds = 2
+    rounds = max(1, min(rounds, 4))
+    last_exc: Optional[Exception] = None
+    for attempt in range(rounds):
+        try:
+            return _init_imu_once()
+        except RuntimeError as exc:
+            last_exc = exc
+            logger.warning("IMU: init round %d/%d failed: %s", attempt + 1, rounds, exc)
+            if attempt + 1 < rounds:
+                i2c_bus.reset_i2c()
+                time.sleep(0.25 * (attempt + 1))
+    raise RuntimeError(f"BNO08x: init failed after {rounds} round(s): {last_exc}") from last_exc
 
 
 def read_sensor_data(bno) -> Any:

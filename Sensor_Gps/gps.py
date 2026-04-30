@@ -10,6 +10,7 @@ I2C: length at 0xFD/0xFE, stream from 0xFF (NEO-M9N integration manual §3.7.2).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
@@ -87,6 +88,8 @@ def _parse_rmc(parts: list[str]) -> Optional[dict]:
         course = float(parts[8] or 0.0)
     except ValueError:
         return None
+    if not math.isfinite(course) or course < 0.0 or course > 360.0:
+        course = 0.0
     return {
         "time": (parts[1] or "000000")[:6],
         "status": status,
@@ -97,8 +100,36 @@ def _parse_rmc(parts: list[str]) -> Optional[dict]:
     }
 
 
+def _nmea_checksum_strict() -> bool:
+    v = os.environ.get("GPS_NMEA_STRICT_CHECKSUM", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _nmea_checksum_valid(line: str) -> bool:
+    """XOR of bytes between ``$`` and ``*`` must match the two hex digits after ``*``."""
+    if not _nmea_checksum_strict():
+        return True
+    star = line.find("*")
+    if star < 0:
+        return False
+    if star + 2 >= len(line):
+        return False
+    try:
+        expect = int(line[star + 1 : star + 3], 16)
+    except ValueError:
+        return False
+    xor = 0
+    for ch in line[1:star]:
+        xor ^= ord(ch) & 0xFF
+    return xor == expect
+
+
 def _ingest_nmea_line(dev: dict, line: str) -> None:
+    line = line.strip()
     if len(line) < 6 or line[0] != "$":
+        return
+    if not _nmea_checksum_valid(line):
+        logger.debug("GPS: dropped NMEA (checksum): %s", line[:96])
         return
     body = line[1:].split("*", 1)[0]
     parts = body.split(",")
