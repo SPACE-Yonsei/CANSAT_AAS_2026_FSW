@@ -34,6 +34,7 @@ pip install adafruit-circuitpython-gps
 pip install adafruit-circuitpython-bno08x
 pip install adafruit-circuitpython-ina228
 pip install adafruit-circuitpython-vl53l0x
+pip install adafruit-extended-bus
 pip install pigpio
 ```
 
@@ -191,7 +192,8 @@ FSW_LOG_TLM=0 python3 main.py
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: `Sensor_Distance/distance.py` uses **VL53L0X** (default I2C `0x29`) when `adafruit-circuitpython-vl53l0x` works; otherwise synthetic. Set `DISTANCE_I2C_ADDR` if needed.
 - **Power**: **INA228** only via `Sensor_Electro/electro.py`, `ELECTRO_I2C_ADDR` (default `0x40`), package `adafruit-circuitpython-ina228`.
-- Env hints: `BARO_I2C_ADDR`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+- Env hints: `BARO_I2C_ADDR`, `BARO_INIT_RETRIES`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
+- **`FSW_I2C_BUS`**: if `sudo i2cdetect -y 1` shows your sensors but Python reports `No I2C device at address`, Blinka may be using a different bus than `i2c-1`. Run `pip install adafruit-extended-bus` and e.g. `export FSW_I2C_BUS=1` before `main.py`.
 - **I2C multiprocessing**: baro / power / IMU / distance each run in a separate process; by default Linux uses `flock` on `FSW_I2C_LOCK_FILE` (default `/tmp/fsw_i2c.lock`) so SMBus transactions do not interleave. Set `FSW_I2C_FLOCK=0` only if you know you do not need it.
 - **IMU init**: if logs show `Was not able to enable feature` / feature `1` (accelerometer), try `IMU_POST_OPEN_DELAY_SEC=0.5`, confirm `IMU_I2C_ADDR` (`0x4A` vs `0x4B`), wiring, and `i2cdetect`. `BNO08X_DEBUG=1` enables verbose driver output.
 
@@ -201,7 +203,8 @@ FSW_LOG_TLM=0 python3 main.py
 |-----|--------|
 | `No module named 'adafruit_ina228'` | In the **same venv** you use for `python3 main.py`: `pip install adafruit-circuitpython-ina228` |
 | `No module named 'adafruit_vl53l0x'` | Optional distance sensor: `pip install adafruit-circuitpython-vl53l0x` or ignore synthetic distance |
-| `No I2C device at address: 0x77` (baro) | `export BARO_I2C_ADDR=0x76` if SDO is grounded, or fix I2C wiring; `sudo i2cdetect -y 1` |
+| `No I2C device at address: 0x77` but `i2cdetect -y 1` shows `77` | Force the same bus Python uses: `pip install adafruit-extended-bus` then `export FSW_I2C_BUS=1`. If SDO=GND use `BARO_I2C_ADDR=0x76`. |
+| `i2cdetect` shows power IC at `42` (not `40`) | `export ELECTRO_I2C_ADDR=0x42` after installing `adafruit-circuitpython-ina228` |
 | GPS `No such file /dev/ttyUSB0` | `ls /dev/ttyUSB* /dev/ttyAMA* /dev/serial*` then `export GPS_DEVICE=...` |
 | Baro TLM looks like ~1013 hPa and temp toggling ±0.2 °C | That is **synthetic** fallback after BMP init/read failure — fix I2C address/hardware first |
 | Power TLM stepping 7.35–7.38 V in a 4-step pattern | **Synthetic** electro — usually missing `ina228` pip package or INA init error |

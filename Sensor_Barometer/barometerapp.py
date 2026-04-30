@@ -89,7 +89,9 @@ def read_barometer_data() -> None:
                     except Exception as exc:
                         logger.warning(
                             "Barometer: hardware init failed (%s); using synthetic. "
-                            "If BMP390 uses SDO=GND try BARO_I2C_ADDR=0x76; run i2cdetect -y 1",
+                            "If i2cdetect shows 0x77 on bus 1 but this fails, try: "
+                            "pip install adafruit-extended-bus && export FSW_I2C_BUS=1. "
+                            "Also BARO_I2C_ADDR=0x76 if SDO=GND; INA at 0x42 needs ELECTRO_I2C_ADDR=0x42.",
                             exc,
                         )
                         _baro_hw = False

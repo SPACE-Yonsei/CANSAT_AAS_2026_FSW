@@ -43,10 +43,32 @@ def reset_i2c() -> None:
 
 
 def get_i2c() -> Any:
-    """Return a process-wide I2C bus. Prefer ``reset_i2c()`` over raw ``deinit``."""
+    """Return a process-wide I2C bus. Prefer ``reset_i2c()`` over raw ``deinit``.
+
+    Set ``FSW_I2C_BUS=1`` (etc.) to force ``/dev/i2c-N`` via ``adafruit_extended_bus``.
+    This fixes cases where ``i2cdetect -y 1`` shows chips but ``board.I2C()`` talks to a
+    different port (common on SBCs / custom Blinka pin maps).
+    """
     global _i2c
     if _i2c is not None:
         return _i2c
+    bus_raw = os.environ.get("FSW_I2C_BUS", "").strip()
+    if bus_raw:
+        try:
+            from adafruit_extended_bus import ExtendedI2C  # type: ignore
+
+            bus_id = int(bus_raw, 0)
+            _i2c = ExtendedI2C(bus_id)
+            logger.info("I2C: ExtendedI2C(%s) -> /dev/i2c-%s", bus_raw, bus_id)
+            return _i2c
+        except Exception as exc:
+            logger.warning(
+                "FSW_I2C_BUS=%s failed (%s). pip install adafruit-extended-bus "
+                "or unset FSW_I2C_BUS. Falling back to board.I2C().",
+                bus_raw,
+                exc,
+            )
+
     import board  # type: ignore
 
     try:
