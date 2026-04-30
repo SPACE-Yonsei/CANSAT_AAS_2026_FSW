@@ -168,15 +168,47 @@ def _ublox_ddc_bytes_available(i2c: Any, address: int) -> int:
     return (msb << 8) | lsb
 
 
+def _ublox_read_chunk_max() -> int:
+    """SMBus ``read_i2c_block_data`` is often capped at 32; u-blox DDC expects **burst** read from 0xFF."""
+    try:
+        v = int(os.environ.get("GPS_I2C_READ_CHUNK", "32"), 0)
+    except ValueError:
+        v = 32
+    return max(1, min(v, 128))
+
+
 def _ublox_ddc_read_stream(i2c: Any, address: int, nbytes: int) -> bytes:
+    """Drain u-blox RX FIFO: write reg **0xFF** once per chunk, then read **multiple** FIFO bytes.
+
+    One I2C transaction per byte (Blinka → ``read_i2c_block_data``) often hits ``EIO`` (121) on Pi
+    when the queue has tens of bytes; burst read matches u-blox / SparkFun reference code.
+    """
     if nbytes <= 0:
         return b""
+    nbytes = min(int(nbytes), 512)
     reg = bytes([0xFF])
-    one = bytearray(1)
+    chunk_max = _ublox_read_chunk_max()
     out = bytearray()
-    for _ in range(nbytes):
-        i2c.writeto_then_readfrom(address, reg, one, out_end=1, in_end=1)
-        out.append(one[0])
+    remaining = nbytes
+    while remaining > 0:
+        take = min(chunk_max, remaining)
+        buf = bytearray(take)
+        try:
+            i2c.writeto_then_readfrom(address, reg, buf, out_end=1, in_end=take)
+            out.extend(buf)
+            remaining -= take
+        except OSError:
+            if take > 1:
+                take = 1
+                buf = bytearray(1)
+                try:
+                    i2c.writeto_then_readfrom(address, reg, buf, out_end=1, in_end=1)
+                    out.extend(buf)
+                    remaining -= 1
+                except OSError:
+                    break
+            else:
+                break
     return bytes(out)
 
 
@@ -261,12 +293,18 @@ def _gps_readdata_i2c(dev: dict) -> Optional[list]:
         i2c = i2c_bus.get_i2c()
         try:
             n = _ublox_ddc_bytes_available(i2c, addr)
+        except OSError as exc:
+            logger.debug("GPS I2C bytes_available failed: %s", exc)
+            n = 0
         except Exception:
             n = 0
         if n > 0:
             n = min(n, 256)
-            chunk = _ublox_ddc_read_stream(i2c, addr, n)
-            _nmea_feed_bytes(dev, chunk)
+            try:
+                chunk = _ublox_ddc_read_stream(i2c, addr, n)
+                _nmea_feed_bytes(dev, chunk)
+            except OSError as exc:
+                logger.warning("GPS I2C read_stream failed (%s); next poll will retry", exc)
     return _gps_build_return(dev)
 
 

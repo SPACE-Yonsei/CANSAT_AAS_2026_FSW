@@ -23,11 +23,18 @@ _BNO_FEATURE_NAMES = {
     0x02: "gyroscope",
     0x03: "magnetometer",
     0x05: "rotation_vector",
+    0x08: "game_rotation_vector",
 }
 
 
-def _enable_feature_retry(bno: Any, feature_id: int, attempts: int = 5) -> None:
+def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
     """BNO08x often needs a short settle + retries right after power-up (Blinka / Pi)."""
+    if attempts is None:
+        try:
+            attempts = int(os.environ.get("IMU_ENABLE_FEATURE_ATTEMPTS", "8"), 0)
+        except ValueError:
+            attempts = 8
+        attempts = max(3, min(attempts, 20))
     name = _BNO_FEATURE_NAMES.get(feature_id, f"id={feature_id:#04x}")
     last: Optional[Exception] = None
     for i in range(attempts):
@@ -53,6 +60,7 @@ def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[floa
 def init_imu() -> tuple[Any, Any]:
     from adafruit_bno08x import (  # type: ignore
         BNO_REPORT_ACCELEROMETER,
+        BNO_REPORT_GAME_ROTATION_VECTOR,
         BNO_REPORT_GYROSCOPE,
         BNO_REPORT_MAGNETOMETER,
         BNO_REPORT_ROTATION_VECTOR,
@@ -81,16 +89,26 @@ def init_imu() -> tuple[Any, Any]:
 
     time.sleep(post_open_delay)
 
-    # Rotation vector first helps fusion wake; accel was failing as feature 0x01 when enabled first on some boards.
-    report_order = (
-        BNO_REPORT_ROTATION_VECTOR,
+    # Accel / gyro / mag first so fusion has data; then rotation_vector (mag-aided).
+    # If that fails (common without mag calibration / EMI), fall back to game_rotation_vector (gyro+accel only).
+    bno._fsw_use_game_quat = False  # type: ignore[attr-defined]
+    for feat in (
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
         BNO_REPORT_MAGNETOMETER,
-    )
-    for feat in report_order:
+    ):
         with i2c_bus.i2c_lock():
             _enable_feature_retry(bno, feat)
+    with i2c_bus.i2c_lock():
+        try:
+            _enable_feature_retry(bno, BNO_REPORT_ROTATION_VECTOR)
+        except RuntimeError as exc:
+            logger.warning(
+                "IMU: rotation_vector not available (%s); enabling game_rotation_vector instead",
+                exc,
+            )
+            _enable_feature_retry(bno, BNO_REPORT_GAME_ROTATION_VECTOR)
+            bno._fsw_use_game_quat = True  # type: ignore[attr-defined]
 
     logger.info("IMU BNO08x OK at 0x%02x", addr)
     return i2c, bno
@@ -104,7 +122,10 @@ def read_sensor_data(bno) -> Any:
             with i2c_bus.i2c_lock():
                 if hasattr(bno, "_process_available_packets"):
                     bno._process_available_packets(max_packets=6)  # type: ignore[attr-defined]
-                qi, qj, qk, qr = bno.quaternion
+                if getattr(bno, "_fsw_use_game_quat", False):
+                    qi, qj, qk, qr = bno.game_quaternion
+                else:
+                    qi, qj, qk, qr = bno.quaternion
                 roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
                 ax, ay, az = bno.acceleration
                 mx, my, mz = bno.magnetic
