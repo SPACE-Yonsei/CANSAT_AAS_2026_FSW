@@ -3,7 +3,7 @@
 ## 0. 한 줄 요약
 - 이 시스템은 `main.py`가 다수 앱 프로세스를 생성하고 `Queue + Pipe`로 라우팅하는 Python 멀티프로세스 FSW이다.
 - nasa의 cfs Software Bus(cfe)와 app들 간의 관계를 추출해서 현재 fsw에 반영(https://github.com/nasa/cFS) sensor 연결없이 app들 간의 관계를 검증할 수 있도록 그리고 센서 연결 없이 최대한 많은 것들을 검증할 수 있도록 구현
-- 앱간 MID 입력과 전달 과정을 간결
+- 앱간 MID 입력과 전달 과정을 기본과 중심심 틀로 잡기.
 
 ## 1. 전체 디렉토리/파일 구조
 
@@ -13,17 +13,27 @@
   - `lib/appargs.py`: AppID/MID 상수 정의
   - `lib/msgstructure.py`: `sender|receiver|MsgID|data` 생성/직렬화/역직렬화
   - `lib/events.py`: 멀티프로세스 로깅 큐 (`QueueListener/QueueHandler`)
+        - 로그는 전체로그(print.csv), 각 앱별 로그(센서와 카메라 데이터 포함)
   - `lib/config.py`: 
         - 운용 모드(0: LAUNCH_PAD, 1: ASCENT, 2: APOGEE, 3: RELEASE, 4: EGG, 5: LANDED)
         - 상태 오버라이드: STATE를 상태로 강제 구동하는 기능이다. 고도로 STATE를 구별하고, 변환하는 기능을 끈다.
         - GPIO 정의(5: release 솔레노이드, 6: egg 모터, 12, 13: 파라포일 조종 모터 left, right)
+        - 센서 통신 속도 정의(I2c hz)
+            bmp390: 10 
+            bno085: 10(100hz로 읽고고 평균내서 10번 -> 10hz)
+            gnss 7 click: 10
+            ina228: 1
+            tf-luna: 10
+            xbee: 10
+            camera: 30fps
+
   - `lib/prevstate.py`: 상태/보정값//IMU yaw 오프셋/타깃좌표/카운터 영속화
 - **통신**
   - `comm/commapp.py`: UART 명령 수신, 정규식 명령 파싱/분기, TLM 집계/송신
   - `comm/uartserial.py`: `/dev/serial0` 기반 UART I/O
-  - `comm/xbeereset.py`: pigpio18로 XBee reset 핀 펄스
+  - `comm/xbeereset.py`: pigpio18로 XBee reset 핀 펄스 기능 구현, main.py 시작 시 펄스 주기.
 - **비행 로직**
-  - `flight_logic/flightlogicapp.py`: state 정의, state 전이, 모터/카메라 명령 발행, 시뮬레이션 모드드
+  - `flight_logic/flightlogicapp.py`: state 정의, state 전이, 모터/카메라 명령 발행, 시뮬레이션 모드
     - state 정의 
         (0   LAUNCH_PAD   발사대 대기
         1   ASCENT   상승 중, 카메라 ON
@@ -46,6 +56,8 @@
   - `Sensor_Barometer/`, `Sensor_Imu/`, `Sensor_Gps/`, `Sensor_Distance/`, `Sensor_Electro/`: 센서 읽기 + 메시지 송신 앱
   - `Sensor_Motor/motorapp.py`, `motor_control.py`, `motor_guidance.py`, `Motor_Egg.py`, `Motor_Release.py`: 패러포일/번와이어/솔레노이드 제어
   - `Sensor_Camera/cameraapp.py`, `picam.py`: 카메라 녹화 제어
+  - 노이즈 제거 방안.
+        - 
 - **운영 스크립트**
   - `startup.sh`, `cansat-fsw.service`, `setup_systemd_service.sh`
 
