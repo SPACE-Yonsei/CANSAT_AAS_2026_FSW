@@ -28,7 +28,7 @@ HEALTH = 1
 
 # Runtime control
 IMU_ERROR_COUNT = 0
-IMU_MAX_CONSECUTIVE_ERRORS = 3
+IMU_MAX_CONSECUTIVE_ERRORS = 50
 IMU_STALE_TIMEOUT_SEC = 1.0
 _last_sample_ts = 0.0
 _imu_lock = threading.Lock()

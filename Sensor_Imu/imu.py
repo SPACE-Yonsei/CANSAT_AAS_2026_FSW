@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,15 @@ def init_imu() -> tuple[Any, Any]:
 
     addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
     i2c = busio.I2C(board.SCL, board.SDA)
-    bno = BNO08X_I2C(i2c, address=addr)
+    lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
+    bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
+    # Adafruit driver prints verbose SHTP "Packet" dumps when debug is on; force off unless BNO08X_DEBUG=1.
+    if not lib_debug:
+        try:
+            bno._debug = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        bno._dbg = lambda *_a, **_k: None  # type: ignore[method-assign]
     for feat in (
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
@@ -47,30 +56,33 @@ def init_imu() -> tuple[Any, Any]:
 
 def read_sensor_data(bno) -> Any:
     """Return 12-tuple for `imuapp`, or False on soft failure."""
-    try:
-        qi, qj, qk, qr = bno.quaternion
-        roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
-        ax, ay, az = bno.acceleration
-        mx, my, mz = bno.magnetic
-        gx, gy, gz = bno.gyro
-        # Gyro in rad/s → deg/s for telemetry consistency with prior synthetic units
-        r2d = 180.0 / math.pi
-        return (
-            roll,
-            pitch,
-            yaw,
-            float(ax),
-            float(ay),
-            float(az),
-            float(mx),
-            float(my),
-            float(mz),
-            float(gx) * r2d,
-            float(gy) * r2d,
-            float(gz) * r2d,
-        )
-    except Exception:
-        return False
+    r2d = 180.0 / math.pi
+    for _ in range(4):
+        try:
+            if hasattr(bno, "_process_available_packets"):
+                bno._process_available_packets(max_packets=12)  # type: ignore[attr-defined]
+            qi, qj, qk, qr = bno.quaternion
+            roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
+            ax, ay, az = bno.acceleration
+            mx, my, mz = bno.magnetic
+            gx, gy, gz = bno.gyro
+            return (
+                roll,
+                pitch,
+                yaw,
+                float(ax),
+                float(ay),
+                float(az),
+                float(mx),
+                float(my),
+                float(mz),
+                float(gx) * r2d,
+                float(gy) * r2d,
+                float(gz) * r2d,
+            )
+        except Exception:
+            time.sleep(0.002)
+    return False
 
 
 def reinit_imu(i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:

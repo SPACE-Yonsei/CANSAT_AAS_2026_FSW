@@ -17,7 +17,7 @@ def _port_candidates() -> list[str]:
     env = os.environ.get("GPS_DEVICE", "").strip()
     if env:
         return [p.strip() for p in env.split(",") if p.strip()]
-    return ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyAMA0"]
+    return ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyS0", "/dev/ttyAMA0"]
 
 
 def _parse_coord(raw: str, hemi: str) -> Optional[float]:

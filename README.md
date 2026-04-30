@@ -186,7 +186,8 @@ FSW_LOG_TLM=0 python3 main.py
 
 - **Barometer**: uses `Sensor_Barometer/barometer.py` (BMP3xx on I2C, default `0x77`) when Blinka + `adafruit-circuitpython-bmp3xx` work; otherwise the app falls back to synthetic altitude/pressure.
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
-- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track.
+- **GPS**: uses `Sensor_Gps/gps.py` on a **separate** UART from the radio. Set `GPS_DEVICE` (e.g. `/dev/ttyUSB0`) and `GPS_BAUD` (often `9600` or `38400`). If no GPS serial is available, `gpsapp` keeps its synthetic track (TLM will still show the fake lat/lon crawl). Run `ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*` on the Pi to see what exists.
+- **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: still uses the built-in synthetic rangefinder in `distanceapp.py` unless you add a real sensor module and wire it there.
 - Env hints: `BARO_I2C_ADDR`, `IMU_I2C_ADDR`, `GPS_DEVICE`, `GPS_BAUD`.
 
