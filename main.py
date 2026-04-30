@@ -22,12 +22,6 @@ import time
 # Initialize logging system FIRST (before any LogEvent calls)
 log_queue = events.init_events_main_process()
 
-# Load configuration files
-from lib import config
-if config.FSW_CONF == config.CONF_NONE:
-    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, "CONFIG IS SELECTED AS NONE, TERMINATING FSW")
-    sys.exit(0)
-
 # Read prev state, altitude calibration for recovery
 from lib import prevstate
 prevstate.init_prevstate()
@@ -37,7 +31,6 @@ prevstate.init_prevstate()
 # for message routing
 # Set maxsize to prevent unbounded memory growth (1000 messages ~ few MB)
 main_queue = Queue(maxsize=1000)
-
 
 # When the main app receives the message entry from the queue
 # It checks the message ID and destination application then routes the message
