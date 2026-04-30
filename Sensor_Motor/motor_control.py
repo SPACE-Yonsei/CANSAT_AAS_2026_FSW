@@ -30,7 +30,7 @@ RIGHT_MIN_PULSE: int = int(RIGHT_ZERO - MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs,
 PULSE_MIN: int = 500   # μs
 PULSE_MAX: int = 2500  # μs
 
-K_pulse: float = PULSE_PER_DEG  # μs/(°/s)
+K_pulse: float = PULSE_PER_DEG*2  # μs/(°/s)
 
 
 def init_control(logger: 'MotorLogger'):
