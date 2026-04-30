@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from math import cos, radians, sqrt
 from typing import Optional
 
 from lib import appargs, msgstructure
+
+
+logger = logging.getLogger(__name__)
+_GPS_SYNTH_WARNED = False
 
 
 GPSAPP_RUNSTATUS = True
@@ -74,18 +79,29 @@ def _synthetic_read():
 
 
 def _read_gps():
+    global _GPS_SYNTH_WARNED
     try:
         from Sensor_Gps import gps as gps_driver  # type: ignore
 
         if not hasattr(_read_gps, "_inst"):
             _read_gps._inst = gps_driver.init_gps()  # type: ignore[attr-defined]
         if _read_gps._inst is None:  # type: ignore[attr-defined]
+            if not _GPS_SYNTH_WARNED:
+                logger.warning(
+                    "GPS: no UART opened; TLM lat/lon are SYNTHETIC. "
+                    "Plug a USB GPS or set GPS_DEVICE to a real port (see README). "
+                    "Check: ls /dev/ttyUSB* /dev/ttyACM* /dev/ttyS*"
+                )
+                _GPS_SYNTH_WARNED = True
             return _synthetic_read()
         data = gps_driver.gps_readdata(_read_gps._inst)  # type: ignore[attr-defined]
         if data is None:
             return None
         return data
     except Exception:
+        if not _GPS_SYNTH_WARNED:
+            logger.warning("GPS: driver error; falling back to synthetic track")
+            _GPS_SYNTH_WARNED = True
         return _synthetic_read()
 
 

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import threading
 from collections import deque
 
 from lib import appargs, msgstructure, prevstate
+
+
+logger = logging.getLogger(__name__)
 
 
 BAROMETERAPP_RUNSTATUS = True
@@ -77,13 +81,23 @@ def read_barometer_data() -> None:
                 from Sensor_Barometer import barometer as baro_driver  # type: ignore
 
                 if _baro_hw is None:
-                    _baro_hw = baro_driver.init_bmp()
+                    try:
+                        _baro_hw = baro_driver.init_bmp()
+                    except Exception as exc:
+                        logger.warning(
+                            "Barometer: hardware init failed (%s); using synthetic pressure/temp/alt",
+                            exc,
+                        )
+                        _baro_hw = False
                 if _baro_hw is not False:
-                    prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
+                    try:
+                        prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
+                    except Exception as exc:
+                        logger.debug("Barometer read error (one frame skipped): %s", exc)
+                        prs_raw, tmp_raw, alt_raw = _synthetic_raw()
                 else:
                     prs_raw, tmp_raw, alt_raw = _synthetic_raw()
             except Exception:
-                _baro_hw = False
                 prs_raw, tmp_raw, alt_raw = _synthetic_raw()
 
             _prs_window.append(float(prs_raw))
