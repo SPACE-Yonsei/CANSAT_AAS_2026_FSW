@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
 from typing import Optional
 
 
@@ -34,19 +35,54 @@ class DummySerial:
         self.is_open = False
 
 
-def init_serial(port: str = "/dev/serial0", baudrate: int = 9600):
+def _port_candidates(explicit: str | None) -> list[str]:
+    env = os.environ.get("UART_DEVICE", "").strip()
+    parts = [p.strip() for p in env.split(",") if p.strip()] if env else []
+    defaults = [
+        (explicit or "").strip(),
+        "/dev/serial0",
+        "/dev/ttyAMA0",
+        "/dev/ttyS0",
+    ]
+    out: list[str] = []
+    for p in parts + defaults:
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def init_serial(port: str | None = None, baudrate: int = 9600):
     """Initialize serial transport.
 
-    If pyserial is not installed, returns a dummy serial object to keep
-    non-hardware tests runnable.
+    Tries multiple common Raspberry Pi UART device paths unless `UART_DEVICE`
+    is set (comma-separated list, highest priority).
+
+    If pyserial is not installed or no port could be opened, returns a dummy
+    serial object to keep non-hardware tests runnable.
     """
     try:
         import serial  # type: ignore
-
-        return serial.Serial(port, baudrate, timeout=1)
     except Exception as exc:
-        logger.warning("Falling back to DummySerial: %s", exc)
+        logger.warning("pyserial unavailable; using DummySerial (%s)", exc)
         return DummySerial()
+
+    candidates = _port_candidates(port or "/dev/serial0")
+    last_exc: Exception | None = None
+    for cand in candidates:
+        try:
+            ser = serial.Serial(cand, baudrate, timeout=1)
+            logger.info("UART opened %s @ %s", cand, baudrate)
+            return ser
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("UART open failed for %s: %s", cand, exc)
+
+    logger.warning("Falling back to DummySerial (last error: %s)", last_exc)
+    return DummySerial()
+
+
+def is_dummy_serial(ser) -> bool:
+    return isinstance(ser, DummySerial)
 
 
 def send_serial_data(ser, string_to_write: str) -> bool:

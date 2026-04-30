@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import logging
 import os
 import re
 import threading
@@ -14,9 +15,14 @@ from lib import appargs, msgstructure, prevstate
 from comm import uartserial
 
 
+logger = logging.getLogger(__name__)
+
 COMMAPP_RUNSTATUS = True
 TELEMETRY_ENABLE = True
 ST_timedelta = timedelta(seconds=0)
+
+_LOG_TLM_TO_CONSOLE = os.environ.get("FSW_LOG_TLM", "").strip() == "1"
+_TLM_SEND_FAIL_LOGGED = False
 
 _RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
 _RBT_REQUIRE_SEQ = os.environ.get("RBT_REQUIRE_SEQ", "1").strip() != "0"
@@ -295,6 +301,7 @@ def command_handler(recv_msg: str) -> None:
 
 
 def send_tlm(serial_instance) -> None:
+    global _TLM_SEND_FAIL_LOGGED
     if not TELEMETRY_ENABLE:
         return
 
@@ -312,7 +319,16 @@ def send_tlm(serial_instance) -> None:
         f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
         f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f}\n"
     )
-    uartserial.send_serial_data(serial_instance, line)
+    ok = uartserial.send_serial_data(serial_instance, line)
+    if _LOG_TLM_TO_CONSOLE:
+        logger.info("TLM %s", line.rstrip("\n"))
+    if not ok and not _TLM_SEND_FAIL_LOGGED:
+        logger.warning(
+            "TLM UART write failed (no bytes will reach the radio/USB adapter). "
+            "Check UART mapping/permissions or set UART_DEVICE=/dev/ttyAMA0 "
+            "and optionally FSW_LOG_TLM=1 for local prints."
+        )
+        _TLM_SEND_FAIL_LOGGED = True
 
 
 def _dispatch_command(line: str, main_queue) -> bool:
@@ -371,6 +387,12 @@ def commapp_main(main_queue, main_pipe) -> None:
     tlm_data.packet_count = prevstate.PREV_PACKET_COUNT
 
     serial_instance = uartserial.init_serial()
+    if uartserial.is_dummy_serial(serial_instance):
+        logger.warning(
+            "Comm UART is in DummySerial mode (no hardware TX/RX). "
+            "Fix UART_DEVICE/pyserial/port permissions, or run with FSW_LOG_TLM=1 "
+            "to print TLM lines to the FSW log."
+        )
     sender = threading.Thread(target=_tlm_sender, args=(serial_instance,), daemon=True)
     reader = threading.Thread(target=read_cmd, args=(main_queue, serial_instance), daemon=True)
     sender.start()
