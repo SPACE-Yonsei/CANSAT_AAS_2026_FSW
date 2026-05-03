@@ -45,7 +45,7 @@ update_lock = threading.Lock()
 
 sensor = SimpleNamespace(
     yaw=0.0,
-    gyrz=0.0,        # deg/s  — see IMU_GYRZ_IS_DEG_S note in handle_imu()
+    gyrz=0.0,        # deg/s, per MID_motor_imu contract
     imu_health=1,
     lat=0.0,
     lon=0.0,
@@ -123,15 +123,11 @@ def handle_gps(data: str) -> None:
     last_gps_update = time.time()
 
 
-_RAD_TO_DEG = 180.0 / 3.141592653589793
-
-
 def handle_imu(data: str) -> None:
-    """Parse: yaw_deg, gyrz_rad_s, imu_health
+    """Parse: yaw_deg,gyrz_deg_s,imu_health.
 
-    BNO085 GYROSCOPE reports angular velocity in rad/s (confirmed from data schema).
-    gyrz is converted to deg/s here so that guidance and FDIR thresholds
-    can work in the same unit as yaw (deg) and commanded_yaw_rate (deg/s).
+    The IPC contract fixes IMU yaw rate in deg/s. The IMU app publishes
+    converted deg/s values, so Motor stores the value as-is.
     """
     global last_imu_update
     fields = [x.strip() for x in data.split(",")]
@@ -140,14 +136,14 @@ def handle_imu(data: str) -> None:
         return
     try:
         yaw            = float(fields[0])
-        gyrz_rad_s     = float(fields[1])          # rad/s from BNO085
+        gyrz_deg_s     = float(fields[1])
         imu_health     = int(float(fields[2]))
     except (ValueError, IndexError) as exc:
         logger.warning("IMU parse error: %s | raw=%r", exc, data)
         return
     with update_lock:
         sensor.yaw        = yaw
-        sensor.gyrz       = gyrz_rad_s * _RAD_TO_DEG   # stored as deg/s
+        sensor.gyrz       = gyrz_deg_s
         sensor.imu_health = imu_health
     last_imu_update = time.time()
 

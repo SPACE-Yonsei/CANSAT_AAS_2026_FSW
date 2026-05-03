@@ -162,7 +162,7 @@ sudo usermod -aG video $USER
 
 - Current app layer is operational and tested.
 - Some low-level hardware driver modules still include shim/fallback paths for non-hardware development.
-- See `Cluad.md` and `fsw_step12_audit.md` for phased implementation/audit status.
+- See `.claude/docs/baseline/fsw-baseline.md` and `.claude/docs/audits/gap-audit-current-baseline.md` for phased implementation/audit status.
 
 ## Troubleshooting
 
@@ -182,7 +182,7 @@ Then commit once and retry pull/merge.
 ### 2) Ctrl+C shutdown prints many child tracebacks
 
 If you still see repeated `KeyboardInterrupt` stack traces in subprocesses,
-you are likely running older app modules. Update to latest `claude` branch code,
+you are likely running older app modules. Update to the latest app code,
 which includes graceful `pipe.poll()` shutdown guards in all app runloops.
 
 ### 3) `receive_serial_data failed: 'NoneType' object cannot be interpreted as an integer`

@@ -62,8 +62,7 @@ class _NS:
 _appargs.MainAppArg        = _NS(AppID=10, AppName='Main', MID_TerminateProcess=1001001)
 _appargs.MotorAppArg       = _NS(AppID=19, AppName='Motor')
 _appargs.FlightlogicAppArg = _NS(MID_motor_TargetCor=1101901, MID_motor_state=1101902,
-                                  MID_motor_burnwire=1101903, MID_motor_EggDrop=1101904,
-                                  MID_motor_PullArms=1101905)
+                                  MID_motor_burnwire=1101903, MID_motor_EggDrop=1101904)
 _appargs.GpsAppArg         = _NS(MID_motor_gps=1501901)
 _appargs.ImuAppArg         = _NS(MID_motor_imu=1401901)
 _appargs.BarometerAppArg   = _NS(MID_motor_alt=1301901)

@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/validate_cmd.py",
+            "command": "python .claude/hooks/hook_validate_command.py",
             "timeout": 10
           }
         ]
@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/syntax_check.py",
+            "command": "python .claude/hooks/hook_syntax_check.py",
             "timeout": 15
           }
         ]
@@ -37,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/session_log.py",
+            "command": "python .claude/hooks/hook_session_log.py",
             "timeout": 10
           }
         ]

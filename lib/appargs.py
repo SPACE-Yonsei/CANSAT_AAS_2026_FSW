@@ -15,7 +15,6 @@ class FlightlogicAppArg:
     MID_motor_state = 1101902
     MID_motor_burnwire = 1101903
     MID_motor_EggDrop = 1101904
-    MID_motor_PullArms = 1101905
 
     MID_comm_state = 1101201
     MID_comm_sim = 1101202
@@ -84,3 +83,10 @@ class CameraAppArg:
 class MotorAppArg:
     AppID = 19
     AppName = "Motor"
+
+# IPC contract notes (documentation only, not runtime data):
+# - Envelope: sender_app|receiver_app|msg_id|data
+# - data must not contain the "|" delimiter.
+# - Comm local commands that do not enter the app bus: CX, ST, RBT.
+# - IMU MID_motor_imu gyrz unit is deg/s.
+# - Motor and Camera are primarily bus receivers in the current architecture.

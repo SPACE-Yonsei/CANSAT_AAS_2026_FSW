@@ -123,12 +123,10 @@ class TestMessageRouting(unittest.TestCase):
 
     # --- IMU ---
     def test_imu_updates_sensor(self):
-        import math
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu,
                   "45.0,2.5,1")
         self.assertAlmostEqual(motorapp.sensor.yaw,  45.0)
-        # 2.5 rad/s stored as deg/s after conversion
-        self.assertAlmostEqual(motorapp.sensor.gyrz, 2.5 * (180.0 / math.pi), places=4)
+        self.assertAlmostEqual(motorapp.sensor.gyrz, 2.5)
         self.assertEqual(motorapp.sensor.imu_health,  1)
         self.assertGreater(motorapp.last_imu_update, 0)
 

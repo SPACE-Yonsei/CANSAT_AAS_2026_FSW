@@ -12,8 +12,7 @@ class TestHarnessFlow(unittest.TestCase):
         flightlogicapp.state = 0
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
-        motorapp.target.lat = 0.0
-        motorapp.target.lon = 0.0
+        motorapp.target = None
         commapp.tlm_data = commapp.TelemetryData()
 
     def _route_once(self, q):
