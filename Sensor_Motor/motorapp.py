@@ -15,7 +15,44 @@ MOTORAPP_RUNSTATUS = True
 motor_enabled = True
 state = 0
 pi = None
+logger: Optional[MotorLogger] = None
 
+target = types.SimpleNamespace(
+    lat  = None,  # Optional[float] — deg, decimal degrees
+    lon  = None,  # Optional[float] — deg, decimal degrees
+)
+
+altitude = types.SimpleNamespace(
+    yaw     = None,   # Optional[float] — deg, 0-360
+    gyrz    = None,   # Optional[float] — rad/s (pre-filtered in imu.py)
+    healthy = False,  # bool — False when IMU reports stale/fault
+)
+baro_m: Optional[float] = None  # m, 기압계 고도
+
+GpsVector = types.SimpleNamespace(
+    lat    = None,  # Optional[float] — deg, decimal degrees
+    lon    = None,  # Optional[float] — deg, decimal degrees
+    speed  = None,  # Optional[float] — m/s
+    course = None,  # Optional[float] — deg, 0-360
+)
+GpsFidelity = types.SimpleNamespace(
+    rmc_status    = None,  # Optional[str]  — "A"(active) / "V"(void)
+    fix_quality   = None,  # Optional[int]  — 0=no fix, 1=GPS, 2=DGPS
+    sats          = None,  # Optional[int]  — 위성 수
+    jump_rejected = True,  # bool — True until is_gps_jump() clears it
+)
+
+state: int = 0
+_start_point_locked: bool = False  # True once a valid-GPS start_point is committed
+
+GYRZ_RUNAWAY_THRESHOLD: float = math.radians(100.0) # rad/s (=100°/s), 제어 불능 판정
+
+GPS_STALE_TIMEOUT: float       = 10.0   # s — drop test max valid gap was 9.0 s
+GPS_MAX_PLAUSIBLE_SPEED: float = 15.0   # m/s — parafoil physical airspeed ceiling
+_gps_last_received_time: float = 0.0    # epoch, 0 = never received
+_last_valid_gps_speed: float   = 1.0    # m/s, hold-last on implausible GPS speed
+
+threads: dict[str, threading.Thread] = {}
 update_lock = threading.Lock()
 sensor = SimpleNamespace(
     yaw=0.0,
@@ -144,72 +181,90 @@ def _snapshot_sensors():
         )
 
 
-def _is_finite(x: float) -> bool:
-    return not (x is None or math.isnan(x) or math.isinf(x))
+def _check_fdir(snap: types.SimpleNamespace) -> Optional[str]:
+    # FDIR-0: 센서 미수신 / NaN·Inf
+    gps_missing  = (snap.gps.lat is None or snap.gps.lon is None
+                    or not math.isfinite(snap.gps.lat) or not math.isfinite(snap.gps.lon))
+    imu_missing  = (snap.imu.yaw is None or snap.imu.gyrz is None
+                    or not math.isfinite(snap.imu.yaw) or not math.isfinite(snap.imu.gyrz))
+    baro_missing = (snap.baro_m is None or not math.isfinite(snap.baro_m))
+    if gps_missing or imu_missing or baro_missing:
+        missing = (["GPS"] if gps_missing else []) + \
+                  (["IMU"] if imu_missing else []) + \
+                  (["BARO"] if baro_missing else [])
+        return f"No data received: {'+'.join(missing)}"
 
+    # FDIR-1: IMU 센서-보고 건강 상태 (imu.py의 read_imu_data 루프가 판정)
+    if not snap.imu.healthy:
+        return "IMU stale (sensor-reported)"
 
-def _check_fdir(snap) -> str | None:
-    if not _is_finite(snap.yaw) or not _is_finite(snap.gyrz) or not _is_finite(snap.baro_m):
-        return "FDIR-0 invalid numeric"
-    if snap.imu_health <= 0:
-        return "FDIR-1 imu unhealthy"
-    if time.time() - last_gps_update > GPS_STALE_TIMEOUT:
-        return "FDIR-2 gps stale"
+    # FDIR-2: GPS 수신 freshness (마지막 수신 후 GPS_STALE_TIMEOUT 초 초과)
+    if _gps_last_received_time > 0:
+        gps_age = time.time() - _gps_last_received_time
+        if gps_age > GPS_STALE_TIMEOUT:
+            return f"GPS stale ({gps_age:.1f}s since last fix, limit={GPS_STALE_TIMEOUT}s)"
 
-    gps_vector = SimpleNamespace(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
-    gps_fidelity = SimpleNamespace(
-        fix_quality=snap.fix_quality,
-        sats=snap.sats,
-        rmc_status=snap.rmc_status,
-    )
-    if not motor_guidance.is_gps_valid(gps_vector, gps_fidelity):
-        return "FDIR-2b gps invalid"
-    if motor_guidance.is_gps_jump(snap.lat, snap.lon):
-        return "FDIR-2c gps jump"
-    if abs(snap.gyrz) > 100.0:
-        return "FDIR-3 high yaw rate"
-    if snap.baro_m <= 0:
-        return "FDIR-4 low altitude"
-    if abs(snap.target_lat) < 0.000001 and abs(snap.target_lon) < 0.000001:
-        return "FDIR-5 target missing"
+    # FDIR-2b: GPS 무결성
+    if not motor_guidance.is_gps_valid(snap.gps, snap.gps_fidelity):
+        return (f"GPS invalid (lat={snap.gps.lat}, lon={snap.gps.lon}, "
+                f"fix={snap.gps_fidelity.fix_quality}, sats={snap.gps_fidelity.sats}, "
+                f"rmc={snap.gps_fidelity.rmc_status})")
+
+    # FDIR-2c: GPS 순간 이동 거부
+    if snap.gps_fidelity.jump_rejected:
+        return (f"GPS jump rejected (lat={snap.gps.lat:.6f}, lon={snap.gps.lon:.6f})")
+
+    # FDIR-3: 극한 회전
+    if abs(snap.imu.gyrz) > GYRZ_RUNAWAY_THRESHOLD:
+        return (f"|gyrz|={abs(snap.imu.gyrz):.2f} rad/s "
+                f"({math.degrees(abs(snap.imu.gyrz)):.1f}°/s) > "
+                f"{GYRZ_RUNAWAY_THRESHOLD:.2f} rad/s")
+
+    # FDIR-4: 기압계 고도
+    if snap.baro_m <= 0.0:
+        return f"Baro altitude invalid ({snap.baro_m:.1f}m)"
+
+    # FDIR-5: 목표 좌표 미수신
+    if snap.target.lat is None or snap.target.lon is None:
+        return "No target coordinates received"
+
     return None
 
 
-def dispatch(msg: str) -> None:
-    global MOTORAPP_RUNSTATUS
-    unpacked = msgstructure.unpack_msg(msg)
-    if unpacked is False:
-        return
-
-    if unpacked.msg_id == appargs.MainAppArg.MID_TerminateProcess:
-        MOTORAPP_RUNSTATUS = False
-    elif unpacked.msg_id == appargs.GpsAppArg.MID_motor_gps:
-        handle_gps(unpacked.data)
-    elif unpacked.msg_id == appargs.ImuAppArg.MID_motor_imu:
-        handle_imu(unpacked.data)
-    elif unpacked.msg_id == appargs.BarometerAppArg.MID_motor_alt:
-        handle_barometer(unpacked.data)
-    elif unpacked.msg_id == appargs.FlightlogicAppArg.MID_motor_TargetCor:
-        handle_target_coord(unpacked.data)
-    elif unpacked.msg_id == appargs.FlightlogicAppArg.MID_motor_state:
-        handle_flight_state(unpacked.data)
-    elif unpacked.msg_id == appargs.FlightlogicAppArg.MID_motor_burnwire:
-        handle_release()
-    elif unpacked.msg_id == appargs.FlightlogicAppArg.MID_motor_EggDrop:
-        handle_egg_drop()
-    elif unpacked.msg_id == appargs.CommAppArg.MID_RouteCmd_MEC:
-        handle_mec(unpacked.data)
+def _check_gps_stale() -> bool:
+    """GPS stale 여부 반환. 새 경고는 GPS_STALE_TIMEOUT 간격으로만 로그."""
+    global _gps_stale_logged_at
+    if _gps_last_received_time <= 0:
+        return False
+    gps_age = time.time() - _gps_last_received_time
+    if gps_age <= GPS_STALE_TIMEOUT:
+        return False
+    now = time.time()
+    if now - _gps_stale_logged_at >= GPS_STALE_TIMEOUT:
+        log(f"GPS stale ({gps_age:.1f}s) — continuing with last known position", events.EventType.warning)
+        _gps_stale_logged_at = now
+    return True
 
 
-def ctrl_paragldr() -> None:
-    while MOTORAPP_RUNSTATUS:
-        if state < 3 or not motor_enabled:
-            time.sleep(0.1)
-            continue
-        if state == 5:
-            motor_control.set_motors_off(pi)
-            time.sleep(0.1)
-            continue
+def ctrl_paragldr():
+    motors_off        = False
+    _fdir_last_reason = None
+    _fdir_repeat_count = 0
+    _ctrl_tick        = 0
+
+    while running:
+        try:
+            snap = _snapshot_sensors()
+
+            if snap.state >= 3 and snap.motor_enabled:
+
+                if snap.state == 5:
+                    if not motors_off:
+                        motor_control.set_motors_off(pi)
+                        motors_off = True
+                        log("State 5: motors off", events.EventType.warning)
+                    time.sleep(CONTROL_LOG_INTERVAL)
+                    continue
 
         snap = _snapshot_sensors()
         fdir = _check_fdir(snap)
