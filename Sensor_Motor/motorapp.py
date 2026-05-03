@@ -81,16 +81,6 @@ FDIR_LOG_INTERVAL: float = 5.0   # min seconds between identical FDIR log lines
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _send(main_queue, msg_id: int, data: str) -> None:
-    msgstructure.send_msg(
-        main_queue,
-        appargs.MotorAppArg.AppID,
-        appargs.CommAppArg.AppID,
-        msg_id,
-        data,
-    )
-
-
 def _is_finite(x) -> bool:
     try:
         return x is not None and not math.isnan(float(x)) and not math.isinf(float(x))
