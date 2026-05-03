@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from lib import appargs, msgstructure
+from lib import appargs, msgstructure, prevstate
 
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,10 @@ def _wrap_deg(deg: float) -> float:
     while deg < 0.0:
         deg += 360.0
     return deg
+
+
+def _apply_yaw_offset(yaw: float) -> float:
+    return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
 
 
 def _ema(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
@@ -96,6 +100,7 @@ def _read_sensor_sample():
 
 def imuapp_init() -> None:
     global _i2c_instance, _imu_instance
+    prevstate.refresh_runtime_overrides()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -135,7 +140,7 @@ def read_imu_data() -> None:
 
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
-        _yaw_ema = _ema(_yaw_ema, _wrap_deg(float(yaw)))
+        _yaw_ema = _ema(_yaw_ema, _apply_yaw_offset(float(yaw)))
         _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
 
         with _imu_lock:
