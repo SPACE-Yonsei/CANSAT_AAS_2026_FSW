@@ -76,6 +76,16 @@ _last_fdir_reason: str | None = None
 _last_fdir_log_ts: float = 0.0
 FDIR_LOG_INTERVAL: float = 5.0   # min seconds between identical FDIR log lines
 
+_start_point_locked: bool = False
+_last_gyrz_for_fdir: float | None = None
+
+# deg/s. Drop-test was motor-off, so high yaw rate can be natural rotation.
+# Use a spike/extreme gate instead of treating every >200 deg/s sample as a
+# hard actuator-safety fault.
+GYRZ_WARN_DPS: float = 200.0
+GYRZ_SPIKE_DELTA_DPS: float = 350.0
+GYRZ_EXTREME_SPIKE_DPS: float = 500.0
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -86,6 +96,60 @@ def _is_finite(x) -> bool:
         return x is not None and not math.isnan(float(x)) and not math.isinf(float(x))
     except (TypeError, ValueError):
         return False
+
+
+def _gps_vector_from_sensor() -> GpsVector:
+    return GpsVector(lat=sensor.lat, lon=sensor.lon, speed=sensor.speed, course=sensor.course)
+
+
+def _gps_fidelity_from_sensor() -> GpsFidelity:
+    return GpsFidelity(
+        fix_quality=sensor.fix_quality,
+        sats=sensor.sats,
+        rmc_status=sensor.rmc_status,
+        gps_health=sensor.gps_health,
+    )
+
+
+def _gps_valid_for_start_lock() -> bool:
+    gps_vector = _gps_vector_from_sensor()
+    gps_fidelity = _gps_fidelity_from_sensor()
+    return motor_guidance.is_gps_valid(gps_vector, gps_fidelity)
+
+
+def _maybe_lock_start_point(reason: str) -> bool:
+    """Lock start coordinates only after GPS quality is valid."""
+    global _start_point_locked
+    with update_lock:
+        if _start_point_locked:
+            return True
+        if not _gps_valid_for_start_lock():
+            return False
+        cur_lat = sensor.lat
+        cur_lon = sensor.lon
+        _start_point_locked = True
+    motor_guidance.set_start_coordinates(cur_lat, cur_lon)
+    logger.info("Start point locked (%s): %.6f, %.6f", reason, cur_lat, cur_lon)
+    return True
+
+
+def _check_yaw_rate_fault(gyrz_deg_s: float) -> str | None:
+    """Classify IMU yaw-rate faults in deg/s.
+
+    Motor-off replay shows large natural spins and occasional spikes. A single
+    moderate high-yaw sample is logged by replay but should not necessarily
+    force neutral; extreme values or abrupt high-rate jumps still fail FDIR.
+    """
+    global _last_gyrz_for_fdir
+    g = float(gyrz_deg_s)
+    prev = _last_gyrz_for_fdir
+    _last_gyrz_for_fdir = g
+
+    if abs(g) >= GYRZ_EXTREME_SPIKE_DPS:
+        return f"FDIR-5 yaw-rate extreme spike ({g:.1f} deg/s)"
+    if prev is not None and abs(g) >= GYRZ_WARN_DPS and abs(g - prev) >= GYRZ_SPIKE_DELTA_DPS:
+        return f"FDIR-5 yaw-rate spike ({g:.1f} deg/s, delta={g - prev:.1f})"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +185,8 @@ def handle_gps(data: str) -> None:
         sensor.rmc_status  = rmc_stat
         sensor.gps_health  = gps_hlth
     last_gps_update = time.time()
+    if state >= 3 and not _start_point_locked:
+        _maybe_lock_start_point("gps-valid-after-state-3")
 
 
 def handle_imu(data: str) -> None:
@@ -189,7 +255,7 @@ def handle_target_coord(data: str) -> None:
 
 def handle_flight_state(data: str) -> None:
     """Update flight state and handle state-entry side effects."""
-    global state, _prev_state
+    global state, _prev_state, _start_point_locked
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError) as exc:
@@ -203,13 +269,13 @@ def handle_flight_state(data: str) -> None:
     _prev_state = state
     state = new_state
 
-    # On entering RELEASE (state 3), lock the start-point for guidance
+    if new_state < 3:
+        _start_point_locked = False
+
+    # On entering RELEASE (state 3), lock only if GPS is already valid.
     if new_state == 3:
-        with update_lock:
-            cur_lat = sensor.lat
-            cur_lon = sensor.lon
-        motor_guidance.set_start_coordinates(cur_lat, cur_lon)
-        logger.info("Start point locked at state-3: %.6f, %.6f", cur_lat, cur_lon)
+        if not _maybe_lock_start_point("state-3"):
+            logger.warning("State-3 entered before valid GPS; start lock deferred")
 
 
 def handle_release() -> None:
@@ -313,9 +379,9 @@ def _check_fdir(snap) -> str | None:
     if motor_guidance.is_gps_jump(snap.lat, snap.lon):
         return "FDIR-4 gps position jump"
 
-    # gyrz is deg/s; >200 deg/s is physically implausible for a parafoil cansat
-    if abs(snap.gyrz) > 200.0:
-        return f"FDIR-5 yaw-rate implausible ({snap.gyrz:.1f} deg/s)"
+    yaw_fault = _check_yaw_rate_fault(float(snap.gyrz))
+    if yaw_fault is not None:
+        return yaw_fault
 
     if snap.baro_m < 0.0:
         return f"FDIR-6 negative altitude ({snap.baro_m:.1f} m)"
@@ -387,6 +453,8 @@ def ctrl_paragldr() -> None:
     while MOTORAPP_RUNSTATUS:
         try:
             if state < 3 or not motor_enabled:
+                if pi is not None:
+                    motor_control.set_neutral(pi)
                 time.sleep(0.1)
                 continue
 
@@ -434,7 +502,9 @@ def ctrl_paragldr() -> None:
 # ---------------------------------------------------------------------------
 
 def init() -> None:
-    global pi
+    global pi, _start_point_locked, _last_gyrz_for_fdir
+    _start_point_locked = False
+    _last_gyrz_for_fdir = None
     motor_guidance.init_guidance()
     Motor_Release.init_burnwire()
     Motor_Egg.init_solenoid()

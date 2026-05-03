@@ -47,6 +47,25 @@ class TestMotorGuidance(unittest.TestCase):
         out = motor_guidance.guidance(imu, gps2, fid, tgt, 5.0)
         self.assertLessEqual(abs(out.commanded_yaw_rate), motor_guidance.LANDING_YR_MAX + 1e-6)
 
+    def test_guidance_debug_fields_finite(self):
+        imu, gps, fid, tgt = self._good_inputs()
+        motor_guidance.set_start_coordinates(gps.lat, gps.lon)
+        motor_guidance.guidance(imu, gps, fid, tgt, 100.0)
+        time.sleep(0.02)
+        gps2 = GpsVector(lat=37.550001, lon=126.950001, speed=12.0, course=90.0)
+        out = motor_guidance.guidance(imu, gps2, fid, tgt, 120.0)
+        self.assertIn(out.state, {"HOMING", "PATTERN", "LANDING"})
+        import math
+        for name in (
+            "crosstrack_error",
+            "along_track",
+            "lookahead",
+            "heading_error",
+            "desired_yaw_rate",
+            "commanded_yaw_rate",
+        ):
+            self.assertTrue(math.isfinite(getattr(out, name)), name)
+
     def test_gps_vector_is_namedtuple(self):
         gps = GpsVector(lat=37.55, lon=126.95, speed=10.0, course=90.0)
         self.assertEqual(gps.lat,    37.55)

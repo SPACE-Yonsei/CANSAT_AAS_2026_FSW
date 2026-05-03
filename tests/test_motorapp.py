@@ -17,6 +17,8 @@ def _reset_motorapp():
     motorapp.target             = None
     motorapp._last_fdir_reason  = None
     motorapp._last_fdir_log_ts  = 0.0
+    motorapp._start_point_locked = False
+    motorapp._last_gyrz_for_fdir = None
 
     motorapp.sensor.yaw         = 10.0
     motorapp.sensor.gyrz        = 1.0
@@ -79,9 +81,14 @@ class TestFDIR(unittest.TestCase):
         self.assertIn("baro stale", motorapp._check_fdir(snap))
 
     def test_fdir_yaw_rate_implausible(self):
-        motorapp.sensor.gyrz = 500.0
+        motorapp.sensor.gyrz = 600.0
         snap = motorapp._snapshot_sensors()
         self.assertIn("yaw-rate", motorapp._check_fdir(snap))
+
+    def test_fdir_moderate_motoroff_yaw_rate_not_hard_fault(self):
+        motorapp.sensor.gyrz = 180.0
+        snap = motorapp._snapshot_sensors()
+        self.assertIsNone(motorapp._check_fdir(snap))
 
     def test_fdir_negative_altitude(self):
         motorapp.sensor.baro_m = -1.0
@@ -188,8 +195,25 @@ class TestHandlers(unittest.TestCase):
     def test_state3_locks_start_point(self):
         motorapp.sensor.lat = 37.55
         motorapp.sensor.lon = 126.95
+        motorapp.sensor.fix_quality = 1
+        motorapp.sensor.sats = 8
+        motorapp.sensor.rmc_status = "A"
+        motorapp.sensor.gps_health = 1
         motorapp.handle_flight_state("3")
         self.assertAlmostEqual(motor_guidance._start_point.lat, 37.55)
+        self.assertAlmostEqual(motor_guidance._start_point.lon, 126.95)
+
+    def test_state3_defers_start_point_until_valid_gps(self):
+        motorapp.sensor.lat = 37.55
+        motorapp.sensor.lon = 0.0
+        motorapp.sensor.fix_quality = 0
+        motorapp.sensor.sats = 0
+        motorapp.sensor.rmc_status = "V"
+        motorapp.sensor.gps_health = 0
+        motorapp.handle_flight_state("3")
+        self.assertFalse(motorapp._start_point_locked)
+        motorapp.handle_gps("37.55,126.95,12.0,90.0,1,8,A,1")
+        self.assertTrue(motorapp._start_point_locked)
         self.assertAlmostEqual(motor_guidance._start_point.lon, 126.95)
 
 

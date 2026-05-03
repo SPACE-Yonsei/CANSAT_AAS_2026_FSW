@@ -1,126 +1,142 @@
-"""Guidance logic: L1-style carrot-following + robust yaw-rate PI control.
+"""Parafoil guidance: start-target carrot tracking plus L1-style yaw-rate demand.
 
 Unit contract:
-  - All angles          : degrees
-  - gyrz (measured yr)  : deg/s  (must match IMU driver output; see motorapp.handle_imu)
-  - commanded_yaw_rate  : deg/s
-  - distance            : metres
-  - altitude (baro_m)   : metres AGL
-  - speed               : m/s
+  - yaw, heading, course        : deg
+  - gyrz, desired/commanded yr  : deg/s
+  - distance, cross-track error : m
+  - altitude                    : m AGL
 
-Phases:
-  HOMING   — altitude > 50 m, fly toward target
-  PATTERN  — 10 m < alt <= 50 m and within 80 m of target; fly figure-8 / loiter
-  LANDING  — alt <= 10 m; reduced yaw-rate limit
+This module intentionally keeps the actuator model out of guidance. It outputs
+only commanded_yaw_rate in deg/s. Motor effectiveness is tuned in motor_control.
 """
 
 from __future__ import annotations
 
+import math
 import time
-from math import atan2, cos, radians, sqrt, tanh
 from types import SimpleNamespace
 from typing import NamedTuple
 
 
 class GpsVector(NamedTuple):
-    """Position and velocity from GPS, always passed as this type."""
-    lat:    float   # decimal degrees, WGS-84
-    lon:    float   # decimal degrees, WGS-84
-    speed:  float   # m/s (ground speed)
-    course: float   # degrees (track over ground)
+    """Position and ground track from GPS."""
+    lat: float
+    lon: float
+    speed: float
+    course: float
 
 
 class GpsFidelity(NamedTuple):
-    """GPS quality flags, always passed as this type."""
-    fix_quality: int    # 0=no fix, 1=GPS, 2=DGPS, …
-    sats:        int    # number of satellites in use
-    rmc_status:  str    # 'A'=active/valid, 'V'=void/invalid
-    gps_health:  int    # driver-level health flag (0=unhealthy)
+    """GPS quality flags from the GPS app."""
+    fix_quality: int
+    sats: int
+    rmc_status: str
+    gps_health: int
+
 
 # ---------------------------------------------------------------------------
 # Guidance tuning constants
 # ---------------------------------------------------------------------------
 
-# Lookahead distances (m) selected by altitude band
-L_DISTANCE_HIGH: float = 40.0
-L_DISTANCE_MID:  float = 30.0
-L_DISTANCE_LOW:  float = 15.0
+# ArduPilot L1-inspired path-following knobs. This is not copied code; these
+# are the same control concepts adapted to a low-speed parafoil with yaw-rate
+# output instead of lateral acceleration output.
+L1_PERIOD_SEC: float = 17.0
+L1_DAMPING: float = 0.75
+L1_MIN_GROUND_SPEED_MPS: float = 3.0
+L1_CAPTURE_ANGLE_DEG: float = 90.0
 
-# Yaw-rate limits (deg/s)
-YR_MAX:         float = 45.0
+# Lookahead bounds and altitude floors (m).
+L_DISTANCE_HIGH: float = 40.0
+L_DISTANCE_MID: float = 30.0
+L_DISTANCE_LOW: float = 15.0
+LOOKAHEAD_MIN_M: float = 10.0
+LOOKAHEAD_MAX_M: float = 45.0
+
+# Phase thresholds.
+PATTERN_ALTITUDE_M: float = 50.0
+LANDING_ALTITUDE_M: float = 10.0
+PATTERN_RADIUS_M: float = 80.0
+
+# Yaw-rate limits (deg/s).
+YR_MAX: float = 45.0
+PATTERN_YR_MAX: float = 35.0
 LANDING_YR_MAX: float = 20.0
 
-# Heading error at which the PI integrator is reset (deg)
+# Heading error at which the PI integrator is reset (deg).
 CAPTURE_THRESHOLD_DEG: float = 45.0
 
-# PI controller gains
-KP_YR:        float = 1.2
-KI_YR:        float = 0.25
-MAX_INTEGRAL: float = 10.0   # deg/s  (anti-windup clamp on integrator)
+# Inner yaw-rate PI gains.
+KP_YR: float = 1.2
+KI_YR: float = 0.25
+MAX_INTEGRAL: float = 10.0
 
-# Slew-rate limit for output yaw-rate (deg/s per second)
+# Command slew-rate limit (deg/s per second).
 MAX_ACCEL: float = 150.0
 
-# GPS integrity thresholds
-GPS_JUMP_MAX_SPEED:          float = 200.0  # m/s — above this we call it a jump
-GPS_STABLE_COUNT_REQUIRED:   int   = 2      # consecutive stable readings before trusting GPS
+# GPS integrity thresholds.
+GPS_JUMP_MAX_SPEED: float = 200.0
+GPS_STABLE_COUNT_REQUIRED: int = 2
+
+EARTH_M_PER_DEG: float = 111_000.0
+
 
 # ---------------------------------------------------------------------------
-# Module-level state (reset by init_guidance)
+# Module-level state
 # ---------------------------------------------------------------------------
 
 _last_gps: SimpleNamespace | None = None
-_gps_stable_count:  int   = 0
-_integral_yr:       float = 0.0
-_last_cmd_yr:       float = 0.0
-_last_ctrl_ts:      float | None = None
+_gps_stable_count: int = 0
+_integral_yr: float = 0.0
+_last_cmd_yr: float = 0.0
+_last_ctrl_ts: float | None = None
 _start_point = SimpleNamespace(lat=0.0, lon=0.0)
 _target_point = SimpleNamespace(lat=0.0, lon=0.0)
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle
-# ---------------------------------------------------------------------------
-
 def init_guidance(_logger=None) -> None:
-    """Reset all guidance state. Call once at app startup and on re-init."""
+    """Reset all runtime state. Call at app startup and before replay tests."""
     global _last_gps, _gps_stable_count, _integral_yr, _last_cmd_yr, _last_ctrl_ts
-    _last_gps         = None
+    _last_gps = None
     _gps_stable_count = 0
-    _integral_yr      = 0.0
-    _last_cmd_yr      = 0.0
-    _last_ctrl_ts     = None
+    _integral_yr = 0.0
+    _last_cmd_yr = 0.0
+    _last_ctrl_ts = None
 
 
 # ---------------------------------------------------------------------------
-# GPS integrity checks
+# GPS integrity and coordinates
 # ---------------------------------------------------------------------------
 
 def is_gps_valid(gps_vector: GpsVector, gps_fidelity: GpsFidelity) -> bool:
-    """Return True when GPS data passes basic sanity checks."""
+    """Return True when GPS data passes basic quality checks."""
     return (
-        -90.0 <= gps_vector.lat <= 90.0
-        and -180.0 <= gps_vector.lon <= 180.0
-        and gps_fidelity.fix_quality >= 1
-        and gps_fidelity.sats >= 4
-        and gps_fidelity.rmc_status.upper() == "A"
-        and gps_fidelity.gps_health >= 1
+        math.isfinite(float(gps_vector.lat))
+        and math.isfinite(float(gps_vector.lon))
+        and -90.0 <= float(gps_vector.lat) <= 90.0
+        and -180.0 <= float(gps_vector.lon) <= 180.0
+        and abs(float(gps_vector.lon)) > 1e-9
+        and int(gps_fidelity.fix_quality) >= 1
+        and int(gps_fidelity.sats) >= 4
+        and str(gps_fidelity.rmc_status).upper() == "A"
+        and int(gps_fidelity.gps_health) >= 1
     )
 
 
+def _gps_to_ne(ref_lat: float, ref_lon: float, lat: float, lon: float) -> SimpleNamespace:
+    """Convert WGS-84 lat/lon to local North/East metres around ref."""
+    north = (lat - ref_lat) * EARTH_M_PER_DEG
+    east = (lon - ref_lon) * EARTH_M_PER_DEG * math.cos(math.radians(ref_lat))
+    return SimpleNamespace(n=north, e=east)
+
+
 def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Flat-earth distance in metres between two WGS-84 coordinates."""
-    dlat = (lat2 - lat1) * 111_000.0
-    dlon = (lon2 - lon1) * 111_000.0 * cos(radians((lat1 + lat2) / 2.0))
-    return sqrt(dlat * dlat + dlon * dlon)
+    ne = _gps_to_ne(lat1, lon1, lat2, lon2)
+    return math.hypot(ne.n, ne.e)
 
 
 def is_gps_jump(lat: float, lon: float) -> bool:
-    """Return True when the implied ground speed exceeds GPS_JUMP_MAX_SPEED m/s.
-
-    Returns True (i.e. 'jump detected') for the very first call and until
-    GPS_STABLE_COUNT_REQUIRED consecutive non-jump readings accumulate.
-    """
+    """Reject first/unstable samples and unrealistic implied GPS velocity."""
     global _last_gps, _gps_stable_count
     now = time.time()
     cur = SimpleNamespace(lat=float(lat), lon=float(lon), ts=now)
@@ -128,9 +144,9 @@ def is_gps_jump(lat: float, lon: float) -> bool:
     if _last_gps is None:
         _last_gps = cur
         _gps_stable_count = 1
-        return True  # first reading: wait for confirmation
+        return True
 
-    dt   = max(1e-3, cur.ts - _last_gps.ts)
+    dt = max(1e-3, cur.ts - _last_gps.ts)
     dist = _distance_m(_last_gps.lat, _last_gps.lon, cur.lat, cur.lon)
     speed_mps = dist / dt
     _last_gps = cur
@@ -143,156 +159,210 @@ def is_gps_jump(lat: float, lon: float) -> bool:
     return _gps_stable_count < GPS_STABLE_COUNT_REQUIRED
 
 
-# ---------------------------------------------------------------------------
-# Coordinate setters
-# ---------------------------------------------------------------------------
-
 def set_start_coordinates(lat: float, lon: float) -> None:
-    """Lock the start point (called by motorapp on state-3 entry)."""
     _start_point.lat = float(lat)
     _start_point.lon = float(lon)
 
 
 def set_target_coord(lat: float, lon: float) -> None:
-    """Update the target landing coordinate (called by motorapp on TC message)."""
     _target_point.lat = float(lat)
     _target_point.lon = float(lon)
 
 
 # ---------------------------------------------------------------------------
-# Control sub-functions
+# Guidance helpers
 # ---------------------------------------------------------------------------
 
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
 def _angle_wrap_deg(angle: float) -> float:
-    """Wrap angle into (-180, +180]."""
-    while angle >  180.0:
+    while angle > 180.0:
         angle -= 360.0
-    while angle < -180.0:
+    while angle <= -180.0:
         angle += 360.0
     return angle
 
 
-def _outer_loop(angle_to_turn_deg: float, speed_mps: float, lookahead_m: float) -> float:
-    """Nonlinear outer-loop: heading error -> desired yaw-rate (deg/s).
+def _bearing_deg(from_ne: SimpleNamespace, to_ne: SimpleNamespace) -> float:
+    """Return navigation bearing: 0=N, +90=E."""
+    return math.degrees(math.atan2(to_ne.e - from_ne.e, to_ne.n - from_ne.n))
 
-    Uses tanh saturation so the output stays within ±YR_MAX.
-    The gain scales with speed/lookahead, giving faster response at low altitude.
+
+def _phase(distance_m: float, baro_m: float) -> str:
+    if baro_m <= LANDING_ALTITUDE_M:
+        return "LANDING"
+    if baro_m <= PATTERN_ALTITUDE_M and distance_m <= PATTERN_RADIUS_M:
+        return "PATTERN"
+    return "HOMING"
+
+
+def _phase_yaw_limit(phase: str) -> float:
+    if phase == "LANDING":
+        return LANDING_YR_MAX
+    if phase == "PATTERN":
+        return PATTERN_YR_MAX
+    return YR_MAX
+
+
+def schedule_lookahead(baro_m: float, gps_speed_mps: float) -> float:
+    """Schedule L1/carrot lookahead by altitude and ground speed.
+
+    ArduPilot L1 uses an L1 distance proportional to damping * period * speed.
+    For this parafoil we bound that distance and keep altitude-dependent floors,
+    because low-altitude operation needs less aggressive lateral movement.
     """
-    gain   = max(0.5, min(2.0, speed_mps / max(5.0, lookahead_m)))
-    scaled = angle_to_turn_deg / 45.0
-    return YR_MAX * tanh(gain * scaled)
+    speed = max(L1_MIN_GROUND_SPEED_MPS, float(gps_speed_mps))
+    l1_distance = (L1_DAMPING * L1_PERIOD_SEC / math.pi) * speed
+
+    if baro_m > 300.0:
+        altitude_floor = L_DISTANCE_HIGH
+    elif baro_m > 150.0:
+        altitude_floor = L_DISTANCE_MID
+    else:
+        altitude_floor = L_DISTANCE_LOW
+
+    return _clamp(max(l1_distance, altitude_floor), LOOKAHEAD_MIN_M, LOOKAHEAD_MAX_M)
 
 
-def _yaw_rate_pi_control(
-    desired_yr: float,
-    measured_yr: float,   # deg/s (same unit as desired_yr)
-    dt: float,
-    yr_limit: float,
-) -> float:
-    """PI controller with conditional-integration anti-windup.
+def _l1_desired_yaw_rate(heading_error_deg: float, speed_mps: float, lookahead_m: float, yr_limit: float) -> float:
+    """Convert heading error to desired yaw rate using an L1-style demand.
 
-    Both desired_yr and measured_yr must be in deg/s.
+    L1 normally commands lateral acceleration: K_L1 * V^2 / L1_dist * sin(Nu).
+    With no airspeed and no full aircraft dynamics model, we approximate the
+    yaw-rate demand as lateral_accel / ground_speed.
     """
+    speed = max(L1_MIN_GROUND_SPEED_MPS, float(speed_mps))
+    nu_deg = _clamp(heading_error_deg, -L1_CAPTURE_ANGLE_DEG, L1_CAPTURE_ANGLE_DEG)
+    k_l1 = 4.0 * L1_DAMPING * L1_DAMPING
+    lateral_accel = k_l1 * speed * speed / max(lookahead_m, 1.0) * math.sin(math.radians(nu_deg))
+    desired_yr = math.degrees(lateral_accel / speed)
+    return _clamp(desired_yr, -yr_limit, yr_limit)
+
+
+def _yaw_rate_pi_control(desired_yr: float, measured_yr: float, dt: float, yr_limit: float) -> float:
+    """Cascade inner-loop PI with conditional anti-windup."""
     global _integral_yr
-    err      = desired_yr - measured_yr
-    p        = KP_YR * err
-    u_unsat  = p + _integral_yr
-    u_sat    = max(-yr_limit, min(yr_limit, u_unsat))
+    err = desired_yr - measured_yr
+    p_term = KP_YR * err
+    u_unsat = p_term + _integral_yr
+    u_sat = _clamp(u_unsat, -yr_limit, yr_limit)
 
-    # Integrate only when not saturated or when error reduces saturation
     if (
         abs(u_unsat) < yr_limit
-        or (u_unsat >  yr_limit and err < 0)
-        or (u_unsat < -yr_limit and err > 0)
+        or (u_unsat > yr_limit and err < 0.0)
+        or (u_unsat < -yr_limit and err > 0.0)
     ):
-        _integral_yr += KI_YR * err * dt
-        _integral_yr  = max(-MAX_INTEGRAL, min(MAX_INTEGRAL, _integral_yr))
-        u_sat = max(-yr_limit, min(yr_limit, p + _integral_yr))
+        _integral_yr = _clamp(_integral_yr + KI_YR * err * dt, -MAX_INTEGRAL, MAX_INTEGRAL)
+        u_sat = _clamp(p_term + _integral_yr, -yr_limit, yr_limit)
 
     return u_sat
 
 
 def _slew_limit(cmd: float, dt: float, accel_limit: float = MAX_ACCEL) -> float:
-    """Rate-limit the yaw-rate command to prevent actuator shock."""
     global _last_cmd_yr
     delta_max = accel_limit * dt
-    delta     = cmd - _last_cmd_yr
-    if   delta >  delta_max:
-        cmd = _last_cmd_yr + delta_max
-    elif delta < -delta_max:
-        cmd = _last_cmd_yr - delta_max
+    cmd = _clamp(cmd, _last_cmd_yr - delta_max, _last_cmd_yr + delta_max)
     _last_cmd_yr = cmd
     return cmd
 
 
-# ---------------------------------------------------------------------------
-# Main guidance entry point
-# ---------------------------------------------------------------------------
+def _fdir_result(reason: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        state="FDIR",
+        phase="FDIR",
+        fdir_reason=reason,
+        distance=0.0,
+        crosstrack_error=math.nan,
+        along_track=math.nan,
+        track_length=math.nan,
+        lookahead=math.nan,
+        desired_heading=math.nan,
+        heading_error=math.nan,
+        desired_yaw_rate=0.0,
+        commanded_yaw_rate=0.0,
+        measured_yaw_rate=0.0,
+        gps_course=math.nan,
+        course_error=math.nan,
+        carrot_e=math.nan,
+        carrot_n=math.nan,
+        yr_limit=0.0,
+    )
+
 
 def guidance(imu_data, gps_vector: GpsVector, gps_fidelity: GpsFidelity, target, baro_m: float) -> SimpleNamespace:
-    """Compute commanded yaw-rate for the current timestep.
+    """Compute commanded yaw-rate for one timestep.
 
-    Args:
-        imu_data     : SimpleNamespace with .yaw (deg) and .gyrz (deg/s)
-        gps_vector   : SimpleNamespace with .lat, .lon, .speed (m/s), .course (deg)
-        gps_fidelity : SimpleNamespace with .fix_quality, .sats, .rmc_status
-        target       : SimpleNamespace with .lat, .lon  (must not be None here;
-                       motorapp FDIR-7 blocks calls when target is None)
-        baro_m       : altitude AGL in metres
-
-    Returns:
-        SimpleNamespace with:
-          .state             : 'HOMING' | 'PATTERN' | 'LANDING' | 'FDIR'
-          .distance          : metres to target (0.0 on FDIR)
-          .commanded_yaw_rate: deg/s  (0.0 on FDIR)
+    Returns a SimpleNamespace with the legacy fields (.state, .distance,
+    .commanded_yaw_rate) plus replay/debug fields used by MotorApp telemetry.
     """
-    _FDIR = SimpleNamespace(state="FDIR", distance=0.0, commanded_yaw_rate=0.0)
-
+    if target is None:
+        return _fdir_result("target missing")
     if not is_gps_valid(gps_vector, gps_fidelity):
-        return _FDIR
+        return _fdir_result("gps invalid")
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        return _FDIR
+        return _fdir_result("gps jump")
 
-    distance      = _distance_m(gps_vector.lat, gps_vector.lon, target.lat, target.lon)
-    dlat          = (target.lat - gps_vector.lat) * 111_000.0
-    mid_lat       = (target.lat + gps_vector.lat) / 2.0
-    dlon          = (target.lon - gps_vector.lon) * 111_000.0 * cos(radians(mid_lat))
-    desired_hdg   = atan2(dlon, dlat) * 180.0 / 3.141592653589793
-    angle_to_turn = _angle_wrap_deg(desired_hdg - float(imu_data.yaw))
+    start = _start_point
+    cur_ne = _gps_to_ne(start.lat, start.lon, float(gps_vector.lat), float(gps_vector.lon))
+    target_ne = _gps_to_ne(start.lat, start.lon, float(target.lat), float(target.lon))
+    start_ne = SimpleNamespace(n=0.0, e=0.0)
+    track_len = max(1e-6, math.hypot(target_ne.n, target_ne.e))
+    track_n = target_ne.n / track_len
+    track_e = target_ne.e / track_len
 
-    # Altitude-based lookahead selection
-    if   baro_m > 300:
-        lookahead = L_DISTANCE_HIGH
-    elif baro_m > 150:
-        lookahead = L_DISTANCE_MID
-    else:
-        lookahead = L_DISTANCE_LOW
+    along_track = cur_ne.n * track_n + cur_ne.e * track_e
+    # Positive means current position is to the left of the start->target line.
+    crosstrack_error = track_e * cur_ne.n - track_n * cur_ne.e
+    distance = math.hypot(target_ne.n - cur_ne.n, target_ne.e - cur_ne.e)
 
-    # Phase selection
-    if   baro_m > 50:
-        phase    = "HOMING"
-    elif baro_m > 10:
-        phase    = "PATTERN" if distance < 80 else "HOMING"
-    else:
-        phase    = "LANDING"
+    phase = _phase(distance, float(baro_m))
+    yr_limit = _phase_yaw_limit(phase)
+    lookahead = schedule_lookahead(float(baro_m), float(gps_vector.speed))
 
-    # Reset integrator on large heading errors (prevents wind-up during large turns)
-    if abs(angle_to_turn) > CAPTURE_THRESHOLD_DEG:
-        global _integral_yr
+    carrot_along = _clamp(along_track + lookahead, 0.0, track_len)
+    carrot_ne = SimpleNamespace(n=carrot_along * track_n, e=carrot_along * track_e)
+
+    desired_heading = _bearing_deg(cur_ne, carrot_ne)
+    heading_error = _angle_wrap_deg(desired_heading - float(imu_data.yaw))
+    track_heading = _bearing_deg(start_ne, target_ne)
+    course_error = _angle_wrap_deg(track_heading - float(gps_vector.course))
+
+    global _integral_yr
+    if abs(heading_error) > CAPTURE_THRESHOLD_DEG:
         _integral_yr = 0.0
 
-    speed      = max(3.0, float(gps_vector.speed))
-    desired_yr = _outer_loop(angle_to_turn, speed, lookahead)
-    yr_limit   = LANDING_YR_MAX if baro_m <= 20 else YR_MAX
+    speed = max(L1_MIN_GROUND_SPEED_MPS, float(gps_vector.speed))
+    desired_yr = _l1_desired_yaw_rate(heading_error, speed, lookahead, yr_limit)
 
     global _last_ctrl_ts
     now = time.time()
-    dt  = 0.1 if _last_ctrl_ts is None else max(0.01, min(0.3, now - _last_ctrl_ts))
+    dt = 0.1 if _last_ctrl_ts is None else _clamp(now - _last_ctrl_ts, 0.01, 0.3)
     _last_ctrl_ts = now
 
-    # measured_yr = imu_data.gyrz in deg/s (same unit as desired_yr)
-    cmd_yr = _yaw_rate_pi_control(desired_yr, float(imu_data.gyrz), dt, yr_limit)
+    measured_yr = float(imu_data.gyrz)
+    cmd_yr = _yaw_rate_pi_control(desired_yr, measured_yr, dt, yr_limit)
     cmd_yr = _slew_limit(cmd_yr, dt)
-    cmd_yr = max(-yr_limit, min(yr_limit, cmd_yr))
+    cmd_yr = _clamp(cmd_yr, -yr_limit, yr_limit)
 
-    return SimpleNamespace(state=phase, distance=distance, commanded_yaw_rate=cmd_yr)
+    return SimpleNamespace(
+        state=phase,
+        phase=phase,
+        fdir_reason="",
+        distance=distance,
+        crosstrack_error=crosstrack_error,
+        along_track=along_track,
+        track_length=track_len,
+        lookahead=lookahead,
+        desired_heading=desired_heading,
+        heading_error=heading_error,
+        desired_yaw_rate=desired_yr,
+        commanded_yaw_rate=cmd_yr,
+        measured_yaw_rate=measured_yr,
+        gps_course=float(gps_vector.course),
+        course_error=course_error,
+        carrot_e=carrot_ne.e,
+        carrot_n=carrot_ne.n,
+        yr_limit=yr_limit,
+    )

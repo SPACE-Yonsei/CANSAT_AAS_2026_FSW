@@ -44,10 +44,20 @@ RIGHT_MIN: int = 600
 RIGHT_MAX: int = 2500
 
 # ---------------------------------------------------------------------------
-# Mixer gain: yaw-rate [deg/s] -> pulse offset [us]
-# Tune this to match actual brake-line throw.
+# Mixer model. The current drop-test did not drive motors, so actuator
+# effectiveness cannot be identified from that data. Keep these explicit and
+# retune after a motor-on drop-test with commanded yaw-rate, servo angle, and
+# measured yaw-rate telemetry.
 # ---------------------------------------------------------------------------
-K_PULSE_PER_DPS: float = 8.0
+SERVO_US_PER_ARM_DEG: float = 8.0
+ACTUATOR_YAW_RATE_PER_ARM_DEG: float = 1.0
+K_PULSE_PER_DPS: float = SERVO_US_PER_ARM_DEG / ACTUATOR_YAW_RATE_PER_ARM_DEG
+
+# Differential command clamp. At the default value, extreme yaw-rate commands
+# still reach the servo min/max clamps used by existing tests and safety paths.
+MAX_DIFFERENTIAL_PULSE_US: float = 2000.0
+MAX_PULSE_OFFSET_US: float = 0.5 * MAX_DIFFERENTIAL_PULSE_US
+MAX_PULSE_STEP_US: float = 120.0
 
 # ---------------------------------------------------------------------------
 # Servo direction signs (physical correction only — do not touch guidance)
@@ -56,6 +66,9 @@ K_PULSE_PER_DPS: float = 8.0
 # ---------------------------------------------------------------------------
 LEFT_SIGN:  float = +1.0
 RIGHT_SIGN: float = -1.0
+
+_last_left_pulse: int = LEFT_NEUTRAL
+_last_right_pulse: int = RIGHT_NEUTRAL
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +106,10 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _rate_limit_pulse(target: int, previous: int) -> int:
+    return int(round(_clamp(target, previous - MAX_PULSE_STEP_US, previous + MAX_PULSE_STEP_US)))
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -126,7 +143,7 @@ def actuator_mixer(commanded_yaw_rate: float):
 
     Both pulses are clamped to [MIN, MAX].
     """
-    offset       = commanded_yaw_rate * K_PULSE_PER_DPS
+    offset       = _clamp(commanded_yaw_rate * K_PULSE_PER_DPS, -MAX_PULSE_OFFSET_US, MAX_PULSE_OFFSET_US)
     left_pulse   = int(round(_clamp(LEFT_NEUTRAL  + LEFT_SIGN  * offset, LEFT_MIN,  LEFT_MAX)))
     right_pulse  = int(round(_clamp(RIGHT_NEUTRAL + RIGHT_SIGN * offset, RIGHT_MIN, RIGHT_MAX)))
     return left_pulse, right_pulse, offset
@@ -141,29 +158,42 @@ def control(pi_handle, commanded_yaw_rate: float) -> SimpleNamespace:
 
     Returns SimpleNamespace with left_pulse, right_pulse, expected_yaw_rate.
     """
-    left_pulse, right_pulse, offset = actuator_mixer(commanded_yaw_rate)
+    global _last_left_pulse, _last_right_pulse
+    left_target, right_target, offset = actuator_mixer(commanded_yaw_rate)
+    left_pulse = _rate_limit_pulse(left_target, _last_left_pulse)
+    right_pulse = _rate_limit_pulse(right_target, _last_right_pulse)
+    _last_left_pulse = left_pulse
+    _last_right_pulse = right_pulse
     backend = pi_handle.pi if isinstance(pi_handle, ControlHandle) else pi_handle
     backend.set_servo_pulsewidth(LEFT_GPIO,  left_pulse)
     backend.set_servo_pulsewidth(RIGHT_GPIO, right_pulse)
     return SimpleNamespace(
         expected_yaw_rate = commanded_yaw_rate,
+        left_target_pulse = left_target,
+        right_target_pulse= right_target,
         left_pulse        = left_pulse,
         right_pulse       = right_pulse,
-        left_cmd_deg      = (LEFT_SIGN  * offset) / K_PULSE_PER_DPS,
-        right_cmd_deg     = (RIGHT_SIGN * offset) / K_PULSE_PER_DPS,
-        actual_delta_deg  = float(offset),
+        left_cmd_deg      = (LEFT_SIGN  * offset) / SERVO_US_PER_ARM_DEG,
+        right_cmd_deg     = (RIGHT_SIGN * offset) / SERVO_US_PER_ARM_DEG,
+        actual_delta_deg  = float(offset / SERVO_US_PER_ARM_DEG),
     )
 
 
 def set_neutral(pi_handle) -> None:
+    global _last_left_pulse, _last_right_pulse
     """Output neutral pulse on both servos (brakes released — safe idle)."""
     backend = pi_handle.pi if isinstance(pi_handle, ControlHandle) else pi_handle
     backend.set_servo_pulsewidth(LEFT_GPIO,  LEFT_NEUTRAL)
     backend.set_servo_pulsewidth(RIGHT_GPIO, RIGHT_NEUTRAL)
+    _last_left_pulse = LEFT_NEUTRAL
+    _last_right_pulse = RIGHT_NEUTRAL
 
 
 def set_motors_off(pi_handle) -> None:
+    global _last_left_pulse, _last_right_pulse
     """Set pulse to 0 on both servos (pigpio disables PWM — use at LANDED)."""
     backend = pi_handle.pi if isinstance(pi_handle, ControlHandle) else pi_handle
     backend.set_servo_pulsewidth(LEFT_GPIO,  0)
     backend.set_servo_pulsewidth(RIGHT_GPIO, 0)
+    _last_left_pulse = 0
+    _last_right_pulse = 0

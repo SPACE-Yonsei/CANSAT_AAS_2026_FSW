@@ -74,6 +74,8 @@ def _reset() -> None:
     motorapp.target             = None
     motorapp._last_fdir_reason  = None
     motorapp._last_fdir_log_ts  = 0.0
+    motorapp._start_point_locked = False
+    motorapp._last_gyrz_for_fdir = None
     motorapp.last_gps_update    = 0.0
     motorapp.last_imu_update    = 0.0
     motorapp.last_baro_update   = 0.0
@@ -168,6 +170,10 @@ class TestMessageRouting(unittest.TestCase):
     def test_state3_locks_start_point(self):
         motorapp.sensor.lat = 37.55
         motorapp.sensor.lon = 126.95
+        motorapp.sensor.fix_quality = 1
+        motorapp.sensor.sats = 7
+        motorapp.sensor.rmc_status = "A"
+        motorapp.sensor.gps_health = 1
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_state, "3")
         self.assertAlmostEqual(motor_guidance._start_point.lat, 37.55)
