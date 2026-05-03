@@ -19,6 +19,23 @@ from __future__ import annotations
 import time
 from math import atan2, cos, radians, sqrt, tanh
 from types import SimpleNamespace
+from typing import NamedTuple
+
+
+class GpsVector(NamedTuple):
+    """Position and velocity from GPS, always passed as this type."""
+    lat:    float   # decimal degrees, WGS-84
+    lon:    float   # decimal degrees, WGS-84
+    speed:  float   # m/s (ground speed)
+    course: float   # degrees (track over ground)
+
+
+class GpsFidelity(NamedTuple):
+    """GPS quality flags, always passed as this type."""
+    fix_quality: int    # 0=no fix, 1=GPS, 2=DGPS, …
+    sats:        int    # number of satellites in use
+    rmc_status:  str    # 'A'=active/valid, 'V'=void/invalid
+    gps_health:  int    # driver-level health flag (0=unhealthy)
 
 # ---------------------------------------------------------------------------
 # Guidance tuning constants
@@ -79,19 +96,15 @@ def init_guidance(_logger=None) -> None:
 # GPS integrity checks
 # ---------------------------------------------------------------------------
 
-def is_gps_valid(gps_vector, gps_fidelity) -> bool:
+def is_gps_valid(gps_vector: GpsVector, gps_fidelity: GpsFidelity) -> bool:
     """Return True when GPS data passes basic sanity checks."""
-    lat    = float(gps_vector.lat)
-    lon    = float(gps_vector.lon)
-    fix    = int(gps_fidelity.fix_quality)
-    sats   = int(gps_fidelity.sats)
-    status = str(gps_fidelity.rmc_status).upper()
     return (
-        -90.0 <= lat <= 90.0
-        and -180.0 <= lon <= 180.0
-        and fix >= 1
-        and sats >= 4
-        and status == "A"
+        -90.0 <= gps_vector.lat <= 90.0
+        and -180.0 <= gps_vector.lon <= 180.0
+        and gps_fidelity.fix_quality >= 1
+        and gps_fidelity.sats >= 4
+        and gps_fidelity.rmc_status.upper() == "A"
+        and gps_fidelity.gps_health >= 1
     )
 
 
@@ -216,7 +229,7 @@ def _slew_limit(cmd: float, dt: float, accel_limit: float = MAX_ACCEL) -> float:
 # Main guidance entry point
 # ---------------------------------------------------------------------------
 
-def guidance(imu_data, gps_vector, gps_fidelity, target, baro_m: float) -> SimpleNamespace:
+def guidance(imu_data, gps_vector: GpsVector, gps_fidelity: GpsFidelity, target, baro_m: float) -> SimpleNamespace:
     """Compute commanded yaw-rate for the current timestep.
 
     Args:

@@ -28,6 +28,7 @@ from types import SimpleNamespace
 
 from lib import appargs, msgstructure
 from Sensor_Motor import Motor_Egg, Motor_Release, motor_control, motor_guidance
+from Sensor_Motor.motor_guidance import GpsFidelity, GpsVector
 
 logger = logging.getLogger(__name__)
 
@@ -319,8 +320,8 @@ def _check_fdir(snap) -> str | None:
     if last_baro_update == 0.0 or now - last_baro_update > BARO_STALE_TIMEOUT:
         return f"FDIR-2c baro stale ({now - last_baro_update:.1f}s since last msg)"
 
-    gps_vector   = SimpleNamespace(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
-    gps_fidelity = SimpleNamespace(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status)
+    gps_vector   = GpsVector(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
+    gps_fidelity = GpsFidelity(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status, gps_health=snap.gps_health)
     if not motor_guidance.is_gps_valid(gps_vector, gps_fidelity):
         return "FDIR-3 gps invalid (fix/sats/rmc_status)"
     if motor_guidance.is_gps_jump(snap.lat, snap.lon):
@@ -421,8 +422,8 @@ def ctrl_paragldr() -> None:
                 _last_fdir_reason = None
 
             imu_data     = SimpleNamespace(yaw=snap.yaw, gyrz=snap.gyrz)
-            gps_vector   = SimpleNamespace(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
-            gps_fidelity = SimpleNamespace(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status)
+            gps_vector   = GpsVector(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
+            gps_fidelity = GpsFidelity(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status, gps_health=snap.gps_health)
 
             result = motor_guidance.guidance(imu_data, gps_vector, gps_fidelity, snap.target, snap.baro_m)
 

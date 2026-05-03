@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from lib import appargs, msgstructure
 from Sensor_Motor import motorapp, motor_guidance, motor_control
+from Sensor_Motor.motor_guidance import GpsFidelity, GpsVector
 
 
 # ---------------------------------------------------------------------------
@@ -122,10 +123,12 @@ class TestMessageRouting(unittest.TestCase):
 
     # --- IMU ---
     def test_imu_updates_sensor(self):
+        import math
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu,
                   "45.0,2.5,1")
         self.assertAlmostEqual(motorapp.sensor.yaw,  45.0)
-        self.assertAlmostEqual(motorapp.sensor.gyrz,  2.5)
+        # 2.5 rad/s stored as deg/s after conversion
+        self.assertAlmostEqual(motorapp.sensor.gyrz, 2.5 * (180.0 / math.pi), places=4)
         self.assertEqual(motorapp.sensor.imu_health,  1)
         self.assertGreater(motorapp.last_imu_update, 0)
 
@@ -220,8 +223,8 @@ class TestFullChain(unittest.TestCase):
     def test_guidance_output_finite(self):
         snap = motorapp._snapshot_sensors()
         imu  = SimpleNamespace(yaw=45.0, gyrz=1.0)
-        gpsv = SimpleNamespace(lat=37.55, lon=126.95, speed=10.0, course=90.0)
-        gpsf = SimpleNamespace(fix_quality=1, sats=7, rmc_status="A")
+        gpsv = GpsVector(lat=37.55, lon=126.95, speed=10.0, course=90.0)
+        gpsf = GpsFidelity(fix_quality=1, sats=7, rmc_status="A", gps_health=1)
         result = motor_guidance.guidance(imu, gpsv, gpsf, snap.target, 200.0)
         self.assertIn(result.state, {"HOMING", "PATTERN", "LANDING"})
         import math
@@ -231,8 +234,8 @@ class TestFullChain(unittest.TestCase):
     def test_guidance_fdir_on_invalid_gps_fidelity(self):
         snap = motorapp._snapshot_sensors()
         imu  = SimpleNamespace(yaw=45.0, gyrz=1.0)
-        gpsv = SimpleNamespace(lat=37.55, lon=126.95, speed=10.0, course=90.0)
-        gpsf = SimpleNamespace(fix_quality=0, sats=1, rmc_status="V")  # bad fidelity
+        gpsv = GpsVector(lat=37.55, lon=126.95, speed=10.0, course=90.0)
+        gpsf = GpsFidelity(fix_quality=0, sats=1, rmc_status="V", gps_health=0)  # bad fidelity
         result = motor_guidance.guidance(imu, gpsv, gpsf, snap.target, 200.0)
         self.assertEqual(result.state, "FDIR")
         self.assertAlmostEqual(result.commanded_yaw_rate, 0.0)

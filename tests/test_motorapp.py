@@ -133,9 +133,11 @@ class TestHandlers(unittest.TestCase):
         self.assertEqual(motorapp.sensor.lat, old_lat)   # unchanged on parse error
 
     def test_handle_imu_valid(self):
+        import math
         motorapp.handle_imu("45.0,2.5,1")
         self.assertAlmostEqual(motorapp.sensor.yaw,  45.0)
-        self.assertAlmostEqual(motorapp.sensor.gyrz,  2.5)
+        # 2.5 rad/s converted to deg/s
+        self.assertAlmostEqual(motorapp.sensor.gyrz, 2.5 * (180.0 / math.pi), places=4)
         self.assertGreater(motorapp.last_imu_update, 0)
 
     def test_handle_imu_bad_data(self):
