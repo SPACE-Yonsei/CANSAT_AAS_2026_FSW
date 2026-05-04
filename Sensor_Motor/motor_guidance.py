@@ -107,25 +107,21 @@ def init_guidance():
     start_point.lat = None
     start_point.lon = None
 
-def reset_control():
-    global wind_effect, last_time
+def reset_control() -> None:
+    global wind_effect, last_time, _gps_stable_count
     wind_effect = 0.0
     cascade_pi.pi_integral = 0.0
     cascade_pi.last_cmd = 0.0  # Slew Rate 초기화 추가
     last_time = time.time()
+    _gps_stable_count = 0
+    _prev_gps.lat = None
+    _prev_gps.lon = None
+    _prev_gps.time = None
+    _prev_gps.initialized = False
+
 
 def _wrap_180(a: float) -> float:
     return (a + 180.0) % 360.0 - 180.0
-
-
-def reset_control() -> None:
-    """Test utility: reset controller integrator and GPS gate states."""
-    global _last_gps, _gps_stable_count, _integral_yr, _last_cmd_yr, _last_ctrl_ts
-    _last_gps = None
-    _gps_stable_count = 0
-    _integral_yr = 0.0
-    _last_cmd_yr = 0.0
-    _last_ctrl_ts = None
 
 
 def is_gps_valid(gps_vector, gps_fidelity) -> bool:
@@ -366,12 +362,28 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             _dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
         return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
-    my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
-    tgt_E, tgt_N = _llh_to_en(target.lat, target.lon)
+    if target is None:
+        _dbg("[CTRL] TARGET_UNSET - target is required before release guidance")
+        return types.SimpleNamespace(state="TARGET_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+    tgt_lat = getattr(target, "lat", None)
+    tgt_lon = getattr(target, "lon", None)
+    if (
+        tgt_lat is None
+        or tgt_lon is None
+        or not math.isfinite(float(tgt_lat))
+        or not math.isfinite(float(tgt_lon))
+        or not (-90.0 <= float(tgt_lat) <= 90.0 and -180.0 <= float(tgt_lon) <= 180.0)
+        or (float(tgt_lat) == 0.0 and float(tgt_lon) == 0.0)
+    ):
+        _dbg(f"[CTRL] TARGET_UNSET - invalid target lat={tgt_lat} lon={tgt_lon}")
+        return types.SimpleNamespace(state="TARGET_UNSET", distance=0.0, commanded_yaw_rate=0.0)
 
     if start_point.lat is None or start_point.lon is None:
         _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
         return types.SimpleNamespace(state="START_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+
+    my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
+    tgt_E, tgt_N = _llh_to_en(float(tgt_lat), float(tgt_lon))
 
     distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
 

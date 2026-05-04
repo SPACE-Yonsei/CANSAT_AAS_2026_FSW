@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from typing import Optional
@@ -64,7 +65,20 @@ def to_apogee(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 2, force=force)
 
 
+def _has_release_target() -> bool:
+    lat = prevstate.Target_lat
+    lon = prevstate.Target_lon
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    return not (lat == 0.0 and lon == 0.0)
+
+
 def to_release(main_queue, force: bool = False) -> None:
+    if not _has_release_target():
+        logger.error("Release blocked: target coordinate must be set before release")
+        return
     _set_state(main_queue, 3, force=force)
     msgstructure.send_msg(
         main_queue,
@@ -97,20 +111,45 @@ def _verify_inter_app_links(main_queue) -> None:
     by dispatching only benign frames that must not trigger actuators.
     """
     # Keep comm mode in "A" and attach audit marker in payload tail.
-    _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, "A,LINKCHK")
-    _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_state, str(state))
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_comm_sim,
+        "A,LINKCHK",
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_comm_state,
+        str(state),
+    )
 
     # Motor receives only state/target refresh (no burnwire/egg trigger).
-    _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
-    _send(
+    msgstructure.send_msg(
         main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_state,
+        str(state),
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
         appargs.MotorAppArg.AppID,
         appargs.FlightlogicAppArg.MID_motor_TargetCor,
         f"{prevstate.Target_lat},{prevstate.Target_lon}",
     )
 
     # Camera OFF is a safe no-op for routing/path check.
-    _send(main_queue, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, "OFF")
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CameraAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_CAM,
+        "OFF",
+    )
     logger.info("SIM A link check frames dispatched")
 
 
@@ -211,6 +250,9 @@ def handle_target_coord(data: str, main_queue) -> None:
     except ValueError:
         return
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return
+    if lat == 0.0 and lon == 0.0:
+        logger.warning("Rejected zero target coordinate for safety policy")
         return
     prevstate.update_target_gps(lat, lon)
     msgstructure.send_msg(

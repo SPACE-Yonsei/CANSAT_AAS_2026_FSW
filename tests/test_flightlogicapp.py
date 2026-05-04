@@ -3,6 +3,7 @@ import unittest
 
 from flight_logic import flightlogicapp
 from lib import appargs
+from lib import prevstate
 
 
 class TestFlightLogicApp(unittest.TestCase):
@@ -19,6 +20,8 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.solenoid_done = False
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
+        prevstate.Target_lat = 37.56
+        prevstate.Target_lon = 126.93
 
     def test_launchpad_to_ascent(self):
         q = queue.Queue()
@@ -31,6 +34,14 @@ class TestFlightLogicApp(unittest.TestCase):
         q = queue.Queue()
         flightlogicapp.handle_ss("3", q)
         self.assertEqual(flightlogicapp.state, 3)
+
+    def test_release_blocked_without_target(self):
+        q = queue.Queue()
+        flightlogicapp.state = 1
+        prevstate.Target_lat = 0.0
+        prevstate.Target_lon = 0.0
+        flightlogicapp.handle_ss("3", q)
+        self.assertEqual(flightlogicapp.state, 1)
 
     def test_sim_command(self):
         q = queue.Queue()
