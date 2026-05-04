@@ -7,6 +7,7 @@ import math
 import os
 import sys
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, Optional
 
@@ -27,6 +28,46 @@ _BNO_FEATURE_NAMES = {
 }
 
 
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)), 0)
+    except ValueError:
+        value = default
+    return max(lo, min(value, hi))
+
+
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        value = default
+    return max(lo, min(value, hi))
+
+
+REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", 100000, 10000, 1000000)
+READ_ATTEMPTS = _env_int("IMU_READ_ATTEMPTS", 4, 1, 12)
+BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "0").strip().lower() not in ("0", "false", "no", "")
+BNO085_RST_PIN = os.environ.get("IMU_BNO085_RST_PIN", "D22")
+IMU_MOUNTED_ON_BOTTOM = os.environ.get("IMU_MOUNTED_ON_BOTTOM", "1").strip().lower() not in ("0", "false", "no", "")
+IMU_FORWARD_AXIS = os.environ.get("IMU_FORWARD_AXIS", "Y").strip().upper()
+MAG_FILTER_ALPHA = _env_float("IMU_MAG_FILTER_ALPHA", 0.2, 0.0, 1.0)
+MAG_FIELD_MIN = _env_float("IMU_MAG_FIELD_MIN", 5.0, 0.0, 1000.0)
+MAG_FIELD_MAX = _env_float("IMU_MAG_FIELD_MAX", 150.0, 1.0, 2000.0)
+MAG_NORM_SPIKE_RATIO = _env_float("IMU_MAG_NORM_SPIKE_RATIO", 3.0, 1.1, 100.0)
+YAW_CORRECTION_GAIN = _env_float("IMU_YAW_CORRECTION_GAIN", 0.02, 0.0, 1.0)
+HAMPEL_WINDOW_SIZE = _env_int("IMU_HAMPEL_WINDOW_SIZE", 7, 3, 31)
+HAMPEL_THRESHOLD = _env_float("IMU_HAMPEL_THRESHOLD", 3.0, 0.1, 20.0)
+HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
+
+_ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
+_LAST_VALID = {
+    "acc": (0.0, 0.0, 0.0),
+    "mag": (0.0, 0.0, 0.0),
+    "gyr": (0.0, 0.0, 0.0),
+}
+_MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
+
+
 def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
     """BNO08x often needs a short settle + retries right after power-up (Blinka / Pi)."""
     if attempts is None:
@@ -39,12 +80,42 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
     last: Optional[Exception] = None
     for i in range(attempts):
         try:
-            bno.enable_feature(feature_id)
+            if os.environ.get("BNO08X_DEBUG", "").strip() == "1":
+                bno.enable_feature(feature_id, REPORT_INTERVAL_US)
+            else:
+                with open(os.devnull, "w", encoding="utf-8") as devnull:
+                    with redirect_stdout(devnull), redirect_stderr(devnull):
+                        bno.enable_feature(feature_id, REPORT_INTERVAL_US)
             return
         except Exception as exc:
             last = exc
             time.sleep(0.06 * (i + 1))
     raise RuntimeError(f"BNO08x: enable {name} failed after {attempts} tries: {last}") from last
+
+
+def _pulse_bno085_reset() -> None:
+    """Optionally assert BNO085 nRESET before opening the I2C driver."""
+    if not BNO085_RST_USE:
+        return
+    try:
+        import board  # type: ignore
+        import digitalio  # type: ignore
+
+        pin = getattr(board, BNO085_RST_PIN)
+        rst = digitalio.DigitalInOut(pin)
+        rst.direction = digitalio.Direction.OUTPUT
+        rst.value = True
+        time.sleep(0.002)
+        rst.value = False
+        time.sleep(0.01)
+        rst.value = True
+        time.sleep(0.65)
+        try:
+            rst.deinit()
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.warning("IMU: BNO085 reset pulse skipped (%s)", exc)
 
 
 def _drain_bno_packets(bno: Any, seconds: float) -> None:
@@ -70,6 +141,98 @@ def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[floa
     return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
 
+def _wrap_360(angle: float) -> float:
+    return float(angle) % 360.0
+
+
+def _wrap_180(angle: float) -> float:
+    return (float(angle) + 180.0) % 360.0 - 180.0
+
+
+def _hampel_angle(name: str, value: float) -> float:
+    window = _ANGLE_WINDOWS[name]
+    window.append(_wrap_360(value))
+    if len(window) > HAMPEL_WINDOW_SIZE:
+        window.pop(0)
+    if len(window) < 3:
+        return _wrap_360(value)
+
+    unwrapped = [window[0]]
+    for item in window[1:]:
+        unwrapped.append(unwrapped[-1] + _wrap_180(item - unwrapped[-1]))
+
+    sorted_vals = sorted(unwrapped)
+    n = len(sorted_vals)
+    median = sorted_vals[n // 2] if n % 2 else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2.0
+    deviations = sorted(abs(x - median) for x in unwrapped)
+    mad = deviations[n // 2] if n % 2 else (deviations[n // 2 - 1] + deviations[n // 2]) / 2.0
+    threshold = HAMPEL_THRESHOLD * max(mad, HAMPEL_MIN_MAD)
+    filtered = [median if abs(x - median) > threshold else x for x in unwrapped]
+    return _wrap_360(sum(filtered) / len(filtered))
+
+
+def _mag_norm_is_valid(norm: float) -> bool:
+    if not (MAG_FIELD_MIN <= norm <= MAG_FIELD_MAX):
+        return False
+    prev = _MAG_FILTER_STATE.get("norm")
+    if prev is not None and float(prev) > 0.0:
+        prev_f = float(prev)
+        if norm > prev_f * MAG_NORM_SPIKE_RATIO or norm < prev_f / MAG_NORM_SPIKE_RATIO:
+            return False
+    return True
+
+
+def _filter_mag(mx: float, my: float, mz: float) -> tuple[float, float, float]:
+    if not _MAG_FILTER_STATE["init"]:
+        _MAG_FILTER_STATE.update({"x": mx, "y": my, "z": mz, "init": True})
+        return mx, my, mz
+    a = MAG_FILTER_ALPHA
+    _MAG_FILTER_STATE["x"] = a * mx + (1.0 - a) * float(_MAG_FILTER_STATE["x"])
+    _MAG_FILTER_STATE["y"] = a * my + (1.0 - a) * float(_MAG_FILTER_STATE["y"])
+    _MAG_FILTER_STATE["z"] = a * mz + (1.0 - a) * float(_MAG_FILTER_STATE["z"])
+    return float(_MAG_FILTER_STATE["x"]), float(_MAG_FILTER_STATE["y"]), float(_MAG_FILTER_STATE["z"])
+
+
+def _env_axis_sign(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return -1.0 if value < 0.0 else 1.0
+
+
+def _yaw_sign() -> float:
+    return _env_axis_sign("IMU_YAW_SIGN", 1.0)
+
+
+def _apply_yaw_convention(yaw_deg: float, gz_deg_s: float) -> tuple[float, float]:
+    """Convert BNO yaw/Z-rate to the FSW heading convention."""
+    sign = _yaw_sign()
+    yaw = float(yaw_deg)
+    rate_sign = sign
+    if IMU_MOUNTED_ON_BOTTOM:
+        yaw = -yaw
+        rate_sign *= -1.0
+    if IMU_FORWARD_AXIS == "Y":
+        yaw += 90.0
+    yaw *= sign
+    return _wrap_360(yaw), rate_sign * gz_deg_s
+
+
+def _apply_mag_yaw_correction(yaw_deg: float, mx: float, my: float) -> float:
+    try:
+        mag_heading = math.degrees(math.atan2(my, mx))
+        if IMU_MOUNTED_ON_BOTTOM:
+            mag_heading = -mag_heading
+        if IMU_FORWARD_AXIS == "Y":
+            mag_heading += 90.0
+        mag_heading *= _yaw_sign()
+        mag_heading = _wrap_360(mag_heading)
+        return _wrap_360(yaw_deg + YAW_CORRECTION_GAIN * _wrap_180(mag_heading - yaw_deg))
+    except Exception:
+        return _wrap_360(yaw_deg)
+
+
 def _init_imu_once() -> tuple[Any, Any]:
     from adafruit_bno08x import (  # type: ignore
         BNO_REPORT_ACCELEROMETER,
@@ -80,13 +243,24 @@ def _init_imu_once() -> tuple[Any, Any]:
     )
     from adafruit_bno08x.i2c import BNO08X_I2C  # type: ignore
 
-    addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
+    env_addr = os.environ.get("IMU_I2C_ADDR", "").strip()
+    addr = int(env_addr, 0) if env_addr else 0x4A
     lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
     post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.5"))
     boot_drain = float(os.environ.get("IMU_BOOT_DRAIN_SEC", "1.0"))
 
+    _pulse_bno085_reset()
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
+        if not env_addr and hasattr(i2c, "scan"):
+            try:
+                addrs = set(i2c.scan())
+                if 0x4A in addrs:
+                    addr = 0x4A
+                elif 0x4B in addrs:
+                    addr = 0x4B
+            except Exception:
+                pass
         bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
         if not lib_debug:
             try:
@@ -97,9 +271,11 @@ def _init_imu_once() -> tuple[Any, Any]:
                 return None
 
             bno._dbg = _noop_dbg  # type: ignore[method-assign]
-        for _ in range(4):
-            if hasattr(bno, "_process_available_packets"):
-                bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                for _ in range(4):
+                    if hasattr(bno, "_process_available_packets"):
+                        bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
 
     _drain_bno_packets(bno, boot_drain)
     time.sleep(post_open_delay)
@@ -151,32 +327,66 @@ def init_imu() -> tuple[Any, Any]:
 def read_sensor_data(bno) -> Any:
     """Return 12-tuple for `imuapp`, or False on soft failure."""
     r2d = 180.0 / math.pi
-    for _ in range(4):
+    for _ in range(READ_ATTEMPTS):
         try:
             with i2c_bus.i2c_lock():
-                if hasattr(bno, "_process_available_packets"):
-                    bno._process_available_packets(max_packets=6)  # type: ignore[attr-defined]
-                if getattr(bno, "_fsw_use_game_quat", False):
-                    qi, qj, qk, qr = bno.game_quaternion
+                with open(os.devnull, "w", encoding="utf-8") as devnull:
+                    with redirect_stdout(devnull), redirect_stderr(devnull):
+                        if hasattr(bno, "_process_available_packets"):
+                            bno._process_available_packets(max_packets=12)  # type: ignore[attr-defined]
+                        quat = bno.game_quaternion if getattr(bno, "_fsw_use_game_quat", False) else bno.quaternion
+                        acc = bno.acceleration
+                        mag = bno.magnetic
+                        gyr = bno.gyro
+
+            if quat is None or any(v is None for v in quat):
+                raise RuntimeError("BNO08x quaternion unavailable")
+            qi, qj, qk, qr = quat
+            roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
+
+            if acc is not None and not any(v is None for v in acc):
+                ax, ay, az = (float(acc[0]), float(acc[1]), float(acc[2]))
+                _LAST_VALID["acc"] = (ax, ay, az)
+            else:
+                ax, ay, az = _LAST_VALID["acc"]
+
+            if mag is not None and not any(v is None for v in mag):
+                raw_mx, raw_my, raw_mz = (float(mag[0]), float(mag[1]), float(mag[2]))
+                mag_norm = math.sqrt(raw_mx * raw_mx + raw_my * raw_my + raw_mz * raw_mz)
+                if _mag_norm_is_valid(mag_norm):
+                    mx, my, mz = _filter_mag(raw_mx, raw_my, raw_mz)
+                    _MAG_FILTER_STATE["norm"] = mag_norm
+                    _LAST_VALID["mag"] = (mx, my, mz)
                 else:
-                    qi, qj, qk, qr = bno.quaternion
-                roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
-                ax, ay, az = bno.acceleration
-                mx, my, mz = bno.magnetic
-                gx, gy, gz = bno.gyro
+                    mx, my, mz = _LAST_VALID["mag"]
+            else:
+                mx, my, mz = _LAST_VALID["mag"]
+
+            if gyr is not None and not any(v is None for v in gyr):
+                gx, gy, gz = (float(gyr[0]), float(gyr[1]), float(gyr[2]))
+                _LAST_VALID["gyr"] = (gx, gy, gz)
+            else:
+                gx, gy, gz = _LAST_VALID["gyr"]
+
+            gz_deg_s = float(gz) * r2d
+            yaw, gz_deg_s = _apply_yaw_convention(yaw, gz_deg_s)
+            yaw = _apply_mag_yaw_correction(yaw, mx, my)
+            roll = _hampel_angle("roll", roll)
+            pitch = _hampel_angle("pitch", pitch)
+            yaw = _hampel_angle("yaw", yaw)
             return (
-                roll,
-                pitch,
-                yaw,
-                float(ax),
-                float(ay),
-                float(az),
-                float(mx),
-                float(my),
-                float(mz),
-                float(gx) * r2d,
-                float(gy) * r2d,
-                float(gz) * r2d,
+                round(float(roll), 4),
+                round(float(pitch), 4),
+                round(float(yaw), 4),
+                round(float(ax), 4),
+                round(float(ay), 4),
+                round(float(az), 4),
+                round(float(mx), 4),
+                round(float(my), 4),
+                round(float(mz), 4),
+                round(float(gx) * r2d, 4),
+                round(float(gy) * r2d, 4),
+                round(float(gz_deg_s), 4),
             )
         except Exception:
             time.sleep(0.002)
@@ -186,6 +396,9 @@ def read_sensor_data(bno) -> Any:
 def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     """Drop the cached bus so ``init_imu`` opens a fresh handle (``deinit`` alone left a dead singleton)."""
     i2c_bus.reset_i2c()
+    for window in _ANGLE_WINDOWS.values():
+        window.clear()
+    _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
     return init_imu()
 
 
@@ -202,15 +415,17 @@ def _imu_cli_period_sec() -> float:
 
 def _print_sample_header() -> None:
     print(
-        "idx | roll[deg] pitch[deg]  yaw[deg] | "
-        "ax[m/s^2] ay[m/s^2] az[m/s^2] | acc[g] | "
-        "mx[uT]  my[uT]  mz[uT] | mag[uT] | "
-        "gx[deg/s] gy[deg/s] gz[deg/s] | gyr[deg/s]",
+        "idx  | roll                 pitch                yaw                  | "
+        "ax                    ay                    az                    acc_norm          | "
+        "mx                 my                 mz                 mag_norm          | "
+        "gx                    gy                    gz                    gyr_norm",
         flush=True,
     )
     print(
-        "----+------------------------------+-------------------------------+--------+"
-        "-------------------------+---------+--------------------------------+-----------",
+        "-----+----------------------------------------------------------------+"
+        "--------------------------------------------------------------------------+"
+        "----------------------------------------------------------------+"
+        "--------------------------------------------------------------------------",
         flush=True,
     )
 
@@ -221,14 +436,22 @@ def _print_sample_line(sample: Any, sample_index: int) -> None:
     mag_norm = math.sqrt(mx * mx + my * my + mz * mz)
     gyr_norm = math.sqrt(gx * gx + gy * gy + gz * gz)
     print(
-        f"{sample_index:3d} | "
-        f"{r:9.2f} {p:10.2f} {y:9.2f} | "
-        f"{ax:9.3f} {ay:9.3f} {az:9.3f} | "
-        f"{acc_g:6.3f} | "
-        f"{mx:6.2f} {my:7.2f} {mz:7.2f} | "
-        f"{mag_norm:7.2f} | "
-        f"{gx:9.3f} {gy:9.3f} {gz:9.3f} | "
-        f"{gyr_norm:9.3f}",
+        f"{sample_index:4d} | "
+        f"roll={r:8.2f} deg  "
+        f"pitch={p:8.2f} deg  "
+        f"yaw={y:8.2f} deg | "
+        f"ax={ax:9.3f} m/s^2  "
+        f"ay={ay:9.3f} m/s^2  "
+        f"az={az:9.3f} m/s^2  "
+        f"acc={acc_g:6.3f} g | "
+        f"mx={mx:8.2f} uT  "
+        f"my={my:8.2f} uT  "
+        f"mz={mz:8.2f} uT  "
+        f"mag={mag_norm:8.2f} uT | "
+        f"gx={gx:9.3f} deg/s  "
+        f"gy={gy:9.3f} deg/s  "
+        f"gz={gz:9.3f} deg/s  "
+        f"gyr={gyr_norm:9.3f} deg/s",
         flush=True,
     )
 
@@ -251,6 +474,12 @@ if __name__ == "__main__":
     print(
         f"IMU: OK, streaming aligned samples every {period:.2f}s "
         "(set IMU_PRINT_PERIOD_SEC to override).",
+        flush=True,
+    )
+    print(
+        f"IMU: config report_interval_us={REPORT_INTERVAL_US} "
+        f"yaw_sign={_yaw_sign():+.0f} mounted_bottom={IMU_MOUNTED_ON_BOTTOM} "
+        f"forward_axis={IMU_FORWARD_AXIS} mag_alpha={MAG_FILTER_ALPHA:.2f}",
         flush=True,
     )
     _print_sample_header()
