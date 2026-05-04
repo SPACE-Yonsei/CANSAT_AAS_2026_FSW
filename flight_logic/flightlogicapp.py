@@ -120,9 +120,7 @@ def handle_sim(data: str, main_queue) -> None:
     if option == "ENABLE":
         sim_enable = True
         sim_active = False
-<<<<<<< HEAD
-        _verify_inter_app_links(main_queue)
-=======
+
         msgstructure.send_msg(
             main_queue,
             appargs.FlightlogicAppArg.AppID,
@@ -130,7 +128,6 @@ def handle_sim(data: str, main_queue) -> None:
             appargs.FlightlogicAppArg.MID_comm_sim,
             "A",
         )
->>>>>>> ad06d2286af0c258b80c723ffe82f23fbb1e65a2
     elif option == "ACTIVATE":
         if sim_enable:
             sim_active = True

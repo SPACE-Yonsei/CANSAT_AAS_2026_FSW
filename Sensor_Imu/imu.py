@@ -28,11 +28,7 @@ _BNO_FEATURE_NAMES = {
 }
 
 
-<<<<<<< HEAD
-def _init_progress(msg: str) -> None:
-    if os.environ.get("IMU_INIT_PROGRESS", "0").strip() == "1":
-        print(msg, flush=True)
-=======
+
 def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     try:
         value = int(os.environ.get(name, str(default)), 0)
@@ -75,7 +71,7 @@ _LAST_VALID = {
     "gyr": (0.0, 0.0, 0.0),
 }
 _MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
->>>>>>> ad06d2286af0c258b80c723ffe82f23fbb1e65a2
+
 
 
 def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
@@ -284,11 +280,7 @@ def _init_imu_once() -> tuple[Any, Any]:
     ctor_max_pkt = int(os.environ.get("IMU_OPEN_DRAIN_MAX_PACKETS", "8"), 0) or 8
     ctor_max_pkt = max(1, min(ctor_max_pkt, 24))
 
-<<<<<<< HEAD
-    _init_progress("IMU: open I2C + BNO08x …")
-=======
     _pulse_bno085_reset()
->>>>>>> ad06d2286af0c258b80c723ffe82f23fbb1e65a2
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
         if not env_addr and hasattr(i2c, "scan"):
@@ -310,17 +302,12 @@ def _init_imu_once() -> tuple[Any, Any]:
                 return None
 
             bno._dbg = _noop_dbg  # type: ignore[method-assign]
-<<<<<<< HEAD
-        for _ in range(ctor_cycles):
-            if hasattr(bno, "_process_available_packets"):
-                bno._process_available_packets(max_packets=ctor_max_pkt)  # type: ignore[attr-defined]
-=======
+
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with redirect_stdout(devnull), redirect_stderr(devnull):
                 for _ in range(4):
                     if hasattr(bno, "_process_available_packets"):
                         bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
->>>>>>> ad06d2286af0c258b80c723ffe82f23fbb1e65a2
 
     if boot_drain > 0:
         _init_progress(f"IMU: boot drain {boot_drain:.2f}s (IMU_BOOT_DRAIN_SEC) …")
