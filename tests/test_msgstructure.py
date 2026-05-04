@@ -50,6 +50,20 @@ class TestMsgStructure(unittest.TestCase):
         ok = msgstructure.send_msg(q, 13, 11, 1301101, "bad|payload")
         self.assertFalse(ok)
 
+    def test_send_msg_returns_false_when_queue_full(self):
+        q = Queue(maxsize=1)
+        q.put("seed")
+        old_drop = msgstructure._MSG_QUEUE_DROP_WHEN_FULL
+        old_timeout = msgstructure._MSG_QUEUE_PUT_TIMEOUT_SEC
+        try:
+            msgstructure._MSG_QUEUE_DROP_WHEN_FULL = True
+            msgstructure._MSG_QUEUE_PUT_TIMEOUT_SEC = 0.0
+            ok = msgstructure.send_msg(q, 13, 11, 1301101, "x")
+            self.assertFalse(ok)
+        finally:
+            msgstructure._MSG_QUEUE_DROP_WHEN_FULL = old_drop
+            msgstructure._MSG_QUEUE_PUT_TIMEOUT_SEC = old_timeout
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,7 +45,7 @@ EMA_ALPHA = 0.25
 
 def _imu_read_period_sec() -> float:
     try:
-        rate_hz = float(config.BAROMETER_RATE_HZ)
+        rate_hz = float(config.IMU_RATE_HZ)
     except (TypeError, ValueError):
         rate_hz = 10.0
     return 1.0 / max(0.1, rate_hz)

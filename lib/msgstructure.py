@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+import os
+import queue
 from multiprocessing.queues import Queue
 from typing import Optional, Union
 
 
 logger = logging.getLogger(__name__)
+
+_MSG_QUEUE_PUT_TIMEOUT_SEC = float(os.environ.get("FSW_MSG_QUEUE_PUT_TIMEOUT_SEC", "0.05"))
+_MSG_QUEUE_DROP_WHEN_FULL = os.environ.get("FSW_MSG_QUEUE_DROP_WHEN_FULL", "1").strip() != "0"
 
 
 @dataclass
@@ -107,7 +112,13 @@ def send_msg(
         return False
 
     try:
-        main_queue.put(packed)
+        if _MSG_QUEUE_DROP_WHEN_FULL:
+            main_queue.put(packed, timeout=max(0.0, _MSG_QUEUE_PUT_TIMEOUT_SEC))
+        else:
+            main_queue.put(packed)
+    except queue.Full:
+        logger.warning("Message queue full; dropping frame sender=%s receiver=%s mid=%s", sender, receiver, msg_id)
+        return False
     except Exception as exc:  # pragma: no cover - queue backend specific
         logger.error("Failed to queue message: %s", exc)
         return False
