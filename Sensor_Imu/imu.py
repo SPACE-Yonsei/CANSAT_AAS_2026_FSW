@@ -193,10 +193,46 @@ def imu_terminate(_i2c: Any) -> None:
     i2c_bus.reset_i2c()
 
 
+def _imu_cli_period_sec() -> float:
+    try:
+        return max(0.05, float(os.environ.get("IMU_PRINT_PERIOD_SEC", "1.0")))
+    except ValueError:
+        return 1.0
+
+
+def _print_sample_block(sample: Any, sample_index: int) -> None:
+    r, p, y, ax, ay, az, mx, my, mz, gx, gy, gz = sample
+    acc_g = math.sqrt(ax * ax + ay * ay + az * az) / 9.80665
+    mag_norm = math.sqrt(mx * mx + my * my + mz * mz)
+    gyr_norm = math.sqrt(gx * gx + gy * gy + gz * gz)
+    print("", flush=True)
+    print(f"=== IMU_SAMPLE {sample_index} ===", flush=True)
+    print("orientation_rpy_deg:", flush=True)
+    print(f"  roll_x [deg]:   {r:9.3f}", flush=True)
+    print(f"  pitch_y [deg]:  {p:9.3f}", flush=True)
+    print(f"  yaw_z [deg]:    {y:9.3f}", flush=True)
+    print("acceleration_m_s2:", flush=True)
+    print(
+        f"  ax [m/s^2]: {ax:9.4f}   ay [m/s^2]: {ay:9.4f}   "
+        f"az [m/s^2]: {az:9.4f}   norm [g]: {acc_g:7.3f}",
+        flush=True,
+    )
+    print("magnetic_field_uT:", flush=True)
+    print(
+        f"  mx [uT]: {mx:9.3f}   my [uT]: {my:9.3f}   "
+        f"mz [uT]: {mz:9.3f}   norm [uT]: {mag_norm:8.3f}",
+        flush=True,
+    )
+    print("gyroscope_deg_s:", flush=True)
+    print(
+        f"  gx [deg/s]: {gx:9.3f}   gy [deg/s]: {gy:9.3f}   "
+        f"gz [deg/s]: {gz:9.3f}   norm [deg/s]: {gyr_norm:8.3f}",
+        flush=True,
+    )
+
+
 if __name__ == "__main__":
     import logging
-
-    from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     print(
@@ -209,9 +245,14 @@ if __name__ == "__main__":
     except Exception as exc:
         print(f"IMU: init failed: {exc}", flush=True)
         raise SystemExit(1) from exc
-    print("IMU: OK, streaming...", flush=True)
-    period = cli_period_sec()
+    period = _imu_cli_period_sec()
+    print(
+        f"IMU: OK, streaming readable samples every {period:.2f}s "
+        "(set IMU_PRINT_PERIOD_SEC to override).",
+        flush=True,
+    )
     _last_fail_log = 0.0
+    _sample_index = 0
     try:
         while True:
             s = read_sensor_data(bno)
@@ -224,14 +265,8 @@ if __name__ == "__main__":
                     )
                     _last_fail_log = now
             else:
-                r, p, y, ax, ay, az, mx, my, mz, gx, gy, gz = s
-                print(
-                    f"rpy_deg={r:.2f},{p:.2f},{y:.2f} "
-                    f"acc={ax:.3f},{ay:.3f},{az:.3f} "
-                    f"mag={mx:.2f},{my:.2f},{mz:.2f} "
-                    f"gyr_deg_s={gx:.3f},{gy:.3f},{gz:.3f}",
-                    flush=True,
-                )
+                _sample_index += 1
+                _print_sample_block(s, _sample_index)
             time.sleep(period)
     except KeyboardInterrupt:
         print("", flush=True)
