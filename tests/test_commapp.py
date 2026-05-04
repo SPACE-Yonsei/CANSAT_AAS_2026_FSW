@@ -3,6 +3,7 @@ import queue
 import unittest
 
 from comm import commapp
+from lib import appargs, msgstructure
 
 
 class DummySerial:
@@ -81,6 +82,28 @@ class TestCommApp(unittest.TestCase):
         self.assertIn("\n", pretty)
         self.assertIn("meta", pretty)
         self.assertIn("gps", pretty)
+
+    def test_command_handler_drops_malformed_numeric_payload(self):
+        msg = msgstructure.fill_msg(
+            appargs.ImuAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.ImuAppArg.MID_comm_euler,
+            "x,2,3,4,5,6,7,8,9,10,11,12",
+        )
+        packed = msgstructure.pack_msg(msg)
+        commapp.command_handler(packed)
+        self.assertTrue(commapp.COMMAPP_RUNSTATUS)
+
+    def test_command_handler_keeps_running_after_bad_gps_payload(self):
+        msg = msgstructure.fill_msg(
+            appargs.GpsAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.GpsAppArg.MID_comm_gga,
+            "120000,alt,37.0,126.0,5",
+        )
+        packed = msgstructure.pack_msg(msg)
+        commapp.command_handler(packed)
+        self.assertTrue(commapp.COMMAPP_RUNSTATUS)
 
 
 if __name__ == "__main__":

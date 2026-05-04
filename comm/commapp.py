@@ -283,41 +283,49 @@ def command_handler(recv_msg: str) -> None:
     mid = unpacked.msg_id
     fields = unpacked.data.split(",") if unpacked.data else []
 
-    if mid == appargs.MainAppArg.MID_TerminateProcess:
-        COMMAPP_RUNSTATUS = False
-    elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
-        tlm_data.pressure = float(fields[0])
-        tlm_data.temperature = float(fields[1])
-        tlm_data.altitude = float(fields[2])
-    elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
-        tlm_data.filtered_roll = float(fields[0])
-        tlm_data.filtered_pitch = float(fields[1])
-        tlm_data.filtered_yaw = float(fields[2])
-        tlm_data.acc_roll = float(fields[3])
-        tlm_data.acc_pitch = float(fields[4])
-        tlm_data.acc_yaw = float(fields[5])
-        tlm_data.mag_roll = float(fields[6])
-        tlm_data.mag_pitch = float(fields[7])
-        tlm_data.mag_yaw = float(fields[8])
-        tlm_data.gyro_roll = float(fields[9])
-        tlm_data.gyro_pitch = float(fields[10])
-        tlm_data.gyro_yaw = float(fields[11])
-    elif mid == appargs.GpsAppArg.MID_comm_gga and len(fields) >= 5:
-        tlm_data.gps_time = fields[0]
-        tlm_data.gps_alt = float(fields[1])
-        tlm_data.gps_lat = float(fields[2])
-        tlm_data.gps_lon = float(fields[3])
-        tlm_data.gps_sats = int(float(fields[4]))
-    elif mid == appargs.ElectroAppArg.MID_comm_volt and len(fields) >= 3:
-        tlm_data.voltage = float(fields[0])
-        tlm_data.current = float(fields[1])
-        tlm_data.power = float(fields[2])
-    elif mid == appargs.DistanceAppArg.MID_comm_dis and len(fields) >= 1:
-        tlm_data.distance = float(fields[0])
-    elif mid == appargs.FlightlogicAppArg.MID_comm_state and len(fields) >= 1:
-        tlm_data.state = fields[0]
-    elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
-        tlm_data.mode = fields[0]
+    try:
+        if mid == appargs.MainAppArg.MID_TerminateProcess:
+            COMMAPP_RUNSTATUS = False
+        elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
+            tlm_data.pressure = float(fields[0])
+            tlm_data.temperature = float(fields[1])
+            tlm_data.altitude = float(fields[2])
+        elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
+            tlm_data.filtered_roll = float(fields[0])
+            tlm_data.filtered_pitch = float(fields[1])
+            tlm_data.filtered_yaw = float(fields[2])
+            tlm_data.acc_roll = float(fields[3])
+            tlm_data.acc_pitch = float(fields[4])
+            tlm_data.acc_yaw = float(fields[5])
+            tlm_data.mag_roll = float(fields[6])
+            tlm_data.mag_pitch = float(fields[7])
+            tlm_data.mag_yaw = float(fields[8])
+            tlm_data.gyro_roll = float(fields[9])
+            tlm_data.gyro_pitch = float(fields[10])
+            tlm_data.gyro_yaw = float(fields[11])
+        elif mid == appargs.GpsAppArg.MID_comm_gga and len(fields) >= 5:
+            tlm_data.gps_time = fields[0]
+            tlm_data.gps_alt = float(fields[1])
+            tlm_data.gps_lat = float(fields[2])
+            tlm_data.gps_lon = float(fields[3])
+            tlm_data.gps_sats = int(float(fields[4]))
+        elif mid == appargs.ElectroAppArg.MID_comm_volt and len(fields) >= 3:
+            tlm_data.voltage = float(fields[0])
+            tlm_data.current = float(fields[1])
+            tlm_data.power = float(fields[2])
+        elif mid == appargs.DistanceAppArg.MID_comm_dis and len(fields) >= 1:
+            tlm_data.distance = float(fields[0])
+        elif mid == appargs.FlightlogicAppArg.MID_comm_state and len(fields) >= 1:
+            tlm_data.state = fields[0]
+        elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
+            tlm_data.mode = fields[0]
+    except (ValueError, TypeError) as exc:
+        logger.warning(
+            "Dropped malformed telemetry payload mid=%s data=%r (%s)",
+            mid,
+            unpacked.data,
+            exc,
+        )
 
 
 def _tlm_multiline_for_console(line: str) -> str:

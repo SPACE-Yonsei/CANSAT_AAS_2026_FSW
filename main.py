@@ -19,6 +19,8 @@ from multiprocessing import Process, Queue, Pipe, connection
 import threading
 import time
 
+APP_DICT_LOCK = threading.RLock()
+
 # Initialize logging system FIRST (before any LogEvent calls)
 log_queue = events.init_events_main_process()
 
@@ -224,8 +226,10 @@ app_launcher_args = {
 # Functions for (re)starting, terminating applications  # 
 #########################################################
 def run_app(AppID: int):
-    if AppID in app_dict:
-        app_process : Process = app_dict[AppID].process
+    with APP_DICT_LOCK:
+        app_entry = app_dict.get(AppID)
+    if app_entry is not None:
+        app_process : Process = app_entry.process
         app_process.start()
     else:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, f"AppID {AppID} not in app dictionary")
@@ -245,23 +249,33 @@ def terminate_FSW():
     packed_msg = msgstructure.pack_msg(msg)
 
     # Send termination message to kill every process
-    for appID in app_dict:
+    with APP_DICT_LOCK:
+        app_ids = list(app_dict.keys())
+    for appID in app_ids:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID}")
+        with APP_DICT_LOCK:
+            app_entry = app_dict.get(appID)
+        if app_entry is None:
+            continue
         try:
-            app_dict[appID].pipe.send(packed_msg)
+            app_entry.pipe.send(packed_msg)
         except (OSError, BrokenPipeError):
              events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, f"Pipe broken for AppID {appID}, process may have already exited")
 
     # Join all processes with timeout, force kill if not responding
-    for appID in app_dict:
+    for appID in app_ids:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Joining AppID {appID}")
-        app_dict[appID].process.join(timeout=3)  # 3초 타임아웃
-        if app_dict[appID].process.is_alive():
+        with APP_DICT_LOCK:
+            app_entry = app_dict.get(appID)
+        if app_entry is None:
+            continue
+        app_entry.process.join(timeout=3)  # 3초 타임아웃
+        if app_entry.process.is_alive():
             events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, f"AppID {appID} not responding, force killing")
-            app_dict[appID].process.terminate()
-            app_dict[appID].process.join(timeout=1)
-            if app_dict[appID].process.is_alive():
-                app_dict[appID].process.kill()
+            app_entry.process.terminate()
+            app_entry.process.join(timeout=1)
+            if app_entry.process.is_alive():
+                app_entry.process.kill()
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID} complete")
 
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Manual termination! Resetting prev state file")
@@ -284,7 +298,9 @@ def restart_app(appID: int):
     """죽은 프로세스를 재시작합니다."""
     global app_dict, app_launchers, app_launcher_args
     
-    if appID not in app_dict or appID not in app_launchers:
+    with APP_DICT_LOCK:
+        has_app = appID in app_dict
+    if not has_app or appID not in app_launchers:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, 
                        f"Cannot restart AppID {appID}: not in dictionary")
         return False
@@ -294,13 +310,6 @@ def restart_app(appID: int):
         return False
     
     try:
-        # 기존 파이프 정리
-        old_pipe = app_dict[appID].pipe
-        try:
-            old_pipe.close()
-        except:
-            pass
-        
         # 새 파이프 생성
         parent_pipe, child_pipe = Pipe()
         
@@ -313,7 +322,14 @@ def restart_app(appID: int):
         new_elements = app_elements()
         new_elements.process = new_process
         new_elements.pipe = parent_pipe
-        app_dict[appID] = new_elements
+        with APP_DICT_LOCK:
+            old_entry = app_dict.get(appID)
+            app_dict[appID] = new_elements
+        if old_entry is not None:
+            try:
+                old_entry.pipe.close()
+            except Exception:
+                pass
         
         # 새 프로세스 시작
         new_process.start()
@@ -332,8 +348,10 @@ def checkrunstatus():
     """모든 프로세스의 생존 여부를 확인하고, 죽은 프로세스를 재시작합니다."""
     global MAINAPP_RUNSTATUS, app_dict
     
-    for appID in list(app_dict.keys()):
-        process = app_dict[appID].process
+    with APP_DICT_LOCK:
+        app_items = [(app_id, app_dict[app_id].process) for app_id in list(app_dict.keys())]
+
+    for appID, process in app_items:
         
         # 프로세스가 시작되었고, 더 이상 살아있지 않은 경우
         if process.pid is not None and not process.is_alive():
@@ -382,10 +400,18 @@ def runloop(Main_Queue : Queue):
             if unpacked_msg == False:
                 continue
 
-            if unpacked_msg.receiver_app in app_dict:
-                app_dict[unpacked_msg.receiver_app].pipe.send(recv_msg)
-            else:
-                #events.LogEvent(appargs.MainAppArg.AppName, events.EventType.error, "Error : Received MID in not in app dictionary")
+            with APP_DICT_LOCK:
+                app_entry = app_dict.get(unpacked_msg.receiver_app)
+            if app_entry is None:
+                continue
+            try:
+                app_entry.pipe.send(recv_msg)
+            except (OSError, BrokenPipeError):
+                events.LogEvent(
+                    appargs.MainAppArg.AppName,
+                    events.EventType.warning,
+                    f"Pipe send failed to AppID {unpacked_msg.receiver_app}",
+                )
                 continue
 
     except KeyboardInterrupt:
@@ -396,9 +422,11 @@ def runloop(Main_Queue : Queue):
         terminate_FSW()
     except KeyboardInterrupt:
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.warning, "Force terminating all processes...")
-        for appID in app_dict:
-            if app_dict[appID].process.is_alive():
-                app_dict[appID].process.kill()
+        with APP_DICT_LOCK:
+            app_entries = [app_dict[app_id] for app_id in app_dict]
+        for app_entry in app_entries:
+            if app_entry.process.is_alive():
+                app_entry.process.kill()
         events.shutdown_events()
         sys.exit(1)
     return
@@ -409,8 +437,10 @@ if __name__ == '__main__':
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "Starting FSW...")
 
     # Start each app's process
-    for appID in app_dict:
-        app_dict[appID].process.start()
+    with APP_DICT_LOCK:
+        start_items = [(app_id, app_dict[app_id].process) for app_id in app_dict]
+    for appID, app_process in start_items:
+        app_process.start()
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Started AppID {appID}")
 
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, "All processes started.")
