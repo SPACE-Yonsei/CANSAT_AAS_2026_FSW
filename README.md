@@ -146,7 +146,7 @@ python3 -m Sensor_Barometer.barometer
 python3 -m Sensor_Imu.imu
 python3 -m Sensor_Electro.electro
 python3 -m Sensor_Distance.distance
-# GPS: I2C u-blox by default (see README); USB NMEA: GPS_USE_UART=1
+# GPS: I2C u-blox DDC only
 python3 -m Sensor_Gps.gps
 ```
 
@@ -203,13 +203,12 @@ FSW_LOG_TLM=0 python3 main.py
 
 - **Barometer**: **BMP3xx only** (e.g. **BMP390**) via `Sensor_Barometer/barometer.py`, I2C `BARO_I2C_ADDR` (default `0x77`), package `adafruit-circuitpython-bmp3xx`. On failure the app logs and falls back to synthetic data.
 - **IMU**: uses `Sensor_Imu/imu.py` (BNO08x, default `0x4A`) when `adafruit-circuitpython-bno08x` works.
-- **GPS**: `Sensor_Gps/gps.py` uses **u-blox DDC I2C** (NMEA over I2C) by default, e.g. **MikroE GNSS 7 Click (NEO-M9N)** at **`0x42`**. Flight **UART** is reserved for **XBee/comm**; GNSS is on the same I2C bus as baro / IMU / etc. (`FSW_I2C_BUS`, `GPS_I2C_ADDR`).
-  - **UART NMEA** (optional, e.g. USB dongle): `export GPS_USE_UART=1` and set `GPS_DEVICE`, `GPS_BAUD`.
+- **GPS**: `Sensor_Gps/gps.py` uses **u-blox DDC I2C** (NMEA/UBX over I2C), e.g. **MikroE GNSS 7 Click (NEO-M9N)** at **`0x42`**. Flight **UART** is reserved for **XBee/comm**; GNSS is on the same I2C bus as baro / IMU / etc. (`FSW_I2C_BUS`, `GPS_I2C_ADDR`).
   - **INA228** is **not** at `0x42`; keep `ELECTRO_I2C_ADDR=0x40` unless your shunt board uses another address.
 - **IMU**: Adafruit BNO08x low-level **packet debug prints** are silenced by default. To turn them back on for driver bring-up: `BNO08X_DEBUG=1 python3 main.py`.
 - **Distance**: **Benewake TF-Luna I2C** via `Sensor_Distance/distance.py` (default address **`0x10`**). Extra pip package not required. Env: `DISTANCE_I2C_ADDR`, `DISTANCE_TFL_TRIGGER` (default `1`; set `0` for continuous mode per Benewake docs).
 - **Power**: **INA228** only via `Sensor_Electro/electro.py`, `ELECTRO_I2C_ADDR` (default `0x40`), package `adafruit-circuitpython-ina228`.
-- Env hints: `BARO_I2C_ADDR`, `BARO_INIT_RETRIES`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `IMU_ENABLE_FEATURE_ATTEMPTS`, `IMU_BOOT_DRAIN_SEC`, `IMU_INIT_ROUNDS`, `IMU_POST_OPEN_DELAY_SEC`, `GPS_I2C_ADDR`, `GPS_I2C_READ_CHUNK` (default 32, u-blox FIFO burst), `GPS_NMEA_STRICT_CHECKSUM` (default on), `GPS_I2C_INIT_RETRIES`, `GPS_I2C_INIT_DELAY_SEC`, `GPS_USE_UART`, `GPS_DEVICE`, `GPS_BAUD`, `DISTANCE_I2C_ADDR`, `DISTANCE_TFL_TRIGGER`.
+- Env hints: `BARO_I2C_ADDR`, `BARO_INIT_RETRIES`, `ELECTRO_I2C_ADDR`, `IMU_I2C_ADDR`, `IMU_ENABLE_FEATURE_ATTEMPTS`, `IMU_BOOT_DRAIN_SEC`, `IMU_INIT_ROUNDS`, `IMU_POST_OPEN_DELAY_SEC`, `GPS_I2C_ADDR`, `GPS_I2C_READ_CHUNK` (default 32, u-blox FIFO burst), `GPS_NMEA_STRICT_CHECKSUM` (default on), `GPS_I2C_INIT_RETRIES`, `GPS_I2C_INIT_DELAY_SEC`, `GPS_DEBUG_RAW`, `DISTANCE_I2C_ADDR`, `DISTANCE_TFL_TRIGGER`.
 - **`FSW_I2C_BUS`**: if `sudo i2cdetect -y 1` shows your sensors but Python reports `No I2C device at address`, Blinka may be using a different bus than `i2c-1`. Run `pip install adafruit-extended-bus` and e.g. `export FSW_I2C_BUS=1` before `main.py`.
 - **I2C multiprocessing**: baro / power / IMU / distance each run in a separate process; by default Linux uses `flock` on `FSW_I2C_LOCK_FILE` (default `/tmp/fsw_i2c.lock`) so SMBus transactions do not interleave. Set `FSW_I2C_FLOCK=0` only if you know you do not need it.
 - **IMU init**: if logs show `Was not able to enable feature` / feature `1` (accelerometer), try `IMU_POST_OPEN_DELAY_SEC=0.5`, confirm `IMU_I2C_ADDR` (`0x4A` vs `0x4B`), wiring, and `i2cdetect`. `BNO08X_DEBUG=1` enables verbose driver output. If **rotation_vector** (`5`) fails, FSW retries with **game_rotation_vector** (no magnetometer fusion) and uses `game_quaternion` for Euler. Raise `IMU_ENABLE_FEATURE_ATTEMPTS` if needed.
@@ -227,13 +226,13 @@ FSW_LOG_TLM=0 python3 main.py
 | Distance synthetic / init errors | FSW uses **TF-Luna I2C** at `0x10` by default; check wiring, `FSW_I2C_BUS`, and `i2cdetect`. |
 | `No I2C device at address: 0x77` but `i2cdetect -y 1` shows `77` | Force the same bus Python uses: `pip install adafruit-extended-bus` then `export FSW_I2C_BUS=1`. If SDO=GND use `BARO_I2C_ADDR=0x76`. |
 | `i2cdetect` shows `42` | **u-blox GNSS** on I2C — default; set `GPS_I2C_ADDR` if not `0x42`. |
-| GPS `No such file /dev/ttyUSB0` | **Normal** for I2C GNSS (no UART GPS). Only set `GPS_DEVICE` if you use `GPS_USE_UART=1`. |
+| GPS `No such file /dev/ttyUSB0` | GPS is I2C-only in this FSW. Do not wire GNSS to the flight UART; reserve UART for XBee/comm. |
 | Baro TLM looks like ~1013 hPa and temp toggling ±0.2 °C | That is **synthetic** fallback after BMP init/read failure — fix I2C address/hardware first |
 | Power TLM stepping 7.35–7.38 V in a 4-step pattern | **Synthetic** electro — usually missing `ina228` pip package or INA init error |
 
 ### 6) XBee “not connected” / ground station sees nothing
 
-- **One UART, one peripheral**: if the Pi’s primary UART is wired to the XBee, use **I2C GNSS** (default FSW) or a **USB** NMEA dongle with `GPS_USE_UART=1` and `GPS_DEVICE=/dev/ttyUSB0`.
+- **One UART, one peripheral**: the Pi’s primary UART is for XBee/comm; use **I2C GNSS** for GPS.
 - **Baud match**: set XCTU **Interface Data Rate** to the same value as FSW `UART_BAUD` (default `9600`). Example: `UART_BAUD=115200 python3 main.py`.
 - **Wiring**: XBee DIN → Pi TX, DOUT → Pi RX, common GND; logic is 3.3 V.
 - **Sanity check**: loop back or use another PC serial monitor at the same baud to confirm bytes leave the Pi when TLM logging is on.

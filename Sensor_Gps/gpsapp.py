@@ -267,8 +267,7 @@ def _read_gps():
             if not _GPS_SYNTH_WARNED:
                 logger.warning(
                     "GPS: I2C u-blox init failed; TLM lat/lon are SYNTHETIC. "
-                    "Check FSW_I2C_BUS, GPS_I2C_ADDR (default 0x42), antenna. "
-                    "USB NMEA only with GPS_USE_UART=1."
+                    "Check FSW_I2C_BUS, GPS_I2C_ADDR (default 0x42), antenna."
                 )
                 _GPS_SYNTH_WARNED = True
             return _synthetic_read()

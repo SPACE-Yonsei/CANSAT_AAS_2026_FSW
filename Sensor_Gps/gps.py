@@ -2,8 +2,6 @@
 
 FSW assumes **GNSS on I2C**; the flight radio uses UART (`comm`), not the GPS.
 
-Optional **UART NMEA** only if ``GPS_USE_UART=1`` (e.g. USB dongle), separate from XBee.
-
 I2C: length at 0xFD/0xFE, stream from 0xFF (NEO-M9N integration manual §3.7.2). Default **0x42**.
 """
 
@@ -25,17 +23,157 @@ if str(_REPO) not in sys.path:
 logger = logging.getLogger(__name__)
 
 
-def _port_candidates() -> list[str]:
-    env = os.environ.get("GPS_DEVICE", "").strip()
-    if env:
-        return [p.strip() for p in env.split(",") if p.strip()]
-    return ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/ttyS0", "/dev/ttyAMA0"]
+def _debug_raw_enabled() -> bool:
+    env = os.environ.get("GPS_DEBUG_RAW")
+    if env is None:
+        return __name__ == "__main__"
+    v = env.strip().lower()
+    return v not in ("0", "false", "no", "off")
 
 
-def _use_uart_gnss() -> bool:
-    """Rare: USB/UART NMEA. Default is I2C u-blox only."""
-    v = os.environ.get("GPS_USE_UART", "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+def _debug_print(message: str) -> None:
+    if _debug_raw_enabled():
+        print(message, flush=True)
+
+
+def _bytes_ascii(data: bytes) -> str:
+    return "".join(chr(b) if 32 <= b <= 126 else "." for b in data)
+
+
+def _debug_section(title: str) -> None:
+    _debug_print("")
+    _debug_print(f"=== {title} ===")
+
+
+def _debug_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
+
+
+def _debug_dict(title: str, data: dict, order: list[str] | None = None) -> None:
+    _debug_section(title)
+    keys = list(order or [])
+    keys.extend(k for k in data.keys() if k not in keys)
+    now = time.time()
+    for key in keys:
+        if key not in data:
+            continue
+        value = data[key]
+        if key == "_seen_ts":
+            _debug_print(f"{key}: {value:.3f} (age={max(0.0, now - float(value)):.3f}s)")
+        else:
+            _debug_print(f"{key}: {_debug_value(value)}")
+
+
+_GPS_ROW_FIELDS = [
+    "time_utc_hhmmss",
+    "alt_m",
+    "lat_deg",
+    "lon_deg",
+    "satellites",
+    "fix_quality",
+    "rmc_status",
+    "speed_m_s",
+    "course_deg",
+    "motion_valid",
+    "position_age_s",
+    "motion_age_s",
+    "source",
+    "fix_type",
+    "h_acc_m",
+    "v_acc_m",
+    "speed_acc_m_s",
+    "heading_acc_deg",
+    "vel_n_m_s",
+    "vel_e_m_s",
+    "valid_flags",
+]
+
+
+def _debug_row(row: Optional[list]) -> None:
+    _debug_section("GPS_ROW decoded output")
+    if row is None:
+        _debug_print("row: None")
+        _debug_print("meaning: no valid position row is available yet")
+        return
+    for i, value in enumerate(row):
+        name = _GPS_ROW_FIELDS[i] if i < len(_GPS_ROW_FIELDS) else f"extra_{i}"
+        _debug_print(f"{name}: {_debug_value(value)}")
+
+
+def _debug_runtime_config(dev: dict) -> None:
+    _debug_section("GPS_CONFIG")
+    _debug_print(f"driver: u-blox DDC/I2C")
+    _debug_print(f"kind: {dev.get('kind')}")
+    _debug_print(f"i2c_addr: 0x{int(dev.get('addr', 0)):02x}")
+    _debug_print(f"i2c_read_chunk_max: {_ublox_read_chunk_max()} bytes")
+    _debug_print(f"nmea_strict_checksum: {_nmea_checksum_strict()}")
+    _debug_print(f"debug_output: {_debug_raw_enabled()}")
+
+
+def _debug_i2c_scan(i2c: Any, expected_addr: int) -> None:
+    if not _debug_raw_enabled():
+        return
+    _debug_section("GPS_I2C scan")
+    if not hasattr(i2c, "scan"):
+        _debug_print("scan: unavailable on this I2C object")
+        return
+    locked = False
+    try:
+        if hasattr(i2c, "try_lock"):
+            for _ in range(5):
+                if i2c.try_lock():
+                    locked = True
+                    break
+                time.sleep(0.01)
+            if not locked:
+                _debug_print("scan: failed to lock I2C bus")
+                return
+        addrs = list(i2c.scan())
+        _debug_print("addresses: " + (" ".join(f"0x{addr:02x}" for addr in addrs) if addrs else "(none)"))
+        _debug_print(f"expected_gps_addr: 0x{expected_addr:02x}")
+        _debug_print(f"gps_addr_present: {expected_addr in addrs}")
+    except Exception as exc:
+        _debug_print(f"scan_error: {exc!r}")
+    finally:
+        if locked and hasattr(i2c, "unlock"):
+            try:
+                i2c.unlock()
+            except Exception:
+                pass
+
+
+def _debug_dump_bytes(label: str, data: bytes) -> None:
+    _debug_section(f"GPS_PACKET raw {label}")
+    _debug_print(f"bytes: {len(data)}")
+    _debug_print(f"hex: {data.hex(' ')}")
+    _debug_print(f"ascii_printable: {_bytes_ascii(data)}")
+    text = data.decode("ascii", errors="replace").replace("\r", "\\r")
+    if text:
+        _debug_print("text_lines:")
+        for line in text.split("\n"):
+            _debug_print(f"  {line}")
+
+
+def _debug_flow(dev: dict, stage: str, **fields: Any) -> None:
+    details = " ".join(f"{key}={value!r}" for key, value in fields.items())
+    _debug_print(f"GPS_FLOW {stage} {details}".rstrip())
+
+
+def _debug_parser_state(dev: dict) -> None:
+    pvt = dev.get("pvt")
+    gga = dev.get("gga")
+    rmc = dev.get("rmc")
+    _debug_section("GPS_PARSER state after this read")
+    _debug_print(f"has_ubx_nav_pvt: {bool(pvt)}")
+    _debug_print(f"has_nmea_gga: {bool(gga)}")
+    _debug_print(f"has_nmea_rmc: {bool(rmc)}")
+    _debug_print(f"ubx_tail_bytes_waiting_for_next_read: {len(dev.get('_ubx_tail', b''))}")
+    _debug_print(f"nmea_tail_bytes_waiting_for_next_read: {len(dev.get('_nmea_tail', b''))}")
+    _debug_print(f"ubx_fix_type: {pvt.get('fix_type') if pvt else None}")
+    _debug_print(f"gga_fix_quality: {gga.get('fix_q') if gga else None}")
+    _debug_print(f"rmc_status: {rmc.get('status') if rmc else None}")
 
 
 def _parse_coord(raw: str, hemi: str) -> Optional[float]:
@@ -128,23 +266,49 @@ def _nmea_checksum_valid(line: str) -> bool:
 def _ingest_nmea_line(dev: dict, line: str) -> None:
     line = line.strip()
     if len(line) < 6 or line[0] != "$":
+        if line:
+            _debug_section("GPS_NMEA ignored")
+            _debug_print(f"line: {line}")
+            _debug_print("reason: not an NMEA sentence")
         return
+    _debug_section("GPS_NMEA sentence")
+    _debug_print(f"line: {line}")
     if not _nmea_checksum_valid(line):
+        _debug_print("checksum: invalid, sentence dropped")
         logger.debug("GPS: dropped NMEA (checksum): %s", line[:96])
         return
+    _debug_print("checksum: valid")
     body = line[1:].split("*", 1)[0]
     parts = body.split(",")
     tag = parts[0] if parts else ""
+    _debug_print(f"tag: {tag}")
+    _debug_print("fields:")
+    for i, part in enumerate(parts):
+        _debug_print(f"  [{i}] {part}")
     if tag.endswith("GGA") and len(parts) > 1:
         g = _parse_gga(parts)
         if g:
             g["_seen_ts"] = time.time()
             dev["gga"] = g
+            _debug_dict("GPS_PARSE GGA", g, ["time", "lat", "lon", "alt", "sats", "fix_q", "_seen_ts"])
+        else:
+            _debug_section("GPS_PARSE GGA failed")
+            _debug_print("reason: missing fields or invalid numeric/coordinate data")
     elif tag.endswith("RMC") and len(parts) > 1:
         r = _parse_rmc(parts)
         if r:
             r["_seen_ts"] = time.time()
             dev["rmc"] = r
+            _debug_dict(
+                "GPS_PARSE RMC",
+                r,
+                ["time", "status", "lat", "lon", "speed_ms", "course", "_seen_ts"],
+            )
+        else:
+            _debug_section("GPS_PARSE RMC failed")
+            _debug_print("reason: missing fields or invalid numeric/coordinate data")
+    else:
+        _debug_print("parser: unsupported sentence type, kept only as raw input")
 
 
 def _nmea_feed_bytes(dev: dict, chunk: bytes) -> None:
@@ -152,6 +316,14 @@ def _nmea_feed_bytes(dev: dict, chunk: bytes) -> None:
     data = tail + chunk
     lines = data.split(b"\n")
     dev["_nmea_tail"] = lines[-1]
+    _debug_flow(
+        dev,
+        "nmea_feed",
+        bytes=len(chunk),
+        previous_tail_bytes=len(tail),
+        complete_lines=max(0, len(lines) - 1),
+        new_tail_bytes=len(dev["_nmea_tail"]),
+    )
     for raw_line in lines[:-1]:
         try:
             line = raw_line.decode("ascii", errors="ignore").strip()
@@ -239,22 +411,70 @@ def _parse_nav_pvt(payload: bytes) -> Optional[dict]:
 
 
 def _ingest_ubx_frame(dev: dict, msg_class: int, msg_id: int, payload: bytes) -> None:
+    _debug_section("GPS_UBX frame")
+    _debug_print(f"class: 0x{msg_class:02x}")
+    _debug_print(f"id: 0x{msg_id:02x}")
+    _debug_print(f"payload_bytes: {len(payload)}")
     if msg_class == 0x01 and msg_id == 0x07:
         pvt = _parse_nav_pvt(payload)
         if pvt is not None:
             dev["pvt"] = pvt
+            _debug_dict(
+                "GPS_PARSE UBX_NAV_PVT",
+                pvt,
+                [
+                    "source",
+                    "date",
+                    "time",
+                    "fix_type",
+                    "num_sv",
+                    "lat",
+                    "lon",
+                    "alt",
+                    "height",
+                    "h_acc",
+                    "v_acc",
+                    "g_speed",
+                    "head_mot",
+                    "vel_n",
+                    "vel_e",
+                    "vel_d",
+                    "s_acc",
+                    "head_acc",
+                    "valid",
+                    "flags",
+                    "i_tow",
+                    "_seen_ts",
+                ],
+            )
+        else:
+            _debug_print("parser: UBX_NAV_PVT parse failed")
+    else:
+        _debug_print("parser: unsupported UBX frame, kept only as raw input")
 
 
 def _ubx_feed_bytes(dev: dict, chunk: bytes) -> None:
     data = dev.setdefault("_ubx_tail", b"") + chunk
+    _debug_flow(
+        dev,
+        "ubx_feed",
+        bytes=len(chunk),
+        previous_tail_bytes=len(dev.get("_ubx_tail", b"")),
+        buffered_bytes=len(data),
+    )
     idx = 0
     while True:
         start = data.find(b"\xB5\x62", idx)
         if start < 0:
             dev["_ubx_tail"] = data[-1:] if data.endswith(b"\xB5") else b""
+            if len(data) > idx:
+                _debug_flow(dev, "ubx_no_more_frames", skipped_bytes=len(data) - idx, tail_bytes=len(dev["_ubx_tail"]))
             return
+        if start > idx:
+            _debug_flow(dev, "ubx_skip_prefix", skipped_bytes=start - idx)
         if len(data) - start < 8:
             dev["_ubx_tail"] = data[start:]
+            _debug_flow(dev, "ubx_wait_header", tail_bytes=len(dev["_ubx_tail"]))
             return
         msg_class = data[start + 2]
         msg_id = data[start + 3]
@@ -262,11 +482,28 @@ def _ubx_feed_bytes(dev: dict, chunk: bytes) -> None:
         end = start + 8 + length
         if len(data) < end:
             dev["_ubx_tail"] = data[start:]
+            _debug_flow(
+                dev,
+                "ubx_wait_payload",
+                class_hex=f"0x{msg_class:02x}",
+                id_hex=f"0x{msg_id:02x}",
+                payload_bytes=length,
+                tail_bytes=len(dev["_ubx_tail"]),
+            )
             return
         frame_body = data[start + 2 : start + 6 + length]
         ck_a, ck_b = _ubx_checksum(frame_body)
         if data[start + 6 + length] == ck_a and data[start + 7 + length] == ck_b:
             _ingest_ubx_frame(dev, msg_class, msg_id, data[start + 6 : start + 6 + length])
+        else:
+            _debug_section("GPS_UBX checksum failed")
+            _debug_print(f"class: 0x{msg_class:02x}")
+            _debug_print(f"id: 0x{msg_id:02x}")
+            _debug_print(f"payload_bytes: {length}")
+            _debug_print(f"expected_ck_a: 0x{ck_a:02x}")
+            _debug_print(f"expected_ck_b: 0x{ck_b:02x}")
+            _debug_print(f"actual_ck_a: 0x{data[start + 6 + length]:02x}")
+            _debug_print(f"actual_ck_b: 0x{data[start + 7 + length]:02x}")
         idx = end
 
 
@@ -411,15 +648,6 @@ def _ublox_enable_nav_pvt_i2c(i2c: Any, address: int) -> None:
         logger.debug("GPS: UBX NAV-PVT enable over I2C failed: %s", exc)
 
 
-def _ublox_enable_nav_pvt_uart(ser: Any) -> None:
-    payload = bytes([0x01, 0x07, 0, 1, 0, 0, 0, 0])
-    frame = _ubx_frame(0x06, 0x01, payload)
-    try:
-        ser.write(frame)
-    except Exception as exc:
-        logger.debug("GPS: UBX NAV-PVT enable over UART failed: %s", exc)
-
-
 def _init_gps_i2c_ublox() -> Any:
     from lib import i2c_bus
 
@@ -431,6 +659,8 @@ def _init_gps_i2c_ublox() -> Any:
         try:
             with i2c_bus.i2c_lock():
                 i2c = i2c_bus.get_i2c()
+                if i == 0:
+                    _debug_i2c_scan(i2c, addr)
                 n = _ublox_ddc_bytes_available(i2c, addr)
                 _ublox_enable_nav_pvt_i2c(i2c, addr)
             logger.info("GPS u-blox DDC I2C at 0x%02x (rx queue ~%d bytes)", addr, n)
@@ -458,85 +688,57 @@ def _init_gps_i2c_ublox() -> Any:
     return None
 
 
-def _init_gps_uart() -> Any:
-    import serial  # type: ignore
-
-    baud = int(os.environ.get("GPS_BAUD", "9600"))
-    last_exc: Exception | None = None
-    for port in _port_candidates():
-        try:
-            ser = serial.Serial(port, baud, timeout=0.2)
-            _ublox_enable_nav_pvt_uart(ser)
-            logger.info("GPS UART opened %s @ %s", port, baud)
-            return {"kind": "uart", "ser": ser, "gga": None, "rmc": None, "pvt": None, "_ubx_tail": b""}
-        except Exception as exc:
-            last_exc = exc
-            logger.warning("GPS open failed for %s: %s", port, exc)
-    logger.warning("GPS UART unavailable (last error: %s)", last_exc)
-    return None
-
-
 def init_gps() -> Any:
-    """Open GNSS: **I2C u-blox by default**; UART only when ``GPS_USE_UART=1``."""
-    if _use_uart_gnss():
-        return _init_gps_uart()
+    """Open GNSS through u-blox DDC/I2C only."""
     return _init_gps_i2c_ublox()
-
-
-def _gps_readdata_uart(dev: dict) -> Optional[list]:
-    ser = dev["ser"]
-    for _ in range(32):
-        raw = ser.readline()
-        if not raw:
-            break
-        _ubx_feed_bytes(dev, raw)
-        try:
-            line = raw.decode("ascii", errors="ignore").strip()
-        except Exception:
-            continue
-        _ingest_nmea_line(dev, line)
-    return _gps_build_return(dev)
 
 
 def _gps_readdata_i2c(dev: dict) -> Optional[list]:
     from lib import i2c_bus
 
     addr = int(dev["addr"])
+    _debug_flow(dev, "poll_start", kind=dev.get("kind"), addr=f"0x{addr:02x}")
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
         try:
             n = _ublox_ddc_bytes_available(i2c, addr)
+            _debug_flow(dev, "i2c_available", bytes=n)
         except OSError as exc:
+            _debug_flow(dev, "i2c_available_error", error=repr(exc))
             logger.debug("GPS I2C bytes_available failed: %s", exc)
             n = 0
-        except Exception:
+        except Exception as exc:
+            _debug_flow(dev, "i2c_available_error", error=repr(exc))
             n = 0
         if n > 0:
             n = min(n, 256)
             try:
+                _debug_flow(dev, "i2c_read_request", bytes=n)
                 chunk = _ublox_ddc_read_stream(i2c, addr, n)
+                _debug_dump_bytes("I2C", chunk)
+                _debug_flow(dev, "feed_ubx", bytes=len(chunk))
                 _ubx_feed_bytes(dev, chunk)
+                _debug_flow(dev, "feed_nmea", bytes=len(chunk))
                 _nmea_feed_bytes(dev, chunk)
             except OSError as exc:
+                _debug_flow(dev, "i2c_read_error", error=repr(exc))
                 logger.warning("GPS I2C read_stream failed (%s); next poll will retry", exc)
-    return _gps_build_return(dev)
+        else:
+            _debug_flow(dev, "i2c_read_skip", reason="empty_fifo")
+    _debug_parser_state(dev)
+    row = _gps_build_return(dev)
+    _debug_row(row)
+    return row
 
 
 def gps_readdata(dev: Optional[dict]) -> Optional[list]:
     if not dev:
         return None
-    if dev.get("kind") == "i2c_ublox":
-        return _gps_readdata_i2c(dev)
-    return _gps_readdata_uart(dev)
+    return _gps_readdata_i2c(dev)
 
 
 def gps_terminate(dev: dict) -> None:
-    if not dev or dev.get("kind") == "i2c_ublox":
-        return
-    try:
-        dev["ser"].close()
-    except Exception:
-        pass
+    return
 
 
 if __name__ == "__main__":
@@ -545,29 +747,31 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    if _use_uart_gnss():
-        print("GPS: UART mode (GPS_USE_UART=1)", flush=True)
-    else:
-        print("GPS: I2C u-blox (default). Set GPS_I2C_ADDR if not 0x42.", flush=True)
+    print("GPS: I2C u-blox only. Set GPS_I2C_ADDR if not 0x42.", flush=True)
     dev = init_gps()
     period = cli_period_sec()
     if dev is None:
         print(
-            "GPS init failed. I2C: FSW_I2C_BUS, wiring, 0x42. UART: GPS_USE_UART=1 and GPS_DEVICE.",
+            "GPS init failed. Check FSW_I2C_BUS, wiring, GPS_I2C_ADDR (default 0x42), antenna.",
             flush=True,
         )
         raise SystemExit(1)
-    print("GPS: OK, streaming...", flush=True)
+    print("GPS: OK, streaming data flow: I2C FIFO -> raw bytes -> UBX/NMEA parser -> gps row", flush=True)
+    _debug_runtime_config(dev)
+    poll_count = 0
     try:
         while True:
+            poll_count += 1
+            _debug_section(f"GPS_POLL {poll_count}")
             row = gps_readdata(dev)
             if row is None:
-                print("fix=no (sky view / baud / I2C / NMEA)", flush=True)
+                print("fix=no (watch GPS_FLOW/GPS_RAW/GPS_PARSE above)", flush=True)
             else:
                 gt, alt, lat, lon, sats, fixq, st, spd, crs = row[:9]
+                source = row[12] if len(row) >= 13 else "NMEA"
                 print(
                     f"time={gt} lat={lat:.6f} lon={lon:.6f} alt_m={alt:.1f} "
-                    f"sats={sats} fix={fixq} rmc={st} v_ms={spd:.2f} crs={crs:.1f}",
+                    f"sats={sats} fix={fixq} rmc={st} v_ms={spd:.2f} crs={crs:.1f} source={source}",
                     flush=True,
                 )
             time.sleep(period)
