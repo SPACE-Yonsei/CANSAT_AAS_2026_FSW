@@ -115,3 +115,17 @@ def reset_prevstate() -> None:
     PREV_PACKET_COUNT = 0
     PREV_ST_TIMEDELTA = 0.0
     _save()
+
+
+def reset_control() -> None:
+    """Test utility: reset mission control-related persisted values.
+
+    Keeps telemetry packet/timebase counters intact for communication tests.
+    """
+    global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT, Target_lat, Target_lon
+    PREV_STATE = 0
+    PREV_ALT_CAL = 0.0
+    PREV_MAX_ALT = 0.0
+    Target_lat = 0.0
+    Target_lon = 0.0
+    _save()

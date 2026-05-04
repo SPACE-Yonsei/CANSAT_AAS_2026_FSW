@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Optional
@@ -10,6 +11,7 @@ from lib import appargs, msgstructure, prevstate
 
 
 FLIGHTLOGIC_RUNSTATUS = True
+logger = logging.getLogger(__name__)
 state = 0
 max_alt = 0.0
 recent_alt: list[float] = []
@@ -79,13 +81,37 @@ def to_landed(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 5, force=force)
 
 
+def _verify_inter_app_links(main_queue) -> None:
+    """Best-effort non-actuating link audit for SIM prepare mode.
+
+    There is no ACK channel for every app, so this routine validates routing
+    by dispatching only benign frames that must not trigger actuators.
+    """
+    # Keep comm mode in "A" and attach audit marker in payload tail.
+    _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, "A,LINKCHK")
+    _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_state, str(state))
+
+    # Motor receives only state/target refresh (no burnwire/egg trigger).
+    _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
+    _send(
+        main_queue,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_TargetCor,
+        f"{prevstate.Target_lat},{prevstate.Target_lon}",
+    )
+
+    # Camera OFF is a safe no-op for routing/path check.
+    _send(main_queue, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, "OFF")
+    logger.info("SIM A link check frames dispatched")
+
+
 def handle_sim(data: str, main_queue) -> None:
     global sim_enable, sim_active
     option = data.strip().upper()
     if option == "ENABLE":
         sim_enable = True
         sim_active = False
-        _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, "A")
+        _verify_inter_app_links(main_queue)
     elif option == "ACTIVATE":
         if sim_enable:
             sim_active = True

@@ -45,6 +45,16 @@ def init_guidance(_logger=None) -> None:
     _last_ctrl_ts = None
 
 
+def reset_control() -> None:
+    """Test utility: reset controller integrator and GPS gate states."""
+    global _last_gps, _gps_stable_count, _integral_yr, _last_cmd_yr, _last_ctrl_ts
+    _last_gps = None
+    _gps_stable_count = 0
+    _integral_yr = 0.0
+    _last_cmd_yr = 0.0
+    _last_ctrl_ts = None
+
+
 def is_gps_valid(gps_vector, gps_fidelity) -> bool:
     lat = float(gps_vector.lat)
     lon = float(gps_vector.lon)

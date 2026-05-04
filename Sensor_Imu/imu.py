@@ -27,6 +27,11 @@ _BNO_FEATURE_NAMES = {
 }
 
 
+def _init_progress(msg: str) -> None:
+    if os.environ.get("IMU_INIT_PROGRESS", "0").strip() == "1":
+        print(msg, flush=True)
+
+
 def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
     """BNO08x often needs a short settle + retries right after power-up (Blinka / Pi)."""
     if attempts is None:
@@ -36,6 +41,7 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
             attempts = 8
         attempts = max(3, min(attempts, 20))
     name = _BNO_FEATURE_NAMES.get(feature_id, f"id={feature_id:#04x}")
+    _init_progress(f"IMU: enable {name} …")
     last: Optional[Exception] = None
     for i in range(attempts):
         try:
@@ -48,16 +54,32 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
 
 
 def _drain_bno_packets(bno: Any, seconds: float) -> None:
-    """Drain SHTP boot / advertisement traffic before ``enable_feature`` (reduces early NAKs)."""
+    """Optional light drain before ``enable_feature``.
+
+    **Avoid** huge ``max_packets`` loops: if the chip signals data-ready but the bus misbehaves,
+    Adafruit's I2C reader can **block indefinitely** inside ``read_header``.
+    """
+    if seconds <= 0:
+        return
+    try:
+        max_calls = int(os.environ.get("IMU_BOOT_DRAIN_MAX_CALLS", "12"), 0)
+    except ValueError:
+        max_calls = 12
+    max_calls = max(1, min(max_calls, 40))
+    per_call_max = int(os.environ.get("IMU_BOOT_DRAIN_MAX_PACKETS", "6"), 0) or 6
+    per_call_max = max(1, min(per_call_max, 24))
+
     deadline = time.monotonic() + max(0.0, seconds)
-    while time.monotonic() < deadline:
+    for _ in range(max_calls):
+        if time.monotonic() >= deadline:
+            break
         try:
             with i2c_bus.i2c_lock():
                 if hasattr(bno, "_process_available_packets"):
-                    bno._process_available_packets(max_packets=48)  # type: ignore[attr-defined]
+                    bno._process_available_packets(max_packets=per_call_max)  # type: ignore[attr-defined]
         except Exception:
             pass
-        time.sleep(0.02)
+        time.sleep(0.04)
 
 
 def _quat_to_euler_deg(qi: float, qj: float, qk: float, qr: float) -> tuple[float, float, float]:
@@ -82,9 +104,18 @@ def _init_imu_once() -> tuple[Any, Any]:
 
     addr = int(os.environ.get("IMU_I2C_ADDR", "0x4A"), 0)
     lib_debug = os.environ.get("BNO08X_DEBUG", "").strip() == "1"
-    post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.5"))
-    boot_drain = float(os.environ.get("IMU_BOOT_DRAIN_SEC", "1.0"))
+    post_open_delay = float(os.environ.get("IMU_POST_OPEN_DELAY_SEC", "0.35"))
+    # Default **off**: long drains repeatedly call ``_process_available_packets`` and can hang in I2C read.
+    boot_drain = float(os.environ.get("IMU_BOOT_DRAIN_SEC", "0"))
+    try:
+        ctor_cycles = int(os.environ.get("IMU_OPEN_DRAIN_CYCLES", "2"), 0)
+    except ValueError:
+        ctor_cycles = 2
+    ctor_cycles = max(0, min(ctor_cycles, 6))
+    ctor_max_pkt = int(os.environ.get("IMU_OPEN_DRAIN_MAX_PACKETS", "8"), 0) or 8
+    ctor_max_pkt = max(1, min(ctor_max_pkt, 24))
 
+    _init_progress("IMU: open I2C + BNO08x …")
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
         bno = BNO08X_I2C(i2c, address=addr, debug=lib_debug)
@@ -97,19 +128,21 @@ def _init_imu_once() -> tuple[Any, Any]:
                 return None
 
             bno._dbg = _noop_dbg  # type: ignore[method-assign]
-        for _ in range(4):
+        for _ in range(ctor_cycles):
             if hasattr(bno, "_process_available_packets"):
-                bno._process_available_packets(max_packets=24)  # type: ignore[attr-defined]
+                bno._process_available_packets(max_packets=ctor_max_pkt)  # type: ignore[attr-defined]
 
+    if boot_drain > 0:
+        _init_progress(f"IMU: boot drain {boot_drain:.2f}s (IMU_BOOT_DRAIN_SEC) …")
     _drain_bno_packets(bno, boot_drain)
     time.sleep(post_open_delay)
 
-    # Gyro before accel works better on some BNO08x + Pi I2C bring-ups; then mag, then fusion report.
+    # Accel → gyro → mag, then fusion (Adafruit / Hillcrest bring-up order; gyro-first hung some Pi+I2C setups).
     # If rotation_vector fails (mag / EMI), fall back to game_rotation_vector.
     bno._fsw_use_game_quat = False  # type: ignore[attr-defined]
     for feat in (
-        BNO_REPORT_GYROSCOPE,
         BNO_REPORT_ACCELEROMETER,
+        BNO_REPORT_GYROSCOPE,
         BNO_REPORT_MAGNETOMETER,
     ):
         with i2c_bus.i2c_lock():
@@ -199,9 +232,10 @@ if __name__ == "__main__":
     from lib.sensor_cli import cli_period_sec
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    os.environ.setdefault("IMU_INIT_PROGRESS", "1")
     print(
-        "IMU: initializing BNO08x (often 15–60 s: I2C flock, enable_feature); "
-        "stop other FSW sensor CLIs or main.py if stuck.",
+        "IMU: initializing BNO08x (15–60 s). If this hangs, set IMU_BOOT_DRAIN_SEC=0 (default), "
+        "try FSW_I2C_FLOCK=0 for CLI-only tests, I2C 100 kHz, IMU_INIT_PROGRESS=1 shows each step.",
         flush=True,
     )
     try:

@@ -12,7 +12,7 @@ import time
 from typing import Optional
 
 from lib import appargs, msgstructure, prevstate
-from comm import uartserial
+from comm import uartserial, xbeereset
 
 
 logger = logging.getLogger(__name__)
@@ -254,6 +254,14 @@ def cmd_tc(option: str, main_queue) -> bool:
     )
 
 
+def cmd_xrst(option: str, _main_queue) -> bool:
+    upper = option.strip().upper()
+    if upper not in {"NOW", "1", "ON"}:
+        return False
+    xbeereset.send_reset_pulse()
+    return True
+
+
 def command_handler(recv_msg: str) -> None:
     global COMMAPP_RUNSTATUS
     unpacked = msgstructure.unpack_msg(recv_msg)
@@ -391,6 +399,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_cam(option, main_queue)
     if cmd == "TC":
         return cmd_tc(option, main_queue)
+    if cmd == "XRST":
+        return cmd_xrst(option, main_queue)
     return False
 
 
