@@ -1,108 +1,114 @@
-"""Parafoil servo mixer and PWM output control.
+#!/usr/bin/env python3
+import math
+import os
+import time
+import types
+from datetime import datetime
 
-This module is hardware-friendly (pigpio) but also test-friendly:
-- If pigpio is unavailable, it falls back to a dummy backend.
-- All command outputs are clamped to safe pulse ranges.
-"""
+_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
+_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
+DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
 
-from __future__ import annotations
+def _dbg(line: str):
+    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    full = f"[{ts}] {line}"
+    print(full)
+    _sim_log.write(full + "\n")
+    _sim_log.flush()
 
-from dataclasses import dataclass
-from types import SimpleNamespace
+PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
+PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
 
+PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg, 서보 물리 보정값 (고정)
 
-LEFT_GPIO = 13
-RIGHT_GPIO = 12
+LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
+RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
 
-LEFT_NEUTRAL = 1500
-RIGHT_NEUTRAL = 1500
+MAX_ANGLE_SCOPE: int = 120  # deg, 서보 기계적 최대 각도
 
-LEFT_MIN = 600
-LEFT_MAX = 2500
-RIGHT_MIN = 600
-RIGHT_MAX = 2500
+NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
+LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
+RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
 
-# Yaw-rate [deg/s] to pulse [us] gain
-K_PULSE_PER_DPS = 8.0
+LEFT_MAX_PULSE:  int = int(LEFT_ZERO  + MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, LEFT 120°
+RIGHT_MIN_PULSE: int = int(RIGHT_ZERO - MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, RIGHT 120°
 
+PULSE_MIN: int = 500   # μs
+PULSE_MAX: int = 2500  # μs
 
-class _DummyPi:
-    def __init__(self) -> None:
-        self.pulses: dict[int, int] = {}
-
-    def set_servo_pulsewidth(self, pin: int, pulse: int) -> None:
-        self.pulses[pin] = pulse
-
-    def stop(self) -> None:
-        return
-
-
-@dataclass
-class ControlHandle:
-    pi: object
-    connected: bool
+K_pulse: float = PULSE_PER_DEG * 2  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수 (×2 튜닝)
 
 
-def _clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
+def init_control():
+    import pigpio
+    pi = pigpio.pi()
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
+    return pi
 
 
-def init_control(_logger=None):
-    """Initialize PWM backend and force neutral actuator state."""
-    try:
-        import pigpio  # type: ignore
+def terminate_parafoil_motor(pi):
+    if pi is not None:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
+        time.sleep(0.1)
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
+        pi.stop()
+def actuator_mixer(commanded_yaw_rate: float) -> tuple:
+    # cmd_yr > 0 (오른쪽 회전): 두 펄스 모두 중립에서 증가
+    #   LEFT:  팔 위로 → 왼쪽 당김 해제
+    #   RIGHT: 팔 아래로(2500 방향) → 오른쪽 당김
+    pulse_offset = commanded_yaw_rate / 2.0 * K_pulse
 
-        pi = pigpio.pi()
-        connected = bool(getattr(pi, "connected", 0))
-        if not connected:
-            pi = _DummyPi()
-    except Exception:
-        pi = _DummyPi()
-        connected = False
+    left_raw_pw  = LEFT_NEUTRAL  + pulse_offset
+    right_raw_pw = RIGHT_NEUTRAL + pulse_offset
 
-    handle = ControlHandle(pi=pi, connected=connected)
-    set_neutral(handle)
-    return handle
+    left_pulse  = max(PULSE_MIN,       min(LEFT_MAX_PULSE,  int(left_raw_pw)))
+    right_pulse = max(RIGHT_MIN_PULSE, min(PULSE_MAX,       int(right_raw_pw)))
 
+    if DEBUG_CONTROL and (int(left_raw_pw) != left_pulse or int(right_raw_pw) != right_pulse):
+        l_deg = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
+        r_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
+        _dbg(f"[ACTUATOR] CLAMP — L={left_pulse}μs({l_deg:.1f}°) R={right_pulse}μs({r_deg:.1f}°)")
 
-def actuator_mixer(commanded_yaw_rate: float):
-    """Map commanded yaw rate to left/right servo pulse widths.
+    left_cmd_deg  = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
+    right_cmd_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
+    actual_delta_deg  = right_cmd_deg - left_cmd_deg
+    actual_offset     = ((left_pulse - LEFT_NEUTRAL) + (right_pulse - RIGHT_NEUTRAL)) / 2.0
+    expected_yaw_rate = actual_offset / K_pulse * 2.0
 
-    Current strategy mirrors the existing baseline behavior:
-    both servos move in the same direction from neutral.
-    """
-    pulse_offset = commanded_yaw_rate * K_PULSE_PER_DPS
-    left_pulse = int(round(_clamp(LEFT_NEUTRAL + pulse_offset, LEFT_MIN, LEFT_MAX)))
-    right_pulse = int(round(_clamp(RIGHT_NEUTRAL + pulse_offset, RIGHT_MIN, RIGHT_MAX)))
-    return left_pulse, right_pulse, pulse_offset
+    return left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
 
 
-def control(pi, commanded_yaw_rate: float):
-    left_pulse, right_pulse, pulse_offset = actuator_mixer(commanded_yaw_rate)
-    pi_handle = pi if isinstance(pi, ControlHandle) else ControlHandle(pi=pi, connected=False)
-    backend = pi_handle.pi
-    backend.set_servo_pulsewidth(LEFT_GPIO, left_pulse)
-    backend.set_servo_pulsewidth(RIGHT_GPIO, right_pulse)
+def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
+    left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate = \
+        actuator_mixer(commanded_yaw_rate)
 
-    return SimpleNamespace(
-        expected_yaw_rate=commanded_yaw_rate,
+    if pi is not None:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
+
+    return types.SimpleNamespace(
+        left_cmd_deg=left_cmd_deg,
+        right_cmd_deg=right_cmd_deg,
+        actual_delta_deg=actual_delta_deg,
+        expected_yaw_rate=expected_yaw_rate,
         left_pulse=left_pulse,
-        right_pulse=right_pulse,
-        left_cmd_deg=pulse_offset / K_PULSE_PER_DPS,
-        right_cmd_deg=pulse_offset / K_PULSE_PER_DPS,
-        actual_delta_deg=float(pulse_offset),
+        right_pulse=right_pulse
     )
+def set_neutral(pi):
+    if DEBUG_CONTROL:
+        _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
+    if pi is not None:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
 
 
-def set_neutral(pi) -> None:
-    pi_handle = pi if isinstance(pi, ControlHandle) else ControlHandle(pi=pi, connected=False)
-    backend = pi_handle.pi
-    backend.set_servo_pulsewidth(LEFT_GPIO, LEFT_NEUTRAL)
-    backend.set_servo_pulsewidth(RIGHT_GPIO, RIGHT_NEUTRAL)
-
-
-def set_motors_off(pi) -> None:
-    pi_handle = pi if isinstance(pi, ControlHandle) else ControlHandle(pi=pi, connected=False)
-    backend = pi_handle.pi
-    backend.set_servo_pulsewidth(LEFT_GPIO, 0)
-    backend.set_servo_pulsewidth(RIGHT_GPIO, 0)
+def set_motors_off(pi):
+    """서보 신호 완전 차단 (LANDED state용)"""
+    if DEBUG_CONTROL:
+        _dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
+    if pi is not None:
+        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
+        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)

@@ -15,5 +15,8 @@ if [[ -d "${VENV_DIR}" ]]; then
   source "${VENV_DIR}/bin/activate"
 fi
 
+export FSW_I2C_BUS="${FSW_I2C_BUS:-1}"
+export GPS_I2C_ADDR="${GPS_I2C_ADDR:-0x42}"
+
 cd "${ROOT_DIR}"
 exec python3 main.py

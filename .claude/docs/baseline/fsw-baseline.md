@@ -1,4 +1,4 @@
-# CANSAT AAS 2026 FSW 통합 기준서 (Cluad + func 융합본)
+# CANSAT AAS 2026 FSW 통합 기준서 (Claude + func 융합본)
 
 생성일: 2026-04-30  
 목적: 기존 FSW를 기반으로 새 FSW를 재구축할 때, 기능 누락 없이 핵심을 유지하고 구조적으로 개선하기 위한 단일 기준 문서
@@ -298,7 +298,7 @@ startup/systemd 스크립트를 정리해줘.
 
 ## 8) 실행 진행 현황 (claude 브랜치)
 
-- [x] Prompt 1: 시스템 계약 고정 (`fsw_step1_contract.md`)
+- [x] Prompt 1: 시스템 계약 고정 (`../contracts/ipc-contract-freeze.md`)
 - [x] Prompt 2: main 재시작 시그니처 안정화 (`main.py`)
 - [x] Prompt 3: 메시지 계층 구현 + 테스트 (`lib/msgstructure.py`, `tests/test_msgstructure.py`)
 - [x] Prompt 4: appargs/events/config/prevstate 구현 + 테스트

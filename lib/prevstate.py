@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
-
-from lib import config
 
 
 _STATE_FILE = Path(__file__).with_name("prevstate.json")
@@ -20,6 +19,33 @@ Target_lat: float = 0.0
 Target_lon: float = 0.0
 PREV_PACKET_COUNT: int = 0
 PREV_ST_TIMEDELTA: float = 0.0
+STATE_OVERRIDE: Optional[int] = None
+YAW_OFFSET: float = 0.0
+
+
+def _read_int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def _read_float_env(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except ValueError:
+        return default
+
+
+def refresh_runtime_overrides() -> None:
+    """Load non-persistent runtime overrides from environment variables."""
+    global STATE_OVERRIDE, YAW_OFFSET
+    state_override = _read_int_env("STATE_OVERRIDE", -1)
+    STATE_OVERRIDE = state_override if state_override >= 0 else None
+    YAW_OFFSET = _read_float_env("YAW_OFFSET", 0.0)
+
+
+refresh_runtime_overrides()
 
 
 def _serialize() -> dict:
@@ -52,6 +78,8 @@ def _save() -> None:
 
 
 def init_prevstate() -> None:
+    refresh_runtime_overrides()
+
     if _STATE_FILE.exists():
         try:
             _apply(json.loads(_STATE_FILE.read_text(encoding="utf-8")))
@@ -62,8 +90,8 @@ def init_prevstate() -> None:
         _save()
 
     # Runtime override for test/safety operation
-    if config.STATE_OVERRIDE is not None:
-        update_prevstate(config.STATE_OVERRIDE)
+    if STATE_OVERRIDE is not None:
+        update_prevstate(STATE_OVERRIDE)
 
 
 def update_prevstate(state: int) -> None:

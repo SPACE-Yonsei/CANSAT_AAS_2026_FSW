@@ -1,6 +1,6 @@
 # FSW Step 12 - Gap Audit (Current Baseline)
 
-기준 문서: `Cluad.md`, `fsw_step1_contract.md`
+기준 문서: `../baseline/fsw-baseline.md`, `../contracts/ipc-contract-freeze.md`
 
 ## 1) 핵심 판정 요약
 

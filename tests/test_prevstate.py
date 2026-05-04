@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +48,20 @@ class TestPrevState(unittest.TestCase):
         self.assertEqual(prevstate.PREV_STATE, 0)
         self.assertEqual(prevstate.PREV_PACKET_COUNT, 0)
         self.assertEqual(prevstate.Target_lat, 0.0)
+
+    def test_runtime_overrides_from_environment(self):
+        os.environ["STATE_OVERRIDE"] = "4"
+        os.environ["YAW_OFFSET"] = "12.5"
+        try:
+            prevstate.reset_prevstate()
+            prevstate.init_prevstate()
+            self.assertEqual(prevstate.STATE_OVERRIDE, 4)
+            self.assertEqual(prevstate.PREV_STATE, 4)
+            self.assertAlmostEqual(prevstate.YAW_OFFSET, 12.5)
+        finally:
+            os.environ.pop("STATE_OVERRIDE", None)
+            os.environ.pop("YAW_OFFSET", None)
+            prevstate.refresh_runtime_overrides()
 
 
 if __name__ == "__main__":

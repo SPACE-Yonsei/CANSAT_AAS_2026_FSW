@@ -62,7 +62,6 @@
 - `MID_motor_state`: FlightLogic -> Motor (`state`)
 - `MID_motor_burnwire`: FlightLogic -> Motor (release trigger)
 - `MID_motor_EggDrop`: FlightLogic -> Motor (egg drop trigger)
-- `MID_motor_PullArms`: FlightLogic -> Motor (arm command)
 - `MID_motor_TargetCor`: FlightLogic -> Motor (`target_lat,target_lon`)
 - `MID_cam_activate`: FlightLogic -> Camera (record activate)
 

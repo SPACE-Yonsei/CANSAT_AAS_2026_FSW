@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "PowerShell(& cmd /c \"dir C:\\\\workspace\\\\CANSAT_AAS_2026_FSW\\\\.claude /s /b 2>&1\")",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_motorapp.py tests/test_motor_control.py tests/test_motor_guidance.py tests/test_motor_actuators.py tests/test_motor_ipc_harness.py -v)",
+      "Bash(.venv/Scripts/python.exe -m unittest tests.test_motorapp tests.test_motor_control tests.test_motor_guidance tests.test_motor_actuators tests.test_motor_ipc_harness -v)"
     ]
   },
   "hooks": {
@@ -12,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/validate_cmd.py",
+            "command": "python .claude/hooks/hook_validate_command.py",
             "timeout": 10
           }
         ]
@@ -24,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/syntax_check.py",
+            "command": "python .claude/hooks/hook_syntax_check.py",
             "timeout": 15
           }
         ]
@@ -35,7 +37,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python .claude/hooks/session_log.py",
+            "command": "python .claude/hooks/hook_session_log.py",
             "timeout": 10
           }
         ]

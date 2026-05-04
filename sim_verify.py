@@ -62,8 +62,7 @@ class _NS:
 _appargs.MainAppArg        = _NS(AppID=10, AppName='Main', MID_TerminateProcess=1001001)
 _appargs.MotorAppArg       = _NS(AppID=19, AppName='Motor')
 _appargs.FlightlogicAppArg = _NS(MID_motor_TargetCor=1101901, MID_motor_state=1101902,
-                                  MID_motor_burnwire=1101903, MID_motor_EggDrop=1101904,
-                                  MID_motor_PullArms=1101905)
+                                  MID_motor_burnwire=1101903, MID_motor_EggDrop=1101904)
 _appargs.GpsAppArg         = _NS(MID_motor_gps=1501901)
 _appargs.ImuAppArg         = _NS(MID_motor_imu=1401901)
 _appargs.BarometerAppArg   = _NS(MID_motor_alt=1301901)
@@ -347,7 +346,7 @@ def _run_sim(init_heading: float,
 
         # Guidance + control
         g_result = motor_guidance.guidance(imu_data, gps_vec, gps_fid,
-                                           target_ns, baro_m=baro_m)
+                                           target_ns, alt=baro_m)
         cmd_yr   = g_result.commanded_yaw_rate
         phase    = g_result.state
 
@@ -773,7 +772,7 @@ def run_q2():
         gps_fid_w = SimpleNamespace(fix_quality=0, sats=0, rmc_status="V")
         imu_w     = SimpleNamespace(yaw=45.0, gyrz=0.0)
         result    = motor_guidance.guidance(imu_w, gps_vec_w, gps_fid_w,
-                                            target_ns_i, baro_m=300.0)
+                                            target_ns_i, alt=300.0)
         invalid_states.append(result.state)
 
     all_invalid = all(s in ("GPS_INVALID",) for s in invalid_states)
@@ -808,12 +807,12 @@ def run_q2():
     gf_valid  = SimpleNamespace(fix_quality=1, sats=8, rmc_status="A")
     imu_valid = SimpleNamespace(yaw=45.0, gyrz=0.0)
     # First feed a valid GPS to initialize _prev_gps in guidance
-    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, baro_m=300.0)
-    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, baro_m=300.0)
-    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, baro_m=300.0)
+    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, alt=300.0)
+    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, alt=300.0)
+    motor_guidance.guidance(imu_valid, g_valid, gf_valid, target_ns_i, alt=300.0)
     # Now inject baro=0 fault
     result_baro = motor_guidance.guidance(imu_valid, g_valid, gf_valid,
-                                          target_ns_i, baro_m=0.0)
+                                          target_ns_i, alt=0.0)
     _check("I3: Baro=0 mid-flight -> guidance returns BARO_INVALID",
            result_baro.state == "BARO_INVALID",
            f'state="{result_baro.state}" cmd_yr={result_baro.commanded_yaw_rate}')

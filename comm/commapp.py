@@ -98,16 +98,6 @@ def set_timedelta(timestr: str) -> bool:
     return True
 
 
-def _send_route(main_queue, receiver: int, msg_id: int, payload: str) -> bool:
-    return msgstructure.send_msg(
-        main_queue,
-        appargs.CommAppArg.AppID,
-        receiver,
-        msg_id,
-        payload,
-    )
-
-
 def cmd_cx(option: str, _main_queue) -> bool:
     global TELEMETRY_ENABLE
     upper = option.strip().upper()
@@ -128,8 +118,12 @@ def cmd_sim(option: str, main_queue) -> bool:
     option = option.strip().upper()
     if option not in {"ENABLE", "ACTIVATE", "DISABLE"}:
         return False
-    return _send_route(
-        main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SIM, option
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SIM,
+        option,
     )
 
 
@@ -139,8 +133,9 @@ def cmd_simp(option: str, main_queue) -> bool:
     except ValueError:
         return False
     tlm_data.altitude = value
-    return _send_route(
+    return msgstructure.send_msg(
         main_queue,
+        appargs.CommAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_SIMP,
         f"{value}",
@@ -148,8 +143,12 @@ def cmd_simp(option: str, main_queue) -> bool:
 
 
 def cmd_cal(option: str, main_queue) -> bool:
-    return _send_route(
-        main_queue, appargs.BarometerAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAL, option.strip()
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.BarometerAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_CAL,
+        option.strip(),
     )
 
 
@@ -157,8 +156,12 @@ def cmd_mec(option: str, main_queue) -> bool:
     option = option.strip().upper()
     if option not in {"ON", "OFF"}:
         return False
-    return _send_route(
-        main_queue, appargs.MotorAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, option
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_MEC,
+        option,
     )
 
 
@@ -169,8 +172,12 @@ def cmd_ss(option: str, main_queue) -> bool:
         return False
     if state < 0 or state > 5:
         return False
-    return _send_route(
-        main_queue, appargs.FlightlogicAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_SS, str(state)
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SS,
+        str(state),
     )
 
 
@@ -230,8 +237,12 @@ def cmd_cam(option: str, main_queue) -> bool:
     option = option.strip().upper()
     if option not in {"ON", "OFF"}:
         return False
-    return _send_route(
-        main_queue, appargs.CameraAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_CAM, option
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.CameraAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_CAM,
+        option,
     )
 
 
@@ -246,8 +257,9 @@ def cmd_tc(option: str, main_queue) -> bool:
         return False
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return False
-    return _send_route(
+    return msgstructure.send_msg(
         main_queue,
+        appargs.CommAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_TC,
         f"{lat},{lon}",

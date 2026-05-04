@@ -28,23 +28,19 @@ solenoid_count = 0
 solenoid_done = False
 
 
-def _send(main_queue, receiver: int, msg_id: int, data: str) -> None:
-    msgstructure.send_msg(
-        main_queue,
-        appargs.FlightlogicAppArg.AppID,
-        receiver,
-        msg_id,
-        data,
-    )
-
-
 def _set_state(main_queue, new_state: int, force: bool = False) -> None:
     global state
     if not force and state == new_state:
         return
     state = new_state
     prevstate.update_prevstate(state)
-    _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, str(state))
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_state,
+        str(state),
+    )
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
@@ -55,7 +51,13 @@ def to_launch_pad(main_queue, force: bool = False) -> None:
 
 def to_ascent(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 1, force=force)
-    _send(main_queue, appargs.CameraAppArg.AppID, appargs.CameraAppArg.MID_cam_activate, "ON")
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CameraAppArg.AppID,
+        appargs.CameraAppArg.MID_cam_activate,
+        "ON",
+    )
 
 
 def to_apogee(main_queue, force: bool = False) -> None:
@@ -64,9 +66,16 @@ def to_apogee(main_queue, force: bool = False) -> None:
 
 def to_release(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 3, force=force)
-    _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_burnwire, "TRIGGER")
-    _send(
+    msgstructure.send_msg(
         main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_burnwire,
+        "TRIGGER",
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
         appargs.MotorAppArg.AppID,
         appargs.FlightlogicAppArg.MID_motor_TargetCor,
         f"{prevstate.Target_lat},{prevstate.Target_lon}",
@@ -111,15 +120,37 @@ def handle_sim(data: str, main_queue) -> None:
     if option == "ENABLE":
         sim_enable = True
         sim_active = False
+<<<<<<< HEAD
         _verify_inter_app_links(main_queue)
+=======
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_comm_sim,
+            "A",
+        )
+>>>>>>> ad06d2286af0c258b80c723ffe82f23fbb1e65a2
     elif option == "ACTIVATE":
         if sim_enable:
             sim_active = True
-            _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, "S")
+            msgstructure.send_msg(
+                main_queue,
+                appargs.FlightlogicAppArg.AppID,
+                appargs.CommAppArg.AppID,
+                appargs.FlightlogicAppArg.MID_comm_sim,
+                "S",
+            )
     elif option == "DISABLE":
         sim_enable = False
         sim_active = False
-        _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_sim, "F")
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_comm_sim,
+            "F",
+        )
 
 
 def handle_simp(data: str, main_queue) -> None:
@@ -185,7 +216,13 @@ def handle_target_coord(data: str, main_queue) -> None:
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return
     prevstate.update_target_gps(lat, lon)
-    _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_TargetCor, f"{lat},{lon}")
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_TargetCor,
+        f"{lat},{lon}",
+    )
 
 
 def handle_reset_alt(_data: str, _main_queue) -> None:
@@ -199,7 +236,13 @@ def solenoid_logic(main_queue, distance: float) -> None:
     if solenoid_done:
         return
     if distance <= 2500 and solenoid_count < 3:
-        _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "TRIGGER")
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_motor_EggDrop,
+            "TRIGGER",
+        )
         solenoid_count += 1
     if solenoid_count >= 3:
         solenoid_done = True
@@ -255,7 +298,13 @@ def barometer_logic(main_queue, alt: float) -> None:
     elif state == 4:
         cnt_egg_drop = cnt_egg_drop + 1 if alt <= 4 else 0
         if cnt_egg_drop >= 2:
-            _send(main_queue, appargs.MotorAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_EggDrop, "TRIGGER")
+            msgstructure.send_msg(
+                main_queue,
+                appargs.FlightlogicAppArg.AppID,
+                appargs.MotorAppArg.AppID,
+                appargs.FlightlogicAppArg.MID_motor_EggDrop,
+                "TRIGGER",
+            )
             cnt_egg_drop = 0
         cnt_landed = cnt_landed + 1 if alt <= 10 else 0
         if cnt_landed >= 100:
@@ -291,7 +340,13 @@ def dispatch(msg: str, main_queue) -> None:
 
 def send_current_state_thread(main_queue) -> None:
     while FLIGHTLOGIC_RUNSTATUS:
-        _send(main_queue, appargs.CommAppArg.AppID, appargs.FlightlogicAppArg.MID_comm_state, str(state))
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_comm_state,
+            str(state),
+        )
         time.sleep(1.0)
 
 

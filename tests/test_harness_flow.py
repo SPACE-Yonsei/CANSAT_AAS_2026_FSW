@@ -13,8 +13,7 @@ class TestHarnessFlow(unittest.TestCase):
         flightlogicapp.recent_alt = []
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
-        motorapp.target.lat = 0.0
-        motorapp.target.lon = 0.0
+        motorapp.TARGET = None
         commapp.tlm_data = commapp.TelemetryData()
 
     def _route_once(self, q):
@@ -40,8 +39,8 @@ class TestHarnessFlow(unittest.TestCase):
         self.assertTrue(ok)
         self._route_once(q)  # Comm -> FlightLogic
         self._route_once(q)  # FlightLogic -> Motor
-        self.assertAlmostEqual(motorapp.target.lat, 37.55)
-        self.assertAlmostEqual(motorapp.target.lon, 126.95)
+        self.assertAlmostEqual(motorapp.TARGET.lat, 37.55)
+        self.assertAlmostEqual(motorapp.TARGET.lon, 126.95)
 
     def test_sim_enable_routes_comm_mode_a(self):
         """SIM ENABLE -> FlightLogic -> Comm MID_comm_sim; first CSV field is A (SIM prepare)."""
@@ -72,3 +71,4 @@ class TestHarnessFlow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
