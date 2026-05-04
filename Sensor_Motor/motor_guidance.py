@@ -190,10 +190,10 @@ def _bearing_deg(from_ne: SimpleNamespace, to_ne: SimpleNamespace) -> float:
     return math.degrees(math.atan2(to_ne.e - from_ne.e, to_ne.n - from_ne.n))
 
 
-def _phase(distance_m: float, baro_m: float) -> str:
-    if baro_m <= LANDING_ALTITUDE_M:
+def _phase(distance_m: float, alt: float) -> str:
+    if alt <= LANDING_ALTITUDE_M:
         return "LANDING"
-    if baro_m <= PATTERN_ALTITUDE_M and distance_m <= PATTERN_RADIUS_M:
+    if alt <= PATTERN_ALTITUDE_M and distance_m <= PATTERN_RADIUS_M:
         return "PATTERN"
     return "HOMING"
 
@@ -206,7 +206,7 @@ def _phase_yaw_limit(phase: str) -> float:
     return YR_MAX
 
 
-def schedule_lookahead(baro_m: float, gps_speed_mps: float) -> float:
+def schedule_lookahead(alt: float, gps_speed_mps: float) -> float:
     """Schedule L1/carrot lookahead by altitude and ground speed.
 
     ArduPilot L1 uses an L1 distance proportional to damping * period * speed.
@@ -216,9 +216,9 @@ def schedule_lookahead(baro_m: float, gps_speed_mps: float) -> float:
     speed = max(L1_MIN_GROUND_SPEED_MPS, float(gps_speed_mps))
     l1_distance = (L1_DAMPING * L1_PERIOD_SEC / math.pi) * speed
 
-    if baro_m > 300.0:
+    if alt > 300.0:
         altitude_floor = L_DISTANCE_HIGH
-    elif baro_m > 150.0:
+    elif alt > 150.0:
         altitude_floor = L_DISTANCE_MID
     else:
         altitude_floor = L_DISTANCE_LOW
@@ -291,7 +291,7 @@ def _fdir_result(reason: str) -> SimpleNamespace:
     )
 
 
-def guidance(imu_data, gps_vector: GpsVector, gps_fidelity: GpsFidelity, target, baro_m: float) -> SimpleNamespace:
+def guidance(imu_data, gps_vector: GpsVector, gps_fidelity: GpsFidelity, target, alt: float) -> SimpleNamespace:
     """Compute commanded yaw-rate for one timestep.
 
     Returns a SimpleNamespace with the legacy fields (.state, .distance,
@@ -317,9 +317,9 @@ def guidance(imu_data, gps_vector: GpsVector, gps_fidelity: GpsFidelity, target,
     crosstrack_error = track_e * cur_ne.n - track_n * cur_ne.e
     distance = math.hypot(target_ne.n - cur_ne.n, target_ne.e - cur_ne.e)
 
-    phase = _phase(distance, float(baro_m))
+    phase = _phase(distance, float(alt))
     yr_limit = _phase_yaw_limit(phase)
-    lookahead = schedule_lookahead(float(baro_m), float(gps_vector.speed))
+    lookahead = schedule_lookahead(float(alt), float(gps_vector.speed))
 
     carrot_along = _clamp(along_track + lookahead, 0.0, track_len)
     carrot_ne = SimpleNamespace(n=carrot_along * track_n, e=carrot_along * track_e)

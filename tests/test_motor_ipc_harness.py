@@ -53,9 +53,9 @@ def _inject_all_sensors(ts_override: float | None = None) -> None:
               "37.56,126.96")
 
     # Stamp timestamps as 'just now' regardless of real execution speed
-    motorapp.last_gps_update  = now
-    motorapp.last_imu_update  = now
-    motorapp.last_baro_update = now
+    motorapp._LAST_GPS_UPDATE  = now
+    motorapp._LAST_IMU_UPDATE  = now
+    motorapp._LAST_BARO_UPDATE = now
 
 
 def _prime_gps_jump(lat: float, lon: float, n: int = 2) -> None:
@@ -68,30 +68,30 @@ def _reset() -> None:
     """Full reset of motorapp and guidance state before each test."""
     motor_guidance.init_guidance()
     motorapp.MOTORAPP_RUNSTATUS = True
-    motorapp.motor_enabled      = True
-    motorapp.state              = 0
-    motorapp._prev_state        = -1
-    motorapp.target             = None
-    motorapp._last_fdir_reason  = None
-    motorapp._last_fdir_log_ts  = 0.0
-    motorapp._start_point_locked = False
-    motorapp._last_gyrz_for_fdir = None
-    motorapp.last_gps_update    = 0.0
-    motorapp.last_imu_update    = 0.0
-    motorapp.last_baro_update   = 0.0
+    motorapp.MOTOR_ENABLED      = True
+    motorapp.STATE              = 0
+    motorapp._PREV_STATE        = -1
+    motorapp.TARGET             = None
+    motorapp._LAST_FDIR_REASON  = None
+    motorapp._LAST_FDIR_LOG_TS  = 0.0
+    motorapp._START_POINT_LOCKED = False
+    motorapp._LAST_GYRZ_FOR_FDIR = None
+    motorapp._LAST_GPS_UPDATE    = 0.0
+    motorapp._LAST_IMU_UPDATE    = 0.0
+    motorapp._LAST_BARO_UPDATE   = 0.0
 
-    motorapp.sensor.yaw         = 0.0
-    motorapp.sensor.gyrz        = 0.0
-    motorapp.sensor.imu_health  = 1
-    motorapp.sensor.lat         = 0.0
-    motorapp.sensor.lon         = 0.0
-    motorapp.sensor.speed       = 0.0
-    motorapp.sensor.course      = 0.0
-    motorapp.sensor.fix_quality = 0
-    motorapp.sensor.sats        = 0
-    motorapp.sensor.rmc_status  = "V"
-    motorapp.sensor.gps_health  = 0
-    motorapp.sensor.baro_m      = 0.0
+    motorapp.SENSOR.yaw         = 0.0
+    motorapp.SENSOR.gyrz        = 0.0
+    motorapp.SENSOR.imu_health  = 1
+    motorapp.SENSOR.lat         = 0.0
+    motorapp.SENSOR.lon         = 0.0
+    motorapp.SENSOR.speed       = 0.0
+    motorapp.SENSOR.course      = 0.0
+    motorapp.SENSOR.fix_quality = 0
+    motorapp.SENSOR.sats        = 0
+    motorapp.SENSOR.rmc_status  = "V"
+    motorapp.SENSOR.gps_health  = 0
+    motorapp.SENSOR.alt      = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -106,74 +106,74 @@ class TestMessageRouting(unittest.TestCase):
     def test_gps_updates_sensor(self):
         _dispatch(appargs.GpsAppArg.AppID, appargs.GpsAppArg.MID_motor_gps,
                   "37.55,126.95,10.0,90.0,1,7,A,1")
-        self.assertAlmostEqual(motorapp.sensor.lat,   37.55)
-        self.assertAlmostEqual(motorapp.sensor.lon,  126.95)
-        self.assertAlmostEqual(motorapp.sensor.speed, 10.0)
-        self.assertEqual(motorapp.sensor.sats,  7)
-        self.assertEqual(motorapp.sensor.rmc_status, "A")
-        self.assertGreater(motorapp.last_gps_update, 0)
+        self.assertAlmostEqual(motorapp.SENSOR.lat,   37.55)
+        self.assertAlmostEqual(motorapp.SENSOR.lon,  126.95)
+        self.assertAlmostEqual(motorapp.SENSOR.speed, 10.0)
+        self.assertEqual(motorapp.SENSOR.sats,  7)
+        self.assertEqual(motorapp.SENSOR.rmc_status, "A")
+        self.assertGreater(motorapp._LAST_GPS_UPDATE, 0)
 
     def test_gps_bad_field_count_ignored(self):
         _dispatch(appargs.GpsAppArg.AppID, appargs.GpsAppArg.MID_motor_gps,
-                  "37.55,126.95")      # only 2 fields — should be ignored silently
-        self.assertAlmostEqual(motorapp.sensor.lat, 0.0)   # unchanged default
+                  "37.55,126.95")      # only 2 fields; should be ignored silently
+        self.assertAlmostEqual(motorapp.SENSOR.lat, 0.0)   # unchanged default
 
     def test_gps_parse_error_ignored(self):
         _dispatch(appargs.GpsAppArg.AppID, appargs.GpsAppArg.MID_motor_gps,
                   "NOTANUMBER,126.95,10.0,90.0,1,7,A,1")
-        self.assertAlmostEqual(motorapp.sensor.lat, 0.0)
+        self.assertAlmostEqual(motorapp.SENSOR.lat, 0.0)
 
     # --- IMU ---
     def test_imu_updates_sensor(self):
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu,
                   "45.0,2.5,1")
-        self.assertAlmostEqual(motorapp.sensor.yaw,  45.0)
-        self.assertAlmostEqual(motorapp.sensor.gyrz, 2.5)
-        self.assertEqual(motorapp.sensor.imu_health,  1)
-        self.assertGreater(motorapp.last_imu_update, 0)
+        self.assertAlmostEqual(motorapp.SENSOR.yaw,  45.0)
+        self.assertAlmostEqual(motorapp.SENSOR.gyrz, 2.5)
+        self.assertEqual(motorapp.SENSOR.imu_health,  1)
+        self.assertGreater(motorapp._LAST_IMU_UPDATE, 0)
 
     def test_imu_bad_data_ignored(self):
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu, "bad")
-        self.assertAlmostEqual(motorapp.sensor.yaw, 0.0)
+        self.assertAlmostEqual(motorapp.SENSOR.yaw, 0.0)
 
     # --- Barometer ---
     def test_baro_updates_sensor(self):
         _dispatch(appargs.BarometerAppArg.AppID, appargs.BarometerAppArg.MID_motor_alt,
                   "150.0,1013.2")
-        self.assertAlmostEqual(motorapp.sensor.baro_m, 150.0)
-        self.assertGreater(motorapp.last_baro_update, 0)
+        self.assertAlmostEqual(motorapp.SENSOR.alt, 150.0)
+        self.assertGreater(motorapp._LAST_BARO_UPDATE, 0)
 
     def test_baro_bad_data_ignored(self):
         _dispatch(appargs.BarometerAppArg.AppID, appargs.BarometerAppArg.MID_motor_alt,
                   "NOPE")
-        self.assertAlmostEqual(motorapp.sensor.baro_m, 0.0)
+        self.assertAlmostEqual(motorapp.SENSOR.alt, 0.0)
 
     # --- Target coordinate ---
     def test_target_coord_sets_target(self):
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_TargetCor, "37.6,127.0")
-        self.assertIsNotNone(motorapp.target)
-        self.assertAlmostEqual(motorapp.target.lat, 37.6)
-        self.assertAlmostEqual(motorapp.target.lon, 127.0)
+        self.assertIsNotNone(motorapp.TARGET)
+        self.assertAlmostEqual(motorapp.TARGET.lat, 37.6)
+        self.assertAlmostEqual(motorapp.TARGET.lon, 127.0)
 
     def test_target_coord_out_of_range_rejected(self):
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_TargetCor, "999.0,127.0")
-        self.assertIsNone(motorapp.target)
+        self.assertIsNone(motorapp.TARGET)
 
     # --- Flight state ---
     def test_state_message_updates_state(self):
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_state, "3")
-        self.assertEqual(motorapp.state, 3)
+        self.assertEqual(motorapp.STATE, 3)
 
     def test_state3_locks_start_point(self):
-        motorapp.sensor.lat = 37.55
-        motorapp.sensor.lon = 126.95
-        motorapp.sensor.fix_quality = 1
-        motorapp.sensor.sats = 7
-        motorapp.sensor.rmc_status = "A"
-        motorapp.sensor.gps_health = 1
+        motorapp.SENSOR.lat = 37.55
+        motorapp.SENSOR.lon = 126.95
+        motorapp.SENSOR.fix_quality = 1
+        motorapp.SENSOR.sats = 7
+        motorapp.SENSOR.rmc_status = "A"
+        motorapp.SENSOR.gps_health = 1
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_state, "3")
         self.assertAlmostEqual(motor_guidance._start_point.lat, 37.55)
@@ -181,14 +181,14 @@ class TestMessageRouting(unittest.TestCase):
 
     # --- MEC ---
     def test_mec_off_disables_motor(self):
-        motorapp.motor_enabled = True
+        motorapp.MOTOR_ENABLED = True
         _dispatch(appargs.CommAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, "OFF")
-        self.assertFalse(motorapp.motor_enabled)
+        self.assertFalse(motorapp.MOTOR_ENABLED)
 
     def test_mec_on_enables_motor(self):
-        motorapp.motor_enabled = False
+        motorapp.MOTOR_ENABLED = False
         _dispatch(appargs.CommAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, "ON")
-        self.assertTrue(motorapp.motor_enabled)
+        self.assertTrue(motorapp.MOTOR_ENABLED)
 
     # --- Malformed messages ---
     def test_malformed_message_ignored(self):
@@ -197,7 +197,7 @@ class TestMessageRouting(unittest.TestCase):
         motorapp.dispatch("")                     # empty string
         motorapp.dispatch("1|2|3")               # missing data field
         # Must not raise, state must be unchanged
-        self.assertEqual(motorapp.state, 0)
+        self.assertEqual(motorapp.STATE, 0)
 
     # --- Terminate ---
     def test_terminate_message_stops_runstatus(self):
@@ -272,49 +272,49 @@ class TestFDIRScenarios(unittest.TestCase):
         _prime_gps_jump(37.55, 126.95)
 
     def test_gps_stale_triggers_fdir(self):
-        motorapp.last_gps_update = time.time() - 999
+        motorapp._LAST_GPS_UPDATE = time.time() - 999
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("gps stale", result)
 
     def test_imu_stale_triggers_fdir(self):
-        motorapp.last_imu_update = time.time() - 999
+        motorapp._LAST_IMU_UPDATE = time.time() - 999
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("imu stale", result)
 
     def test_baro_stale_triggers_fdir(self):
-        motorapp.last_baro_update = time.time() - 999
+        motorapp._LAST_BARO_UPDATE = time.time() - 999
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("baro stale", result)
 
     def test_target_none_triggers_fdir(self):
-        motorapp.target = None
+        motorapp.TARGET = None
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("target", result)
 
     def test_implausible_gyrz_triggers_fdir(self):
-        motorapp.sensor.gyrz = 999.0   # deg/s — way above physical limit
+        motorapp.SENSOR.gyrz = 999.0   # deg/s, way above physical limit
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("yaw-rate", result)
 
     def test_imu_unhealthy_triggers_fdir(self):
-        motorapp.sensor.imu_health = 0
+        motorapp.SENSOR.imu_health = 0
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
         self.assertIn("imu_health", result)
 
     def test_never_received_gps_triggers_fdir(self):
-        motorapp.last_gps_update = 0.0
+        motorapp._LAST_GPS_UPDATE = 0.0
         snap = motorapp._snapshot_sensors()
         result = motorapp._check_fdir(snap)
         self.assertIsNotNone(result)
@@ -345,8 +345,8 @@ class TestCtrlParagldrResilience(unittest.TestCase):
         _reset()
         _inject_all_sensors()
         _prime_gps_jump(37.55, 126.95)
-        motorapp.state  = 3
-        motorapp.pi     = handle
+        motorapp.STATE  = 3
+        motorapp.PI     = handle
 
         with mock.patch("Sensor_Motor.motorapp.motor_guidance") as mock_guidance:
             mock_guidance.is_gps_valid.return_value  = True
@@ -367,3 +367,4 @@ class TestCtrlParagldrResilience(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

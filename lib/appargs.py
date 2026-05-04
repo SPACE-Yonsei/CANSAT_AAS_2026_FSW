@@ -24,13 +24,13 @@ class CommAppArg:
     AppID = 12
     AppName = "Comm"
 
-    MID_RouteCmd_SIM = 121101
-    MID_RouteCmd_SIMP = 121102
-    MID_RouteCmd_CAL = 121103
-    MID_RouteCmd_MEC = 121104
-    MID_RouteCmd_SS = 121105
-    MID_RouteCmd_CAM = 121106
-    MID_RouteCmd_TC = 121107
+    MID_RouteCmd_SIM = 1201101
+    MID_RouteCmd_SIMP = 1201102
+    MID_RouteCmd_CAL = 1201103
+    MID_RouteCmd_MEC = 1201104
+    MID_RouteCmd_SS = 1201105
+    MID_RouteCmd_CAM = 1201106
+    MID_RouteCmd_TC = 1201107
 
 
 class BarometerAppArg:
@@ -47,6 +47,7 @@ class ImuAppArg:
     AppName = "IMU"
 
     MID_motor_imu = 1401901
+
     MID_comm_euler = 1401201
 
 
@@ -55,6 +56,7 @@ class GpsAppArg:
     AppName = "GPS"
 
     MID_motor_gps = 1501901
+
     MID_comm_gga = 1501201
 
 
@@ -63,6 +65,7 @@ class DistanceAppArg:
     AppName = "Distance"
 
     MID_flight_dis = 1601101
+
     MID_comm_dis = 1601201
 
 

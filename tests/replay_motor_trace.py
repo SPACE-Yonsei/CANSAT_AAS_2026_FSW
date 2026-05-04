@@ -229,27 +229,27 @@ def _infer_target(rows: list[dict]) -> tuple[float, float] | None:
 def _reset_motorapp_for_replay(target: tuple[float, float] | None) -> None:
     motor_guidance.init_guidance()
     motorapp.MOTORAPP_RUNSTATUS = True
-    motorapp.motor_enabled = True
-    motorapp.state = 0
-    motorapp._prev_state = -1
-    motorapp._start_point_locked = False
-    motorapp._last_gyrz_for_fdir = None
-    motorapp.target = None
-    motorapp.last_gps_update = 0.0
-    motorapp.last_imu_update = 0.0
-    motorapp.last_baro_update = 0.0
-    motorapp.sensor.yaw = 0.0
-    motorapp.sensor.gyrz = 0.0
-    motorapp.sensor.imu_health = 1
-    motorapp.sensor.lat = 0.0
-    motorapp.sensor.lon = 0.0
-    motorapp.sensor.speed = 0.0
-    motorapp.sensor.course = 0.0
-    motorapp.sensor.fix_quality = 0
-    motorapp.sensor.sats = 0
-    motorapp.sensor.rmc_status = "V"
-    motorapp.sensor.gps_health = 0
-    motorapp.sensor.baro_m = 0.0
+    motorapp.MOTOR_ENABLED = True
+    motorapp.STATE = 0
+    motorapp._PREV_STATE = -1
+    motorapp._START_POINT_LOCKED = False
+    motorapp._LAST_GYRZ_FOR_FDIR = None
+    motorapp.TARGET = None
+    motorapp._LAST_GPS_UPDATE = 0.0
+    motorapp._LAST_IMU_UPDATE = 0.0
+    motorapp._LAST_BARO_UPDATE = 0.0
+    motorapp.SENSOR.yaw = 0.0
+    motorapp.SENSOR.gyrz = 0.0
+    motorapp.SENSOR.imu_health = 1
+    motorapp.SENSOR.lat = 0.0
+    motorapp.SENSOR.lon = 0.0
+    motorapp.SENSOR.speed = 0.0
+    motorapp.SENSOR.course = 0.0
+    motorapp.SENSOR.fix_quality = 0
+    motorapp.SENSOR.sats = 0
+    motorapp.SENSOR.rmc_status = "V"
+    motorapp.SENSOR.gps_health = 0
+    motorapp.SENSOR.alt = 0.0
     if target is not None:
         motorapp.handle_target_coord(f"{target[0]},{target[1]}")
 
@@ -268,7 +268,7 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
             fake_now = original_time() + sim_t
             pytime.time = lambda now=fake_now: now  # type: ignore[assignment]
 
-            motorapp.handle_flight_state(str(_int(row, "state", motorapp.state)))
+            motorapp.handle_flight_state(str(_int(row, "state", motorapp.STATE)))
             motorapp.handle_gps(
                 ",".join(
                     [
@@ -308,10 +308,10 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
             right_pulse = motor_control.RIGHT_NEUTRAL
             pulse_offset = 0.0
 
-            if motorapp.state < 3 or not motorapp.motor_enabled:
+            if motorapp.STATE < 3 or not motorapp.MOTOR_ENABLED:
                 safety_action = "neutral"
                 motor_control.set_neutral(control_backend)
-            elif motorapp.state == 5:
+            elif motorapp.STATE == 5:
                 safety_action = "motors_off"
                 motor_control.set_motors_off(control_backend)
                 left_pulse = 0
@@ -328,7 +328,7 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
                     snap.rmc_status,
                     snap.gps_health,
                 )
-                result = motor_guidance.guidance(imu, gps, fidelity, snap.target, snap.baro_m)
+                result = motor_guidance.guidance(imu, gps, fidelity, snap.target, snap.alt)
                 current_phase = result.state
                 current_distance = float(result.distance)
                 current_crosstrack = float(getattr(result, "crosstrack_error", math.nan))
@@ -665,3 +665,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
