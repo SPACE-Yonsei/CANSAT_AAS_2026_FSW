@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from lib import appargs, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,14 @@ _i2c_instance = None
 _yaw_ema = None
 _gyrz_ema = None
 EMA_ALPHA = 0.25
+
+
+def _imu_read_period_sec() -> float:
+    try:
+        rate_hz = float(config.BAROMETER_RATE_HZ)
+    except (TypeError, ValueError):
+        rate_hz = 10.0
+    return 1.0 / max(0.1, rate_hz)
 
 
 def _wrap_deg(deg: float) -> float:
@@ -127,6 +135,7 @@ def _try_reinit() -> None:
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _yaw_ema, _gyrz_ema
+    period = _imu_read_period_sec()
     while IMUAPP_RUNSTATUS:
         sample = _read_sensor_sample()
         if sample is False:
@@ -135,7 +144,7 @@ def read_imu_data() -> None:
                 _try_reinit()
                 IMU_ERROR_COUNT = 0
             HEALTH = 0
-            time.sleep(0.01)
+            time.sleep(period)
             continue
 
         IMU_ERROR_COUNT = 0
@@ -153,7 +162,7 @@ def read_imu_data() -> None:
             _last_sample_ts = time.time()
 
         HEALTH = 1
-        time.sleep(0.01)  # 100 Hz
+        time.sleep(period)
 
 
 def send_imu_data(main_queue) -> None:

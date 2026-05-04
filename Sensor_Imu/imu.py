@@ -15,7 +15,7 @@ _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from lib import i2c_bus
+from lib import config, i2c_bus
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +44,22 @@ def _env_float(name: str, default: float, lo: float, hi: float) -> float:
     return max(lo, min(value, hi))
 
 
-REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", 100000, 10000, 1000000)
+def _imu_read_rate_hz() -> float:
+    return _env_float("IMU_READ_RATE_HZ", float(config.BAROMETER_RATE_HZ), 0.1, 200.0)
+
+
+REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", int(1_000_000.0 / _imu_read_rate_hz()), 10000, 1000000)
 READ_ATTEMPTS = _env_int("IMU_READ_ATTEMPTS", 4, 1, 12)
 BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "0").strip().lower() not in ("0", "false", "no", "")
 BNO085_RST_PIN = os.environ.get("IMU_BNO085_RST_PIN", "D22")
 IMU_MOUNTED_ON_BOTTOM = os.environ.get("IMU_MOUNTED_ON_BOTTOM", "1").strip().lower() not in ("0", "false", "no", "")
 IMU_FORWARD_AXIS = os.environ.get("IMU_FORWARD_AXIS", "Y").strip().upper()
-MAG_FILTER_ALPHA = _env_float("IMU_MAG_FILTER_ALPHA", 0.2, 0.0, 1.0)
+MAG_FILTER_ALPHA = _env_float("IMU_MAG_FILTER_ALPHA", 0.5, 0.0, 1.0)
 MAG_FIELD_MIN = _env_float("IMU_MAG_FIELD_MIN", 5.0, 0.0, 1000.0)
 MAG_FIELD_MAX = _env_float("IMU_MAG_FIELD_MAX", 150.0, 1.0, 2000.0)
 MAG_NORM_SPIKE_RATIO = _env_float("IMU_MAG_NORM_SPIKE_RATIO", 3.0, 1.1, 100.0)
 YAW_CORRECTION_GAIN = _env_float("IMU_YAW_CORRECTION_GAIN", 0.02, 0.0, 1.0)
-HAMPEL_WINDOW_SIZE = _env_int("IMU_HAMPEL_WINDOW_SIZE", 7, 3, 31)
+HAMPEL_WINDOW_SIZE = _env_int("IMU_HAMPEL_WINDOW_SIZE", 3, 3, 31)
 HAMPEL_THRESHOLD = _env_float("IMU_HAMPEL_THRESHOLD", 3.0, 0.1, 20.0)
 HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
 
@@ -413,6 +417,10 @@ def _imu_cli_period_sec() -> float:
         return 1.0
 
 
+def _imu_read_period_sec() -> float:
+    return 1.0 / _imu_read_rate_hz()
+
+
 def _print_sample_header() -> None:
     print(
         "idx  | roll                 pitch                yaw                  | "
@@ -471,9 +479,10 @@ if __name__ == "__main__":
         print(f"IMU: init failed: {exc}", flush=True)
         raise SystemExit(1) from exc
     period = _imu_cli_period_sec()
+    read_period = _imu_read_period_sec()
     print(
-        f"IMU: OK, streaming aligned samples every {period:.2f}s "
-        "(set IMU_PRINT_PERIOD_SEC to override).",
+        f"IMU: OK, reading at {_imu_read_rate_hz():.2f}Hz and printing every {period:.2f}s "
+        "(set IMU_READ_RATE_HZ / IMU_PRINT_PERIOD_SEC to override).",
         flush=True,
     )
     print(
@@ -485,11 +494,13 @@ if __name__ == "__main__":
     _print_sample_header()
     _last_fail_log = 0.0
     _sample_index = 0
+    _latest_sample = None
+    _next_print = time.monotonic()
     try:
         while True:
             s = read_sensor_data(bno)
+            now = time.monotonic()
             if s is False:
-                now = time.monotonic()
                 if now - _last_fail_log >= 2.0:
                     print(
                         "IMU: read failed (move module, check 0x4A/0x4B, BNO08X_DEBUG=1)",
@@ -497,11 +508,14 @@ if __name__ == "__main__":
                     )
                     _last_fail_log = now
             else:
+                _latest_sample = s
+            if _latest_sample is not None and now >= _next_print:
                 _sample_index += 1
                 if _sample_index > 1 and (_sample_index - 1) % 25 == 0:
                     _print_sample_header()
-                _print_sample_line(s, _sample_index)
-            time.sleep(period)
+                _print_sample_line(_latest_sample, _sample_index)
+                _next_print = now + period
+            time.sleep(read_period)
     except KeyboardInterrupt:
         print("", flush=True)
     finally:
