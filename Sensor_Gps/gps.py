@@ -31,6 +31,13 @@ def _debug_raw_enabled() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
+def _gps_cli_period_sec() -> float:
+    try:
+        return max(0.05, float(os.environ.get("GPS_PRINT_PERIOD_SEC", "2.0")))
+    except ValueError:
+        return 2.0
+
+
 def _debug_print(message: str) -> None:
     if _debug_raw_enabled():
         print(message, flush=True)
@@ -744,19 +751,21 @@ def gps_terminate(dev: dict) -> None:
 if __name__ == "__main__":
     import time
 
-    from lib.sensor_cli import cli_period_sec
-
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     print("GPS: I2C u-blox only. Set GPS_I2C_ADDR if not 0x42.", flush=True)
     dev = init_gps()
-    period = cli_period_sec()
+    period = _gps_cli_period_sec()
     if dev is None:
         print(
             "GPS init failed. Check FSW_I2C_BUS, wiring, GPS_I2C_ADDR (default 0x42), antenna.",
             flush=True,
         )
         raise SystemExit(1)
-    print("GPS: OK, streaming data flow: I2C FIFO -> raw bytes -> UBX/NMEA parser -> gps row", flush=True)
+    print(
+        f"GPS: OK, streaming data flow every {period:.2f}s: "
+        "I2C FIFO -> raw bytes -> UBX/NMEA parser -> gps row",
+        flush=True,
+    )
     _debug_runtime_config(dev)
     poll_count = 0
     try:
