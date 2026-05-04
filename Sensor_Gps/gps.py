@@ -33,9 +33,9 @@ def _debug_raw_enabled() -> bool:
 
 def _gps_cli_period_sec() -> float:
     try:
-        return max(0.05, float(os.environ.get("GPS_PRINT_PERIOD_SEC", "2.0")))
+        return max(0.05, float(os.environ.get("GPS_PRINT_PERIOD_SEC", "1.0")))
     except ValueError:
-        return 2.0
+        return 1.0
 
 
 def _debug_print(message: str) -> None:
@@ -107,6 +107,44 @@ def _debug_row(row: Optional[list]) -> None:
     for i, value in enumerate(row):
         name = _GPS_ROW_FIELDS[i] if i < len(_GPS_ROW_FIELDS) else f"extra_{i}"
         _debug_print(f"{name}: {_debug_value(value)}")
+
+
+def _debug_latest_measurements(dev: dict) -> None:
+    now = time.time()
+    pvt = dev.get("pvt")
+    gga = dev.get("gga")
+    rmc = dev.get("rmc")
+    _debug_section("GPS_LATEST parsed values")
+    if pvt:
+        _debug_print("[UBX_NAV_PVT]")
+        _debug_print(f"  time: {pvt.get('time')}")
+        _debug_print(f"  fix_type: {pvt.get('fix_type')}  sats: {pvt.get('num_sv')}")
+        _debug_print(f"  lat: {_debug_value(pvt.get('lat'))}  lon: {_debug_value(pvt.get('lon'))}")
+        _debug_print(f"  alt_m: {_debug_value(pvt.get('alt'))}  height_m: {_debug_value(pvt.get('height'))}")
+        _debug_print(f"  speed_m_s: {_debug_value(pvt.get('g_speed'))}  course_deg: {_debug_value(pvt.get('head_mot'))}")
+        _debug_print(f"  h_acc_m: {_debug_value(pvt.get('h_acc'))}  v_acc_m: {_debug_value(pvt.get('v_acc'))}")
+        _debug_print(f"  age_s: {max(0.0, now - float(pvt.get('_seen_ts', now))):.3f}")
+    else:
+        _debug_print("[UBX_NAV_PVT] none")
+
+    if gga:
+        _debug_print("[NMEA_GGA position]")
+        _debug_print(f"  time: {gga.get('time')}")
+        _debug_print(f"  fix_quality: {gga.get('fix_q')}  sats: {gga.get('sats')}")
+        _debug_print(f"  lat: {_debug_value(gga.get('lat'))}  lon: {_debug_value(gga.get('lon'))}")
+        _debug_print(f"  alt_m: {_debug_value(gga.get('alt'))}")
+        _debug_print(f"  age_s: {max(0.0, now - float(gga.get('_seen_ts', now))):.3f}")
+    else:
+        _debug_print("[NMEA_GGA position] none")
+
+    if rmc:
+        _debug_print("[NMEA_RMC motion]")
+        _debug_print(f"  time: {rmc.get('time')}  status: {rmc.get('status')}")
+        _debug_print(f"  lat: {_debug_value(rmc.get('lat'))}  lon: {_debug_value(rmc.get('lon'))}")
+        _debug_print(f"  speed_m_s: {_debug_value(rmc.get('speed_ms'))}  course_deg: {_debug_value(rmc.get('course'))}")
+        _debug_print(f"  age_s: {max(0.0, now - float(rmc.get('_seen_ts', now))):.3f}")
+    else:
+        _debug_print("[NMEA_RMC motion] none")
 
 
 def _debug_runtime_config(dev: dict) -> None:
@@ -486,6 +524,16 @@ def _ubx_feed_bytes(dev: dict, chunk: bytes) -> None:
         msg_class = data[start + 2]
         msg_id = data[start + 3]
         length = int.from_bytes(data[start + 4 : start + 6], "little")
+        if length > 1024:
+            _debug_flow(
+                dev,
+                "ubx_drop_bad_length",
+                class_hex=f"0x{msg_class:02x}",
+                id_hex=f"0x{msg_id:02x}",
+                payload_bytes=length,
+            )
+            idx = start + 2
+            continue
         end = start + 8 + length
         if len(data) < end:
             dev["_ubx_tail"] = data[start:]
@@ -598,7 +646,11 @@ def _ublox_ddc_bytes_available(i2c: Any, address: int) -> int:
     msb = int(one[0])
     i2c.writeto_then_readfrom(address, bytes([0xFE]), one, out_end=1, in_end=1)
     lsb = int(one[0])
-    return (msb << 8) | lsb
+    available = (msb << 8) | lsb
+    if available >= 4096:
+        _debug_flow({}, "i2c_available_invalid", msb=f"0x{msb:02x}", lsb=f"0x{lsb:02x}", bytes=available)
+        return 0
+    return available
 
 
 def _ublox_read_chunk_max() -> int:
@@ -723,6 +775,11 @@ def _gps_readdata_i2c(dev: dict) -> Optional[list]:
                 _debug_flow(dev, "i2c_read_request", bytes=n)
                 chunk = _ublox_ddc_read_stream(i2c, addr, n)
                 _debug_dump_bytes("I2C", chunk)
+                if chunk and all(b == 0xFF for b in chunk):
+                    _debug_flow(dev, "i2c_read_idle_ff", bytes=len(chunk), action="discard_and_clear_parser_tails")
+                    dev["_ubx_tail"] = b""
+                    dev["_nmea_tail"] = b""
+                    chunk = b""
                 _debug_flow(dev, "feed_ubx", bytes=len(chunk))
                 _ubx_feed_bytes(dev, chunk)
                 _debug_flow(dev, "feed_nmea", bytes=len(chunk))
@@ -733,6 +790,7 @@ def _gps_readdata_i2c(dev: dict) -> Optional[list]:
         else:
             _debug_flow(dev, "i2c_read_skip", reason="empty_fifo")
     _debug_parser_state(dev)
+    _debug_latest_measurements(dev)
     row = _gps_build_return(dev)
     _debug_row(row)
     return row
