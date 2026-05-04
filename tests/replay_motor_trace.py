@@ -228,28 +228,27 @@ def _infer_target(rows: list[dict]) -> tuple[float, float] | None:
 
 def _reset_motorapp_for_replay(target: tuple[float, float] | None) -> None:
     motor_guidance.init_guidance()
-    motorapp.MOTORAPP_RUNSTATUS = True
-    motorapp.MOTOR_ENABLED = True
-    motorapp.STATE = 0
-    motorapp._PREV_STATE = -1
+    motorapp.MOTORAPP_RUNSTATUS  = True
+    motorapp.MOTOR_ENABLED       = True
+    motorapp.STATE               = 0
+    motorapp._PREV_STATE         = -1
     motorapp._START_POINT_LOCKED = False
-    motorapp._LAST_GYRZ_FOR_FDIR = None
-    motorapp.TARGET = None
-    motorapp._LAST_GPS_UPDATE = 0.0
-    motorapp._LAST_IMU_UPDATE = 0.0
-    motorapp._LAST_BARO_UPDATE = 0.0
-    motorapp.SENSOR.yaw = 0.0
-    motorapp.SENSOR.gyrz = 0.0
-    motorapp.SENSOR.imu_health = 1
-    motorapp.SENSOR.lat = 0.0
-    motorapp.SENSOR.lon = 0.0
-    motorapp.SENSOR.speed = 0.0
-    motorapp.SENSOR.course = 0.0
-    motorapp.SENSOR.fix_quality = 0
-    motorapp.SENSOR.sats = 0
-    motorapp.SENSOR.rmc_status = "V"
-    motorapp.SENSOR.gps_health = 0
-    motorapp.SENSOR.alt = 0.0
+    motorapp.TARGET              = None
+
+    motorapp.IMU.yaw        = 0.0
+    motorapp.IMU.gyrz       = 0.0
+    motorapp.IMU.imu_health = 1
+
+    motorapp.GPS_VECTOR.lat       = 0.0
+    motorapp.GPS_VECTOR.lon       = 0.0
+    motorapp.GPS_VECTOR.direction = 0.0
+    motorapp.GPS_VECTOR.velocity  = 0.0
+
+    motorapp.GPS_HEALTH.pos_health    = 0
+    motorapp.GPS_HEALTH.motion_health = 0
+
+    motorapp.ALT = 0.0
+
     if target is not None:
         motorapp.handle_target_coord(f"{target[0]},{target[1]}")
 

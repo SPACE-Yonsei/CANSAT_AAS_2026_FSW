@@ -1,4 +1,4 @@
-"""Motor app: data ingestion, FDIR, and parafoil control loop.
+"""Motor app: data ingestion and parafoil control loop.
 
 Message flow (inbound via main_pipe):
   GpsApp       -> MID_motor_gps       -> handle_gps()
@@ -13,8 +13,6 @@ Message flow (inbound via main_pipe):
 Control thread (ctrl_paragldr, ~10 Hz):
   STATE < 3 or MOTOR_ENABLED=False  ->  servo neutral  (safe idle)
   STATE == 5  (LANDED)              ->  servo off       (no PWM)
-  any FDIR fault                    ->  servo neutral
-  guidance.state == 'FDIR'          ->  servo neutral
   nominal                           ->  guidance -> motor_control
 """
 
@@ -28,7 +26,6 @@ from types import SimpleNamespace
 
 from lib import appargs, msgstructure
 from Sensor_Motor import Motor_Egg, Motor_Release, motor_control, motor_guidance
-from Sensor_Motor.motor_guidance import GpsFidelity, GpsVector
 
 logger = logging.getLogger(__name__)
 
@@ -43,48 +40,29 @@ PI = None  # ControlHandle; assigned by init()
 _PREV_STATE: int = -1
 _UPDATE_LOCK = threading.Lock()
 
-SENSOR = SimpleNamespace(
+IMU = SimpleNamespace(
     yaw=0.0,
-    gyrz=0.0,        # deg/s, per MID_motor_imu contract
+    gyrz=0.0,       # deg/s, per MID_motor_imu contract
     imu_health=1,
+)
+ALT: float = 0.0
+
+GPS_VECTOR = SimpleNamespace(
     lat=0.0,
     lon=0.0,
-    speed=0.0,
-    course=0.0,
-    fix_quality=0,
-    sats=0,
-    rmc_status="V",
-    gps_health=0,
-    alt=0.0,
+    direction=0.0,  # deg, GPS ground-track direction; not IMU yaw.
+    velocity=0.0,
+)
+GPS_HEALTH = SimpleNamespace(
+    pos_health=0,
+    motion_health=0,
 )
 
 # target is None until a valid TC message is received.
 # NEVER initialise to (0, 0) — that is a real coordinate (Gulf of Guinea).
 TARGET: SimpleNamespace | None = None
 
-# Stale-sensor timestamps (0.0 = never received)
-_LAST_GPS_UPDATE: float = 0.0
-_LAST_IMU_UPDATE: float = 0.0
-_LAST_BARO_UPDATE: float = 0.0
-
-GPS_STALE_TIMEOUT: float  = 10.0
-IMU_STALE_TIMEOUT: float  =  5.0
-BARO_STALE_TIMEOUT: float = 15.0
-
-# FDIR rate-limited logging
-_LAST_FDIR_REASON: str | None = None
-_LAST_FDIR_LOG_TS: float = 0.0
-FDIR_LOG_INTERVAL: float = 5.0   # min seconds between identical FDIR log lines
-
 _START_POINT_LOCKED: bool = False
-_LAST_GYRZ_FOR_FDIR: float | None = None
-
-# deg/s. Drop-test was motor-off, so high yaw rate can be natural rotation.
-# Use a spike/extreme gate instead of treating every >200 deg/s sample as a
-# hard actuator-safety fault.
-GYRZ_WARN_DPS: float = 200.0
-GYRZ_SPIKE_DELTA_DPS: float = 350.0
-GYRZ_EXTREME_SPIKE_DPS: float = 500.0
 
 
 # ---------------------------------------------------------------------------
@@ -98,23 +76,14 @@ def _is_finite(x) -> bool:
         return False
 
 
-def _gps_vector_from_sensor() -> GpsVector:
-    return GpsVector(lat=SENSOR.lat, lon=SENSOR.lon, speed=SENSOR.speed, course=SENSOR.course)
-
-
-def _gps_fidelity_from_sensor() -> GpsFidelity:
-    return GpsFidelity(
-        fix_quality=SENSOR.fix_quality,
-        sats=SENSOR.sats,
-        rmc_status=SENSOR.rmc_status,
-        gps_health=SENSOR.gps_health,
-    )
-
-
 def _gps_valid_for_start_lock() -> bool:
-    gps_vector = _gps_vector_from_sensor()
-    gps_fidelity = _gps_fidelity_from_sensor()
-    return motor_guidance.is_gps_valid(gps_vector, gps_fidelity)
+    return (
+        int(GPS_HEALTH.pos_health) > 0
+        and _is_finite(GPS_VECTOR.lat)
+        and _is_finite(GPS_VECTOR.lon)
+        and GPS_VECTOR.lat != 0.0
+        and GPS_VECTOR.lon != 0.0
+    )
 
 
 def _maybe_lock_start_point(reason: str) -> bool:
@@ -125,31 +94,12 @@ def _maybe_lock_start_point(reason: str) -> bool:
             return True
         if not _gps_valid_for_start_lock():
             return False
-        cur_lat = SENSOR.lat
-        cur_lon = SENSOR.lon
+        cur_lat = GPS_VECTOR.lat
+        cur_lon = GPS_VECTOR.lon
         _START_POINT_LOCKED = True
     motor_guidance.set_start_coordinates(cur_lat, cur_lon)
     logger.info("Start point locked (%s): %.6f, %.6f", reason, cur_lat, cur_lon)
     return True
-
-
-def _check_yaw_rate_fault(gyrz_deg_s: float) -> str | None:
-    """Classify IMU yaw-rate faults in deg/s.
-
-    Motor-off replay shows large natural spins and occasional spikes. A single
-    moderate high-yaw sample is logged by replay but should not necessarily
-    force neutral; extreme values or abrupt high-rate jumps still fail FDIR.
-    """
-    global _LAST_GYRZ_FOR_FDIR
-    g = float(gyrz_deg_s)
-    prev = _LAST_GYRZ_FOR_FDIR
-    _LAST_GYRZ_FOR_FDIR = g
-
-    if abs(g) >= GYRZ_EXTREME_SPIKE_DPS:
-        return f"FDIR-5 yaw-rate extreme spike ({g:.1f} deg/s)"
-    if prev is not None and abs(g) >= GYRZ_WARN_DPS and abs(g - prev) >= GYRZ_SPIKE_DELTA_DPS:
-        return f"FDIR-5 yaw-rate spike ({g:.1f} deg/s, delta={g - prev:.1f})"
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -157,34 +107,33 @@ def _check_yaw_rate_fault(gyrz_deg_s: float) -> str | None:
 # ---------------------------------------------------------------------------
 
 def handle_gps(data: str) -> None:
-    """Parse: lat,lon,speed,course,fix_quality,sats,rmc_status,gps_health"""
-    global _LAST_GPS_UPDATE
+    """Parse GPS payload.
+
+    Contract: lat,lon,direction,velocity,pos_health,motion_health.
+    """
     fields = [x.strip() for x in data.split(",")]
-    if len(fields) < 8:
-        logger.warning("GPS parse: expected >=8 fields, got %d | raw=%r", len(fields), data)
+    if len(fields) != 6:
+        logger.warning("GPS parse: expected 6 fields, got %d | raw=%r", len(fields), data)
         return
     try:
-        lat      = float(fields[0])
-        lon      = float(fields[1])
-        speed    = float(fields[2])
-        course   = float(fields[3])
-        fix_qual = int(float(fields[4]))
-        sats     = int(float(fields[5]))
-        rmc_stat = fields[6]
-        gps_hlth = int(float(fields[7]))
+        lat = float(fields[0])
+        lon = float(fields[1])
+        direction = float(fields[2])
+        velocity = float(fields[3])
+        pos_health = int(float(fields[4]))
+        motion_health = int(float(fields[5]))
     except (ValueError, IndexError) as exc:
         logger.warning("GPS parse error: %s | raw=%r", exc, data)
         return
+
     with _UPDATE_LOCK:
-        SENSOR.lat         = lat
-        SENSOR.lon         = lon
-        SENSOR.speed       = speed
-        SENSOR.course      = course
-        SENSOR.fix_quality = fix_qual
-        SENSOR.sats        = sats
-        SENSOR.rmc_status  = rmc_stat
-        SENSOR.gps_health  = gps_hlth
-    _LAST_GPS_UPDATE = time.time()
+        GPS_VECTOR.lat           = lat
+        GPS_VECTOR.lon           = lon
+        GPS_VECTOR.direction     = direction % 360.0 if _is_finite(direction) else direction
+        GPS_VECTOR.velocity      = velocity
+        GPS_HEALTH.pos_health    = pos_health
+        GPS_HEALTH.motion_health = motion_health
+
     if STATE >= 3 and not _START_POINT_LOCKED:
         _maybe_lock_start_point("gps-valid-after-state-3")
 
@@ -195,28 +144,25 @@ def handle_imu(data: str) -> None:
     The IPC contract fixes IMU yaw rate in deg/s. The IMU app publishes
     converted deg/s values, so Motor stores the value as-is.
     """
-    global _LAST_IMU_UPDATE
     fields = [x.strip() for x in data.split(",")]
     if len(fields) < 3:
         logger.warning("IMU parse: expected >=3 fields, got %d | raw=%r", len(fields), data)
         return
     try:
-        yaw            = float(fields[0])
-        gyrz_deg_s     = float(fields[1])
-        imu_health     = int(float(fields[2]))
+        yaw        = float(fields[0])
+        gyrz_deg_s = float(fields[1])
+        imu_health = int(float(fields[2]))
     except (ValueError, IndexError) as exc:
         logger.warning("IMU parse error: %s | raw=%r", exc, data)
         return
     with _UPDATE_LOCK:
-        SENSOR.yaw        = yaw
-        SENSOR.gyrz       = gyrz_deg_s
-        SENSOR.imu_health = imu_health
-    _LAST_IMU_UPDATE = time.time()
+        IMU.yaw        = yaw
+        IMU.gyrz       = gyrz_deg_s
+        IMU.imu_health = imu_health
 
 
 def handle_barometer(data: str) -> None:
     """Parse: altitude_m[,pressure,...]"""
-    global _LAST_BARO_UPDATE
     fields = data.split(",")
     if not fields or not fields[0].strip():
         logger.warning("Barometer parse: empty data")
@@ -226,9 +172,9 @@ def handle_barometer(data: str) -> None:
     except (ValueError, IndexError) as exc:
         logger.warning("Barometer parse error: %s | raw=%r", exc, data)
         return
+    global ALT
     with _UPDATE_LOCK:
-        SENSOR.alt = alt
-    _LAST_BARO_UPDATE = time.time()
+        ALT = alt
 
 
 def handle_target_coord(data: str) -> None:
@@ -315,7 +261,7 @@ def handle_mec(data: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sensor snapshot & FDIR
+# Sensor snapshot
 # ---------------------------------------------------------------------------
 
 def _snapshot_sensors() -> SimpleNamespace:
@@ -327,79 +273,18 @@ def _snapshot_sensors() -> SimpleNamespace:
             else None
         )
         return SimpleNamespace(
-            yaw        = SENSOR.yaw,
-            gyrz       = SENSOR.gyrz,
-            imu_health = SENSOR.imu_health,
-            lat        = SENSOR.lat,
-            lon        = SENSOR.lon,
-            speed      = SENSOR.speed,
-            course     = SENSOR.course,
-            fix_quality= SENSOR.fix_quality,
-            sats       = SENSOR.sats,
-            rmc_status = SENSOR.rmc_status,
-            gps_health = SENSOR.gps_health,
-            alt        = SENSOR.alt,
-            target     = tgt_copy,
+            yaw           = IMU.yaw,
+            gyrz          = IMU.gyrz,
+            imu_health    = IMU.imu_health,
+            lat           = GPS_VECTOR.lat,
+            lon           = GPS_VECTOR.lon,
+            direction     = GPS_VECTOR.direction,
+            velocity      = GPS_VECTOR.velocity,
+            pos_health    = GPS_HEALTH.pos_health,
+            motion_health = GPS_HEALTH.motion_health,
+            alt           = ALT,
+            target        = tgt_copy,
         )
-
-
-def _check_fdir(snap) -> str | None:
-    """Return a descriptive FDIR reason string, or None when all checks pass.
-
-    Check order (fail-fast, most critical first):
-      FDIR-0   NaN / Inf in numeric sensors
-      FDIR-1   IMU health flag
-      FDIR-2a  GPS stale (no message within GPS_STALE_TIMEOUT)
-      FDIR-2b  IMU stale
-      FDIR-2c  Baro stale
-      FDIR-3   GPS fix quality / sats / rmc_status invalid
-      FDIR-4   GPS position jump (unrealistic speed)
-      FDIR-5   Yaw-rate physically implausible (deg/s)
-      FDIR-6   Negative altitude
-      FDIR-7   Target coordinate not yet received
-    """
-    if not _is_finite(snap.yaw) or not _is_finite(snap.gyrz) or not _is_finite(snap.alt):
-        return "FDIR-0 non-finite numeric sensor value"
-
-    if snap.imu_health <= 0:
-        return "FDIR-1 imu_health flag unhealthy"
-
-    now = time.time()
-    if _LAST_GPS_UPDATE == 0.0 or now - _LAST_GPS_UPDATE > GPS_STALE_TIMEOUT:
-        return f"FDIR-2a gps stale ({now - _LAST_GPS_UPDATE:.1f}s since last msg)"
-    if _LAST_IMU_UPDATE == 0.0 or now - _LAST_IMU_UPDATE > IMU_STALE_TIMEOUT:
-        return f"FDIR-2b imu stale ({now - _LAST_IMU_UPDATE:.1f}s since last msg)"
-    if _LAST_BARO_UPDATE == 0.0 or now - _LAST_BARO_UPDATE > BARO_STALE_TIMEOUT:
-        return f"FDIR-2c baro stale ({now - _LAST_BARO_UPDATE:.1f}s since last msg)"
-
-    gps_vector   = GpsVector(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
-    gps_fidelity = GpsFidelity(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status, gps_health=snap.gps_health)
-    if not motor_guidance.is_gps_valid(gps_vector, gps_fidelity):
-        return "FDIR-3 gps invalid (fix/sats/rmc_status)"
-    if motor_guidance.is_gps_jump(snap.lat, snap.lon):
-        return "FDIR-4 gps position jump"
-
-    yaw_fault = _check_yaw_rate_fault(float(snap.gyrz))
-    if yaw_fault is not None:
-        return yaw_fault
-
-    if snap.alt < 0.0:
-        return f"FDIR-6 negative altitude ({snap.alt:.1f} m)"
-
-    if snap.target is None:
-        return "FDIR-7 target coordinate not received"
-
-    return None
-
-
-def _log_fdir(reason: str) -> None:
-    """Rate-limited FDIR logger: same reason logged at most every FDIR_LOG_INTERVAL s."""
-    global _LAST_FDIR_REASON, _LAST_FDIR_LOG_TS
-    now = time.time()
-    if reason != _LAST_FDIR_REASON or now - _LAST_FDIR_LOG_TS >= FDIR_LOG_INTERVAL:
-        logger.warning("FDIR -> neutral | %s", reason)
-        _LAST_FDIR_REASON = reason
-        _LAST_FDIR_LOG_TS = now
 
 
 # ---------------------------------------------------------------------------
@@ -441,15 +326,11 @@ def ctrl_paragldr() -> None:
     """Parafoil control loop (~10 Hz, daemon thread).
 
     Safe-output contract:
-      Any exception       -> set_neutral, continue (loop never dies)
-      FDIR fault          -> set_neutral
-      guidance FDIR       -> set_neutral
+      Any exception      -> set_neutral, continue (loop never dies)
       STATE < 3 or !MEC  -> set_neutral (idle)
       STATE == 5          -> set_motors_off
       nominal             -> motor_control.control(commanded_yaw_rate)
     """
-    global _LAST_FDIR_REASON
-
     while MOTORAPP_RUNSTATUS:
         try:
             if STATE < 3 or not MOTOR_ENABLED:
@@ -464,28 +345,21 @@ def ctrl_paragldr() -> None:
                 continue
 
             snap = _snapshot_sensors()
-            fdir = _check_fdir(snap)
-            if fdir is not None:
-                _log_fdir(fdir)
-                motor_control.set_neutral(PI)
-                time.sleep(0.1)
-                continue
 
-            if _LAST_FDIR_REASON is not None:
-                logger.info("FDIR cleared, resuming guidance")
-                _LAST_FDIR_REASON = None
+            imu_data = SimpleNamespace(yaw=snap.yaw, gyrz=snap.gyrz)
+            guidance_position = SimpleNamespace(
+                lat=snap.lat,
+                lon=snap.lon,
+                direction=snap.direction,
+                velocity=snap.velocity,
+            )
+            guidance_health = SimpleNamespace(
+                pos_health=snap.pos_health,
+                motion_health=snap.motion_health,
+            )
 
-            imu_data     = SimpleNamespace(yaw=snap.yaw, gyrz=snap.gyrz)
-            gps_vector   = GpsVector(lat=snap.lat, lon=snap.lon, speed=snap.speed, course=snap.course)
-            gps_fidelity = GpsFidelity(fix_quality=snap.fix_quality, sats=snap.sats, rmc_status=snap.rmc_status, gps_health=snap.gps_health)
-
-            result = motor_guidance.guidance(imu_data, gps_vector, gps_fidelity, snap.target, snap.alt)
-
-            if result.state == "FDIR":
-                _log_fdir("guidance internal FDIR")
-                motor_control.set_neutral(PI)
-            else:
-                motor_control.control(PI, float(result.commanded_yaw_rate))
+            result = motor_guidance.guidance(imu_data, guidance_position, guidance_health, snap.target, snap.alt)
+            motor_control.control(PI, float(result.commanded_yaw_rate))
 
         except Exception as exc:
             logger.error("ctrl_paragldr unhandled exception: %s", exc, exc_info=True)
@@ -502,9 +376,8 @@ def ctrl_paragldr() -> None:
 # ---------------------------------------------------------------------------
 
 def init() -> None:
-    global PI, _START_POINT_LOCKED, _LAST_GYRZ_FOR_FDIR
+    global PI, _START_POINT_LOCKED
     _START_POINT_LOCKED = False
-    _LAST_GYRZ_FOR_FDIR = None
     motor_guidance.init_guidance()
     Motor_Release.init_burnwire()
     Motor_Egg.init_solenoid()

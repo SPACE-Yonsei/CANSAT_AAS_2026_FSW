@@ -119,6 +119,16 @@ def _wrap_180(a: float) -> float:
 
 
 def is_gps_valid(gps_vector, gps_fidelity) -> bool:
+    if hasattr(gps_fidelity, "pos_health"):
+        return (
+            gps_vector.lat is not None
+            and gps_vector.lon is not None
+            and gps_vector.lat != 0.0
+            and gps_vector.lon != 0.0
+            and abs(gps_vector.lat) <= 90.0
+            and abs(gps_vector.lon) <= 180.0
+            and int(gps_fidelity.pos_health) > 0
+        )
     if (gps_vector.lat is None or gps_vector.lon is None
             or gps_fidelity.fix_quality is None
             or gps_fidelity.sats is None
@@ -132,6 +142,14 @@ def is_gps_valid(gps_vector, gps_fidelity) -> bool:
                    and gps_fidelity.sats >= 4
                    and gps_fidelity.rmc_status == "A")
     return coord_ok and fidelity_ok
+
+
+def _gps_velocity(gps_vector) -> float:
+    return float(getattr(gps_vector, "velocity", getattr(gps_vector, "speed", 0.0)))
+
+
+def _gps_direction(gps_vector) -> float:
+    return float(getattr(gps_vector, "direction", getattr(gps_vector, "course", 0.0)))
 
 
 def is_gps_jump(lat: float, lon: float) -> bool:
@@ -313,8 +331,18 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
 
     if not is_gps_valid(gps_vector, gps_fidelity):
         if DEBUG_GUIDANCE:
+            if hasattr(gps_fidelity, "pos_health"):
+                gps_detail = (
+                    f"pos_health={getattr(gps_fidelity, 'pos_health', 0)} "
+                    f"motion_health={getattr(gps_fidelity, 'motion_health', 0)}"
+                )
+            else:
+                gps_detail = (
+                    f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} "
+                    f"rmc={gps_fidelity.rmc_status}"
+                )
             _dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
-                 f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} rmc={gps_fidelity.rmc_status}")
+                 f"{gps_detail}")
         return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
 
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
@@ -368,7 +396,7 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     wind_carrot_angl_north = _wrap_180(carrot_angl_north - wind_effect)
     angl_to_turn = _wrap_180(wind_carrot_angl_north - imu_data.yaw)
 
-    V = max(gps_vector.speed, 1.0)
+    V = max(_gps_velocity(gps_vector), 1.0)
 
     # ── Capture mode: 대각도 오차 시 integral freeze ──────────────────
     # |error| > CAPTURE_THRESHOLD 이면 PI 적분기를 0으로 리셋.
@@ -397,8 +425,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             phase = "TURNING"
 
     # 바람 학습 (Wind Learning)
-    if phase == "STRAIGHT" and gps_vector.speed > WIND_LEARN_MIN_SPEED:
-        current_crab = _wrap_180(gps_vector.course - imu_data.yaw)
+    if phase == "STRAIGHT" and _gps_velocity(gps_vector) > WIND_LEARN_MIN_SPEED:
+        current_crab = _wrap_180(_gps_direction(gps_vector) - imu_data.yaw)
         wind_effect = (1.0 - WIND_EMA_ALPHA) * wind_effect + WIND_EMA_ALPHA * current_crab
         wind_effect = max(-WIND_MAX_DEG, min(WIND_MAX_DEG, wind_effect))
 
@@ -433,5 +461,3 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         distance=distance,
         commanded_yaw_rate=commanded_yaw_rate
     )
-
-

@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import struct
 import sys
 import time
 from pathlib import Path
@@ -137,10 +138,12 @@ def _ingest_nmea_line(dev: dict, line: str) -> None:
     if tag.endswith("GGA") and len(parts) > 1:
         g = _parse_gga(parts)
         if g:
+            g["_seen_ts"] = time.time()
             dev["gga"] = g
     elif tag.endswith("RMC") and len(parts) > 1:
         r = _parse_rmc(parts)
         if r:
+            r["_seen_ts"] = time.time()
             dev["rmc"] = r
 
 
@@ -157,20 +160,171 @@ def _nmea_feed_bytes(dev: dict, chunk: bytes) -> None:
         _ingest_nmea_line(dev, line)
 
 
+def _ubx_checksum(data: bytes) -> tuple[int, int]:
+    ck_a = 0
+    ck_b = 0
+    for b in data:
+        ck_a = (ck_a + b) & 0xFF
+        ck_b = (ck_b + ck_a) & 0xFF
+    return ck_a, ck_b
+
+
+def _ubx_frame(msg_class: int, msg_id: int, payload: bytes = b"") -> bytes:
+    header = bytes([msg_class & 0xFF, msg_id & 0xFF]) + len(payload).to_bytes(2, "little")
+    ck_a, ck_b = _ubx_checksum(header + payload)
+    return b"\xB5\x62" + header + payload + bytes([ck_a, ck_b])
+
+
+def _parse_nav_pvt(payload: bytes) -> Optional[dict]:
+    """Parse UBX-NAV-PVT payload (class 0x01, id 0x07)."""
+    if len(payload) < 92:
+        return None
+    try:
+        i_tow = struct.unpack_from("<I", payload, 0)[0]
+        year = struct.unpack_from("<H", payload, 4)[0]
+        month = payload[6]
+        day = payload[7]
+        hour = payload[8]
+        minute = payload[9]
+        second = payload[10]
+        valid = payload[11]
+        fix_type = payload[20]
+        flags = payload[21]
+        num_sv = payload[23]
+        lon_raw = struct.unpack_from("<i", payload, 24)[0]
+        lat_raw = struct.unpack_from("<i", payload, 28)[0]
+        height_raw = struct.unpack_from("<i", payload, 32)[0]
+        h_msl_raw = struct.unpack_from("<i", payload, 36)[0]
+        h_acc_raw = struct.unpack_from("<I", payload, 40)[0]
+        v_acc_raw = struct.unpack_from("<I", payload, 44)[0]
+        vel_n_raw = struct.unpack_from("<i", payload, 48)[0]
+        vel_e_raw = struct.unpack_from("<i", payload, 52)[0]
+        vel_d_raw = struct.unpack_from("<i", payload, 56)[0]
+        g_speed_raw = struct.unpack_from("<i", payload, 60)[0]
+        head_mot_raw = struct.unpack_from("<i", payload, 64)[0]
+        s_acc_raw = struct.unpack_from("<I", payload, 68)[0]
+        head_acc_raw = struct.unpack_from("<I", payload, 72)[0]
+    except (IndexError, struct.error):
+        return None
+
+    if not (1 <= month <= 12 and 1 <= day <= 31 and 0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 60):
+        time_text = "000000"
+    else:
+        time_text = f"{hour:02d}{minute:02d}{min(second, 59):02d}"
+
+    return {
+        "source": "UBX_NAV_PVT",
+        "i_tow": i_tow,
+        "date": (year, month, day),
+        "time": time_text,
+        "valid": valid,
+        "fix_type": fix_type,
+        "flags": flags,
+        "num_sv": num_sv,
+        "lat": lat_raw * 1.0e-7,
+        "lon": lon_raw * 1.0e-7,
+        "alt": h_msl_raw / 1000.0,
+        "height": height_raw / 1000.0,
+        "h_acc": h_acc_raw / 1000.0,
+        "v_acc": v_acc_raw / 1000.0,
+        "vel_n": vel_n_raw / 1000.0,
+        "vel_e": vel_e_raw / 1000.0,
+        "vel_d": vel_d_raw / 1000.0,
+        "g_speed": abs(g_speed_raw) / 1000.0,
+        "head_mot": (head_mot_raw * 1.0e-5) % 360.0,
+        "s_acc": s_acc_raw / 1000.0,
+        "head_acc": head_acc_raw * 1.0e-5,
+        "_seen_ts": time.time(),
+    }
+
+
+def _ingest_ubx_frame(dev: dict, msg_class: int, msg_id: int, payload: bytes) -> None:
+    if msg_class == 0x01 and msg_id == 0x07:
+        pvt = _parse_nav_pvt(payload)
+        if pvt is not None:
+            dev["pvt"] = pvt
+
+
+def _ubx_feed_bytes(dev: dict, chunk: bytes) -> None:
+    data = dev.setdefault("_ubx_tail", b"") + chunk
+    idx = 0
+    while True:
+        start = data.find(b"\xB5\x62", idx)
+        if start < 0:
+            dev["_ubx_tail"] = data[-1:] if data.endswith(b"\xB5") else b""
+            return
+        if len(data) - start < 8:
+            dev["_ubx_tail"] = data[start:]
+            return
+        msg_class = data[start + 2]
+        msg_id = data[start + 3]
+        length = int.from_bytes(data[start + 4 : start + 6], "little")
+        end = start + 8 + length
+        if len(data) < end:
+            dev["_ubx_tail"] = data[start:]
+            return
+        frame_body = data[start + 2 : start + 6 + length]
+        ck_a, ck_b = _ubx_checksum(frame_body)
+        if data[start + 6 + length] == ck_a and data[start + 7 + length] == ck_b:
+            _ingest_ubx_frame(dev, msg_class, msg_id, data[start + 6 : start + 6 + length])
+        idx = end
+
+
 def _gps_build_return(dev: dict) -> Optional[list]:
+    pvt = dev.get("pvt")
+    if pvt:
+        now = time.time()
+        pos_seen = float(pvt.get("_seen_ts", now))
+        pos_age = max(0.0, now - pos_seen)
+        fix_type = int(pvt.get("fix_type", 0))
+        num_sv = int(pvt.get("num_sv", 0))
+        status = "A" if fix_type >= 2 else "V"
+        motion_valid = 1 if status == "A" else 0
+        return [
+            pvt["time"],
+            pvt["alt"],
+            pvt["lat"],
+            pvt["lon"],
+            num_sv,
+            1 if fix_type >= 2 else 0,
+            status,
+            float(pvt.get("g_speed", 0.0)),
+            float(pvt.get("head_mot", 0.0)),
+            motion_valid,
+            pos_age,
+            pos_age,
+            "UBX_NAV_PVT",
+            fix_type,
+            float(pvt.get("h_acc", 1.0e9)),
+            float(pvt.get("v_acc", 1.0e9)),
+            float(pvt.get("s_acc", 1.0e9)),
+            float(pvt.get("head_acc", 1.0e9)),
+            float(pvt.get("vel_n", 0.0)),
+            float(pvt.get("vel_e", 0.0)),
+            int(pvt.get("valid", 0)),
+        ]
+
     gga = dev.get("gga")
     if not gga or int(gga.get("fix_q", 0)) < 1:
         return None
 
+    now = time.time()
+    pos_seen = float(gga.get("_seen_ts", now))
+    pos_age = max(0.0, now - pos_seen)
     rmc = dev.get("rmc")
     if rmc:
         status = str(rmc.get("status", "V")).upper()
         speed_ms = float(rmc.get("speed_ms", 0.0))
         course = float(rmc.get("course", 0.0))
+        motion_seen = float(rmc.get("_seen_ts", now))
+        motion_age = max(0.0, now - motion_seen)
+        motion_valid = 1 if status == "A" else 0
     else:
-        status = "A"
+        status = "V"
         speed_ms = 0.0
         course = 0.0
+        motion_age = 1.0e9
+        motion_valid = 0
 
     return [
         gga["time"],
@@ -182,6 +336,10 @@ def _gps_build_return(dev: dict) -> Optional[list]:
         status,
         speed_ms,
         course,
+        motion_valid,
+        pos_age,
+        motion_age,
+        "NMEA",
     ]
 
 
@@ -243,6 +401,25 @@ def _ublox_ddc_read_stream(i2c: Any, address: int, nbytes: int) -> bytes:
     return bytes(out)
 
 
+def _ublox_enable_nav_pvt_i2c(i2c: Any, address: int) -> None:
+    """Request UBX-NAV-PVT output on the DDC/I2C port; harmless if unsupported."""
+    payload = bytes([0x01, 0x07, 1, 0, 0, 0, 0, 0])
+    frame = _ubx_frame(0x06, 0x01, payload)
+    try:
+        i2c.writeto(address, frame)
+    except Exception as exc:
+        logger.debug("GPS: UBX NAV-PVT enable over I2C failed: %s", exc)
+
+
+def _ublox_enable_nav_pvt_uart(ser: Any) -> None:
+    payload = bytes([0x01, 0x07, 0, 1, 0, 0, 0, 0])
+    frame = _ubx_frame(0x06, 0x01, payload)
+    try:
+        ser.write(frame)
+    except Exception as exc:
+        logger.debug("GPS: UBX NAV-PVT enable over UART failed: %s", exc)
+
+
 def _init_gps_i2c_ublox() -> Any:
     from lib import i2c_bus
 
@@ -255,13 +432,16 @@ def _init_gps_i2c_ublox() -> Any:
             with i2c_bus.i2c_lock():
                 i2c = i2c_bus.get_i2c()
                 n = _ublox_ddc_bytes_available(i2c, addr)
+                _ublox_enable_nav_pvt_i2c(i2c, addr)
             logger.info("GPS u-blox DDC I2C at 0x%02x (rx queue ~%d bytes)", addr, n)
             return {
                 "kind": "i2c_ublox",
                 "addr": addr,
                 "gga": None,
                 "rmc": None,
+                "pvt": None,
                 "_nmea_tail": b"",
+                "_ubx_tail": b"",
             }
         except Exception as exc:
             last_exc = exc
@@ -286,8 +466,9 @@ def _init_gps_uart() -> Any:
     for port in _port_candidates():
         try:
             ser = serial.Serial(port, baud, timeout=0.2)
+            _ublox_enable_nav_pvt_uart(ser)
             logger.info("GPS UART opened %s @ %s", port, baud)
-            return {"kind": "uart", "ser": ser, "gga": None, "rmc": None}
+            return {"kind": "uart", "ser": ser, "gga": None, "rmc": None, "pvt": None, "_ubx_tail": b""}
         except Exception as exc:
             last_exc = exc
             logger.warning("GPS open failed for %s: %s", port, exc)
@@ -308,6 +489,7 @@ def _gps_readdata_uart(dev: dict) -> Optional[list]:
         raw = ser.readline()
         if not raw:
             break
+        _ubx_feed_bytes(dev, raw)
         try:
             line = raw.decode("ascii", errors="ignore").strip()
         except Exception:
@@ -333,6 +515,7 @@ def _gps_readdata_i2c(dev: dict) -> Optional[list]:
             n = min(n, 256)
             try:
                 chunk = _ublox_ddc_read_stream(i2c, addr, n)
+                _ubx_feed_bytes(dev, chunk)
                 _nmea_feed_bytes(dev, chunk)
             except OSError as exc:
                 logger.warning("GPS I2C read_stream failed (%s); next poll will retry", exc)
