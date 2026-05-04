@@ -200,33 +200,35 @@ def _imu_cli_period_sec() -> float:
         return 1.0
 
 
-def _print_sample_block(sample: Any, sample_index: int) -> None:
+def _print_sample_header() -> None:
+    print(
+        "idx | roll[deg] pitch[deg]  yaw[deg] | "
+        "ax[m/s^2] ay[m/s^2] az[m/s^2] | acc[g] | "
+        "mx[uT]  my[uT]  mz[uT] | mag[uT] | "
+        "gx[deg/s] gy[deg/s] gz[deg/s] | gyr[deg/s]",
+        flush=True,
+    )
+    print(
+        "----+------------------------------+-------------------------------+--------+"
+        "-------------------------+---------+--------------------------------+-----------",
+        flush=True,
+    )
+
+
+def _print_sample_line(sample: Any, sample_index: int) -> None:
     r, p, y, ax, ay, az, mx, my, mz, gx, gy, gz = sample
     acc_g = math.sqrt(ax * ax + ay * ay + az * az) / 9.80665
     mag_norm = math.sqrt(mx * mx + my * my + mz * mz)
     gyr_norm = math.sqrt(gx * gx + gy * gy + gz * gz)
-    print("", flush=True)
-    print(f"=== IMU_SAMPLE {sample_index} ===", flush=True)
-    print("orientation_rpy_deg:", flush=True)
-    print(f"  roll_x [deg]:   {r:9.3f}", flush=True)
-    print(f"  pitch_y [deg]:  {p:9.3f}", flush=True)
-    print(f"  yaw_z [deg]:    {y:9.3f}", flush=True)
-    print("acceleration_m_s2:", flush=True)
     print(
-        f"  ax [m/s^2]: {ax:9.4f}   ay [m/s^2]: {ay:9.4f}   "
-        f"az [m/s^2]: {az:9.4f}   norm [g]: {acc_g:7.3f}",
-        flush=True,
-    )
-    print("magnetic_field_uT:", flush=True)
-    print(
-        f"  mx [uT]: {mx:9.3f}   my [uT]: {my:9.3f}   "
-        f"mz [uT]: {mz:9.3f}   norm [uT]: {mag_norm:8.3f}",
-        flush=True,
-    )
-    print("gyroscope_deg_s:", flush=True)
-    print(
-        f"  gx [deg/s]: {gx:9.3f}   gy [deg/s]: {gy:9.3f}   "
-        f"gz [deg/s]: {gz:9.3f}   norm [deg/s]: {gyr_norm:8.3f}",
+        f"{sample_index:3d} | "
+        f"{r:9.2f} {p:10.2f} {y:9.2f} | "
+        f"{ax:9.3f} {ay:9.3f} {az:9.3f} | "
+        f"{acc_g:6.3f} | "
+        f"{mx:6.2f} {my:7.2f} {mz:7.2f} | "
+        f"{mag_norm:7.2f} | "
+        f"{gx:9.3f} {gy:9.3f} {gz:9.3f} | "
+        f"{gyr_norm:9.3f}",
         flush=True,
     )
 
@@ -247,10 +249,11 @@ if __name__ == "__main__":
         raise SystemExit(1) from exc
     period = _imu_cli_period_sec()
     print(
-        f"IMU: OK, streaming readable samples every {period:.2f}s "
+        f"IMU: OK, streaming aligned samples every {period:.2f}s "
         "(set IMU_PRINT_PERIOD_SEC to override).",
         flush=True,
     )
+    _print_sample_header()
     _last_fail_log = 0.0
     _sample_index = 0
     try:
@@ -266,7 +269,9 @@ if __name__ == "__main__":
                     _last_fail_log = now
             else:
                 _sample_index += 1
-                _print_sample_block(s, _sample_index)
+                if _sample_index > 1 and (_sample_index - 1) % 25 == 0:
+                    _print_sample_header()
+                _print_sample_line(s, _sample_index)
             time.sleep(period)
     except KeyboardInterrupt:
         print("", flush=True)
