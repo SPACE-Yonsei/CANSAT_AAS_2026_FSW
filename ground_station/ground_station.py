@@ -103,9 +103,11 @@ _RX_POLL_IDLE_MS = 22
 _RX_POLL_BACKLOG_MS = 1
 # Map trail: cap vertices sent to Canvas (full history kept in memory for bounds)
 _MAP_TRACK_DRAW_MAX = 450
-# Pad plot bounds (meters) so the track is not flush to the border and scale jitters less
-_MAP_BOUNDS_PAD_FRAC = 0.07
-_MAP_BOUNDS_PAD_MIN_M = 5.0
+# Map view is centered on **start** (release origin). Extent from ref is capped (then fills plot):
+#   east–west ≤ ±1 km, north–south ≤ ±500 m. Wide canvases stretch longitude across pw and latitude across ph.
+_MAP_REF_MAX_HALF_EAST_M = 1000.0
+_MAP_REF_MAX_HALF_NORTH_M = 500.0
+_MAP_VIEW_MIN_HALF_M = 2.5
 
 # Map styling (dark plot, readable axes)
 _MAP_BG = "#0b1220"
@@ -721,29 +723,32 @@ class GroundStation(tk.Tk):
         lons = [p[1] for p in all_pts]
         lat_min, lat_max = min(lats), max(lats)
         lon_min, lon_max = min(lons), max(lons)
-        d_lat = max(1e-8, lat_max - lat_min)
-        d_lon = max(1e-8, lon_max - lon_min)
-        lat_mid = (lat_min + lat_max) / 2.0
-        meter_per_lon = 111320.0 * math.cos(math.radians(lat_mid))
+        if "start" in self._map_points:
+            ref_lat, ref_lon = self._map_points["start"]
+        else:
+            ref_lat = (lat_min + lat_max) / 2.0
+            ref_lon = (lon_min + lon_max) / 2.0
+
+        meter_per_lon = 111320.0 * math.cos(math.radians(ref_lat))
         meter_per_lon = meter_per_lon if abs(meter_per_lon) > 1e-6 else 1.0
-        width_m = d_lon * meter_per_lon
-        height_m = d_lat * 111320.0
-        span_raw = max(width_m, height_m, 5.0)
-        pad_m = max(span_raw * _MAP_BOUNDS_PAD_FRAC, _MAP_BOUNDS_PAD_MIN_M)
-        pad_lat = pad_m / 111320.0
-        pad_lon = pad_m / meter_per_lon
-        lat_min -= pad_lat
-        lat_max += pad_lat
-        lon_min -= pad_lon
-        lon_max += pad_lon
-        d_lat = max(1e-8, lat_max - lat_min)
-        d_lon = max(1e-8, lon_max - lon_min)
-        lat_center = (lat_min + lat_max) / 2.0
-        lon_center = (lon_min + lon_max) / 2.0
-        width_m = d_lon * meter_per_lon
-        height_m = d_lat * 111320.0
-        span = max(width_m, height_m, 5.0)
-        dec = _map_geo_decimals(span)
+
+        half_e_data = 0.0
+        half_n_data = 0.0
+        for la, lo in all_pts:
+            east = (lo - ref_lon) * meter_per_lon
+            north = (la - ref_lat) * 111320.0
+            half_e_data = max(half_e_data, abs(east))
+            half_n_data = max(half_n_data, abs(north))
+
+        half_e = min(
+            _MAP_REF_MAX_HALF_EAST_M,
+            max(half_e_data, _MAP_VIEW_MIN_HALF_M),
+        )
+        half_n = min(
+            _MAP_REF_MAX_HALF_NORTH_M,
+            max(half_n_data, _MAP_VIEW_MIN_HALF_M),
+        )
+        dec = _map_geo_decimals(max(2.0 * half_e, 2.0 * half_n, 5.0))
 
         pl = float(margin_l)
         pr = float(w - margin_r)
@@ -753,19 +758,19 @@ class GroundStation(tk.Tk):
         ph = max(20.0, pb - pt)
 
         def project(lat: float, lon: float) -> tuple[float, float]:
-            east = (lon - lon_center) * meter_per_lon
-            north = (lat - lat_center) * 111320.0
-            x = pl + pw / 2.0 + (east / span) * pw
-            y = pt + ph / 2.0 - (north / span) * ph
+            east = (lon - ref_lon) * meter_per_lon
+            north = (lat - ref_lat) * 111320.0
+            x = pl + pw / 2.0 + (east / half_e) * (pw / 2.0)
+            y = pt + ph / 2.0 - (north / half_n) * (ph / 2.0)
             return x, y
 
         def inv_lon(px: float) -> float:
-            east = ((px - pl - pw / 2.0) / pw) * span
-            return lon_center + east / meter_per_lon
+            east = ((px - pl - pw / 2.0) / (pw / 2.0)) * half_e
+            return ref_lon + east / meter_per_lon
 
         def inv_lat(py: float) -> float:
-            north = ((pt + ph / 2.0 - py) / ph) * span
-            return lat_center + north / 111320.0
+            north = ((pt + ph / 2.0 - py) / (ph / 2.0)) * half_n
+            return ref_lat + north / 111320.0
 
         # Plot background + border
         c.create_rectangle(pl, pt, pr, pb, fill=_MAP_PLOT_FILL, outline=_MAP_BORDER, width=2)
@@ -836,7 +841,10 @@ class GroundStation(tk.Tk):
             font=("Segoe UI", 11, "bold"),
         )
 
-        scale_txt = f"span ≈ {span:.0f} m"
+        scale_txt = (
+            f"ref start  E±{half_e:.0f}m  N±{half_n:.0f}m  (cap {int(_MAP_REF_MAX_HALF_EAST_M)}m / "
+            f"{int(_MAP_REF_MAX_HALF_NORTH_M)}m)"
+        )
         c.create_text(pl + 4, pt + 4, text=scale_txt, anchor="nw", fill=_MAP_AXIS_LABEL, font=_MAP_FONT_SMALL)
 
         if len(self._track_points) >= 2:
