@@ -42,27 +42,22 @@ signal.signal(signal.SIGINT,  shutdown)
 signal.signal(signal.SIGTERM, shutdown)
 
 
-def smooth_move(pin, start_us, end_us, steps=30, step_delay=0.02):
-    """Interpolate from start_us to end_us in `steps` increments."""
-    for i in range(1, steps + 1):
-        pw = int(start_us + (end_us - start_us) * i / steps)
-        pi.set_servo_pulsewidth(pin, pw)
-        time.sleep(step_delay)
+HOLD_S = 0.4   # seconds to hold after reaching each position
 
 
-def move_left(from_us, to_us, label):
+def move_left(_, to_us):
     deg = (to_us - left_zero) / pulse_per_degree
     print(f"LEFT  motor -> {deg:.0f} deg  ({to_us}us)")
-    smooth_move(LEFT_PIN, from_us, to_us)
-    time.sleep(1)
+    pi.set_servo_pulsewidth(LEFT_PIN, to_us)
+    time.sleep(HOLD_S)
     return to_us
 
 
-def move_right(from_us, to_us, label):
+def move_right(_, to_us):
     deg = (right_zero - to_us) / pulse_per_degree
     print(f"RIGHT motor -> {deg:.0f} deg  ({to_us}us)")
-    smooth_move(RIGHT_PIN, from_us, to_us)
-    time.sleep(1)
+    pi.set_servo_pulsewidth(RIGHT_PIN, to_us)
+    time.sleep(HOLD_S)
     return to_us
 
 
@@ -75,11 +70,11 @@ while True:
     print(f"\n--- Cycle {cycle} ---")
 
     # LEFT: 0 -> 60 -> 120
-    l_cur = move_left(l_cur, left_zero, "0 deg")
-    l_cur = move_left(l_cur, left_mid,  "60 deg")
-    l_cur = move_left(l_cur, left_neutral, "120 deg")
+    l_cur = move_left(l_cur, left_zero)
+    l_cur = move_left(l_cur, left_mid)
+    l_cur = move_left(l_cur, left_neutral)
 
     # RIGHT: 0 -> 60 -> 120
-    r_cur = move_right(r_cur, right_zero, "0 deg")
-    r_cur = move_right(r_cur, right_mid,  "60 deg")
-    r_cur = move_right(r_cur, right_neutral, "120 deg")
+    r_cur = move_right(r_cur, right_zero)
+    r_cur = move_right(r_cur, right_mid)
+    r_cur = move_right(r_cur, right_neutral)
