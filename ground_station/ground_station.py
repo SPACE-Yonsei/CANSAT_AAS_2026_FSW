@@ -62,6 +62,16 @@ TLM_FIELDS = [
 
 LEGACY_TLM_FIELDS = 30
 
+# Serial RX: process at most this many lines per Tk tick so bursts (USB backlog) do not freeze the UI for seconds.
+_RX_MAX_LINES_PER_TICK = 24
+_RX_POLL_IDLE_MS = 22
+_RX_POLL_BACKLOG_MS = 1
+# Map trail: cap vertices sent to Canvas (full history kept in memory for bounds)
+_MAP_TRACK_DRAW_MAX = 450
+# Pad plot bounds (meters) so the track is not flush to the border and scale jitters less
+_MAP_BOUNDS_PAD_FRAC = 0.07
+_MAP_BOUNDS_PAD_MIN_M = 5.0
+
 # Map styling (dark plot, readable axes)
 _MAP_BG = "#0b1220"
 _MAP_PLOT_FILL = "#111827"
@@ -73,6 +83,31 @@ _MAP_FONT_SMALL = ("Segoe UI", 8)
 _MAP_FONT_TICK = ("Consolas", 9)
 _MAP_FONT_AXIS = ("Segoe UI", 9, "bold")
 _MAP_FONT_LEGEND = ("Consolas", 8)
+
+
+def _decimate_trail(
+    trail: list[tuple[float, float]], max_points: int
+) -> list[tuple[float, float]]:
+    """Evenly sample along the path, always keeping first and last points.
+
+    Strided ``trail[::step]`` often drops the newest fix and creates uneven gaps
+    that look like a broken or 'teleporting' blue path.
+    """
+    n = len(trail)
+    if n <= max_points or max_points < 2:
+        return list(trail)
+    out: list[tuple[float, float]] = []
+    last_i = -1
+    denom = max_points - 1
+    for j in range(max_points):
+        i = int(round(j * (n - 1) / denom))
+        i = max(0, min(n - 1, i))
+        if i != last_i:
+            out.append(trail[i])
+            last_i = i
+    if out[-1] != trail[-1]:
+        out.append(trail[-1])
+    return out
 
 
 def _map_geo_decimals(span_m: float) -> int:
@@ -178,7 +213,7 @@ class GroundStation(tk.Tk):
 
         self._build_ui()
         self._refresh_ports()
-        self.after(20, self._drain_rx)
+        self.after(_RX_POLL_IDLE_MS, self._drain_rx)
         self.after(500, self._update_status)
 
     # --------------------------------------------------------------- UI ---
@@ -543,7 +578,18 @@ class GroundStation(tk.Tk):
             return None
         return v
 
-    def _update_map_and_motor(self, parsed: dict[str, str]) -> None:
+    def _ingest_tlm_track(self, parsed: dict[str, str]) -> None:
+        """Append GPS to trail — call for every telemetry row so the path stays correct when UI is coalesced."""
+        cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
+        cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
+        if cur_lat is not None and cur_lon is not None:
+            self._track_points.append((cur_lat, cur_lon))
+            if len(self._track_points) > 500:
+                self._track_points = self._track_points[-500:]
+
+    def _apply_telemetry_ui(self, parsed: dict[str, str]) -> None:
+        """Refresh telemetry labels, motor bars, map layers from one frame (latest in a batch)."""
+        self._apply_to_ui(parsed)
         cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
         cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
         start_lat = self._parse_optional_float(parsed.get("start_lat", ""))
@@ -554,11 +600,6 @@ class GroundStation(tk.Tk):
         carrot_lon = self._parse_optional_float(parsed.get("carrot_lon", ""))
         cur_hdg = self._parse_optional_float(parsed.get("current_heading_deg", ""))
         des_hdg = self._parse_optional_float(parsed.get("desired_heading_deg", ""))
-
-        if cur_lat is not None and cur_lon is not None:
-            self._track_points.append((cur_lat, cur_lon))
-            if len(self._track_points) > 500:
-                self._track_points = self._track_points[-500:]
 
         self._map_points = {}
         if start_lat is not None and start_lon is not None:
@@ -592,7 +633,7 @@ class GroundStation(tk.Tk):
         self._map_dirty = True
         if self._map_redraw_after_id is not None:
             return
-        self._map_redraw_after_id = self.after(100, self._flush_map_redraw)
+        self._map_redraw_after_id = self.after(48, self._flush_map_redraw)
 
     def _flush_map_redraw(self) -> None:
         self._map_redraw_after_id = None
@@ -627,11 +668,23 @@ class GroundStation(tk.Tk):
         lon_min, lon_max = min(lons), max(lons)
         d_lat = max(1e-8, lat_max - lat_min)
         d_lon = max(1e-8, lon_max - lon_min)
-        lat_center = (lat_min + lat_max) / 2.0
-        lon_center = (lon_min + lon_max) / 2.0
-        lat_mid = lat_center
+        lat_mid = (lat_min + lat_max) / 2.0
         meter_per_lon = 111320.0 * math.cos(math.radians(lat_mid))
         meter_per_lon = meter_per_lon if abs(meter_per_lon) > 1e-6 else 1.0
+        width_m = d_lon * meter_per_lon
+        height_m = d_lat * 111320.0
+        span_raw = max(width_m, height_m, 5.0)
+        pad_m = max(span_raw * _MAP_BOUNDS_PAD_FRAC, _MAP_BOUNDS_PAD_MIN_M)
+        pad_lat = pad_m / 111320.0
+        pad_lon = pad_m / meter_per_lon
+        lat_min -= pad_lat
+        lat_max += pad_lat
+        lon_min -= pad_lon
+        lon_max += pad_lon
+        d_lat = max(1e-8, lat_max - lat_min)
+        d_lon = max(1e-8, lon_max - lon_min)
+        lat_center = (lat_min + lat_max) / 2.0
+        lon_center = (lon_min + lon_max) / 2.0
         width_m = d_lon * meter_per_lon
         height_m = d_lat * 111320.0
         span = max(width_m, height_m, 5.0)
@@ -733,10 +786,24 @@ class GroundStation(tk.Tk):
 
         if len(self._track_points) >= 2:
             pts: list[float] = []
-            for lat, lon in self._track_points:
+            trail = _decimate_trail(self._track_points, _MAP_TRACK_DRAW_MAX)
+            prev_xy: tuple[float, float] | None = None
+            for lat, lon in trail:
                 x, y = project(lat, lon)
+                if prev_xy is not None:
+                    if abs(x - prev_xy[0]) < 0.35 and abs(y - prev_xy[1]) < 0.35:
+                        continue
                 pts.extend([x, y])
-            c.create_line(*pts, fill="#38bdf8", width=3, smooth=False)
+                prev_xy = (x, y)
+            if len(pts) >= 4:
+                c.create_line(
+                    *pts,
+                    fill="#38bdf8",
+                    width=3,
+                    smooth=False,
+                    capstyle=tk.ROUND,
+                    joinstyle=tk.ROUND,
+                )
 
         colors = {
             "start": "#34d399",
@@ -786,31 +853,44 @@ class GroundStation(tk.Tk):
 
     # ------------------------------------------------------ rx pipeline ---
     def _drain_rx(self) -> None:
+        n = 0
+        last_tlm: dict[str, str] | None = None
+        last_tlm_line: str | None = None
+        last_host_ts = ""
+        tlm_in_tick = 0
         try:
-            while True:
+            while n < _RX_MAX_LINES_PER_TICK:
                 line = self._rx_queue.get_nowait()
-                self._handle_line(line)
+                n += 1
+                host_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                parsed = self._parse_tlm(line)
+                if parsed is not None:
+                    self._packet_count += 1
+                    self._last_packet_ts = time.time()
+                    self._ingest_tlm_track(parsed)
+                    self._write_csv_row(parsed, line)
+                    tlm_in_tick += 1
+                    last_tlm = parsed
+                    last_tlm_line = line
+                    last_host_ts = host_ts
+                else:
+                    self._bad_packet_count += 1
+                    tag = "warn"
+                    if line.startswith("[serial-error]"):
+                        tag = "err"
+                    self._append_console(f"{host_ts}  {line}", tag)
         except queue.Empty:
             pass
-        finally:
-            self.after(20, self._drain_rx)
 
-    def _handle_line(self, line: str) -> None:
-        host_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        parsed = self._parse_tlm(line)
-        if parsed is not None:
-            self._packet_count += 1
-            self._last_packet_ts = time.time()
-            self._apply_to_ui(parsed)
-            self._update_map_and_motor(parsed)
-            self._append_console(f"{host_ts}  {line}", "ok")
-            self._write_csv_row(parsed, line)
-        else:
-            self._bad_packet_count += 1
-            tag = "warn"
-            if line.startswith("[serial-error]"):
-                tag = "err"
-            self._append_console(f"{host_ts}  {line}", tag)
+        if last_tlm is not None:
+            self._apply_telemetry_ui(last_tlm)
+            if tlm_in_tick > 1:
+                self._append_console(f"{last_host_ts}  (×{tlm_in_tick}) {last_tlm_line}", "ok")
+            else:
+                self._append_console(f"{last_host_ts}  {last_tlm_line}", "ok")
+
+        delay = _RX_POLL_BACKLOG_MS if n >= _RX_MAX_LINES_PER_TICK else _RX_POLL_IDLE_MS
+        self.after(delay, self._drain_rx)
 
     def _parse_tlm(self, line: str) -> dict[str, str] | None:
         if not line.startswith(f"${TEAM_ID},"):
