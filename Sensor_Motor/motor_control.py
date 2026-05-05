@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import math
 import os
+import sys
 import time
 import types
 from datetime import datetime
@@ -12,7 +13,13 @@ DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     full = f"[{ts}] {line}"
-    print(full)
+    try:
+        print(full)
+    except UnicodeEncodeError:
+        # Windows cp949 / non-utf8 console: drop unencodable glyphs (μ, °, —, …)
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        sys.stdout.write(full.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
+        sys.stdout.flush()
     _sim_log.write(full + "\n")
     _sim_log.flush()
 

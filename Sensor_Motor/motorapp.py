@@ -322,7 +322,44 @@ def dispatch(msg: str) -> None:
 # Control loop
 # ---------------------------------------------------------------------------
 
-def ctrl_paragldr() -> None:
+def _fmt_num(value: float) -> str:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "nan"
+    if math.isnan(v) or math.isinf(v):
+        return "nan"
+    return f"{v:.8f}"
+
+
+def _send_motor_diag(main_queue, left_pulse: int, right_pulse: int, result) -> None:
+    if main_queue is None:
+        return
+    payload = ",".join(
+        [
+            str(int(left_pulse)),
+            str(int(right_pulse)),
+            _fmt_num(getattr(result, "start_lat", float("nan"))),
+            _fmt_num(getattr(result, "start_lon", float("nan"))),
+            _fmt_num(getattr(result, "target_lat", float("nan"))),
+            _fmt_num(getattr(result, "target_lon", float("nan"))),
+            _fmt_num(getattr(result, "carrot_lat", float("nan"))),
+            _fmt_num(getattr(result, "carrot_lon", float("nan"))),
+            _fmt_num(getattr(result, "current_heading", float("nan"))),
+            _fmt_num(getattr(result, "desired_heading", float("nan"))),
+            str(getattr(result, "state", "")),
+        ]
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.MID_comm_motor_diag,
+        payload,
+    )
+
+
+def ctrl_paragldr(main_queue=None) -> None:
     """Parafoil control loop (~10 Hz, daemon thread).
 
     Safe-output contract:
@@ -336,11 +373,23 @@ def ctrl_paragldr() -> None:
             if STATE < 3 or not MOTOR_ENABLED:
                 if PI is not None:
                     motor_control.set_neutral(PI)
+                _send_motor_diag(
+                    main_queue,
+                    motor_control.LEFT_NEUTRAL,
+                    motor_control.RIGHT_NEUTRAL,
+                    SimpleNamespace(state="IDLE", current_heading=IMU.yaw),
+                )
                 time.sleep(0.1)
                 continue
 
             if STATE == 5:
                 motor_control.set_motors_off(PI)
+                _send_motor_diag(
+                    main_queue,
+                    0,
+                    0,
+                    SimpleNamespace(state="LANDED", current_heading=IMU.yaw),
+                )
                 time.sleep(0.1)
                 continue
 
@@ -359,7 +408,8 @@ def ctrl_paragldr() -> None:
             )
 
             result = motor_guidance.guidance(imu_data, guidance_position, guidance_health, snap.target, snap.alt)
-            motor_control.control(PI, float(result.commanded_yaw_rate))
+            motor_out = motor_control.control(PI, float(result.commanded_yaw_rate))
+            _send_motor_diag(main_queue, motor_out.left_pulse, motor_out.right_pulse, result)
 
         except Exception as exc:
             logger.error("ctrl_paragldr unhandled exception: %s", exc, exc_info=True)
@@ -388,11 +438,15 @@ def init() -> None:
     )
 
 
-def motorapp_main(main_pipe) -> None:
+def motorapp_main(main_queue, main_pipe=None) -> None:
+    # Backward compatibility: allow motorapp_main(main_pipe) in tests.
+    if main_pipe is None:
+        main_pipe = main_queue
+        main_queue = None
     init()
 
     ctrl_thread = threading.Thread(
-        target=ctrl_paragldr, daemon=True, name="MotorControlLoop"
+        target=ctrl_paragldr, args=(main_queue,), daemon=True, name="MotorControlLoop"
     )
     ctrl_thread.start()
     logger.info("MotorControlLoop started")

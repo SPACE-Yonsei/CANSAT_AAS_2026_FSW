@@ -86,6 +86,7 @@ class CameraAppArg:
 class MotorAppArg:
     AppID = 19
     AppName = "Motor"
+    MID_comm_motor_diag = 1901201
 
 # IPC contract notes (documentation only, not runtime data):
 # - Envelope: sender_app|receiver_app|msg_id|data

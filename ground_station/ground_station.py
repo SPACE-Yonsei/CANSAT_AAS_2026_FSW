@@ -14,6 +14,7 @@ Standalone, no other repo modules required (only `pyserial` + tkinter).
 from __future__ import annotations
 
 import csv
+import math
 import os
 import queue
 import sys
@@ -44,7 +45,14 @@ TLM_FIELDS = [
     "gps_time", "gps_alt", "gps_lat", "gps_lon", "gps_sats",
     "distance_cm", "cmd_echo",
     "filtered_roll", "filtered_pitch", "filtered_yaw",
+    "start_lat", "start_lon",
+    "target_lat", "target_lon",
+    "carrot_lat", "carrot_lon",
+    "current_heading_deg", "desired_heading_deg",
+    "left_pulse_us", "right_pulse_us", "guidance_state",
 ]
+
+LEGACY_TLM_FIELDS = 30
 
 COMMAND_PRESETS = [
     ("CX,ON",   "Telemetry ON"),
@@ -118,6 +126,12 @@ class GroundStation(tk.Tk):
         self._bad_packet_count = 0
         self._last_packet_ts: float | None = None
         self._tlm_vars: dict[str, tk.StringVar] = {}
+        self._track_points: list[tuple[float, float]] = []
+        self._map_points: dict[str, tuple[float, float]] = {}
+        self._current_heading_deg = math.nan
+        self._desired_heading_deg = math.nan
+        self._left_pulse_us = 0
+        self._right_pulse_us = 0
 
         self._build_ui()
         self._refresh_ports()
@@ -146,9 +160,13 @@ class GroundStation(tk.Tk):
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         right = ttk.Frame(body)
         right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        right.rowconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
 
         self._build_telemetry_panel(left)
-        self._build_console_and_command(right)
+        self._build_map_and_motor(right)
+        self._build_console_and_command(right, row_offset=1)
         self._build_status_bar()
 
     def _build_top_bar(self) -> None:
@@ -261,13 +279,51 @@ class GroundStation(tk.Tk):
         for r in range((len(groups) + 1) // 2):
             wrap.rowconfigure(r, weight=1)
 
-    def _build_console_and_command(self, parent: ttk.Frame) -> None:
-        parent.rowconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=0)
+    def _build_map_and_motor(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        self._map_canvas = tk.Canvas(
+            frame,
+            height=260,
+            background="#0b1220",
+            highlightthickness=1,
+            highlightbackground="#2d3748",
+        )
+        self._map_canvas.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self._map_canvas.bind("<Configure>", lambda _e: self._draw_map())
+
+        bars = ttk.Frame(frame)
+        bars.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        bars.columnconfigure(1, weight=1)
+        bars.columnconfigure(3, weight=1)
+
+        ttk.Label(bars, text="Left pulse").grid(row=0, column=0, sticky="w")
+        self._left_bar = ttk.Progressbar(bars, orient="horizontal", mode="determinate", maximum=1000)
+        self._left_bar.grid(row=0, column=1, sticky="ew", padx=(6, 10))
+        self._left_pulse_var = tk.StringVar(value="0 us")
+        ttk.Label(bars, textvariable=self._left_pulse_var, width=10).grid(row=0, column=2, sticky="e")
+
+        ttk.Label(bars, text="Right pulse").grid(row=1, column=0, sticky="w")
+        self._right_bar = ttk.Progressbar(bars, orient="horizontal", mode="determinate", maximum=1000)
+        self._right_bar.grid(row=1, column=1, sticky="ew", padx=(6, 10))
+        self._right_pulse_var = tk.StringVar(value="0 us")
+        ttk.Label(bars, textvariable=self._right_pulse_var, width=10).grid(row=1, column=2, sticky="e")
+
+        self._heading_var = tk.StringVar(value="heading: -- / target: --")
+        ttk.Label(bars, textvariable=self._heading_var).grid(row=0, column=3, rowspan=2, sticky="w")
+        self._guidance_var = tk.StringVar(value="guidance: --")
+        ttk.Label(bars, textvariable=self._guidance_var).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+    def _build_console_and_command(self, parent: ttk.Frame, row_offset: int = 0) -> None:
+        parent.rowconfigure(row_offset, weight=1)
+        parent.rowconfigure(row_offset + 1, weight=0)
         parent.columnconfigure(0, weight=1)
 
         console_box = ttk.LabelFrame(parent, text="Raw RX (XBee)")
-        console_box.grid(row=0, column=0, sticky="nsew")
+        console_box.grid(row=row_offset, column=0, sticky="nsew", pady=(8, 0))
         console_box.rowconfigure(0, weight=1)
         console_box.columnconfigure(0, weight=1)
 
@@ -285,7 +341,7 @@ class GroundStation(tk.Tk):
         self._console.tag_configure("tx", foreground="#7aa2f7")
 
         cmd_box = ttk.LabelFrame(parent, text="Command (CMD,1070,...)")
-        cmd_box.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        cmd_box.grid(row=row_offset + 1, column=0, sticky="ew", pady=(8, 0))
         cmd_box.columnconfigure(1, weight=1)
 
         ttk.Label(cmd_box, text="Preset:").grid(row=0, column=0, padx=6, pady=4, sticky="w")
@@ -412,6 +468,129 @@ class GroundStation(tk.Tk):
         except Exception as exc:
             self._append_console(f"[TX-error] {exc}", "err")
 
+    def _parse_optional_float(self, value: str) -> float | None:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(v):
+            return None
+        return v
+
+    def _update_map_and_motor(self, parsed: dict[str, str]) -> None:
+        cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
+        cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
+        start_lat = self._parse_optional_float(parsed.get("start_lat", ""))
+        start_lon = self._parse_optional_float(parsed.get("start_lon", ""))
+        target_lat = self._parse_optional_float(parsed.get("target_lat", ""))
+        target_lon = self._parse_optional_float(parsed.get("target_lon", ""))
+        carrot_lat = self._parse_optional_float(parsed.get("carrot_lat", ""))
+        carrot_lon = self._parse_optional_float(parsed.get("carrot_lon", ""))
+        cur_hdg = self._parse_optional_float(parsed.get("current_heading_deg", ""))
+        des_hdg = self._parse_optional_float(parsed.get("desired_heading_deg", ""))
+
+        if cur_lat is not None and cur_lon is not None:
+            self._track_points.append((cur_lat, cur_lon))
+            if len(self._track_points) > 500:
+                self._track_points = self._track_points[-500:]
+
+        self._map_points = {}
+        if start_lat is not None and start_lon is not None:
+            self._map_points["start"] = (start_lat, start_lon)
+        if target_lat is not None and target_lon is not None:
+            self._map_points["target"] = (target_lat, target_lon)
+        if carrot_lat is not None and carrot_lon is not None:
+            self._map_points["carrot"] = (carrot_lat, carrot_lon)
+        if cur_lat is not None and cur_lon is not None:
+            self._map_points["current"] = (cur_lat, cur_lon)
+
+        self._current_heading_deg = cur_hdg if cur_hdg is not None else math.nan
+        self._desired_heading_deg = des_hdg if des_hdg is not None else math.nan
+
+        left_pulse = self._parse_optional_float(parsed.get("left_pulse_us", ""))
+        right_pulse = self._parse_optional_float(parsed.get("right_pulse_us", ""))
+        self._left_pulse_us = int(left_pulse) if left_pulse is not None else 0
+        self._right_pulse_us = int(right_pulse) if right_pulse is not None else 0
+        self._left_bar["value"] = max(0, min(1000, self._left_pulse_us - 1000))
+        self._right_bar["value"] = max(0, min(1000, self._right_pulse_us - 1000))
+        self._left_pulse_var.set(f"{self._left_pulse_us} us")
+        self._right_pulse_var.set(f"{self._right_pulse_us} us")
+        ch = "--" if not math.isfinite(self._current_heading_deg) else f"{self._current_heading_deg:.1f}deg"
+        dh = "--" if not math.isfinite(self._desired_heading_deg) else f"{self._desired_heading_deg:.1f}deg"
+        self._heading_var.set(f"heading: {ch} / target: {dh}")
+        gstate = parsed.get("guidance_state", "").strip() or "--"
+        self._guidance_var.set(f"guidance: {gstate}")
+        self._draw_map()
+
+    def _draw_map(self) -> None:
+        c = self._map_canvas
+        c.delete("all")
+        w = max(10, c.winfo_width())
+        h = max(10, c.winfo_height())
+        pad = 24
+
+        all_pts = list(self._track_points) + list(self._map_points.values())
+        if not all_pts:
+            c.create_text(w / 2, h / 2, text="Waiting for GPS/map telemetry...", fill="#9ca3af")
+            return
+
+        lats = [p[0] for p in all_pts]
+        lons = [p[1] for p in all_pts]
+        lat_min, lat_max = min(lats), max(lats)
+        lon_min, lon_max = min(lons), max(lons)
+        d_lat = max(1e-6, lat_max - lat_min)
+        d_lon = max(1e-6, lon_max - lon_min)
+        lat_mid = (lat_min + lat_max) / 2.0
+        meter_per_lon = 111320.0 * math.cos(math.radians(lat_mid))
+        meter_per_lon = meter_per_lon if abs(meter_per_lon) > 1e-6 else 1.0
+        width_m = d_lon * meter_per_lon
+        height_m = d_lat * 111320.0
+        span = max(width_m, height_m, 5.0)
+
+        def project(lat: float, lon: float) -> tuple[float, float]:
+            east = (lon - (lon_min + lon_max) / 2.0) * meter_per_lon
+            north = (lat - (lat_min + lat_max) / 2.0) * 111320.0
+            x = (w / 2.0) + (east / span) * (w - 2 * pad)
+            y = (h / 2.0) - (north / span) * (h - 2 * pad)
+            return x, y
+
+        c.create_rectangle(pad, pad, w - pad, h - pad, outline="#334155")
+        c.create_text(pad + 4, pad + 4, text="N", anchor="nw", fill="#9ca3af")
+
+        if len(self._track_points) >= 2:
+            pts: list[float] = []
+            for lat, lon in self._track_points:
+                x, y = project(lat, lon)
+                pts.extend([x, y])
+            c.create_line(*pts, fill="#60a5fa", width=2, smooth=True)
+
+        colors = {
+            "start": "#34d399",
+            "target": "#f87171",
+            "carrot": "#fbbf24",
+            "current": "#60a5fa",
+        }
+        for name in ("start", "target", "carrot", "current"):
+            if name not in self._map_points:
+                continue
+            x, y = project(*self._map_points[name])
+            r = 5 if name == "current" else 4
+            c.create_oval(x - r, y - r, x + r, y + r, fill=colors[name], outline="")
+            c.create_text(x + 8, y - 8, text=name, fill=colors[name], anchor="nw")
+
+        if "current" in self._map_points:
+            cx, cy = project(*self._map_points["current"])
+            for deg, color in (
+                (self._current_heading_deg, "#38bdf8"),
+                (self._desired_heading_deg, "#fbbf24"),
+            ):
+                if not math.isfinite(deg):
+                    continue
+                rad = math.radians(deg)
+                dx = math.sin(rad) * 28.0
+                dy = -math.cos(rad) * 28.0
+                c.create_line(cx, cy, cx + dx, cy + dy, fill=color, width=3, arrow=tk.LAST)
+
     # ------------------------------------------------------ rx pipeline ---
     def _drain_rx(self) -> None:
         try:
@@ -430,6 +609,7 @@ class GroundStation(tk.Tk):
             self._packet_count += 1
             self._last_packet_ts = time.time()
             self._apply_to_ui(parsed)
+            self._update_map_and_motor(parsed)
             self._append_console(f"{host_ts}  {line}", "ok")
             self._write_csv_row(parsed, line)
         else:
@@ -444,8 +624,10 @@ class GroundStation(tk.Tk):
             return None
         body = line[1:]
         parts = body.split(",")
-        if len(parts) < len(TLM_FIELDS):
+        if len(parts) < LEGACY_TLM_FIELDS:
             return None
+        if len(parts) < len(TLM_FIELDS):
+            parts.extend([""] * (len(TLM_FIELDS) - len(parts)))
         out = {key: parts[i].strip() for i, key in enumerate(TLM_FIELDS)}
         out["team_id"] = TEAM_ID
         return out

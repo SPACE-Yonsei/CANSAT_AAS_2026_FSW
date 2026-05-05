@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
+import math
 import os
 import re
 import threading
@@ -62,6 +63,17 @@ class TelemetryData:
     filtered_roll: float = 0.0
     filtered_pitch: float = 0.0
     filtered_yaw: float = 0.0
+    start_lat: float = float("nan")
+    start_lon: float = float("nan")
+    target_lat: float = float("nan")
+    target_lon: float = float("nan")
+    carrot_lat: float = float("nan")
+    carrot_lon: float = float("nan")
+    current_heading: float = float("nan")
+    desired_heading: float = float("nan")
+    left_pulse: int = 0
+    right_pulse: int = 0
+    guidance_state: str = ""
     packet_count: int = 0
 
 
@@ -320,6 +332,18 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.state = fields[0]
         elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
             tlm_data.mode = fields[0]
+        elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 11:
+            tlm_data.left_pulse = int(float(fields[0]))
+            tlm_data.right_pulse = int(float(fields[1]))
+            tlm_data.start_lat = float(fields[2])
+            tlm_data.start_lon = float(fields[3])
+            tlm_data.target_lat = float(fields[4])
+            tlm_data.target_lon = float(fields[5])
+            tlm_data.carrot_lat = float(fields[6])
+            tlm_data.carrot_lon = float(fields[7])
+            tlm_data.current_heading = float(fields[8])
+            tlm_data.desired_heading = float(fields[9])
+            tlm_data.guidance_state = fields[10].strip()
     except (ValueError, TypeError) as exc:
         logger.warning(
             "Dropped malformed telemetry payload mid=%s data=%r (%s)",
@@ -359,6 +383,16 @@ def _tlm_multiline_for_console(line: str) -> str:
     return "TLM\n" + "\n".join(f"  {ln}" for ln in lines)
 
 
+def _fmt_opt_float(value: float, fmt: str) -> str:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(v):
+        return ""
+    return format(v, fmt)
+
+
 def send_tlm(serial_instance) -> None:
     global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS
     if not TELEMETRY_ENABLE:
@@ -376,7 +410,12 @@ def send_tlm(serial_instance) -> None:
         f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
         f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
         f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
-        f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f}\n"
+        f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f},"
+        f"{_fmt_opt_float(tlm_data.start_lat, '.6f')},{_fmt_opt_float(tlm_data.start_lon, '.6f')},"
+        f"{_fmt_opt_float(tlm_data.target_lat, '.6f')},{_fmt_opt_float(tlm_data.target_lon, '.6f')},"
+        f"{_fmt_opt_float(tlm_data.carrot_lat, '.6f')},{_fmt_opt_float(tlm_data.carrot_lon, '.6f')},"
+        f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},{_fmt_opt_float(tlm_data.desired_heading, '.2f')},"
+        f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state}\n"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if ok:

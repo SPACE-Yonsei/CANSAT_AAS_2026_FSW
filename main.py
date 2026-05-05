@@ -94,11 +94,11 @@ def flightlogicapp_launcher(queue, pipe, log_queue):
     from flight_logic import flightlogicapp
     flightlogicapp.flightlogicapp_main(queue, pipe)
 
-def motorapp_launcher(pipe, log_queue):
+def motorapp_launcher(queue, pipe, log_queue):
     from lib import events
     events.init_events_subprocess(log_queue)
     from Sensor_Motor import motorapp
-    motorapp.motorapp_main(pipe)
+    motorapp.motorapp_main(queue, pipe)
 
 def distanceapp_launcher(queue, pipe, log_queue):
     from lib import events
@@ -174,7 +174,7 @@ app_dict[appargs.FlightlogicAppArg.AppID] = flightlogicapp_elements
 #########################################################
 parent_pipe, child_pipe = Pipe()
 motorapp_elements = app_elements()
-motorapp_elements.process = Process(target=motorapp_launcher, args=(child_pipe, log_queue))
+motorapp_elements.process = Process(target=motorapp_launcher, args=(main_queue, child_pipe, log_queue))
 motorapp_elements.pipe = parent_pipe
 app_dict[appargs.MotorAppArg.AppID] = motorapp_elements
 
@@ -207,7 +207,7 @@ app_launchers = {
 }
 
 # Launcher argument factory map
-# Camera/Motor do not take main_queue, while others do.
+# Camera does not take main_queue, while others do.
 app_launcher_args = {
     appargs.BarometerAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
     appargs.CameraAppArg.AppID: lambda child_pipe: (child_pipe, log_queue),
@@ -216,7 +216,7 @@ app_launcher_args = {
     appargs.CommAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
     appargs.ElectroAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
     appargs.FlightlogicAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
-    appargs.MotorAppArg.AppID: lambda child_pipe: (child_pipe, log_queue),
+    appargs.MotorAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
     appargs.DistanceAppArg.AppID: lambda child_pipe: (main_queue, child_pipe, log_queue),
 }
 

@@ -12,7 +12,14 @@ _sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     full = f"[{ts}] {line}"
-    print(full)
+    try:
+        print(full)
+    except UnicodeEncodeError:
+        # Windows cp949 / non-utf8 console: drop unencodable glyphs (μ, °, —, …)
+        import sys as _sys
+        enc = getattr(_sys.stdout, "encoding", None) or "ascii"
+        _sys.stdout.write(full.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
+        _sys.stdout.flush()
     _sim_log.write(full + "\n")
     _sim_log.flush()
 
@@ -221,6 +228,19 @@ def _llh_to_en(lat: float, lon: float) -> tuple:
     return E, N
 
 
+def _en_to_ll(E: float, N: float) -> tuple:
+    """start_point 기준 EN(m) → 위도/경도 변환."""
+    if start_point.lat is None or start_point.lon is None:
+        return float("nan"), float("nan")
+    lat = start_point.lat + (N / LAT_TO_METER)
+    lon_scale = LAT_TO_METER * math.cos(math.radians(start_point.lat))
+    if abs(lon_scale) < 1e-6:
+        lon = start_point.lon
+    else:
+        lon = start_point.lon + (E / lon_scale)
+    return lat, lon
+
+
 def _carrot(my_E: float, my_N: float,
             tgt_E: float, tgt_N: float) -> tuple:
     """
@@ -349,22 +369,70 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
                 )
             _dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
                  f"{gps_detail}")
-        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="GPS_INVALID",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float("nan"),
+            target_lon=float("nan"),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
+            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
+        )
 
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
         _dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
              f"pi_int_before={cascade_pi.pi_integral:.3f}")
         cascade_pi.pi_integral = 0.0
-        return types.SimpleNamespace(state="GPS_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="GPS_INVALID",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float("nan"),
+            target_lon=float("nan"),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
+            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
+        )
     
     if baro_m <= 0.0:
         if DEBUG_GUIDANCE:
             _dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
-        return types.SimpleNamespace(state="BARO_INVALID", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="BARO_INVALID",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float("nan"),
+            target_lon=float("nan"),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
+            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
+        )
 
     if target is None:
         _dbg("[CTRL] TARGET_UNSET - target is required before release guidance")
-        return types.SimpleNamespace(state="TARGET_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="TARGET_UNSET",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float("nan"),
+            target_lon=float("nan"),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
+            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
+        )
     tgt_lat = getattr(target, "lat", None)
     tgt_lon = getattr(target, "lon", None)
     if (
@@ -376,11 +444,35 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         or (float(tgt_lat) == 0.0 and float(tgt_lon) == 0.0)
     ):
         _dbg(f"[CTRL] TARGET_UNSET - invalid target lat={tgt_lat} lon={tgt_lon}")
-        return types.SimpleNamespace(state="TARGET_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="TARGET_UNSET",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float("nan"),
+            target_lon=float("nan"),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
+            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
+        )
 
     if start_point.lat is None or start_point.lon is None:
         _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
-        return types.SimpleNamespace(state="START_UNSET", distance=0.0, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="START_UNSET",
+            distance=0.0,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float(tgt_lat),
+            target_lon=float(tgt_lon),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float("nan"),
+            start_lon=float("nan"),
+        )
 
     my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
     tgt_E, tgt_N = _llh_to_en(float(tgt_lat), float(tgt_lon))
@@ -390,7 +482,19 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
     if distance < TARGET_REACHED_RADIUS:
         if DEBUG_GUIDANCE:
             _dbg(f"[CTRL] TARGET_REACHED - dist={distance:.1f}m")
-        return types.SimpleNamespace(state="TARGET_REACHED", distance=distance, commanded_yaw_rate=0.0)
+        return types.SimpleNamespace(
+            state="TARGET_REACHED",
+            distance=distance,
+            commanded_yaw_rate=0.0,
+            current_heading=float(getattr(imu_data, "yaw", 0.0)),
+            desired_heading=float("nan"),
+            target_lat=float(tgt_lat),
+            target_lon=float(tgt_lon),
+            carrot_lat=float("nan"),
+            carrot_lon=float("nan"),
+            start_lat=float(start_point.lat),
+            start_lon=float(start_point.lon),
+        )
 
     if baro_m > ALT_HIGH:
         L_DISTANCE = L_DISTANCE_HIGH
@@ -478,8 +582,17 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             f"pi_int={cascade_pi.pi_integral:.3f} cmd_yr={commanded_yaw_rate:.2f}°/s"
         )
 
+    carrot_lat, carrot_lon = _en_to_ll(guide_E, guide_N)
     return types.SimpleNamespace(
         state=phase,
         distance=distance,
-        commanded_yaw_rate=commanded_yaw_rate
+        commanded_yaw_rate=commanded_yaw_rate,
+        current_heading=float(getattr(imu_data, "yaw", 0.0)),
+        desired_heading=float(wind_carrot_angl_north),
+        target_lat=float(tgt_lat),
+        target_lon=float(tgt_lon),
+        carrot_lat=float(carrot_lat),
+        carrot_lon=float(carrot_lon),
+        start_lat=float(start_point.lat),
+        start_lon=float(start_point.lon),
     )
