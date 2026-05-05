@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import logging
 import os
+import sys
 from typing import Optional
 
 
@@ -35,17 +36,37 @@ class DummySerial:
         self.is_open = False
 
 
+def _discover_serial_ports() -> list[str]:
+    """Best-effort probe of available serial devices via pyserial tools."""
+    try:
+        from serial.tools import list_ports  # type: ignore
+    except Exception:
+        return []
+
+    discovered: list[str] = []
+    try:
+        for entry in list_ports.comports():
+            dev = getattr(entry, "device", "")
+            dev = dev.strip() if isinstance(dev, str) else ""
+            if dev:
+                discovered.append(dev)
+    except Exception:
+        return []
+    return discovered
+
+
 def _port_candidates(explicit: str | None) -> list[str]:
     env = os.environ.get("UART_DEVICE", "").strip()
     parts = [p.strip() for p in env.split(",") if p.strip()] if env else []
-    defaults = [
-        (explicit or "").strip(),
-        "/dev/serial0",
-        "/dev/ttyAMA0",
-        "/dev/ttyS0",
-    ]
+    discovered = _discover_serial_ports()
+    explicit_port = (explicit or "").strip()
+    if sys.platform.startswith("win"):
+        defaults = [f"COM{i}" for i in range(1, 33)]
+    else:
+        defaults = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0", "/dev/ttyUSB0", "/dev/ttyACM0"]
+
     out: list[str] = []
-    for p in parts + defaults:
+    for p in parts + [explicit_port] + discovered + defaults:
         if p and p not in out:
             out.append(p)
     return out
@@ -75,7 +96,8 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
         except ValueError:
             baudrate = 9600
 
-    candidates = _port_candidates(port or "/dev/serial0")
+    default_port = "COM3" if sys.platform.startswith("win") else "/dev/serial0"
+    candidates = _port_candidates(port or default_port)
     last_exc: Exception | None = None
     for cand in candidates:
         try:
@@ -86,7 +108,11 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
             last_exc = exc
             logger.warning("UART open failed for %s: %s", cand, exc)
 
-    logger.warning("Falling back to DummySerial (last error: %s)", last_exc)
+    logger.warning(
+        "Falling back to DummySerial after trying %s (last error: %s)",
+        ", ".join(candidates),
+        last_exc,
+    )
     return DummySerial()
 
 
