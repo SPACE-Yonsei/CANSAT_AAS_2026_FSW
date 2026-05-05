@@ -1,56 +1,57 @@
 #!/usr/bin/env python3
 import pigpio
 import time
+import signal
+import sys
 
 
 RIGHT_PIN = 12
 LEFT_PIN = 13
 
-pulse_per_degree = 2000/180
+pulse_per_degree = 2000 / 180
 
 left_zero = 600
 right_zero = 2500
 left_neutral = int(left_zero + 120 * pulse_per_degree)
 right_neutral = int(right_zero - 120 * pulse_per_degree)
 
-print(f"left_neutral: {left_neutral}μs")
-print(f"right_neutral: {right_neutral}μs")
+print(f"left_neutral:  {left_neutral}us  ({120:.1f} deg)")
+print(f"right_neutral: {right_neutral}us  ({120:.1f} deg)")
 
 pi = pigpio.pi()
 if not pi.connected:
-    print("❌ pigpio 연결 실패")
-    exit()
-
-print("LEFT 모터 0(600) 이동..")
-pi.set_servo_pulsewidth(LEFT_PIN, 600)
-time.sleep(7)
-
-print("LEFT 모터 120 이동...")
-pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
-time.sleep(7)
+    print("ERROR: pigpio connection failed")
+    sys.exit(1)
 
 
-print("RIGHT 모터 0(2500) 이동...")
-pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
-time.sleep(7)
-
-print("RIGHT 모터 120 이동...")
-pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
-time.sleep(7)
-
-
-# print("right 1500")
-# pi.set_servo_pulsewidth(RIGHT_PIN, 1500)
-# time.sleep(5)
-
-# print("right 2500")
-# pi.set_servo_pulsewidth(RIGHT_PIN, 2500)
-# time.sleep(5)
+def shutdown(*_):
+    print("\nCtrl+C detected — stopping motors and exiting")
+    pi.set_servo_pulsewidth(LEFT_PIN,  0)
+    pi.set_servo_pulsewidth(RIGHT_PIN, 0)
+    pi.stop()
+    sys.exit(0)
 
 
-# PWM 신호만 끄고 (모터 토크 해제)
-pi.set_servo_pulsewidth(LEFT_PIN, 0)
-pi.set_servo_pulsewidth(RIGHT_PIN, 0)
+signal.signal(signal.SIGINT,  shutdown)
+signal.signal(signal.SIGTERM, shutdown)
 
-pi.stop()
-print("✓ 완료")
+cycle = 0
+while True:
+    cycle += 1
+    print(f"\n--- Cycle {cycle} ---")
+
+    print(f"LEFT  motor -> 0 deg  ({left_zero}us)")
+    pi.set_servo_pulsewidth(LEFT_PIN, left_zero)
+    time.sleep(1)
+
+    print(f"LEFT  motor -> 120 deg  ({left_neutral}us)")
+    pi.set_servo_pulsewidth(LEFT_PIN, left_neutral)
+    time.sleep(1)
+
+    print(f"RIGHT motor -> 0 deg  ({right_zero}us)")
+    pi.set_servo_pulsewidth(RIGHT_PIN, right_zero)
+    time.sleep(1)
+
+    print(f"RIGHT motor -> 120 deg  ({right_neutral}us)")
+    pi.set_servo_pulsewidth(RIGHT_PIN, right_neutral)
+    time.sleep(1)

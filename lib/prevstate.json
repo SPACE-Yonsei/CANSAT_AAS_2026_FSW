@@ -1,0 +1,9 @@
+{
+  "PREV_STATE": 0,
+  "PREV_ALT_CAL": 0.0,
+  "PREV_MAX_ALT": 0.0,
+  "Target_lat": 0.0,
+  "Target_lon": 0.0,
+  "PREV_PACKET_COUNT": 0,
+  "PREV_ST_TIMEDELTA": 0.0
+}
