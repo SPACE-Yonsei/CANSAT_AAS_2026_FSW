@@ -132,10 +132,15 @@ class GroundStation(tk.Tk):
         self._desired_heading_deg = math.nan
         self._left_pulse_us = 0
         self._right_pulse_us = 0
+        # Avoid blocking the Tk mainloop: CSV flush / map redraw / console scroll are debounced.
+        self._csv_flush_after_id: str | None = None
+        self._map_redraw_after_id: str | None = None
+        self._map_dirty: bool = False
+        self._console_scroll_after_id: str | None = None
 
         self._build_ui()
         self._refresh_ports()
-        self.after(50, self._drain_rx)
+        self.after(20, self._drain_rx)
         self.after(500, self._update_status)
 
     # --------------------------------------------------------------- UI ---
@@ -293,7 +298,7 @@ class GroundStation(tk.Tk):
             highlightbackground="#2d3748",
         )
         self._map_canvas.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        self._map_canvas.bind("<Configure>", lambda _e: self._draw_map())
+        self._map_canvas.bind("<Configure>", lambda _e: self._request_map_redraw())
 
         bars = ttk.Frame(frame)
         bars.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
@@ -410,6 +415,19 @@ class GroundStation(tk.Tk):
         self._append_console(f"[connect] {port} @ {baud}", "ok")
 
     def _disconnect(self) -> None:
+        if self._map_redraw_after_id is not None:
+            try:
+                self.after_cancel(self._map_redraw_after_id)
+            except tk.TclError:
+                pass
+            self._map_redraw_after_id = None
+        self._map_dirty = False
+        if self._console_scroll_after_id is not None:
+            try:
+                self.after_cancel(self._console_scroll_after_id)
+            except tk.TclError:
+                pass
+            self._console_scroll_after_id = None
         if self._worker is not None:
             self._worker.stop()
         if self._ser is not None:
@@ -441,7 +459,17 @@ class GroundStation(tk.Tk):
             self._csv_file = None
 
     def _close_csv(self) -> None:
+        if self._csv_flush_after_id is not None:
+            try:
+                self.after_cancel(self._csv_flush_after_id)
+            except tk.TclError:
+                pass
+            self._csv_flush_after_id = None
         if self._csv_file is not None:
+            try:
+                self._csv_file.flush()
+            except Exception:
+                pass
             try:
                 self._csv_file.close()
             except Exception:
@@ -520,6 +548,19 @@ class GroundStation(tk.Tk):
         self._heading_var.set(f"heading: {ch} / target: {dh}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
         self._guidance_var.set(f"guidance: {gstate}")
+        self._request_map_redraw()
+
+    def _request_map_redraw(self) -> None:
+        self._map_dirty = True
+        if self._map_redraw_after_id is not None:
+            return
+        self._map_redraw_after_id = self.after(100, self._flush_map_redraw)
+
+    def _flush_map_redraw(self) -> None:
+        self._map_redraw_after_id = None
+        if not self._map_dirty:
+            return
+        self._map_dirty = False
         self._draw_map()
 
     def _draw_map(self) -> None:
@@ -562,7 +603,8 @@ class GroundStation(tk.Tk):
             for lat, lon in self._track_points:
                 x, y = project(lat, lon)
                 pts.extend([x, y])
-            c.create_line(*pts, fill="#60a5fa", width=2, smooth=True)
+            # smooth=True is surprisingly expensive on Windows Tk with long polylines.
+            c.create_line(*pts, fill="#60a5fa", width=2, smooth=False)
 
         colors = {
             "start": "#34d399",
@@ -600,7 +642,7 @@ class GroundStation(tk.Tk):
         except queue.Empty:
             pass
         finally:
-            self.after(50, self._drain_rx)
+            self.after(20, self._drain_rx)
 
     def _handle_line(self, line: str) -> None:
         host_ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -646,9 +688,19 @@ class GroundStation(tk.Tk):
             row.append(raw)
             self._csv_writer.writerow(row)
             assert self._csv_file is not None
-            self._csv_file.flush()
+            if self._csv_flush_after_id is None:
+                self._csv_flush_after_id = self.after(200, self._debounced_csv_flush)
         except Exception as exc:
             self._append_console(f"[csv-error] {exc}", "err")
+
+    def _debounced_csv_flush(self) -> None:
+        self._csv_flush_after_id = None
+        if self._csv_file is None:
+            return
+        try:
+            self._csv_file.flush()
+        except Exception as exc:
+            self._append_console(f"[csv-error] flush {exc}", "err")
 
     # ------------------------------------------------------ console UI ---
     def _append_console(self, text: str, tag: str = "") -> None:
@@ -656,7 +708,15 @@ class GroundStation(tk.Tk):
         if int(self._console.index("end-1c").split(".")[0]) > 4000:
             self._console.delete("1.0", "1500.0")
         if self._autoscroll_var.get():
+            if self._console_scroll_after_id is None:
+                self._console_scroll_after_id = self.after(40, self._debounced_console_scroll)
+
+    def _debounced_console_scroll(self) -> None:
+        self._console_scroll_after_id = None
+        try:
             self._console.see(tk.END)
+        except tk.TclError:
+            pass
 
     def _clear_console(self) -> None:
         self._console.delete("1.0", tk.END)
@@ -676,6 +736,18 @@ class GroundStation(tk.Tk):
         self.after(500, self._update_status)
 
     def destroy(self) -> None:  # type: ignore[override]
+        if self._map_redraw_after_id is not None:
+            try:
+                self.after_cancel(self._map_redraw_after_id)
+            except tk.TclError:
+                pass
+            self._map_redraw_after_id = None
+        if self._console_scroll_after_id is not None:
+            try:
+                self.after_cancel(self._console_scroll_after_id)
+            except tk.TclError:
+                pass
+            self._console_scroll_after_id = None
         self._disconnect()
         super().destroy()
 
