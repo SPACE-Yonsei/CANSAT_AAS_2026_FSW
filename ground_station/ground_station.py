@@ -62,6 +62,32 @@ TLM_FIELDS = [
 
 LEGACY_TLM_FIELDS = 30
 
+# Map styling (dark plot, readable axes)
+_MAP_BG = "#0b1220"
+_MAP_PLOT_FILL = "#111827"
+_MAP_GRID = "#334155"
+_MAP_BORDER = "#64748b"
+_MAP_TICK = "#cbd5e1"
+_MAP_AXIS_LABEL = "#94a3b8"
+_MAP_FONT_SMALL = ("Segoe UI", 8)
+_MAP_FONT_TICK = ("Consolas", 9)
+_MAP_FONT_AXIS = ("Segoe UI", 9, "bold")
+_MAP_FONT_LEGEND = ("Consolas", 8)
+
+
+def _map_geo_decimals(span_m: float) -> int:
+    """Decimal places for tick labels from approximate plot span (meters)."""
+    if span_m > 50_000:
+        return 2
+    if span_m > 5_000:
+        return 3
+    if span_m > 500:
+        return 4
+    if span_m > 50:
+        return 5
+    return 6
+
+
 COMMAND_PRESETS = [
     ("CX,ON",   "Telemetry ON"),
     ("CX,OFF",  "Telemetry OFF"),
@@ -304,8 +330,8 @@ class GroundStation(tk.Tk):
 
         self._map_canvas = tk.Canvas(
             frame,
-            height=260,
-            background="#0b1220",
+            height=300,
+            background=_MAP_BG,
             highlightthickness=1,
             highlightbackground="#2d3748",
         )
@@ -580,57 +606,159 @@ class GroundStation(tk.Tk):
         c.delete("all")
         w = max(10, c.winfo_width())
         h = max(10, c.winfo_height())
-        pad = 24
+
+        margin_l, margin_r = 56, 10
+        margin_t, margin_b = 14, 44
 
         all_pts = list(self._track_points) + list(self._map_points.values())
         if not all_pts:
-            c.create_text(w / 2, h / 2, text="Waiting for GPS/map telemetry...", fill="#9ca3af")
+            c.create_text(
+                w / 2,
+                h / 2,
+                text="Waiting for GPS / guidance map telemetry…",
+                fill="#94a3b8",
+                font=_MAP_FONT_AXIS,
+            )
             return
 
         lats = [p[0] for p in all_pts]
         lons = [p[1] for p in all_pts]
         lat_min, lat_max = min(lats), max(lats)
         lon_min, lon_max = min(lons), max(lons)
-        d_lat = max(1e-6, lat_max - lat_min)
-        d_lon = max(1e-6, lon_max - lon_min)
-        lat_mid = (lat_min + lat_max) / 2.0
+        d_lat = max(1e-8, lat_max - lat_min)
+        d_lon = max(1e-8, lon_max - lon_min)
+        lat_center = (lat_min + lat_max) / 2.0
+        lon_center = (lon_min + lon_max) / 2.0
+        lat_mid = lat_center
         meter_per_lon = 111320.0 * math.cos(math.radians(lat_mid))
         meter_per_lon = meter_per_lon if abs(meter_per_lon) > 1e-6 else 1.0
         width_m = d_lon * meter_per_lon
         height_m = d_lat * 111320.0
         span = max(width_m, height_m, 5.0)
+        dec = _map_geo_decimals(span)
+
+        pl = float(margin_l)
+        pr = float(w - margin_r)
+        pt = float(margin_t)
+        pb = float(h - margin_b)
+        pw = max(20.0, pr - pl)
+        ph = max(20.0, pb - pt)
 
         def project(lat: float, lon: float) -> tuple[float, float]:
-            east = (lon - (lon_min + lon_max) / 2.0) * meter_per_lon
-            north = (lat - (lat_min + lat_max) / 2.0) * 111320.0
-            x = (w / 2.0) + (east / span) * (w - 2 * pad)
-            y = (h / 2.0) - (north / span) * (h - 2 * pad)
+            east = (lon - lon_center) * meter_per_lon
+            north = (lat - lat_center) * 111320.0
+            x = pl + pw / 2.0 + (east / span) * pw
+            y = pt + ph / 2.0 - (north / span) * ph
             return x, y
 
-        c.create_rectangle(pad, pad, w - pad, h - pad, outline="#334155")
-        c.create_text(pad + 4, pad + 4, text="N", anchor="nw", fill="#9ca3af")
+        def inv_lon(px: float) -> float:
+            east = ((px - pl - pw / 2.0) / pw) * span
+            return lon_center + east / meter_per_lon
+
+        def inv_lat(py: float) -> float:
+            north = ((pt + ph / 2.0 - py) / ph) * span
+            return lat_center + north / 111320.0
+
+        # Plot background + border
+        c.create_rectangle(pl, pt, pr, pb, fill=_MAP_PLOT_FILL, outline=_MAP_BORDER, width=2)
+
+        # Grid (geographic — constant lat / constant lon lines through plot)
+        n_grid = 5
+        for i in range(1, n_grid):
+            gx = pl + (pw * i / n_grid)
+            c.create_line(gx, pt, gx, pb, fill=_MAP_GRID, width=1, dash=(3, 5))
+        for i in range(1, n_grid):
+            gy = pt + (ph * i / n_grid)
+            c.create_line(pl, gy, pr, gy, fill=_MAP_GRID, width=1, dash=(3, 5))
+
+        # Axis ticks: longitude along bottom, latitude along left
+        n_ticks = 5
+        for i in range(n_ticks + 1):
+            t = i / n_ticks
+            px = pl + pw * t
+            lon_v = inv_lon(px)
+            c.create_line(px, pb, px, pb + 5, fill=_MAP_TICK, width=2)
+            c.create_text(
+                px,
+                pb + 8,
+                text=f"{lon_v:.{dec}f}°",
+                fill=_MAP_TICK,
+                font=_MAP_FONT_TICK,
+                anchor="n",
+            )
+
+        for i in range(n_ticks + 1):
+            t = i / n_ticks
+            py = pb - ph * t
+            lat_v = inv_lat(py)
+            c.create_line(pl - 5, py, pl, py, fill=_MAP_TICK, width=2)
+            c.create_text(
+                pl - 8,
+                py,
+                text=f"{lat_v:.{dec}f}°",
+                fill=_MAP_TICK,
+                font=_MAP_FONT_TICK,
+                anchor="e",
+            )
+
+        c.create_text(
+            (pl + pr) / 2.0,
+            h - 6,
+            text="Longitude (°)  —  east →",
+            fill=_MAP_AXIS_LABEL,
+            font=_MAP_FONT_AXIS,
+            anchor="s",
+        )
+        c.create_text(
+            8,
+            (pt + pb) / 2.0,
+            text="Latitude (°)",
+            fill=_MAP_AXIS_LABEL,
+            font=_MAP_FONT_AXIS,
+            anchor="center",
+            angle=90,
+        )
+
+        c.create_text(
+            pr - 4,
+            pt + 4,
+            text="N",
+            anchor="ne",
+            fill="#e2e8f0",
+            font=("Segoe UI", 11, "bold"),
+        )
+
+        scale_txt = f"span ≈ {span:.0f} m"
+        c.create_text(pl + 4, pt + 4, text=scale_txt, anchor="nw", fill=_MAP_AXIS_LABEL, font=_MAP_FONT_SMALL)
 
         if len(self._track_points) >= 2:
             pts: list[float] = []
             for lat, lon in self._track_points:
                 x, y = project(lat, lon)
                 pts.extend([x, y])
-            # smooth=True is surprisingly expensive on Windows Tk with long polylines.
-            c.create_line(*pts, fill="#60a5fa", width=2, smooth=False)
+            c.create_line(*pts, fill="#38bdf8", width=3, smooth=False)
 
         colors = {
             "start": "#34d399",
             "target": "#f87171",
             "carrot": "#fbbf24",
-            "current": "#60a5fa",
+            "current": "#38bdf8",
         }
         for name in ("start", "target", "carrot", "current"):
             if name not in self._map_points:
                 continue
-            x, y = project(*self._map_points[name])
-            r = 5 if name == "current" else 4
-            c.create_oval(x - r, y - r, x + r, y + r, fill=colors[name], outline="")
-            c.create_text(x + 8, y - 8, text=name, fill=colors[name], anchor="nw")
+            lat_p, lon_p = self._map_points[name]
+            x, y = project(lat_p, lon_p)
+            r = 7 if name == "current" else 5
+            c.create_oval(
+                x - r, y - r, x + r, y + r,
+                fill=colors[name], outline="#f8fafc", width=2,
+            )
+            label = f"{name}\n{lat_p:.{dec}f}°, {lon_p:.{dec}f}°"
+            c.create_text(
+                x + r + 6, y - 10, text=label, fill="#f1f5f9",
+                font=_MAP_FONT_LEGEND, anchor="nw",
+            )
 
         if "current" in self._map_points:
             cx, cy = project(*self._map_points["current"])
@@ -641,9 +769,20 @@ class GroundStation(tk.Tk):
                 if not math.isfinite(deg):
                     continue
                 rad = math.radians(deg)
-                dx = math.sin(rad) * 28.0
-                dy = -math.cos(rad) * 28.0
+                dx = math.sin(rad) * 36.0
+                dy = -math.cos(rad) * 36.0
                 c.create_line(cx, cy, cx + dx, cy + dy, fill=color, width=3, arrow=tk.LAST)
+            c.create_text(
+                cx, cy + 22,
+                text=(
+                    f"ψ {self._current_heading_deg:.0f}°"
+                    if math.isfinite(self._current_heading_deg)
+                    else "ψ —"
+                ),
+                fill="#bae6fd",
+                font=_MAP_FONT_SMALL,
+                anchor="n",
+            )
 
     # ------------------------------------------------------ rx pipeline ---
     def _drain_rx(self) -> None:
