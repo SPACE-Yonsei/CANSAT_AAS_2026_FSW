@@ -31,6 +31,7 @@ class CommAppArg:
     MID_RouteCmd_SS = 1201105
     MID_RouteCmd_CAM = 1201106
     MID_RouteCmd_TC = 1201107
+    MID_RouteCmd_SIMG = 1201108
 
 
 class BarometerAppArg:
@@ -58,6 +59,7 @@ class GpsAppArg:
     MID_motor_gps = 1501901
 
     MID_comm_gga = 1501201
+    MID_flight_gps_sim = 1501101
 
 
 class DistanceAppArg:

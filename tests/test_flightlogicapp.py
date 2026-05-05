@@ -50,6 +50,18 @@ class TestFlightLogicApp(unittest.TestCase):
         self.assertTrue(flightlogicapp.sim_enable)
         self.assertTrue(flightlogicapp.sim_active)
 
+    def test_simg_forwards_to_gps_when_active(self):
+        q = queue.Queue()
+        flightlogicapp.handle_sim("ENABLE", q)
+        flightlogicapp.handle_sim("ACTIVATE", q)
+        while not q.empty():
+            q.get_nowait()
+        flightlogicapp.handle_simg("37.56,126.93,90,5", q)
+        msg = q.get_nowait()
+        self.assertIn(f"|{appargs.GpsAppArg.AppID}|", msg)
+        self.assertIn(f"|{appargs.GpsAppArg.MID_flight_gps_sim}|", msg)
+        self.assertTrue(msg.endswith("|37.56,126.93,90.0,5.0,80.0"))
+
     def test_target_coord_validation(self):
         q = queue.Queue()
         flightlogicapp.handle_target_coord("37.56,126.93", q)

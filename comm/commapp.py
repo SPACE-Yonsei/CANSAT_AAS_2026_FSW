@@ -155,6 +155,33 @@ def cmd_simp(option: str, main_queue) -> bool:
     )
 
 
+def cmd_simg(option: str, main_queue) -> bool:
+    """lat,lon,course_deg,speed_m_s[,alt_m] — forwarded to FlightLogic (SIM ACTIVATE required on FSW)."""
+    parts = [x.strip() for x in option.split(",") if x.strip() != ""]
+    if len(parts) not in (4, 5):
+        return False
+    try:
+        lat = float(parts[0])
+        lon = float(parts[1])
+        float(parts[2])
+        float(parts[3])
+        if len(parts) == 5:
+            float(parts[4])
+    except ValueError:
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+    if lat == 0.0 and lon == 0.0:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SIMG,
+        option.strip(),
+    )
+
+
 def cmd_cal(option: str, main_queue) -> bool:
     return msgstructure.send_msg(
         main_queue,
@@ -454,6 +481,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_sim(option, main_queue)
     if cmd == "SIMP":
         return cmd_simp(option, main_queue)
+    if cmd == "SIMG":
+        return cmd_simg(option, main_queue)
     if cmd == "CAL":
         return cmd_cal(option, main_queue)
     if cmd == "MEC":

@@ -55,6 +55,92 @@ _last_gps_time: Optional[str] = None
 _duplicate_gps_time_count = 0
 _gps_lock = threading.Lock()
 
+# SIM inject (FlightLogic -> MID_flight_gps_sim): bench / SIM ACTIVATE mode only.
+_sim_fix: Optional[dict] = None
+
+
+def _set_sim_fix(payload: Optional[dict]) -> None:
+    global _sim_fix
+    with _gps_lock:
+        _sim_fix = payload
+
+
+def _get_sim_fix() -> Optional[dict]:
+    with _gps_lock:
+        return dict(_sim_fix) if _sim_fix is not None else None
+
+
+def _sim_gps_row() -> Optional[list]:
+    """Return a gps_readdata-shaped row when SIM inject is active."""
+    fix = _get_sim_fix()
+    if fix is None:
+        return None
+    now_time = time.strftime("%H%M%S", time.gmtime())
+    return [
+        now_time,
+        fix["alt"],
+        fix["lat"],
+        fix["lon"],
+        fix["sats"],
+        fix["fix_quality"],
+        "A",
+        fix["speed"],
+        fix["course"],
+        1,
+        0.0,
+        0.0,
+        "SIM",
+    ]
+
+
+def _apply_flight_gps_sim(data: str) -> None:
+    """Parse `lat,lon,course_deg,speed_m_s[,alt_m]` or CLEAR."""
+    global _sim_fix
+    text = data.strip()
+    if text.upper() == "CLEAR":
+        _set_sim_fix(None)
+        logger.info("GPS SIM inject cleared (hardware path resumes)")
+        return
+    parts = [x.strip() for x in text.split(",")]
+    if len(parts) not in (4, 5):
+        logger.warning("GPS SIM inject: expected lat,lon,course,speed[,alt] got %r", data)
+        return
+    try:
+        lat = float(parts[0])
+        lon = float(parts[1])
+        course = float(parts[2]) % 360.0
+        speed = float(parts[3])
+        alt = float(parts[4]) if len(parts) == 5 else ALT
+    except ValueError:
+        logger.warning("GPS SIM inject: bad numeric fields %r", data)
+        return
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return
+    if lat == 0.0 and lon == 0.0:
+        return
+    if speed < 0.0 or speed > GPS_MAX_VALID_SPEED + 1.0:
+        logger.warning("GPS SIM inject: speed out of range %s", speed)
+        return
+    _set_sim_fix(
+        {
+            "lat": lat,
+            "lon": lon,
+            "course": course,
+            "speed": speed,
+            "alt": alt,
+            "sats": 8,
+            "fix_quality": 1,
+        }
+    )
+    logger.info(
+        "GPS SIM inject: lat=%.6f lon=%.6f crs=%.1fdeg V=%.2fm/s alt=%.1fm",
+        lat,
+        lon,
+        course,
+        speed,
+        alt,
+    )
+
 
 def command_handler(recv_msg: str) -> None:
     global GPSAPP_RUNSTATUS
@@ -63,6 +149,8 @@ def command_handler(recv_msg: str) -> None:
         return
     if unpacked.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         GPSAPP_RUNSTATUS = False
+    elif unpacked.msg_id == appargs.GpsAppArg.MID_flight_gps_sim:
+        _apply_flight_gps_sim(unpacked.data or "")
 
 
 def _wrap_180(a: float) -> float:
@@ -188,6 +276,11 @@ def _position_health(
             return 0, None
         if h_acc is not None and _is_finite(h_acc) and float(h_acc) > GPS_MAX_H_ACC_M:
             return 0, None
+    if str(source).upper() == "SIM":
+        if gps_time_s is None:
+            return 0, None
+        delta = _position_delta(lat, lon, now, gps_time_s)
+        return 1, delta
     if gps_time_s is None:
         return 0, None
     if not _duplicate_time_ok(gps_time):
@@ -232,6 +325,17 @@ def _motion_health(
         if speed > 2.0 and head_acc is not None and _is_finite(head_acc) and float(head_acc) > GPS_MAX_HEAD_ACC_DEG:
             return 0
 
+    if str(source).upper() == "SIM":
+        if str(rmc_status).upper() != "A" or not motion_present:
+            return 0
+        if not _is_finite(speed) or not _is_finite(course):
+            return 0
+        if course < 0.0 or course > 360.0:
+            return 0
+        if speed < 0.0 or speed > GPS_MAX_VALID_SPEED:
+            return 0
+        return 1
+
     if position_delta is not None:
         derived_speed = float(position_delta["speed"])
         if derived_speed > GPS_MIN_COURSE_SPEED:
@@ -258,6 +362,9 @@ def _synthetic_read():
 
 def _read_gps():
     global _GPS_SYNTH_WARNED
+    sim_row = _sim_gps_row()
+    if sim_row is not None:
+        return sim_row
     try:
         from Sensor_Gps import gps as gps_driver  # type: ignore
 

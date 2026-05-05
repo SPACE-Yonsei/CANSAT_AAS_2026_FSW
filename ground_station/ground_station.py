@@ -1,9 +1,17 @@
 """CANSAT AAS 2026 - Ground Station GUI.
 
-Receives telemetry from XBee (USB serial), parses the 30-field CANSAT
-TLM CSV emitted by `comm/commapp.py:send_tlm`, displays it live, logs
-to CSV, and sends commands using the `CMD,1070,<CMD>,<option>` format
-that `comm/commapp.py:_dispatch_command` accepts.
+Receives telemetry from XBee (USB serial), parses the CANSAT TLM CSV emitted by
+`comm/commapp.py:send_tlm`, displays it live, logs to CSV, and sends commands as
+`CMD,1070,<CMD>,<body>` (see `comm/commapp.py:_dispatch_command`).
+
+SIM mode (bench / map rehearsal) — send in order:
+  1. CMD,1070,SIM,ENABLE     — prepare (TLM mode column A)
+  2. CMD,1070,SIM,ACTIVATE  — SIM on (TLM S); required before SIMP/SIMG
+  3. CMD,1070,SIMP,<alt_m>  — simulated baro altitude for flight logic / state machine
+  4. CMD,1070,SIMG,lat,lon,course_deg,speed_m_s[,alt_m] — simulated GPS fix (course: ground track deg, speed: m/s)
+  5. CMD,1070,TC,lat,lon    — release target (same as flight; required before SS,3)
+  6. CMD,1070,SS,3          — jump to RELEASE when target is set (optional for map test)
+  7. CMD,1070,SIM,DISABLE   — exit SIM (TLM F); GPS returns to hardware path
 
 Run:
     python ground_station/ground_station.py
@@ -61,6 +69,10 @@ COMMAND_PRESETS = [
     ("SIM,ENABLE",   "SIM mode enable"),
     ("SIM,ACTIVATE", "SIM mode activate"),
     ("SIM,DISABLE",  "SIM mode disable"),
+    ("SIMP,120",     "SIM baro altitude (m)"),
+    ("SIMG,37.56,126.93,90,8.5", "SIM GPS lat,lon,course°,speed_m/s"),
+    ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
+    ("TC,37.57,126.94", "Target lat,lon (release)"),
     ("CAL,",         "Calibrate barometer (zero-set)"),
     ("MEC,ON",  "Mechanism ON"),
     ("MEC,OFF", "Mechanism OFF"),

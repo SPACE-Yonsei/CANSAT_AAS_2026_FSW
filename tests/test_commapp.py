@@ -48,6 +48,22 @@ class TestCommApp(unittest.TestCase):
         self.assertFalse(commapp._dispatch_command("BAD,LINE", q))
         self.assertFalse(commapp._dispatch_command("CMD,1070,UNKNOWN,1", q))
 
+    def test_dispatch_simg_routes_to_flightlogic(self):
+        q = queue.Queue()
+        ok = commapp._dispatch_command("CMD,1070,SIMG,37.56,126.93,90,8.5", q)
+        self.assertTrue(ok)
+        msg = q.get_nowait()
+        self.assertIn(f"|{appargs.FlightlogicAppArg.AppID}|", msg)
+        self.assertIn(f"|{appargs.CommAppArg.MID_RouteCmd_SIMG}|", msg)
+        self.assertTrue(msg.endswith("|37.56,126.93,90,8.5"))
+
+    def test_dispatch_simg_rejects_bad_coords(self):
+        q = queue.Queue()
+        self.assertFalse(commapp._dispatch_command("CMD,1070,SIMG,0,0,90,1", q))
+        self.assertTrue(q.empty())
+        self.assertFalse(commapp._dispatch_command("CMD,1070,SIMG,37,126", q))
+        self.assertTrue(q.empty())
+
     def test_rbt_requires_token_and_sequence(self):
         self.assertFalse(commapp.cmd_rbt("WRONG,1,aaa", None))
         self.assertFalse(commapp.cmd_rbt("SECRET", None))

@@ -159,7 +159,13 @@ def handle_sim(data: str, main_queue) -> None:
     if option == "ENABLE":
         sim_enable = True
         sim_active = False
-
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.GpsAppArg.AppID,
+            appargs.GpsAppArg.MID_flight_gps_sim,
+            "CLEAR",
+        )
         msgstructure.send_msg(
             main_queue,
             appargs.FlightlogicAppArg.AppID,
@@ -183,10 +189,52 @@ def handle_sim(data: str, main_queue) -> None:
         msgstructure.send_msg(
             main_queue,
             appargs.FlightlogicAppArg.AppID,
+            appargs.GpsAppArg.AppID,
+            appargs.GpsAppArg.MID_flight_gps_sim,
+            "CLEAR",
+        )
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
             appargs.CommAppArg.AppID,
             appargs.FlightlogicAppArg.MID_comm_sim,
             "F",
         )
+
+
+def handle_simg(data: str, main_queue) -> None:
+    """SIM GPS inject: lat,lon,course_deg,speed_m_s[,alt_m] — requires SIM ACTIVATE."""
+    if not sim_active:
+        logger.warning("SIMG ignored: SIM ACTIVATE required first")
+        return
+    parts = [x.strip() for x in data.split(",") if x.strip() != ""]
+    if len(parts) not in (4, 5):
+        logger.warning("SIMG: expected lat,lon,course_deg,speed_m_s[,alt_m] got %r", data)
+        return
+    try:
+        lat = float(parts[0])
+        lon = float(parts[1])
+        course = float(parts[2])
+        speed = float(parts[3])
+        if len(parts) == 5:
+            alt = float(parts[4])
+        else:
+            alt = 80.0
+    except ValueError:
+        logger.warning("SIMG: non-numeric fields %r", data)
+        return
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return
+    if lat == 0.0 and lon == 0.0:
+        return
+    payload = f"{lat},{lon},{course},{speed},{alt}"
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.GpsAppArg.AppID,
+        appargs.GpsAppArg.MID_flight_gps_sim,
+        payload,
+    )
 
 
 def handle_simp(data: str, main_queue) -> None:
@@ -365,6 +413,8 @@ def dispatch(msg: str, main_queue) -> None:
         handle_sim(unpacked.data, main_queue)
     elif mid == appargs.CommAppArg.MID_RouteCmd_SIMP:
         handle_simp(unpacked.data, main_queue)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_SIMG:
+        handle_simg(unpacked.data, main_queue)
     elif mid == appargs.BarometerAppArg.MID_flight_alt:
         handle_barometer(unpacked.data, main_queue)
     elif mid == appargs.DistanceAppArg.MID_flight_dis:
