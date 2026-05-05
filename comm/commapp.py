@@ -300,7 +300,6 @@ def send_tlm(serial_instance):
 
         tlm_debug_text = f"\nID : {tlm_data.team_id} TIME : {tlm_data.mission_time}, PCK_CNT : {tlm_data.packet_count}, MODE : {tlm_data.mode}, STATE : {tlm_data.state}\n"\
                 f"Barometer : {tlm_data.altitude} , {tlm_data.temperature}, {tlm_data.pressure}\n" \
-                 f"Elctro : {tlm_data.voltage}, {tlm_data.current}, {tlm_data.power}\n" \
                  f"IMU : Gyro({tlm_data.gyro_roll}, {tlm_data.gyro_pitch}, {tlm_data.gyro_yaw}), " \
                  f"Accel({tlm_data.acc_roll}, {tlm_data.acc_pitch}, {tlm_data.acc_yaw}), " \
                  f"Mag({tlm_data.mag_roll}, {tlm_data.mag_pitch}, {tlm_data.mag_yaw})\n" \
