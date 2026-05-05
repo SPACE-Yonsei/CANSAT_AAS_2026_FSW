@@ -371,6 +371,74 @@ def cmd_fix_transparent(ser: serial.Serial) -> int:
     return 0
 
 
+# ----------------------------------------------------------- loopback ---
+def cmd_loopback(ser: serial.Serial, duration: float) -> int:
+    """Write a token and read it back. Use with TX↔RX shorted (XBee removed).
+
+    Wire Pi physical pin 8 (GPIO14, TX0) directly to pin 10 (GPIO15, RX0).
+    If this still receives nothing, the Pi UART itself is misconfigured (most
+    often `serial-getty@ttyAMA0` running, kernel console on serial0, or
+    `enable_uart=1` missing in /boot/config.txt).
+    """
+    print(f"== Loopback test on {ser.port} @ {ser.baudrate} for {duration:.1f}s ==")
+    print(
+        "Short Pi pin 8 (TX) <-> pin 10 (RX) with a jumper wire.\n"
+        "If you read back the same lines, the Pi UART works."
+    )
+    t0 = time.time()
+    sent = 0
+    rx_lines = 0
+    buf = bytearray()
+    try:
+        while time.time() - t0 < duration:
+            line = f"PI-LOOPBACK,{sent}\n".encode("ascii")
+            ser.write(line)
+            ser.flush()
+            print("TX", line.decode().rstrip())
+            sent += 1
+            t_send = time.time()
+            while time.time() - t_send < 0.5:
+                chunk = ser.read(64)
+                if chunk:
+                    buf.extend(chunk)
+                    while True:
+                        nl = buf.find(b"\n")
+                        if nl < 0:
+                            break
+                        got = bytes(buf[:nl]).decode("ascii", errors="ignore").rstrip("\r")
+                        del buf[: nl + 1]
+                        if got:
+                            print("RX", got)
+                            rx_lines += 1
+    except KeyboardInterrupt:
+        print("\n[abort] interrupted by user")
+    print(f"Sent {sent} / Received {rx_lines}")
+    if rx_lines == 0:
+        print(
+            "\n[ERR] No bytes echoed back. The Pi UART read path is broken:\n"
+            "  - Check `systemctl is-active serial-getty@ttyAMA0` and disable it.\n"
+            "  - Check /boot/cmdline.txt does NOT contain console=serial0,*.\n"
+            "  - Check /boot/config.txt has enable_uart=1 (and dtoverlay=disable-bt on Pi 3+).\n"
+            "  - Try `--port /dev/ttyAMA0` directly.\n"
+        )
+        return 1
+    print("[OK] Loopback succeeded -> Pi UART path is fine.")
+    return 0
+
+
+def cmd_list_ports() -> int:
+    print("== Detected serial devices ==")
+    for path in ("/dev/serial0", "/dev/serial1", "/dev/ttyAMA0",
+                 "/dev/ttyAMA10", "/dev/ttyS0", "/dev/ttyUSB0"):
+        try:
+            real = os.readlink(path) if os.path.islink(path) else "(not a symlink)"
+        except OSError:
+            real = ""
+        exists = os.path.exists(path)
+        print(f"  {path:<22} exists={exists}  link->{real}")
+    return 0
+
+
 # ----------------------------------------------------------- send test ---
 def cmd_send_test(ser: serial.Serial, duration: float, period: float) -> int:
     print(f"== Sending $LINKTEST frames for {duration:.1f}s on {ser.port} @ {ser.baudrate} ==")
@@ -403,9 +471,16 @@ def main() -> None:
                    help="Set AP=0, BD=3, DH=0, DL=FFFF, ATWR/ATAC")
     p.add_argument("--send-test", action="store_true",
                    help="Send $LINKTEST frames so the laptop side can verify reception")
+    p.add_argument("--loopback", action="store_true",
+                   help="Pi-side TX↔RX echo test (jumper Pi pin 8 ↔ pin 10, no XBee)")
+    p.add_argument("--list-ports", action="store_true",
+                   help="Print known serial device paths and where they resolve")
     p.add_argument("--duration", type=float, default=30.0)
     p.add_argument("--period", type=float, default=0.5)
     args = p.parse_args()
+
+    if args.list_ports:
+        sys.exit(cmd_list_ports())
 
     if args.reset:
         reset_pulse()
@@ -423,6 +498,8 @@ def main() -> None:
             rc = cmd_fix_transparent(ser)
         elif args.send_test:
             rc = cmd_send_test(ser, args.duration, args.period)
+        elif args.loopback:
+            rc = cmd_loopback(ser, args.duration)
         else:
             rc = cmd_read(ser)
     finally:
