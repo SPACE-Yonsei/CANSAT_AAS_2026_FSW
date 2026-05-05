@@ -82,7 +82,8 @@ TEAM_ID = "1070"
 
 
 def set_cmdecho(cmd_str: str) -> None:
-    tlm_data.cmd_echo = cmd_str.replace(",", "")
+    # Single TLM CSV field: keep body readable (commas -> ';' avoids mangled SIMG/TC).
+    tlm_data.cmd_echo = cmd_str.replace(",", ";")
 
 
 def get_current_time() -> str:
@@ -466,10 +467,10 @@ def send_tlm(serial_instance) -> None:
 def _dispatch_command(line: str, main_queue) -> bool:
     # Normalize command "CMD,1070,<body>"
     line = line.strip()
-    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Z]+),(.*)", line)
+    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Za-z]+),(.*)", line, re.IGNORECASE)
     if not m:
         return False
-    cmd = m.group(1)
+    cmd = m.group(1).upper()
     option = m.group(2).strip()
     set_cmdecho(f"{cmd},{option}")
 

@@ -43,6 +43,15 @@ class TestCommApp(unittest.TestCase):
         msg = q.get_nowait()
         self.assertIn("|19|", msg)
 
+    def test_dispatch_command_case_insensitive_token(self):
+        q = queue.Queue()
+        self.assertTrue(commapp._dispatch_command("CMD,1070,ss,3", q))
+        msg = q.get_nowait()
+        self.assertIn(f"|{appargs.FlightlogicAppArg.AppID}|", msg)
+        self.assertIn(f"|{appargs.CommAppArg.MID_RouteCmd_SS}|", msg)
+        self.assertTrue(msg.endswith("|3"))
+        self.assertEqual(commapp.tlm_data.cmd_echo, "SS;3")
+
     def test_dispatch_rejects_invalid(self):
         q = queue.Queue()
         self.assertFalse(commapp._dispatch_command("BAD,LINE", q))

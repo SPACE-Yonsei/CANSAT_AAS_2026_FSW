@@ -9,8 +9,8 @@ SIM mode (bench / map rehearsal) — send in order:
   2. CMD,1070,SIM,ACTIVATE  — SIM on (TLM S); required before SIMP/SIMG
   3. CMD,1070,SIMP,<alt_m>  — simulated baro altitude for flight logic / state machine
   4. CMD,1070,SIMG,lat,lon,course_deg,speed_m_s[,alt_m] — simulated GPS fix (course: ground track deg, speed: m/s)
-  5. CMD,1070,TC,lat,lon    — release target (same as flight; required before SS,3)
-  6. CMD,1070,SS,3          — jump to RELEASE when target is set (optional for map test)
+  5. CMD,1070,TC,lat,lon    — release target (required: SS,3 is blocked if prevstate target is unset)
+  6. CMD,1070,SS,3          — jump to RELEASE (commands are case-insensitive: ss,3 works)
   7. CMD,1070,SIM,DISABLE   — exit SIM (TLM F); GPS returns to hardware path
 
 Run:

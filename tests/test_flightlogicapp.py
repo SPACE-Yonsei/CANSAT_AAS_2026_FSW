@@ -35,6 +35,23 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.handle_ss("3", q)
         self.assertEqual(flightlogicapp.state, 3)
 
+    def test_ss_to_egg_pushes_target_to_motor(self):
+        q = queue.Queue()
+        prevstate.Target_lat = 37.57
+        prevstate.Target_lon = 126.94
+        flightlogicapp.handle_ss("4", q)
+        found = False
+        while not q.empty():
+            msg = q.get_nowait()
+            if (
+                f"|{appargs.MotorAppArg.AppID}|" in msg
+                and str(appargs.FlightlogicAppArg.MID_motor_TargetCor) in msg
+                and "37.57" in msg
+                and "126.94" in msg
+            ):
+                found = True
+        self.assertTrue(found)
+
     def test_release_blocked_without_target(self):
         q = queue.Queue()
         flightlogicapp.state = 1

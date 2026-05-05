@@ -98,6 +98,15 @@ def to_release(main_queue, force: bool = False) -> None:
 
 def to_egg(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 4, force=force)
+    # SS,4 can skip SS,3; refresh motor target from prevstate so guidance is not TARGET_UNSET.
+    if _has_release_target():
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_motor_TargetCor,
+            f"{prevstate.Target_lat},{prevstate.Target_lon}",
+        )
 
 
 def to_landed(main_queue, force: bool = False) -> None:
