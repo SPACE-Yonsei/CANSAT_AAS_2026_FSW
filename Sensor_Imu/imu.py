@@ -28,6 +28,11 @@ _BNO_FEATURE_NAMES = {
 }
 
 
+def _init_progress(message: str) -> None:
+    """Lightweight init progress hook used during IMU bring-up."""
+    logger.info(message)
+
+
 
 def _env_int(name: str, default: int, lo: int, hi: int) -> int:
     try:
