@@ -7,7 +7,8 @@ ASCII bytes that FSW writes to `/dev/serial0` get discarded as malformed
 API frames.
 
 This script must run while `main.py` is **NOT** running (only one process
-can hold `/dev/serial0` at a time).
+can hold the UART device at a time). On some boards `/dev/serial0` does not
+exist; use `UART_DEVICE=/dev/ttyAMA0` or pass `--port /dev/ttyAMA0`.
 
 It auto-detects whether the local XBee is in transparent mode (uses
 `+++/AT...`) or API mode (uses 0x08 AT Command frames, with or without
@@ -28,6 +29,7 @@ XBee via USB Explorer) for `$LINKTEST,...` lines.
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import sys
 import time
@@ -84,6 +86,54 @@ def reset_pulse() -> None:
 
 def open_port(port: str, baud: int) -> serial.Serial:
     return serial.Serial(port, baud, timeout=1.0, write_timeout=1.0)
+
+
+def uart_port_candidates(cli_port: str) -> list[str]:
+    """Build an ordered list of device paths to try (CLI, env, common Pi names)."""
+    out: list[str] = []
+    for p in (cli_port or "").split(","):
+        p = p.strip()
+        if p and p not in out:
+            out.append(p)
+    env = os.environ.get("UART_DEVICE", "").strip()
+    for part in env.split(","):
+        part = part.strip()
+        if part and part not in out:
+            out.append(part)
+    for fb in (
+        "/dev/serial0",
+        "/dev/serial1",
+        "/dev/ttyAMA0",
+        "/dev/ttyS0",
+        "/dev/ttyAMA10",
+    ):
+        if fb not in out:
+            out.append(fb)
+    return out
+
+
+def open_first_uart(candidates: list[str], baud: int) -> tuple[serial.Serial, str]:
+    tried: list[str] = []
+    for cand in candidates:
+        if not os.path.exists(cand):
+            tried.append(f"{cand} (missing)")
+            continue
+        try:
+            ser = open_port(cand, baud)
+            print(f"[open] {cand} @ {baud} baud")
+            return ser, cand
+        except Exception as exc:
+            tried.append(f"{cand} ({exc})")
+    detail = "\n  ".join(tried) if tried else "(no candidates)"
+    raise OSError(
+        "No UART port could be opened. Tried:\n  "
+        + detail
+        + "\n\nHints:\n"
+        + "  - dietpi-config: enable primary UART; reboot if needed.\n"
+        + "  - /boot/config.txt: ensure enable_uart=1 (Pi 3+: dtoverlay=disable-bt if conflicts).\n"
+        + "  - export UART_DEVICE=/dev/ttyAMA0   # or the path that exists on your board\n"
+        + "  - python3 tools/xbee_diag.py --list-ports"
+    )
 
 
 # ----------------------------------------------------- transparent mode ---
@@ -360,7 +410,7 @@ def cmd_fix_transparent(ser: serial.Serial) -> int:
     if escape is None:
         print(
             "[ERR] Could not reach the XBee in either mode. "
-            "Check power, wiring, and that no other process is using /dev/serial0."
+            "Check power, wiring, and that no other process is using the UART."
         )
         return 1
     print(f"[fix] using API mode (escape={'AP=2' if escape else 'AP=1'})")
@@ -427,15 +477,35 @@ def cmd_loopback(ser: serial.Serial, duration: float) -> int:
 
 
 def cmd_list_ports() -> int:
-    print("== Detected serial devices ==")
-    for path in ("/dev/serial0", "/dev/serial1", "/dev/ttyAMA0",
-                 "/dev/ttyAMA10", "/dev/ttyS0", "/dev/ttyUSB0"):
+    print("== Standard Raspberry Pi UART paths ==")
+    for path in (
+        "/dev/serial0",
+        "/dev/serial1",
+        "/dev/ttyAMA0",
+        "/dev/ttyAMA10",
+        "/dev/ttyS0",
+        "/dev/ttyUSB0",
+    ):
         try:
             real = os.readlink(path) if os.path.islink(path) else "(not a symlink)"
         except OSError:
             real = ""
         exists = os.path.exists(path)
         print(f"  {path:<22} exists={exists}  link->{real}")
+    print("\n== Matching /dev/ttyAMA* and /dev/ttyS* (if any) ==")
+    for pattern in ("/dev/ttyAMA*", "/dev/ttyS*"):
+        for path in sorted(glob.glob(pattern)):
+            print(f"  {path}")
+    try:
+        from serial.tools import list_ports
+
+        print("\n== pyserial list_ports ==")
+        for entry in list_ports.comports():
+            dev = getattr(entry, "device", "")
+            desc = getattr(entry, "description", "")
+            print(f"  {dev:<16}  {desc!r}")
+    except Exception as exc:
+        print(f"\n(pyserial list_ports unavailable: {exc})")
     return 0
 
 
@@ -463,7 +533,14 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--port", default=os.environ.get("UART_DEVICE", "/dev/serial0"))
+    p.add_argument(
+        "--port",
+        default="",
+        help=(
+            "UART device path, comma-separated list allowed. "
+            "Default: UART_DEVICE env + /dev/serial0, /dev/ttyAMA0, /dev/ttyS0, ..."
+        ),
+    )
     p.add_argument("--baud", type=int, default=int(os.environ.get("UART_BAUD", "9600")))
     p.add_argument("--reset", action="store_true",
                    help="Pulse XBee /RESET via GPIO18 before opening (uses pigpio)")
@@ -487,9 +564,9 @@ def main() -> None:
         time.sleep(0.5)
 
     try:
-        ser = open_port(args.port, args.baud)
-    except Exception as exc:
-        print(f"[ERR] Could not open {args.port} @ {args.baud}: {exc}")
+        ser, _ = open_first_uart(uart_port_candidates(args.port), args.baud)
+    except OSError as exc:
+        print(f"[ERR] {exc}")
         sys.exit(1)
 
     rc = 0

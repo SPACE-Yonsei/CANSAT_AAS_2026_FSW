@@ -63,7 +63,7 @@ def _port_candidates(explicit: str | None) -> list[str]:
     if sys.platform.startswith("win"):
         defaults = [f"COM{i}" for i in range(1, 33)]
     else:
-        defaults = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0", "/dev/ttyUSB0", "/dev/ttyACM0"]
+        defaults = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyAMA10", "/dev/ttyS0", "/dev/ttyUSB0", "/dev/ttyACM0"]
 
     out: list[str] = []
     for p in parts + [explicit_port] + discovered + defaults:
