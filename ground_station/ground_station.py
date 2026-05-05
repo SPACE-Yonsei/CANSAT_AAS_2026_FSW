@@ -62,6 +62,41 @@ TLM_FIELDS = [
 
 LEGACY_TLM_FIELDS = 30
 
+# Fixed character widths for telemetry value columns — avoids layout jump when cmd_echo / GPS strings change.
+_TLM_VALUE_WIDTH_DEFAULT = 11
+_TLM_VALUE_WIDTH: dict[str, int] = {
+    "cmd_echo": 36,
+    "gps_lat": 12,
+    "gps_lon": 12,
+    "gps_time": 10,
+    "time": 10,
+    "packet_count": 7,
+    "team_id": 6,
+    "mode": 4,
+    "state": 4,
+    "altitude_m": 10,
+    "temperature_c": 8,
+    "pressure_hpa": 10,
+    "voltage_v": 8,
+    "current_a": 8,
+    "power_w": 8,
+    "distance_cm": 10,
+    "gps_alt": 8,
+    "gps_sats": 4,
+    "filtered_roll": 9,
+    "filtered_pitch": 9,
+    "filtered_yaw": 9,
+    "gyro_roll": 9,
+    "gyro_pitch": 9,
+    "gyro_yaw": 9,
+    "acc_roll": 9,
+    "acc_pitch": 9,
+    "acc_yaw": 9,
+    "mag_roll": 9,
+    "mag_pitch": 9,
+    "mag_yaw": 9,
+}
+
 # Serial RX: process at most this many lines per Tk tick so bursts (USB backlog) do not freeze the UI for seconds.
 _RX_MAX_LINES_PER_TICK = 24
 _RX_POLL_IDLE_MS = 22
@@ -230,8 +265,9 @@ class GroundStation(tk.Tk):
         self._build_top_bar()
         body = ttk.Frame(self)
         body.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
-        body.columnconfigure(0, weight=1)
-        body.columnconfigure(1, weight=1)
+        # uniform: left/right panes keep a stable 1:1 split when the window is resized
+        body.columnconfigure(0, weight=1, uniform="gs_body")
+        body.columnconfigure(1, weight=1, uniform="gs_body")
         body.rowconfigure(0, weight=1)
 
         left = ttk.Frame(body)
@@ -337,7 +373,7 @@ class GroundStation(tk.Tk):
         ]
 
         for col in range(2):
-            wrap.columnconfigure(col, weight=1)
+            wrap.columnconfigure(col, weight=1, uniform="tlm_cols")
 
         for idx, (title, fields) in enumerate(groups):
             row, col = divmod(idx, 2)
@@ -350,9 +386,14 @@ class GroundStation(tk.Tk):
                 )
                 var = tk.StringVar(value="—")
                 self._tlm_vars[key] = var
-                ttk.Label(box, textvariable=var, style="Stat.TLabel").grid(
-                    row=i, column=1, sticky="e", padx=6, pady=2
-                )
+                vw = _TLM_VALUE_WIDTH.get(key, _TLM_VALUE_WIDTH_DEFAULT)
+                ttk.Label(
+                    box,
+                    textvariable=var,
+                    style="Stat.TLabel",
+                    width=vw,
+                    anchor="e",
+                ).grid(row=i, column=1, sticky="e", padx=6, pady=2)
 
         for r in range((len(groups) + 1) // 2):
             wrap.rowconfigure(r, weight=1)
@@ -391,9 +432,19 @@ class GroundStation(tk.Tk):
         ttk.Label(bars, textvariable=self._right_pulse_var, width=10).grid(row=1, column=2, sticky="e")
 
         self._heading_var = tk.StringVar(value="heading: -- / target: --")
-        ttk.Label(bars, textvariable=self._heading_var).grid(row=0, column=3, rowspan=2, sticky="w")
+        ttk.Label(
+            bars,
+            textvariable=self._heading_var,
+            width=46,
+            anchor="w",
+        ).grid(row=0, column=3, rowspan=2, sticky="w")
         self._guidance_var = tk.StringVar(value="guidance: --")
-        ttk.Label(bars, textvariable=self._guidance_var).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        ttk.Label(
+            bars,
+            textvariable=self._guidance_var,
+            width=96,
+            anchor="w",
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
 
     def _build_console_and_command(self, parent: ttk.Frame, row_offset: int = 0) -> None:
         parent.rowconfigure(row_offset, weight=1)
@@ -446,9 +497,13 @@ class GroundStation(tk.Tk):
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
         self._status_var = tk.StringVar(value="Disconnected")
-        ttk.Label(bar, textvariable=self._status_var).pack(side=tk.LEFT)
+        ttk.Label(bar, textvariable=self._status_var, width=36, anchor="w").pack(
+            side=tk.LEFT
+        )
         self._rate_var = tk.StringVar(value="rx: 0 / err: 0 / rate: -- Hz")
-        ttk.Label(bar, textvariable=self._rate_var).pack(side=tk.RIGHT)
+        ttk.Label(bar, textvariable=self._rate_var, width=38, anchor="e").pack(
+            side=tk.RIGHT
+        )
 
     # ---------------------------------------------------------- actions ---
     def _refresh_ports(self) -> None:

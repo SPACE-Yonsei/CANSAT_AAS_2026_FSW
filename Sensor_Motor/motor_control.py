@@ -8,7 +8,13 @@ from datetime import datetime
 
 _SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
 _sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
-DEBUG_CONTROL = True  # 제어 출력 디버그 프린트 on/off
+# Servo clamp / actuator logging (off by default; CANSAT_DEBUG_CONTROL=1 to enable)
+DEBUG_CONTROL = os.environ.get("CANSAT_DEBUG_CONTROL", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 def _dbg(line: str):
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]

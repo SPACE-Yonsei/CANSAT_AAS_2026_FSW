@@ -68,7 +68,14 @@ ALT_LOW: int  = 150  # m
 wind_effect: Optional[float] = None  # deg, 풍향 보정값
 last_time: Optional[float]   = None  # s, time.time() epoch
 
-DEBUG_GUIDANCE: bool = True
+# Verbose [CTRL] / file log every guidance tick — off by default (floods console + syncs _sim_log).
+# Enable for bench debug: set env CANSAT_DEBUG_GUIDANCE=1
+DEBUG_GUIDANCE: bool = os.environ.get("CANSAT_DEBUG_GUIDANCE", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 _pattern = types.SimpleNamespace(
     lobe_sign       = 1,    # int   - +1 또는 -1
@@ -260,7 +267,7 @@ def _carrot(my_E: float, my_N: float,
     # carrot = 투영점에서 L_DISTANCE 전방, [origin, target] 범위로 클램프
     # max(0.0,...): 기체가 start_point 뒤에 있을 때 carrot이 역방향으로 배치되는 것 방지
     s_carrot = max(0.0, min(s + L_DISTANCE, line_len))
-    if s < 0.0:
+    if s < 0.0 and DEBUG_GUIDANCE:
         _dbg(f"[CARROT] vehicle behind origin: s={s:.1f}m -> clamped to {s_carrot:.1f}m")
     return s_carrot * uE, s_carrot * uN
 
@@ -384,8 +391,9 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         )
 
     if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        _dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
-             f"pi_int_before={cascade_pi.pi_integral:.3f}")
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
+                 f"pi_int_before={cascade_pi.pi_integral:.3f}")
         cascade_pi.pi_integral = 0.0
         return types.SimpleNamespace(
             state="GPS_INVALID",
@@ -419,7 +427,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         )
 
     if target is None:
-        _dbg("[CTRL] TARGET_UNSET - target is required before release guidance")
+        if DEBUG_GUIDANCE:
+            _dbg("[CTRL] TARGET_UNSET - target is required before release guidance")
         return types.SimpleNamespace(
             state="TARGET_UNSET",
             distance=0.0,
@@ -443,7 +452,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         or not (-90.0 <= float(tgt_lat) <= 90.0 and -180.0 <= float(tgt_lon) <= 180.0)
         or (float(tgt_lat) == 0.0 and float(tgt_lon) == 0.0)
     ):
-        _dbg(f"[CTRL] TARGET_UNSET - invalid target lat={tgt_lat} lon={tgt_lon}")
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] TARGET_UNSET - invalid target lat={tgt_lat} lon={tgt_lon}")
         return types.SimpleNamespace(
             state="TARGET_UNSET",
             distance=0.0,
@@ -459,7 +469,8 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
         )
 
     if start_point.lat is None or start_point.lon is None:
-        _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
+        if DEBUG_GUIDANCE:
+            _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
         return types.SimpleNamespace(
             state="START_UNSET",
             distance=0.0,
@@ -574,12 +585,6 @@ def guidance(imu_data, gps_vector, gps_fidelity, target,
             + ("  [SAT]" if sat else "")
             + ("  [LND]" if landing_mode else "")
             + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
-        )
-    elif _guidance_tick % 10 == 0:
-        _dbg(
-            f"[CTRL/{_guidance_tick}] {phase} dist={distance:.1f}m "
-            f"err={angl_to_turn:.1f}° wind={wind_effect:.1f}° "
-            f"pi_int={cascade_pi.pi_integral:.3f} cmd_yr={commanded_yaw_rate:.2f}°/s"
         )
 
     carrot_lat, carrot_lon = _en_to_ll(guide_E, guide_N)
