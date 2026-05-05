@@ -4,13 +4,24 @@ IMU yaw-driven parafoil servo test.
 Reads yaw angle from BNO085, deflects servos from 60-deg neutral
 proportional to heading error from the reference yaw captured at startup.
 """
+import os
 import sys
 import time
 import signal
 
 import pigpio
 
-sys.path.insert(0, '/root/CANSAT_AAS_2026_FSW')
+FSW_ROOT = '/root/CANSAT_AAS_2026_FSW'
+os.chdir(FSW_ROOT)
+sys.path.insert(0, FSW_ROOT)
+
+# Ensure config.txt exists so config.py doesn't spam on every import
+_cfg = os.path.join(FSW_ROOT, 'lib', 'config.txt')
+if not os.path.exists(_cfg):
+    os.makedirs(os.path.dirname(_cfg), exist_ok=True)
+    with open(_cfg, 'w') as _f:
+        _f.write("# SELECTED=PAYLOAD\n")
+
 from Sensor_Imu.imu import init_imu, read_sensor_data, imu_terminate
 
 # ── Servo constants ───────────────────────────────────────────────────────────
@@ -148,9 +159,10 @@ while True:
         r_deg = pulse_to_deg_right(r_pw)
         dir_str = "R>>" if err >  2 else "<<L" if err < -2 else "|||"
         print(
-            f"[{tick // LOOP_HZ:04d}s]  "
-            f"yaw={yaw:>7.2f}°  ref={ref_yaw:>7.2f}°  err={err:>+6.1f}°  {dir_str} | "
-            f"L={l_deg:>5.1f}°({l_pw}us)  R={r_deg:>5.1f}°({r_pw}us)"
+            f"[{tick // LOOP_HZ:04d}s] "
+            f"yaw={yaw:>7.2f}°  ref={ref_yaw:.2f}°  err={err:>+6.2f}°  {dir_str}\n"
+            f"  LEFT  : {l_pw:>4d} us  {l_deg:>6.2f} deg\n"
+            f"  RIGHT : {r_pw:>4d} us  {r_deg:>6.2f} deg"
         )
 
     elapsed = time.monotonic() - t0
