@@ -84,6 +84,46 @@ def reset_pulse() -> None:
         pi.stop()
 
 
+def force_rts_low() -> bool:
+    """Drive Pi GPIO16 (XBee RTS line on this board) LOW.
+
+    XBee defaults to D6=1 (RTS flow control). It refuses to TX while its
+    RTS input is HIGH. The Pi's GPIO16 is normally a floating input, which
+    can keep the XBee silent. This routine drives GPIO16 LOW so the XBee
+    is always allowed to talk back. Best-effort; tries pigpio then sysfs.
+    """
+    pin = int(os.environ.get("XBEE_RTS_GPIO", "16"))
+    try:
+        import pigpio  # type: ignore
+
+        pi = pigpio.pi()
+        if getattr(pi, "connected", False):
+            try:
+                pi.set_mode(pin, pigpio.OUTPUT)
+                pi.write(pin, 0)
+                print(f"[rts] pigpio: GPIO{pin} -> output low (XBee RTS line held LOW)")
+                return True
+            finally:
+                pi.stop()
+    except Exception as exc:
+        print(f"[rts] pigpio unavailable: {exc}")
+
+    try:
+        from gpiozero import LED  # type: ignore
+
+        rts = LED(pin)
+        rts.off()
+        print(f"[rts] gpiozero: GPIO{pin} -> output low (held by this process)")
+        return True
+    except Exception as exc:
+        print(f"[rts] gpiozero unavailable: {exc}")
+    print(
+        "[rts] Could not force RTS low. Either install pigpio/gpiozero,\n"
+        "      or simply unplug the XBee RTS wire (or short it to GND)."
+    )
+    return False
+
+
 def open_port(port: str, baud: int) -> serial.Serial:
     return serial.Serial(port, baud, timeout=1.0, write_timeout=1.0)
 
@@ -280,6 +320,61 @@ def read_via_at(ser: serial.Serial) -> Optional[dict[str, str]]:
         out[key] = at_cmd(ser, f"AT{key}")
     at_cmd(ser, "ATCN")
     return out
+
+
+def probe_any_response(ser: serial.Serial) -> Optional[str]:
+    """Return a short label if XBee responds via either +++ or 0x08 API frames."""
+    if at_enter_command_mode(ser):
+        at_cmd(ser, "ATCN")
+        return "transparent (+++)"
+    esc = detect_api_escape(ser)
+    if esc is None:
+        return None
+    return f"API AP={2 if esc else 1}"
+
+
+def cmd_auto_baud(args, ser: serial.Serial, baud_override: int) -> int:
+    """Iterate likely XBee baud rates trying +++ and API probes."""
+    bauds = [baud_override, 9600, 115200, 19200, 38400, 57600, 230400]
+    seen: list[int] = []
+    print(f"== Scanning XBee baud rates on {ser.port} ==")
+    port = ser.port
+    ser.close()
+    found: Optional[tuple[int, str]] = None
+    for b in bauds:
+        if b in seen:
+            continue
+        seen.append(b)
+        try:
+            test = open_port(port, b)
+        except Exception as exc:
+            print(f"  {b:>6} baud: open failed ({exc})")
+            continue
+        try:
+            label = probe_any_response(test)
+        finally:
+            test.close()
+        if label is None:
+            print(f"  {b:>6} baud: no response")
+        else:
+            print(f"  {b:>6} baud: RESPONSE -> {label}")
+            if found is None:
+                found = (b, label)
+    if found is None:
+        print(
+            "\n[ERR] No baud rate responded. Most likely the XBee never sees an OK\n"
+            "      to send back. Top suspects (in order):\n"
+            "        1) RTS flow control: re-run with --force-rts-low, or unplug/short\n"
+            "           the XBee RTS wire (pin 16) to GND.\n"
+            "        2) DOUT not reaching Pi RX (GPIO15) — check XBee pin 2 wiring.\n"
+            "        3) XBee unpowered — check 3.3V on pin 1 with a multimeter.\n"
+            "        4) Bricked firmware — recover via XCTU on a USB Explorer.\n"
+        )
+        return 1
+    b, label = found
+    print(f"\n[OK] XBee responds at {b} baud ({label}).")
+    print(f"       Set FSW to match: export UART_BAUD={b}")
+    return 0
 
 
 def read_via_api(ser: serial.Serial, escape: bool) -> Optional[dict[str, str]]:
@@ -552,12 +647,19 @@ def main() -> None:
                    help="Pi-side TX↔RX echo test (jumper Pi pin 8 ↔ pin 10, no XBee)")
     p.add_argument("--list-ports", action="store_true",
                    help="Print known serial device paths and where they resolve")
+    p.add_argument("--auto-baud", action="store_true",
+                   help="Sweep common baud rates and report which one the XBee responds on")
+    p.add_argument("--force-rts-low", action="store_true",
+                   help="Drive Pi GPIO16 LOW (XBee RTS) so the XBee is allowed to TX even with D6=1")
     p.add_argument("--duration", type=float, default=30.0)
     p.add_argument("--period", type=float, default=0.5)
     args = p.parse_args()
 
     if args.list_ports:
         sys.exit(cmd_list_ports())
+
+    if args.force_rts_low:
+        force_rts_low()
 
     if args.reset:
         reset_pulse()
@@ -571,7 +673,9 @@ def main() -> None:
 
     rc = 0
     try:
-        if args.fix_transparent:
+        if args.auto_baud:
+            rc = cmd_auto_baud(args, ser, args.baud)
+        elif args.fix_transparent:
             rc = cmd_fix_transparent(ser)
         elif args.send_test:
             rc = cmd_send_test(ser, args.duration, args.period)
@@ -580,7 +684,10 @@ def main() -> None:
         else:
             rc = cmd_read(ser)
     finally:
-        ser.close()
+        try:
+            ser.close()
+        except Exception:
+            pass
     sys.exit(rc)
 
 
