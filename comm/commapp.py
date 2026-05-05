@@ -23,6 +23,7 @@ ST_timedelta = timedelta(seconds=0)
 
 _LOG_TLM_TO_CONSOLE = os.environ.get("FSW_LOG_TLM", "1").strip() != "0"
 _TLM_SEND_FAIL_LOGGED = False
+_LAST_TLM_FAIL_LOG_TS = 0.0
 
 _RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
 _RBT_REQUIRE_SEQ = os.environ.get("RBT_REQUIRE_SEQ", "1").strip() != "0"
@@ -359,7 +360,7 @@ def _tlm_multiline_for_console(line: str) -> str:
 
 
 def send_tlm(serial_instance) -> None:
-    global _TLM_SEND_FAIL_LOGGED
+    global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS
     if not TELEMETRY_ENABLE:
         return
 
@@ -378,13 +379,20 @@ def send_tlm(serial_instance) -> None:
         f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f}\n"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
-    if _LOG_TLM_TO_CONSOLE:
-        logger.info("%s", _tlm_multiline_for_console(line))
-    if not ok and not _TLM_SEND_FAIL_LOGGED:
+    if ok:
+        if _LOG_TLM_TO_CONSOLE:
+            logger.info("TLM TX OK\n%s", _tlm_multiline_for_console(line))
+        _TLM_SEND_FAIL_LOGGED = False
+        return
+
+    now = time.time()
+    if _LOG_TLM_TO_CONSOLE and (now - _LAST_TLM_FAIL_LOG_TS) >= 3.0:
+        logger.warning("TLM TX FAIL (UART write failed)\n%s", _tlm_multiline_for_console(line))
+        _LAST_TLM_FAIL_LOG_TS = now
+    if not _TLM_SEND_FAIL_LOGGED:
         logger.warning(
             "TLM UART write failed (no bytes will reach the radio/USB adapter). "
-            "Check UART mapping/permissions or set UART_DEVICE=/dev/ttyAMA0 "
-            "and optionally FSW_LOG_TLM=1 for local prints."
+            "Check UART mapping/permissions and explicit UART_DEVICE (Windows: COMx, Linux: /dev/tty*)."
         )
         _TLM_SEND_FAIL_LOGGED = True
 
