@@ -27,25 +27,35 @@ class _FakePigpio:
 
 class TestActuatorMixer(unittest.TestCase):
     def test_clamp_high(self):
-        l, r, *_ = motor_control.actuator_mixer(9999.0)
-        self.assertLess(l, motor_control.LEFT_NEUTRAL)
+        l, r, left_angle, right_angle, delta, _ = motor_control.actuator_mixer(9999.0)
+        self.assertGreater(delta, 0.0)
+        self.assertGreater(left_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertLess(right_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertGreater(l, motor_control.LEFT_NEUTRAL)
         self.assertGreater(r, motor_control.RIGHT_NEUTRAL)
 
     def test_clamp_low(self):
-        l, r, *_ = motor_control.actuator_mixer(-9999.0)
-        self.assertGreater(l, motor_control.LEFT_NEUTRAL)
+        l, r, left_angle, right_angle, delta, _ = motor_control.actuator_mixer(-9999.0)
+        self.assertLess(delta, 0.0)
+        self.assertLess(left_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertGreater(right_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertLess(l, motor_control.LEFT_NEUTRAL)
         self.assertLess(r, motor_control.RIGHT_NEUTRAL)
 
     def test_zero_is_neutral(self):
-        l, r, _, _, _, offset = motor_control.actuator_mixer(0.0)
+        l, r, left_angle, right_angle, _, offset = motor_control.actuator_mixer(0.0)
         self.assertEqual(l, motor_control.LEFT_NEUTRAL)
         self.assertEqual(r, motor_control.RIGHT_NEUTRAL)
+        self.assertAlmostEqual(left_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(right_angle, motor_control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(offset, 0.0)
 
     def test_differential_direction(self):
-        l_pos, r_pos, *_ = motor_control.actuator_mixer(10.0)
-        l_neu, r_neu, *_ = motor_control.actuator_mixer(0.0)
-        self.assertLess(l_pos, l_neu)
+        l_pos, r_pos, left_pos, right_pos, *_ = motor_control.actuator_mixer(10.0)
+        l_neu, r_neu, left_neu, right_neu, *_ = motor_control.actuator_mixer(0.0)
+        self.assertGreater(left_pos, left_neu)
+        self.assertLess(right_pos, right_neu)
+        self.assertGreater(l_pos, l_neu)
         self.assertGreater(r_pos, r_neu)
 
     def test_output_within_bounds(self):
@@ -109,6 +119,90 @@ class TestControlFeedback(unittest.TestCase):
         from lib import config
         self.assertEqual(motor_control.PARAFOIL_LEFT_MOTOR_PIN, config.PARAFOIL_LEFT_GPIO)
         self.assertEqual(motor_control.PARAFOIL_RIGHT_MOTOR_PIN, config.PARAFOIL_RIGHT_GPIO)
+
+
+class TestParafoilBrakeController(unittest.TestCase):
+    def _controller(self, **overrides):
+        cfg = motor_control.ControlConfig(**overrides)
+        return motor_control.ParafoilBrakeController(cfg)
+
+    @staticmethod
+    def _cmd(yaw_rate, ts=100.0):
+        return motor_control.GuidanceCommand(
+            yaw_rate_cmd_deg_s=yaw_rate,
+            valid=True,
+            timestamp=ts,
+        )
+
+    def test_positive_yaw_rate_commands_right_turn_arm_geometry(self):
+        ctl = self._controller()
+        out = ctl.update(self._cmd(10.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertGreater(out.delta_arm_deg, 0.0)
+        self.assertGreater(out.left_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+        self.assertLess(out.right_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+
+    def test_negative_yaw_rate_commands_left_turn_arm_geometry(self):
+        ctl = self._controller()
+        out = ctl.update(self._cmd(-10.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertLess(out.delta_arm_deg, 0.0)
+        self.assertLess(out.left_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+        self.assertGreater(out.right_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+
+    def test_zero_command_is_neutral(self):
+        ctl = self._controller()
+        out = ctl.update(self._cmd(0.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertAlmostEqual(out.left_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(out.right_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(out.delta_arm_deg, 0.0)
+
+    def test_large_command_respects_limits(self):
+        ctl = self._controller(MAX_ARM_RATE_DEG_S=10_000.0)
+        out = ctl.update(self._cmd(999.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertLessEqual(abs(out.delta_arm_deg), motor_control.DELTA_ARM_MAX_DEG)
+        self.assertGreaterEqual(out.left_angle_deg, motor_control.ARM_MIN_DEG)
+        self.assertLessEqual(out.left_angle_deg, motor_control.ARM_MAX_DEG)
+        self.assertGreaterEqual(out.right_angle_deg, motor_control.ARM_MIN_DEG)
+        self.assertLessEqual(out.right_angle_deg, motor_control.ARM_MAX_DEG)
+        self.assertTrue(out.saturated)
+
+    def test_saturation_blocks_integrator_windup(self):
+        ctl = self._controller(K_I=1.0, MAX_ARM_RATE_DEG_S=10_000.0)
+        for i in range(10):
+            ctl.update(self._cmd(999.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
+        self.assertAlmostEqual(ctl.pid.integral_deg, 0.0)
+
+    def test_invalid_yaw_rate_uses_feedforward_only(self):
+        ctl = self._controller(MAX_ARM_RATE_DEG_S=10_000.0)
+        out = ctl.update(self._cmd(10.0), yaw_rate_meas_deg_s=float("nan"), now=100.0)
+        self.assertEqual(out.mode, "FEEDFORWARD_ONLY")
+        self.assertFalse(out.sensor_valid)
+        self.assertAlmostEqual(out.delta_pid_deg, 0.0)
+        self.assertGreater(out.delta_arm_deg, 0.0)
+
+    def test_guidance_timeout_neutralizes(self):
+        ctl = self._controller()
+        out = ctl.update(self._cmd(10.0, ts=99.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertEqual(out.mode, "GUIDANCE_TIMEOUT")
+        self.assertFalse(out.valid)
+        self.assertAlmostEqual(out.left_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(out.right_angle_deg, motor_control.NEUTRAL_ARM_DEG)
+
+    def test_slew_rate_limits_single_loop_angle_jump(self):
+        ctl = self._controller(MAX_ARM_RATE_DEG_S=10.0)
+        out = ctl.update(self._cmd(60.0), yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertLessEqual(abs(out.left_angle_deg - motor_control.NEUTRAL_ARM_DEG), 1.0 + 1e-6)
+        self.assertLessEqual(abs(out.right_angle_deg - motor_control.NEUTRAL_ARM_DEG), 1.0 + 1e-6)
+
+    def test_lat_acc_command_converts_to_yaw_rate(self):
+        ctl = self._controller(MAX_ARM_RATE_DEG_S=10_000.0)
+        cmd = motor_control.GuidanceCommand(
+            lat_acc_cmd_mps2=2.0,
+            ground_speed_mps=4.0,
+            valid=True,
+            timestamp=100.0,
+        )
+        out = ctl.update(cmd, yaw_rate_meas_deg_s=0.0, now=100.0)
+        self.assertAlmostEqual(out.yaw_rate_cmd_deg_s, 28.6478897565, places=6)
 
 
 if __name__ == "__main__":

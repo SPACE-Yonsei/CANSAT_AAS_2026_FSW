@@ -36,6 +36,7 @@ from Sensor_Motor.motor_guidance import (
 from Sensor_Motor.motor_control import (
     ParafoilBrakeController,
     ControlConfig,
+    GuidanceCommand,
     BrakeCommand,
     init_control,
     set_neutral,
@@ -339,8 +340,19 @@ def _send_diag(main_queue, cmd: BrakeCommand, g_out: GuidanceOutput,
         str(cmd.right_pw),
         _fmt(g_out.crossTrack),
         _fmt(g_out.alongTrack),
-        _fmt(g_out.courseRateCmd),
-        _fmt(cmd.diffBrake),
+        _fmt(cmd.yaw_rate_cmd_deg_s),
+        _fmt(cmd.yaw_rate_meas_deg_s),
+        _fmt(cmd.yaw_rate_error_deg_s),
+        _fmt(cmd.delta_ff_deg),
+        _fmt(cmd.delta_pid_deg),
+        _fmt(cmd.delta_arm_deg),
+        _fmt(cmd.left_angle_deg),
+        _fmt(cmd.right_angle_deg),
+        str(int(cmd.saturated)),
+        str(int(cmd.sensor_valid)),
+        _fmt(cmd.guidance_command_age_s),
+        cmd.fallback_mode,
+        cmd.mode,
         diag_state,
     ])
     msgstructure.send_msg(
@@ -391,10 +403,19 @@ def ctrl_paragldr(main_queue=None) -> None:
             g_out = _guidance.update(est, now)
 
             if g_out.active:
-                cmd = _controller.update(g_out.courseRateCmd, est.gyrz, now)
+                guidance_cmd = GuidanceCommand(
+                    yaw_rate_cmd_deg_s=math.degrees(g_out.courseRateCmd),
+                    lat_acc_cmd_mps2=g_out.latAccDem,
+                    ground_speed_mps=g_out.groundSpeed,
+                    valid=True,
+                    timestamp=g_out.timestamp,
+                )
+                yaw_rate_meas_deg_s = math.degrees(est.gyrz) if est.gyrz is not None else None
+                cmd = _controller.update(guidance_cmd, yaw_rate_meas_deg_s, now)
             else:
                 _controller.reset()
-                cmd = BrakeCommand(timestamp=now)  # neutral
+                guidance_cmd = GuidanceCommand(valid=False, timestamp=now)
+                cmd = _controller.update(guidance_cmd, None, now)
 
             if PI is not None:
                 set_brake_command(PI, cmd)
