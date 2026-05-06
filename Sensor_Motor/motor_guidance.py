@@ -122,6 +122,12 @@ class EstimatedState:
     guidance_mode: GuidanceMode = GuidanceMode.DISABLED
     reason: str = ""
 
+    # Sensor availability case for missing-data policy research.
+    # L = Lat/Lon position, C = course over ground, S = ground speed,
+    # G = GyroZ yaw-rate. Missing fields are shown as "-"; e.g. "LCS-".
+    sensor_case: str = "----"
+    case_policy: str = ""
+
 
 @dataclass
 class GuidanceOutput:
@@ -284,6 +290,7 @@ class NavigationStateEstimator:
         self._fill_altitude(state, now)
         self._fill_attitude(state)
         self._fill_tilt_rate(state)
+        self._fill_lcsg_case(state)
         self._classify_guidance_mode(state)
         return state
 
@@ -417,6 +424,81 @@ class NavigationStateEstimator:
         """Case L: tilt rate from gx, gy for payload oscillation detection."""
         if self._gx is not None and self._gy is not None:
             state.tilt_rate = math.hypot(self._gx.value, self._gy.value)
+
+    def _fill_lcsg_case(self, state: EstimatedState) -> None:
+        """
+        Classify the active sensor combination for missing-data control policy.
+
+        This is intentionally a skeleton: it records which core fields are
+        available after freshness/propagation handling, without changing the
+        current L1 mechanism. The next research step can replace individual
+        TODO branches with validated estimators such as GNSS dead reckoning,
+        course-from-position history, or yaw-rate hold/observer logic.
+        """
+        pos_ok = state.pos_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        motion_ok = state.motion_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        yaw_ok = state.yaw_rate_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+
+        has_l = pos_ok and state.pos_N is not None and state.pos_E is not None
+        has_c = motion_ok and state.course is not None
+        has_s = motion_ok and state.groundSpeed is not None
+        has_g = yaw_ok and state.gyrz is not None
+
+        state.sensor_case = "".join([
+            "L" if has_l else "-",
+            "C" if has_c else "-",
+            "S" if has_s else "-",
+            "G" if has_g else "-",
+        ])
+        state.case_policy = self._lcsg_policy_skeleton(state.sensor_case)
+
+    @staticmethod
+    def _lcsg_policy_skeleton(sensor_case: str) -> str:
+        """
+        Missing-data policy map for L/C/S/G.
+
+        LCSG: nominal path following.
+              L1 computes course-rate or lateral-accel command and controller
+              closes yaw-rate feedback with GyroZ.
+
+        LCS-: guidance still valid, yaw-rate feedback missing.
+              Controller must use feedforward-only or a future course-rate
+              estimate from GNSS course history. Current control layer already
+              falls back to feedforward-only when GyroZ is invalid.
+
+        LC-G: speed missing.
+              L1 distance, lat_acc -> yaw_rate conversion, and velocity vector
+              are not trustworthy. TODO: derive S from consecutive LatLon
+              fixes only after validating GNSS noise and sampling interval.
+
+        L-SG: course missing.
+              TODO: derive C from LatLon history when displacement is large
+              enough; until then keep degraded or disable L1.
+
+        -CSG: no position.
+              Cross-track path following is unavailable. TODO: short dead
+              reckoning from C/S/G can bridge only a very short GNSS outage;
+              otherwise command neutral/safe glide.
+
+        L--G, L---, --SG, -C-G, -CS-, etc.
+              Insufficient for reliable L1 path following. Keep neutral/safe
+              glide unless a validated observer supplies the missing fields.
+        """
+        if sensor_case == "LCSG":
+            return "nominal_l1_with_yaw_rate_feedback"
+        if sensor_case == "LCS-":
+            return "l1_valid_feedforward_only_no_gyro"
+        if sensor_case == "LC-G":
+            return "hold_or_estimate_ground_speed_from_position_history"
+        if sensor_case == "L-SG":
+            return "hold_or_estimate_course_from_position_history"
+        if sensor_case == "-CSG":
+            return "no_position_short_dead_reckoning_or_safe_glide"
+        if sensor_case.startswith("L") and sensor_case[1:3] == "--":
+            return "position_only_no_l1_motion_safe_glide"
+        if sensor_case.endswith("G"):
+            return "gyro_only_or_partial_motion_no_l1_safe_glide"
+        return "insufficient_l1_inputs_safe_glide"
 
     def _classify_guidance_mode(self, state: EstimatedState) -> None:
         pos_ok    = state.pos_status    in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)

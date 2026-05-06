@@ -66,6 +66,45 @@ class TestMotorGuidance(unittest.TestCase):
         out = motor_guidance.guidance(imu, gps, fid, None, 120.0)
         self.assertEqual(out.state, "TARGET_UNSET")
 
+    def test_estimator_reports_nominal_lcsg_case(self):
+        est = motor_guidance.NavigationStateEstimator()
+        now = time.time()
+        est.update_gnss(
+            lat=37.55,
+            lon=126.95,
+            course_rad=math.radians(90.0),
+            groundSpeed=12.0,
+            posHealth=True,
+            motionHealth=True,
+            ts=now,
+        )
+        est.update_imu(gz=5.0, ts=now)
+
+        state = est.estimate(now)
+
+        self.assertEqual(state.sensor_case, "LCSG")
+        self.assertEqual(state.case_policy, "nominal_l1_with_yaw_rate_feedback")
+        self.assertEqual(state.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+
+    def test_estimator_reports_feedforward_only_when_gyro_missing(self):
+        est = motor_guidance.NavigationStateEstimator()
+        now = time.time()
+        est.update_gnss(
+            lat=37.55,
+            lon=126.95,
+            course_rad=math.radians(90.0),
+            groundSpeed=12.0,
+            posHealth=True,
+            motionHealth=True,
+            ts=now,
+        )
+
+        state = est.estimate(now)
+
+        self.assertEqual(state.sensor_case, "LCS-")
+        self.assertEqual(state.case_policy, "l1_valid_feedforward_only_no_gyro")
+        self.assertEqual(state.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+
 
 if __name__ == "__main__":
     unittest.main()
