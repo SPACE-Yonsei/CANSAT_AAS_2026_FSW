@@ -1,127 +1,226 @@
 #!/usr/bin/env python3
+"""
+ParafoilBrakeController and servo PWM mapping.
+
+Controller: PI course-rate feedback → differential brake [-1, 1].
+Servo:      differential brake + base brake → left/right PWM.
+
+Sign convention (consistent with L1Guidance):
+  courseRateCmd > 0  →  right turn  →  diffBrake > 0  →  right brake pulled
+  courseRateCmd < 0  →  left turn   →  diffBrake < 0  →  left brake pulled
+"""
 import math
-import os
 import sys
 import time
-import types
-from datetime import datetime
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Optional
 
-_SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
-_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
-# Servo clamp / actuator logging (off by default; CANSAT_DEBUG_CONTROL=1 to enable)
-DEBUG_CONTROL = os.environ.get("CANSAT_DEBUG_CONTROL", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+try:
+    import pigpio as _pigpio_module
+except ImportError:
+    _pigpio_module = None
 
-def _dbg(line: str):
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    full = f"[{ts}] {line}"
-    try:
-        print(full)
-    except UnicodeEncodeError:
-        # Windows cp949 / non-utf8 console: drop unencodable glyphs (μ, °, —, …)
-        enc = getattr(sys.stdout, "encoding", None) or "ascii"
-        sys.stdout.write(full.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
-        sys.stdout.flush()
-    _sim_log.write(full + "\n")
-    _sim_log.flush()
+# ── Servo hardware config ──────────────────────────────────────────────────────
+LEFT_GPIO  = 13
+RIGHT_GPIO = 12
 
-PARAFOIL_LEFT_MOTOR_PIN: int  = 13   # GPIO BCM pin
-PARAFOIL_RIGHT_MOTOR_PIN: int = 12   # GPIO BCM pin
+LEFT_NEUTRAL  = 1720   # µs
+RIGHT_NEUTRAL = 1780   # µs
 
-PULSE_PER_DEG: float = 2000.0 / 180.0  # μs/deg, 서보 물리 보정값 (고정)
+LEFT_MIN  = 600
+LEFT_MAX  = 2120
+RIGHT_MIN = 880
+RIGHT_MAX = 2500
 
-LEFT_ZERO: int  = 600   # μs, 서보 0° 펄스폭
-RIGHT_ZERO: int = 2500  # μs, 서보 0° 펄스폭
+# Symmetric max deflection (conservative: smaller of the two sides)
+_LEFT_MAX_DEFLECT  = min(LEFT_NEUTRAL  - LEFT_MIN,  LEFT_MAX  - LEFT_NEUTRAL)   # 400 µs
+_RIGHT_MAX_DEFLECT = min(RIGHT_NEUTRAL - RIGHT_MIN, RIGHT_MAX - RIGHT_NEUTRAL)  # 720 µs
+_DEFLECT_PW        = min(_LEFT_MAX_DEFLECT, _RIGHT_MAX_DEFLECT)                 # 400 µs
 
-MAX_ANGLE_SCOPE: int = 120  # deg, 서보 기계적 최대 각도
-
-NEUTRAL_DEG: float = 60.0  # deg, 서보 중립 각도
-LEFT_NEUTRAL: int  = int(LEFT_ZERO  + NEUTRAL_DEG * PULSE_PER_DEG)  # μs
-RIGHT_NEUTRAL: int = int(RIGHT_ZERO - NEUTRAL_DEG * PULSE_PER_DEG)  # μs
-
-LEFT_MAX_PULSE:  int = int(LEFT_ZERO  + MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, LEFT 120°
-RIGHT_MIN_PULSE: int = int(RIGHT_ZERO - MAX_ANGLE_SCOPE * PULSE_PER_DEG)  # μs, RIGHT 120°
-
-PULSE_MIN: int = 500   # μs
-PULSE_MAX: int = 2500  # μs
-
-K_pulse: float = PULSE_PER_DEG * 2  # μs/(°/s), yaw rate → 서보 펄스 오프셋 변환 계수 (×2 튜닝)
+# Backward-compatible names used by tests and replay tools.
+PARAFOIL_LEFT_MOTOR_PIN = LEFT_GPIO
+PARAFOIL_RIGHT_MOTOR_PIN = RIGHT_GPIO
+PULSE_MIN = LEFT_MIN
+PULSE_MAX = RIGHT_MAX
+LEFT_MAX_PULSE = LEFT_MAX
+RIGHT_MIN_PULSE = RIGHT_MIN
 
 
+# ── Data classes ───────────────────────────────────────────────────────────────
+@dataclass
+class ControlConfig:
+    """Tunable PI controller parameters."""
+    Kp:           float = 0.8    # (rad/s error) → diffBrake
+    Ki:           float = 0.15   # 1/s
+    MAX_INTEGRAL: float = 0.5    # anti-windup clamp [diffBrake·s]
+    MAX_ACCEL:    float = 4.0    # slew rate [diffBrake/s]
+    BASE_BRAKE:   float = 0.0    # symmetric brake offset [0, 1]
+
+
+@dataclass
+class BrakeCommand:
+    """Complete actuator command produced by ParafoilBrakeController."""
+    timestamp:  float
+    diffBrake:  float = 0.0          # [-1, 1], + = right turn
+    baseBrake:  float = 0.0          # [0, 1], symmetric
+    left_pw:    int   = LEFT_NEUTRAL  # µs
+    right_pw:   int   = RIGHT_NEUTRAL # µs
+
+
+# ── ParafoilBrakeController ────────────────────────────────────────────────────
+class ParafoilBrakeController:
+    """
+    PI controller: courseRateCmd [rad/s] → diffBrake [-1, 1].
+
+    yawRateMeas = gz converted to rad/s (done upstream in NavigationStateEstimator).
+    When yawRateMeas is None, falls back to open-loop proportional.
+    """
+
+    def __init__(self, config: Optional[ControlConfig] = None) -> None:
+        self.cfg              = config or ControlConfig()
+        self._integral:  float           = 0.0
+        self._last_cmd:  float           = 0.0
+        self._last_ts:   Optional[float] = None
+
+    def update(
+        self,
+        courseRateCmd: float,
+        yawRateMeas:   Optional[float],
+        now: float,
+    ) -> BrakeCommand:
+        cmd = BrakeCommand(timestamp=now)
+        dt  = self._tick(now)
+
+        if yawRateMeas is None:
+            raw = self.cfg.Kp * courseRateCmd
+        else:
+            error = courseRateCmd - yawRateMeas
+            u     = self.cfg.Kp * error + self.cfg.Ki * self._integral
+
+            # Anti-windup: accumulate only when unsaturated or error opposes saturation
+            if abs(u) < 1.0 or error * u < 0.0:
+                self._integral = _clamp(
+                    self._integral + error * dt,
+                    -self.cfg.MAX_INTEGRAL, self.cfg.MAX_INTEGRAL,
+                )
+                u = self.cfg.Kp * error + self.cfg.Ki * self._integral
+
+            raw = u
+
+        diffBrake = self._slew(_clamp(raw, -1.0, 1.0), dt)
+
+        cmd.diffBrake = diffBrake
+        cmd.baseBrake = self.cfg.BASE_BRAKE
+        cmd.left_pw, cmd.right_pw = _brake_to_pw(diffBrake, self.cfg.BASE_BRAKE)
+        return cmd
+
+    def reset(self) -> None:
+        self._integral = 0.0
+        self._last_cmd = 0.0
+        self._last_ts  = None
+
+    def _tick(self, now: float) -> float:
+        if self._last_ts is None:
+            self._last_ts = now
+            return 0.1
+        dt = _clamp(now - self._last_ts, 0.02, 0.5)
+        self._last_ts = now
+        return dt
+
+    def _slew(self, target: float, dt: float) -> float:
+        delta     = target - self._last_cmd
+        max_delta = self.cfg.MAX_ACCEL * dt
+        result    = self._last_cmd + _clamp(delta, -max_delta, max_delta)
+        self._last_cmd = result
+        return result
+
+
+# ── Brake → PWM mapping ────────────────────────────────────────────────────────
+def _brake_to_pw(diffBrake: float, baseBrake: float) -> tuple:
+    """
+    diffBrake > 0  →  right turn  →  right brake pulled, left released.
+    baseBrake      →  symmetric pull on both brakes (speed / flare control).
+    """
+    base_off  = int(baseBrake  * _DEFLECT_PW)
+    right_off = int( diffBrake * _DEFLECT_PW) + base_off
+    left_off  = int(-diffBrake * _DEFLECT_PW) + base_off
+
+    left_pw  = _clamp_pw(LEFT_NEUTRAL  + left_off,  LEFT_MIN,  LEFT_MAX)
+    right_pw = _clamp_pw(RIGHT_NEUTRAL + right_off, RIGHT_MIN, RIGHT_MAX)
+    return left_pw, right_pw
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return lo if x < lo else (hi if x > hi else x)
+
+
+def _clamp_pw(pw: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, int(pw)))
+
+
+_legacy_controller = ParafoilBrakeController(ControlConfig())
+
+
+def actuator_mixer(courseRateCmd: float) -> tuple:
+    """Stateless compatibility mixer."""
+    diffBrake = _clamp(ControlConfig().Kp * courseRateCmd, -1.0, 1.0)
+    left_pw, right_pw = _brake_to_pw(diffBrake, 0.0)
+    pulse_offset = diffBrake * _DEFLECT_PW
+    return left_pw, right_pw, 0.0, 0.0, diffBrake, pulse_offset
+
+
+def control(pi, courseRateCmd: float, yawRateMeas: Optional[float] = None):
+    cmd = _legacy_controller.update(courseRateCmd, yawRateMeas, time.time())
+    set_brake_command(pi, cmd)
+    return SimpleNamespace(
+        left_pulse=cmd.left_pw,
+        right_pulse=cmd.right_pw,
+        left_cmd_deg=(cmd.left_pw - LEFT_NEUTRAL) / _DEFLECT_PW * 60.0,
+        right_cmd_deg=(cmd.right_pw - RIGHT_NEUTRAL) / _DEFLECT_PW * 60.0,
+        actual_delta_deg=-cmd.diffBrake * 120.0,
+        expected_yaw_rate=courseRateCmd,
+        diffBrake=cmd.diffBrake,
+        baseBrake=cmd.baseBrake,
+    )
+
+
+# ── pigpio lifecycle ───────────────────────────────────────────────────────────
 def init_control():
-    import pigpio
-    pi = pigpio.pi()
-    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
-    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
+    pigpio_mod = sys.modules.get("pigpio", _pigpio_module)
+    if pigpio_mod is None:
+        return None
+    pi = pigpio_mod.pi()
+    if not pi.connected:
+        return None
+    pi.set_servo_pulsewidth(LEFT_GPIO,  LEFT_NEUTRAL)
+    pi.set_servo_pulsewidth(RIGHT_GPIO, RIGHT_NEUTRAL)
     return pi
 
 
-def terminate_parafoil_motor(pi):
-    if pi is not None:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
-        time.sleep(0.1)
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
-        pi.stop()
-def actuator_mixer(commanded_yaw_rate: float) -> tuple:
-    # cmd_yr > 0 (오른쪽 회전): 두 펄스 모두 중립에서 증가
-    #   LEFT:  팔 위로 → 왼쪽 당김 해제
-    #   RIGHT: 팔 아래로(2500 방향) → 오른쪽 당김
-    pulse_offset = commanded_yaw_rate / 2.0 * K_pulse
-
-    left_raw_pw  = LEFT_NEUTRAL  + pulse_offset
-    right_raw_pw = RIGHT_NEUTRAL + pulse_offset
-
-    left_pulse  = max(PULSE_MIN,       min(LEFT_MAX_PULSE,  int(left_raw_pw)))
-    right_pulse = max(RIGHT_MIN_PULSE, min(PULSE_MAX,       int(right_raw_pw)))
-
-    if DEBUG_CONTROL and (int(left_raw_pw) != left_pulse or int(right_raw_pw) != right_pulse):
-        l_deg = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
-        r_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
-        _dbg(f"[ACTUATOR] CLAMP — L={left_pulse}μs({l_deg:.1f}°) R={right_pulse}μs({r_deg:.1f}°)")
-
-    left_cmd_deg  = (left_pulse  - LEFT_ZERO)  / PULSE_PER_DEG
-    right_cmd_deg = (RIGHT_ZERO  - right_pulse) / PULSE_PER_DEG
-    actual_delta_deg  = right_cmd_deg - left_cmd_deg
-    actual_offset     = ((left_pulse - LEFT_NEUTRAL) + (right_pulse - RIGHT_NEUTRAL)) / 2.0
-    expected_yaw_rate = actual_offset / K_pulse * 2.0
-
-    return left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate
+def set_neutral(pi) -> None:
+    if pi is None:
+        return
+    pi.set_servo_pulsewidth(LEFT_GPIO,  LEFT_NEUTRAL)
+    pi.set_servo_pulsewidth(RIGHT_GPIO, RIGHT_NEUTRAL)
 
 
-def control(pi, commanded_yaw_rate: float) -> types.SimpleNamespace:
-    left_pulse, right_pulse, left_cmd_deg, right_cmd_deg, actual_delta_deg, expected_yaw_rate = \
-        actuator_mixer(commanded_yaw_rate)
-
-    if pi is not None:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pulse)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pulse)
-
-    return types.SimpleNamespace(
-        left_cmd_deg=left_cmd_deg,
-        right_cmd_deg=right_cmd_deg,
-        actual_delta_deg=actual_delta_deg,
-        expected_yaw_rate=expected_yaw_rate,
-        left_pulse=left_pulse,
-        right_pulse=right_pulse
-    )
-def set_neutral(pi):
-    if DEBUG_CONTROL:
-        _dbg(f"[ACTUATOR] SET_NEUTRAL — L_pw={LEFT_NEUTRAL} R_pw={RIGHT_NEUTRAL}")
-    if pi is not None:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_NEUTRAL)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_NEUTRAL)
+def set_motors_off(pi) -> None:
+    if pi is None:
+        return
+    pi.set_servo_pulsewidth(LEFT_GPIO,  0)
+    pi.set_servo_pulsewidth(RIGHT_GPIO, 0)
 
 
-def set_motors_off(pi):
-    """서보 신호 완전 차단 (LANDED state용)"""
-    if DEBUG_CONTROL:
-        _dbg("[ACTUATOR] MOTORS_OFF — pw=0 (signal cut)")
-    if pi is not None:
-        pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
-        pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
+def set_brake_command(pi, cmd: BrakeCommand) -> None:
+    if pi is None:
+        return
+    pi.set_servo_pulsewidth(LEFT_GPIO,  cmd.left_pw)
+    pi.set_servo_pulsewidth(RIGHT_GPIO, cmd.right_pw)
+
+
+def terminate_control(pi) -> None:
+    if pi is None:
+        return
+    set_motors_off(pi)
+    pi.stop()

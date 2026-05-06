@@ -1,43 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir:*)",
-      "Bash(python -m py_compile:*)",
-      "Bash(python test_msgstructure.py:*)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motor_guidance.py''\\).read\\(\\)\\); print\\(''motor_guidance.py: OK''\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motor_control.py''\\).read\\(\\)\\); print\\(''motor_control.py: OK''\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''Sensor_Motor/motorapp.py''\\).read\\(\\)\\); print\\(''motorapp.py: OK''\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''lib/appargs.py''\\).read\\(\\)\\); print\\(''appargs.py: OK''\\)\")",
-      "Bash(python:*)",
-      "Bash(pip install:*)",
-      "Bash(.venv/Scripts/python.exe sim_hifi.py)",
-      "Bash(python3 sim_test.py)",
-      "Bash(.venv/Scripts/python sim_hifi.py)",
-      "Read(//c/workspace/CANSAT_AAS_2026_FSW/**)",
-      "Bash(bash /tmp/count_files.sh)",
-      "Bash(grep -r \"shareddata\\\\|shared_data\\\\|from shared\\\\|import shared\" /c/workspace/CANSAT_AAS_2026_FSW --include=*.py)",
-      "Bash(grep -r \"class.*Vector\\\\|class.*Fidelity\\\\|SimpleNamespace\" /c/workspace/CANSAT_AAS_2026_FSW/Sensor_Motor --include=*.py)",
-      "Read(//c/Users/ms kang/Desktop/**)",
-      "Read(//tmp/**)",
-      "Bash(PYTHONIOENCODING=utf-8 python _physics_analysis.py)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 50 --target-bearing 45 --target-distance 500 --plot)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 200 --init-heading 90)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 300 --init-heading 45)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 56 --target-distance 400 --init-heading 56)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 200 --init-heading 180)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --single --target-bearing 45 --target-distance 700 --init-heading 180)",
-      "Bash(PYTHONIOENCODING=utf-8 python sim_hifi.py --runs 100 --target-bearing 45 --target-distance 350 --init-heading 45)",
-      "mcp__notion__API-retrieve-a-page",
-      "Bash(git stash *)",
-      "Bash(git branch *)",
-      "Bash(git push *)",
-      "Bash(rm .vscode/settings.json)",
-      "Bash(rmdir .vscode)",
-      "WebFetch(domain:faculty.nps.edu)",
       "WebSearch",
+      "WebFetch(domain:faculty.nps.edu)",
       "WebFetch(domain:digitalcommons.georgefox.edu)",
       "WebFetch(domain:arc.aiaa.org)",
-      "WebFetch(domain:www.researchgate.net)"
+      "WebFetch(domain:www.researchgate.net)",
+      "mcp__notion__API-retrieve-a-page",
+      "Read(C:\\Users\\ms kang\\Desktop\\**)"
     ]
   }
 }

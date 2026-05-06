@@ -1,21 +1,38 @@
 #!/usr/bin/env python3
+"""
+Navigation state estimation and L1 guidance for CanSat parafoil FSW.
+
+Architecture:
+  sensor apps → NavigationStateEstimator → L1Guidance → ParafoilBrakeController
+
+Coordinate convention:
+  Local N/E frame.  +N = north, +E = east.
+  course chi:  0 = north, +pi/2 = east, increasing = right turn.
+  crossTrack > 0  →  left of path (A→B direction).
+  Nu > 0  →  latAccDem > 0  →  courseRateCmd > 0  →  right turn.
+"""
 import math
 import os
 import time
-import types
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
+from enum import Enum
+from types import SimpleNamespace
+from typing import Optional, Tuple
 
+# ── Debug log ──────────────────────────────────────────────────────────────────
 _SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
 _sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
+DEBUG_GUIDANCE: bool = os.environ.get("CANSAT_DEBUG_GUIDANCE", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
-def _dbg(line: str):
+def _dbg(line: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
     full = f"[{ts}] {line}"
     try:
         print(full)
     except UnicodeEncodeError:
-        # Windows cp949 / non-utf8 console: drop unencodable glyphs (μ, °, —, …)
         import sys as _sys
         enc = getattr(_sys.stdout, "encoding", None) or "ascii"
         _sys.stdout.write(full.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
@@ -23,581 +40,832 @@ def _dbg(line: str):
     _sim_log.write(full + "\n")
     _sim_log.flush()
 
-# ── Outer-loop 파라미터 ────────────────────────────────────────────
-# tanh 포화 기반 heading error → desired_yaw_rate 변환
-YR_MAX: float            = 45.0   # deg/s  outer-loop 포화 상한
-                                   # actuator 선형 한계 60 deg/s의 75% - PI 과도응답 여유
-CAPTURE_THRESHOLD: float = 45.0   # deg    이 이상이면 capture mode (integral freeze)
-                                   # 소각 track mode와 대각도 capture mode의 경계
-LANDING_YR_MAX: float    = 20.0   # deg/s  저고도 보수 클램프 상한
-LANDING_ALT: float       = 20.0   # m      이 고도 이하에서 LANDING 보수 모드 적용
 
-cascade_pi = types.SimpleNamespace(
-    Kp_inner      = 1.3,   # inner-loop 비례 게인 (yaw rate error → command)
-    Ki_inner      = 0.05,  # 1/s  적분 게인 (steady-state offset 제거)
-    pi_integral   = 0.0,   # °/s·s  적분 누적값
-    MAX_INTEGRAL  = 10.0,  # °/s·s  적분 클램프 (YR_MAX 기준으로 축소)
-                            # 이유: YR_MAX=45이므로 기존 15보다 작아도 충분
-    DEADBAND      = 5.0,   # deg  heading error 불감대
-    MAX_CMD       = 60.0,  # °/s  actuator 유효 선형 한계 (실측 ±60 deg/s)
-    last_cmd      = 0.0,   # °/s  slew limiter용 이전 명령값
-    MAX_ACCEL     = 150.0, # °/s²  slew rate - 200에서 축소하여 급변 추가 억제
-)
+# ── Earth radius ───────────────────────────────────────────────────────────────
+R_E = 6_378_137.0  # m, WGS-84 equatorial radius
 
-target = types.SimpleNamespace(
-    lat  = None,  # Optional[float] - deg, decimal degrees
-    lon  = None,  # Optional[float] - deg, decimal degrees
-)
-start_point = types.SimpleNamespace(
-    lat  = None,  # Optional[float] - deg, decimal degrees
-    lon  = None,  # Optional[float] - deg, decimal degrees
-)
+# ── Freshness thresholds [s] ───────────────────────────────────────────────────
+POS_FRESH_AGE             = 1.0
+POS_PROPAGATE_MAX_AGE     = 2.0
+POS_HARD_STALE_AGE        = 3.0
 
-LAT_TO_METER: float = 111320.0  # m/deg
+MOTION_FRESH_AGE          = 1.0
+MOTION_PROPAGATE_MAX_AGE  = 2.0
+MOTION_HARD_STALE_AGE     = 3.0
 
-L_DISTANCE_BASE: float = 25.0   # m
-L_DISTANCE_HIGH: float = 40.0   # m, 고고도용
-L_DISTANCE_LOW: float  = 15.0   # m, 저고도용
-L_DISTANCE: float      = L_DISTANCE_BASE   # m, L1 추적 거리
+YAW_RATE_FRESH_AGE        = 0.20
+YAW_RATE_PROPAGATE_MAX_AGE= 0.50
+YAW_RATE_HARD_STALE_AGE   = 1.0
 
-PATTERN_ENTRY_DIST: float = 50.0  # m - figure-8 진입 거리
+ALT_FRESH_AGE             = 0.50
+ALT_PROPAGATE_MAX_AGE     = 2.0
+ALT_HARD_STALE_AGE        = 3.0
 
-ALT_HIGH: int = 300  # m
-ALT_LOW: int  = 150  # m
+CONTROL_COMMAND_HOLD_MAX_AGE = 0.3
+ACCEL_PROPAGATE_MAX_AGE   = 0.5  # max bridging time via accelerometer
 
-wind_effect: Optional[float] = None  # deg, 풍향 보정값
-last_time: Optional[float]   = None  # s, time.time() epoch
 
-# Verbose [CTRL] / file log every guidance tick — off by default (floods console + syncs _sim_log).
-# Enable for bench debug: set env CANSAT_DEBUG_GUIDANCE=1
-DEBUG_GUIDANCE: bool = os.environ.get("CANSAT_DEBUG_GUIDANCE", "").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
+# ── Enums ──────────────────────────────────────────────────────────────────────
+class FieldStatus(Enum):
+    FRESH        = "FRESH"
+    PROPAGATABLE = "PROPAGATABLE"
+    HARD_STALE   = "HARD_STALE"
+    MISSING      = "MISSING"
 
-_pattern = types.SimpleNamespace(
-    lobe_sign       = 1,    # int   - +1 또는 -1
-    last_switch_time = 0.0, # s, time.time() epoch
-    LOBE_PERIOD     = 25.0, # s
-    RADIUS          = 25.0, # m
-)
 
-# GPS 순간 이동 감지용 상태
-_prev_gps = types.SimpleNamespace(
-    lat         = None,   # Optional[float] - deg
-    lon         = None,   # Optional[float] - deg
-    time        = None,   # Optional[float] - s, epoch
-    initialized = False,  # bool
-)
-GPS_JUMP_MAX_SPEED: float = 200.0        # m/s
-GPS_STABLE_COUNT_REQUIRED: int = 2      # 샘플 수
-_gps_stable_count: int = 0
+class GuidanceMode(Enum):
+    ACTIVE   = "ACTIVE"
+    DEGRADED = "DEGRADED"
+    DISABLED = "DISABLED"
 
-TARGET_REACHED_RADIUS: float = 10.0    # m, 목표 도달 판정 반경
-PATTERN_ALT_MIN: float       = 10.0   # m, 패턴 비행 진입 최소 고도
-PATTERN_ALT_MAX: float       = 50.0   # m, 패턴 비행 진입 최대 고도
-WIND_LEARN_MIN_SPEED: float  = 2.5    # m/s, wind 학습 최소 GPS 속도
-WIND_EMA_ALPHA: float        = 0.15   # wind EMA 학습률 (0=고정, 1=즉시 반영)
-WIND_MAX_DEG: float          = 45.0   # deg, wind_effect 최대 보정각
-DT_MIN: float = 0.02                  # s, guidance dt 하한
-DT_MAX: float = 0.5                   # s, guidance dt 상한
 
-def init_guidance():
-    global wind_effect, last_time, L_DISTANCE, _gps_stable_count
-    wind_effect = 0.0
-    L_DISTANCE = L_DISTANCE_BASE
-    cascade_pi.pi_integral = 0.0
-    cascade_pi.last_cmd = 0.0  # Slew Rate 초기화 추가
-    last_time = time.time()
-    _pattern.lobe_sign = 1
-    _pattern.last_switch_time = time.time()
-    _prev_gps.lat         = None
-    _prev_gps.lon         = None
-    _prev_gps.time        = None
-    _prev_gps.initialized = False
-    _gps_stable_count = 0
+# ── Data classes ───────────────────────────────────────────────────────────────
+@dataclass
+class _FieldRecord:
+    value: float
+    ts: float
+
+
+@dataclass
+class EstimatedState:
+    """Best-estimate navigation state produced by NavigationStateEstimator."""
+    timestamp: float
+
+    # Position in local N/E [m]
+    pos_N: Optional[float] = None
+    pos_E: Optional[float] = None
+    pos_status: FieldStatus = FieldStatus.MISSING
+
+    # Ground-track motion
+    vel_N:       Optional[float] = None   # m/s
+    vel_E:       Optional[float] = None   # m/s
+    course:      Optional[float] = None   # rad, chi
+    groundSpeed: Optional[float] = None   # m/s
+    motion_status: FieldStatus = FieldStatus.MISSING
+
+    # Yaw rate from gz [rad/s]
+    gyrz: Optional[float] = None
+    yaw_rate_status: FieldStatus = FieldStatus.MISSING
+
+    # Barometer altitude [m]
+    altitude: Optional[float] = None
+    alt_status: FieldStatus = FieldStatus.MISSING
+
+    # IMU attitude — for propagation and logging, not L1 core input
+    roll:  Optional[float] = None  # deg
+    pitch: Optional[float] = None  # deg
+    yaw:   Optional[float] = None  # deg
+
+    # Tilt rate derived from gx, gy [deg/s]
+    tilt_rate: Optional[float] = None
+
+    guidance_mode: GuidanceMode = GuidanceMode.DISABLED
+    reason: str = ""
+
+
+@dataclass
+class GuidanceOutput:
+    """Output of L1Guidance.update()."""
+    timestamp:    float
+    active:       bool  = False
+    degraded:     bool  = False
+    latAccDem:    float = 0.0   # m/s²
+    courseRateCmd:float = 0.0   # rad/s, + = right turn
+    Nu1:          float = 0.0   # rad
+    Nu2:          float = 0.0   # rad
+    Nu:           float = 0.0   # rad
+    crossTrack:   float = 0.0   # m, + = left of path
+    alongTrack:   float = 0.0   # m
+    L1_dist:      float = 0.0   # m
+    groundSpeed:  float = 0.0   # m/s
+    reason:       str   = ""
+
+
+@dataclass
+class L1Config:
+    """Tunable L1 guidance parameters — all adjustable at runtime."""
+    damping:         float = 0.75
+    period:          float = 8.0   # s
+    L1_MIN:          float = 5.0   # m
+    V_MIN:           float = 2.0   # m/s
+    LAT_ACC_MAX:     float = 4.0   # m/s²
+    COURSE_RATE_MAX: float = 0.6   # rad/s
+
+
+# ── NavigationStateEstimator ───────────────────────────────────────────────────
+class NavigationStateEstimator:
+    """
+    Receives sensor fields from message handlers, tracks their age, and
+    produces the best EstimatedState for guidance.
+
+    This is field-availability and data-age management.
+    It is NOT a sensor reliability checker — raw sensor validity is the
+    responsibility of sensorapps.  posHealth / motionHealth are the only
+    availability flags honoured here.
+    """
+
+    def __init__(self) -> None:
+        # GNSS
+        self._lat:         Optional[_FieldRecord] = None
+        self._lon:         Optional[_FieldRecord] = None
+        self._course:      Optional[_FieldRecord] = None   # rad
+        self._groundSpeed: Optional[_FieldRecord] = None   # m/s
+
+        # IMU
+        self._roll:  Optional[_FieldRecord] = None  # deg
+        self._pitch: Optional[_FieldRecord] = None  # deg
+        self._yaw:   Optional[_FieldRecord] = None  # deg
+        self._ax:    Optional[_FieldRecord] = None  # m/s²
+        self._ay:    Optional[_FieldRecord] = None  # m/s²
+        self._az:    Optional[_FieldRecord] = None  # m/s²
+        self._gx:    Optional[_FieldRecord] = None  # deg/s
+        self._gy:    Optional[_FieldRecord] = None  # deg/s
+        self._gz:    Optional[_FieldRecord] = None  # deg/s
+
+        # Baro
+        self._altitude: Optional[_FieldRecord] = None  # m
+
+        # Local N/E coordinate origin (locked on first fresh GNSS position)
+        self._origin_lat: Optional[float] = None
+        self._origin_lon: Optional[float] = None
+
+        # Previous position for course-from-history estimation
+        self._prev_pos_N:  Optional[float] = None
+        self._prev_pos_E:  Optional[float] = None
+        self._prev_pos_ts: Optional[float] = None
+
+    # ── Public update methods ──────────────────────────────────────────────────
+
+    def update_gnss(
+        self,
+        lat:         Optional[float],
+        lon:         Optional[float],
+        course_rad:  Optional[float],
+        groundSpeed: Optional[float],
+        posHealth:   bool,
+        motionHealth: bool,
+        ts: float,
+    ) -> None:
+        if posHealth and lat is not None and lon is not None:
+            self._lat = _FieldRecord(lat, ts)
+            self._lon = _FieldRecord(lon, ts)
+            if self._origin_lat is None:
+                self._origin_lat = lat
+                self._origin_lon = lon
+        if motionHealth:
+            if course_rad is not None:
+                self._course = _FieldRecord(course_rad, ts)
+            if groundSpeed is not None:
+                self._groundSpeed = _FieldRecord(groundSpeed, ts)
+
+    def update_imu(
+        self,
+        roll:  Optional[float] = None,
+        pitch: Optional[float] = None,
+        yaw:   Optional[float] = None,
+        ax:    Optional[float] = None,
+        ay:    Optional[float] = None,
+        az:    Optional[float] = None,
+        gx:    Optional[float] = None,
+        gy:    Optional[float] = None,
+        gz:    Optional[float] = None,
+        ts:    float = 0.0,
+    ) -> None:
+        def _set(rec: Optional[_FieldRecord], v: Optional[float]) -> Optional[_FieldRecord]:
+            return _FieldRecord(v, ts) if v is not None else rec
+
+        self._roll  = _set(self._roll,  roll)
+        self._pitch = _set(self._pitch, pitch)
+        self._yaw   = _set(self._yaw,   yaw)
+        self._ax    = _set(self._ax,    ax)
+        self._ay    = _set(self._ay,    ay)
+        self._az    = _set(self._az,    az)
+        self._gx    = _set(self._gx,    gx)
+        self._gy    = _set(self._gy,    gy)
+        self._gz    = _set(self._gz,    gz)
+
+    def update_baro(self, altitude: float, ts: float) -> None:
+        self._altitude = _FieldRecord(altitude, ts)
+
+    def set_origin(self, lat: float, lon: float) -> None:
+        """Manually override the local N/E coordinate origin."""
+        self._origin_lat = lat
+        self._origin_lon = lon
+        self._prev_pos_N = None
+        self._prev_pos_E = None
+        self._prev_pos_ts = None
+
+    def reset_origin(self) -> None:
+        self._origin_lat = None
+        self._origin_lon = None
+        self._prev_pos_N = None
+        self._prev_pos_E = None
+        self._prev_pos_ts = None
+
+    @property
+    def origin_lat(self) -> Optional[float]:
+        return self._origin_lat
+
+    @property
+    def origin_lon(self) -> Optional[float]:
+        return self._origin_lon
+
+    # ── Primary query ─────────────────────────────────────────────────────────
+
+    def estimate(self, now: float) -> EstimatedState:
+        """
+        Build the best EstimatedState at time `now`.
+        Input combination cases A–L are dispatched by the fill methods.
+        """
+        state = EstimatedState(timestamp=now)
+        self._fill_position(state, now)
+        self._fill_motion(state, now)
+        self._fill_yaw_rate(state, now)
+        self._fill_altitude(state, now)
+        self._fill_attitude(state)
+        self._fill_tilt_rate(state)
+        self._classify_guidance_mode(state)
+        return state
+
+    # ── Private fill methods (Section 7 skeleton) ─────────────────────────────
+
+    def _fill_position(self, state: EstimatedState, now: float) -> None:
+        """Cases A/B/C/D/E/H/I/K: resolve pos_N, pos_E."""
+        lat_rec = self._lat
+        lon_rec = self._lon
+
+        if lat_rec is None or lon_rec is None or self._origin_lat is None:
+            state.pos_status = FieldStatus.MISSING
+            return
+
+        pos_age = now - max(lat_rec.ts, lon_rec.ts)
+
+        if pos_age <= POS_FRESH_AGE:
+            # Cases A/B/C/H/I — fresh GNSS position
+            pos_N, pos_E = _ll_to_ne(
+                lat_rec.value, lon_rec.value,
+                self._origin_lat, self._origin_lon,
+            )
+            state.pos_N, state.pos_E = pos_N, pos_E
+            state.pos_status = FieldStatus.FRESH
+            self._prev_pos_N  = pos_N
+            self._prev_pos_E  = pos_E
+            self._prev_pos_ts = now
+
+        elif pos_age <= POS_PROPAGATE_MAX_AGE:
+            # Case E skeleton: velocity-based propagation placeholder
+            # Case K skeleton: accel-based bridging (≤ ACCEL_PROPAGATE_MAX_AGE) placeholder
+            state.pos_N, state.pos_E = _ll_to_ne(
+                lat_rec.value, lon_rec.value,
+                self._origin_lat, self._origin_lon,
+            )
+            state.pos_status = FieldStatus.PROPAGATABLE
+
+        else:
+            state.pos_status = FieldStatus.HARD_STALE
+
+    def _fill_motion(self, state: EstimatedState, now: float) -> None:
+        """Cases A/B/C/D/E/H/I/J: resolve course, groundSpeed, vel_N, vel_E."""
+        c_rec  = self._course
+        gs_rec = self._groundSpeed
+
+        def _age(r: Optional[_FieldRecord]) -> float:
+            return (now - r.ts) if r is not None else float("inf")
+
+        c_age  = _age(c_rec)
+        gs_age = _age(gs_rec)
+
+        if c_rec is None and gs_rec is None:
+            # Case D/F/G/J skeleton: no motion data at all
+            state.motion_status = FieldStatus.MISSING
+            return
+
+        if c_age <= MOTION_FRESH_AGE and gs_age <= MOTION_FRESH_AGE:
+            # Cases A/B/C — full fresh motion
+            state.course      = c_rec.value
+            state.groundSpeed = gs_rec.value
+            state.vel_N = gs_rec.value * math.cos(c_rec.value)
+            state.vel_E = gs_rec.value * math.sin(c_rec.value)
+            state.motion_status = FieldStatus.FRESH
+
+        elif c_age <= MOTION_PROPAGATE_MAX_AGE and gs_age <= MOTION_PROPAGATE_MAX_AGE:
+            # Cases D/E skeleton: propagatable stale motion
+            state.course      = c_rec.value
+            state.groundSpeed = gs_rec.value
+            state.vel_N = gs_rec.value * math.cos(c_rec.value)
+            state.vel_E = gs_rec.value * math.sin(c_rec.value)
+            state.motion_status = FieldStatus.PROPAGATABLE
+
+        elif c_rec is None and gs_rec is not None and gs_age <= MOTION_PROPAGATE_MAX_AGE:
+            # Case I skeleton: groundSpeed present, course missing
+            # Try course from position history if available
+            course_est = self._course_from_history()
+            if course_est is not None:
+                state.course      = course_est
+                state.groundSpeed = gs_rec.value
+                state.vel_N = gs_rec.value * math.cos(course_est)
+                state.vel_E = gs_rec.value * math.sin(course_est)
+                state.motion_status = FieldStatus.PROPAGATABLE
+            else:
+                state.motion_status = FieldStatus.MISSING
+
+        elif c_rec is not None and c_age <= MOTION_PROPAGATE_MAX_AGE and gs_rec is None:
+            # Case H skeleton: course present, groundSpeed missing
+            state.motion_status = FieldStatus.MISSING
+
+        else:
+            state.motion_status = FieldStatus.HARD_STALE
+
+    def _fill_yaw_rate(self, state: EstimatedState, now: float) -> None:
+        """Cases B/C/F/J: gz → gyrz [rad/s]."""
+        gz_rec = self._gz
+        if gz_rec is None:
+            state.yaw_rate_status = FieldStatus.MISSING
+            return
+        age = now - gz_rec.ts
+        if age <= YAW_RATE_FRESH_AGE:
+            state.gyrz            = math.radians(gz_rec.value)
+            state.yaw_rate_status = FieldStatus.FRESH
+        elif age <= YAW_RATE_PROPAGATE_MAX_AGE:
+            state.gyrz            = math.radians(gz_rec.value)
+            state.yaw_rate_status = FieldStatus.PROPAGATABLE
+        else:
+            state.yaw_rate_status = FieldStatus.HARD_STALE
+
+    def _fill_altitude(self, state: EstimatedState, now: float) -> None:
+        """Cases C/G: barometer altitude."""
+        alt_rec = self._altitude
+        if alt_rec is None:
+            state.alt_status = FieldStatus.MISSING
+            return
+        age = now - alt_rec.ts
+        if age <= ALT_FRESH_AGE:
+            state.altitude   = alt_rec.value
+            state.alt_status = FieldStatus.FRESH
+        elif age <= ALT_PROPAGATE_MAX_AGE:
+            state.altitude   = alt_rec.value
+            state.alt_status = FieldStatus.PROPAGATABLE
+        else:
+            state.alt_status = FieldStatus.HARD_STALE
+
+    def _fill_attitude(self, state: EstimatedState) -> None:
+        if self._roll  is not None: state.roll  = self._roll.value
+        if self._pitch is not None: state.pitch = self._pitch.value
+        if self._yaw   is not None: state.yaw   = self._yaw.value
+
+    def _fill_tilt_rate(self, state: EstimatedState) -> None:
+        """Case L: tilt rate from gx, gy for payload oscillation detection."""
+        if self._gx is not None and self._gy is not None:
+            state.tilt_rate = math.hypot(self._gx.value, self._gy.value)
+
+    def _classify_guidance_mode(self, state: EstimatedState) -> None:
+        pos_ok    = state.pos_status    in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        motion_ok = state.motion_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+
+        if not pos_ok and not motion_ok:
+            state.guidance_mode = GuidanceMode.DISABLED
+            state.reason        = "pos+motion unavailable"
+        elif not pos_ok:
+            state.guidance_mode = GuidanceMode.DISABLED
+            state.reason        = "position unavailable"
+        elif not motion_ok:
+            state.guidance_mode = GuidanceMode.DISABLED
+            state.reason        = "motion unavailable"
+        elif (state.pos_status    == FieldStatus.PROPAGATABLE
+              or state.motion_status == FieldStatus.PROPAGATABLE):
+            state.guidance_mode = GuidanceMode.DEGRADED
+            state.reason        = "propagated data in use"
+        else:
+            state.guidance_mode = GuidanceMode.ACTIVE
+            state.reason        = ""
+
+    def _course_from_history(self) -> Optional[float]:
+        """Estimate course [rad] from last two cached positions."""
+        if (self._prev_pos_N is None or self._lat is None
+                or self._origin_lat is None):
+            return None
+        cur_N, cur_E = _ll_to_ne(
+            self._lat.value, self._lon.value,
+            self._origin_lat, self._origin_lon,
+        )
+        dN = cur_N - self._prev_pos_N
+        dE = cur_E - self._prev_pos_E
+        if math.hypot(dN, dE) < 0.5:
+            return None
+        return math.atan2(dE, dN)
+
+
+# ── L1Guidance ─────────────────────────────────────────────────────────────────
+class L1Guidance:
+    """
+    Port of ArduPilot AP_L1_Control::update_waypoint() for parafoil.
+
+    Outputs courseRateCmd [rad/s] instead of bank angle.
+    Positive courseRateCmd = right turn (chi increases).
+
+    Nu = Nu1 + Nu2
+      Nu1 = cross-track capture angle  (asin(crossTrack / L1_dist))
+      Nu2 = velocity-track angle       (atan2(xtrackVel, ltrackVel))
+    """
+
+    def __init__(self, config: Optional[L1Config] = None) -> None:
+        self.cfg = config or L1Config()
+        self._target_N: Optional[float] = None
+        self._target_E: Optional[float] = None
+        self._start_N:  Optional[float] = None
+        self._start_E:  Optional[float] = None
+        self._start_locked: bool  = False
+        self._last_Nu:  float     = 0.0   # for _prevent_indecision
+
+    def set_target(self, target_N: float, target_E: float) -> None:
+        self._target_N = target_N
+        self._target_E = target_E
+
+    def set_start(self, start_N: float, start_E: float) -> None:
+        self._start_N      = start_N
+        self._start_E      = start_E
+        self._start_locked = True
+
+    def reset(self) -> None:
+        self._start_locked = False
+        self._start_N      = None
+        self._start_E      = None
+        self._last_Nu      = 0.0
+
+    def update(self, state: EstimatedState, now: float) -> GuidanceOutput:
+        out = GuidanceOutput(timestamp=now)
+
+        # ── Preconditions ────────────────────────────────────────────────────
+        if self._target_N is None or self._target_E is None:
+            out.reason = "no target"
+            return out
+
+        if state.guidance_mode == GuidanceMode.DISABLED:
+            out.reason = state.reason
+            return out
+
+        pos_N = state.pos_N
+        pos_E = state.pos_E
+        if pos_N is None or pos_E is None:
+            out.reason = "position missing"
+            return out
+
+        # ── Lock start point on first active position ────────────────────────
+        if not self._start_locked:
+            self._start_N      = pos_N
+            self._start_E      = pos_E
+            self._start_locked = True
+
+        # ── Path geometry (A → B) ─────────────────────────────────────────────
+        A_N, A_E = self._start_N,  self._start_E
+        B_N, B_E = self._target_N, self._target_E
+
+        AB_N   = B_N - A_N
+        AB_E   = B_E - A_E
+        AB_len = math.hypot(AB_N, AB_E)
+
+        if AB_len < 1.0:
+            out.reason = "start ≈ target"
+            return out
+
+        e_N = AB_N / AB_len
+        e_E = AB_E / AB_len
+
+        # ── AP = current position relative to A ──────────────────────────────
+        AP_N = pos_N - A_N
+        AP_E = pos_E - A_E
+
+        alongTrack = AP_N * e_N + AP_E * e_E   # projection onto AB
+        crossTrack = AP_N * e_E - AP_E * e_N   # + = left of path
+
+        # ── Velocity ─────────────────────────────────────────────────────────
+        gs     = state.groundSpeed or 0.0
+        course = state.course      or 0.0
+        vel_N  = gs * math.cos(course)
+        vel_E  = gs * math.sin(course)
+
+        ltrackVel = vel_N * e_N + vel_E * e_E   # along-path velocity
+        xtrackVel = vel_N * e_E - vel_E * e_N   # cross-path velocity, + = left
+
+        # ── L1 distance ───────────────────────────────────────────────────────
+        gs_for_l1 = max(gs, self.cfg.V_MIN)
+        L1_dist   = max(
+            self.cfg.damping * self.cfg.period / math.pi * gs_for_l1,
+            self.cfg.L1_MIN,
+        )
+
+        # ── Nu1: cross-track capture ──────────────────────────────────────────
+        sine_Nu1 = _clamp(crossTrack / L1_dist, -0.7071, 0.7071)
+        Nu1      = math.asin(sine_Nu1)
+
+        # ── Nu2: velocity-track alignment ─────────────────────────────────────
+        vel_mag = math.hypot(ltrackVel, xtrackVel)
+        Nu2     = math.atan2(xtrackVel, ltrackVel) if vel_mag >= 0.01 else 0.0
+
+        # ── Total L1 angle ────────────────────────────────────────────────────
+        target_bearing = math.atan2(B_E - pos_E, B_N - pos_N)
+        Nu = self._prevent_indecision(Nu1 + Nu2, target_bearing, course)
+        Nu = _clamp(Nu, -math.pi / 2.0, math.pi / 2.0)
+
+        # ── K_L1 = 4 * damping² ──────────────────────────────────────────────
+        K_L1 = 4.0 * self.cfg.damping ** 2
+
+        # ── Lateral acceleration demand ───────────────────────────────────────
+        latAccDem = _clamp(
+            K_L1 * (gs ** 2) / L1_dist * math.sin(Nu),
+            -self.cfg.LAT_ACC_MAX, self.cfg.LAT_ACC_MAX,
+        )
+
+        # ── Course rate command ───────────────────────────────────────────────
+        courseRateCmd = _clamp(
+            latAccDem / max(gs, self.cfg.V_MIN),
+            -self.cfg.COURSE_RATE_MAX, self.cfg.COURSE_RATE_MAX,
+        )
+
+        out.active        = True
+        out.degraded      = (state.guidance_mode == GuidanceMode.DEGRADED)
+        out.latAccDem     = latAccDem
+        out.courseRateCmd = courseRateCmd
+        out.Nu1           = Nu1
+        out.Nu2           = Nu2
+        out.Nu            = Nu
+        out.crossTrack    = crossTrack
+        out.alongTrack    = alongTrack
+        out.L1_dist       = L1_dist
+        out.groundSpeed   = gs
+
+        if DEBUG_GUIDANCE:
+            _dbg(
+                f"[L1] active={out.active} degraded={out.degraded} "
+                f"Nu1={math.degrees(Nu1):.1f}° Nu2={math.degrees(Nu2):.1f}° "
+                f"Nu={math.degrees(Nu):.1f}° xtrack={crossTrack:.1f}m "
+                f"atrack={alongTrack:.1f}m L1={L1_dist:.1f}m "
+                f"gs={gs:.1f}m/s latAcc={latAccDem:.3f}m/s² "
+                f"crCmd={math.degrees(courseRateCmd):.2f}°/s"
+            )
+
+        return out
+
+    def _prevent_indecision(
+        self,
+        Nu: float,
+        target_bearing: Optional[float] = None,
+        course: Optional[float] = None,
+    ) -> float:
+        """
+        Hold turn direction when target is nearly behind vehicle (|Nu| > 150°).
+        Prevents L/R oscillation when pointing away from target.
+        Mirrors ArduPilot AP_L1_Control::_prevent_indecision().
+        """
+        THRESHOLD = 0.9 * math.pi
+        pointing_away = True
+        if target_bearing is not None and course is not None:
+            pointing_away = abs(_wrap_pi(target_bearing - course)) > math.radians(120.0)
+        if (abs(Nu) > THRESHOLD
+                and abs(self._last_Nu) > THRESHOLD
+                and pointing_away
+                and Nu * self._last_Nu < 0.0):
+            Nu = self._last_Nu
+        self._last_Nu = Nu
+        return Nu
+
+
+# ── Utilities ──────────────────────────────────────────────────────────────────
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return lo if x < lo else (hi if x > hi else x)
+
+
+def _wrap_pi(a: float) -> float:
+    """Wrap angle to (-pi, +pi]."""
+    return (a + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _ll_to_ne(lat: float, lon: float,
+              lat0: float, lon0: float) -> Tuple[float, float]:
+    """
+    Lat/lon [deg] → local North/East [m] relative to origin (lat0, lon0).
+    Flat-earth approximation, valid for small areas (< ~50 km).
+    """
+    N = (lat  - lat0)  * math.pi / 180.0 * R_E
+    E = (lon  - lon0)  * math.pi / 180.0 * R_E * math.cos(math.radians(lat0))
+    return N, E
+
+
+def ne_to_ll(N: float, E: float,
+             lat0: float, lon0: float) -> Tuple[float, float]:
+    """Inverse of _ll_to_ne — local N/E [m] → lat/lon [deg]."""
+    lat = lat0 + N / (math.pi / 180.0 * R_E)
+    lon_scale = math.pi / 180.0 * R_E * math.cos(math.radians(lat0))
+    lon = lon0 + (E / lon_scale if abs(lon_scale) > 1e-6 else 0.0)
+    return lat, lon
+
+
+# Legacy facade ---------------------------------------------------------------
+#
+# The new runtime uses NavigationStateEstimator and L1Guidance directly.  These
+# wrappers keep replay tools and older unit tests callable while they migrate to
+# the class-based API.
+
+GPS_JUMP_MAX_SPEED = 200.0          # m/s
+GPS_STABLE_COUNT_REQUIRED = 2
+LANDING_YR_MAX = 0.25               # rad/s
+
+
+@dataclass(init=False)
+class GpsVector:
+    lat: float
+    lon: float
+    velocity: float                 # m/s
+    direction: float                # deg, legacy course
+
+    def __init__(self, lat: float, lon: float, a: float = 0.0, b: float = 0.0, **kwargs) -> None:
+        self.lat = lat
+        self.lon = lon
+        if "speed" in kwargs or "course" in kwargs:
+            self.velocity = float(kwargs.get("speed", a))
+            self.direction = float(kwargs.get("course", b))
+        elif abs(float(a)) <= 80.0 and abs(float(b)) > 80.0:
+            self.velocity = float(a)
+            self.direction = float(b)
+        else:
+            self.direction = float(a)
+            self.velocity = float(b)
+
+
+@dataclass
+class GpsFidelity:
+    fix_quality: int = 1
+    sats: int = 4
+    rmc_status: str = "A"
+    gps_health: int = 1
+    pos_health: int = 1
+    motion_health: int = 1
+
+
+@dataclass
+class GuidanceResult:
+    state: str
+    distance: float = 0.0
+    commanded_yaw_rate: float = 0.0
+    desired_yaw_rate: float = 0.0
+    crosstrack_error: float = 0.0
+    along_track: float = 0.0
+    heading_error: float = 0.0
+
+
+@dataclass
+class _GpsJumpState:
+    initialized: bool = False
+    lat: float = 0.0
+    lon: float = 0.0
+    time: float = 0.0
+
+
+start_point = SimpleNamespace(lat=None, lon=None)
+target_coord = SimpleNamespace(lat=None, lon=None)
+_prev_gps = _GpsJumpState()
+_gps_stable_count = 0
+_legacy_estimator = NavigationStateEstimator()
+_legacy_guidance = L1Guidance(L1Config())
+cascade_pi = SimpleNamespace(MAX_CMD=L1Config().COURSE_RATE_MAX)
+
+
+def init_guidance() -> None:
+    global _prev_gps, _gps_stable_count, _legacy_estimator, _legacy_guidance
     start_point.lat = None
     start_point.lon = None
-
-def reset_control() -> None:
-    global wind_effect, last_time, _gps_stable_count
-    wind_effect = 0.0
-    cascade_pi.pi_integral = 0.0
-    cascade_pi.last_cmd = 0.0  # Slew Rate 초기화 추가
-    last_time = time.time()
+    target_coord.lat = None
+    target_coord.lon = None
+    _prev_gps = _GpsJumpState()
     _gps_stable_count = 0
-    _prev_gps.lat = None
-    _prev_gps.lon = None
-    _prev_gps.time = None
-    _prev_gps.initialized = False
+    _legacy_estimator = NavigationStateEstimator()
+    _legacy_guidance = L1Guidance(L1Config())
 
 
-def _wrap_180(a: float) -> float:
-    return (a + 180.0) % 360.0 - 180.0
+def set_start_coordinates(lat: float, lon: float) -> None:
+    start_point.lat = lat
+    start_point.lon = lon
+    _legacy_estimator.set_origin(lat, lon)
+    _legacy_guidance.set_start(0.0, 0.0)
 
 
-def is_gps_valid(gps_vector, gps_fidelity) -> bool:
-    if hasattr(gps_fidelity, "pos_health"):
-        return (
-            gps_vector.lat is not None
-            and gps_vector.lon is not None
-            and gps_vector.lat != 0.0
-            and gps_vector.lon != 0.0
-            and abs(gps_vector.lat) <= 90.0
-            and abs(gps_vector.lon) <= 180.0
-            and int(gps_fidelity.pos_health) > 0
-        )
-    if (gps_vector.lat is None or gps_vector.lon is None
-            or gps_fidelity.fix_quality is None
-            or gps_fidelity.sats is None
-            or gps_fidelity.rmc_status is None):
+def set_target_coord(lat: float, lon: float) -> None:
+    target_coord.lat = lat
+    target_coord.lon = lon
+    if start_point.lat is not None and start_point.lon is not None:
+        tgt_N, tgt_E = _ll_to_ne(lat, lon, start_point.lat, start_point.lon)
+        _legacy_guidance.set_target(tgt_N, tgt_E)
+
+
+def is_gps_valid(gps, gps_fidelity) -> bool:
+    try:
+        lat = float(gps.lat)
+        lon = float(gps.lon)
+    except (TypeError, ValueError, AttributeError):
         return False
-    coord_ok = (gps_vector.lat != 0.0
-                and gps_vector.lon != 0.0
-                and abs(gps_vector.lat) <= 90.0
-                and abs(gps_vector.lon) <= 180.0)
-    fidelity_ok = (gps_fidelity.fix_quality >= 1
-                   and gps_fidelity.sats >= 4
-                   and gps_fidelity.rmc_status == "A")
-    return coord_ok and fidelity_ok
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return False
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
 
+    pos_health = getattr(gps_fidelity, "pos_health", None)
+    motion_health = getattr(gps_fidelity, "motion_health", None)
+    if pos_health is not None or motion_health is not None:
+        return bool(pos_health) and bool(motion_health)
 
-def _gps_velocity(gps_vector) -> float:
-    return float(getattr(gps_vector, "velocity", getattr(gps_vector, "speed", 0.0)))
-
-
-def _gps_direction(gps_vector) -> float:
-    return float(getattr(gps_vector, "direction", getattr(gps_vector, "course", 0.0)))
+    fix_quality = int(getattr(gps_fidelity, "fix_quality", 0))
+    sats = int(getattr(gps_fidelity, "sats", 0))
+    rmc_status = str(getattr(gps_fidelity, "rmc_status", "V")).upper()
+    gps_health = int(getattr(gps_fidelity, "gps_health", 1))
+    return fix_quality >= 1 and sats >= 4 and rmc_status == "A" and gps_health >= 1
 
 
 def is_gps_jump(lat: float, lon: float) -> bool:
-    """
-    Fix 직후 불안정 샘플 거부 + 비현실적 순간 이동 거부.
-    True를 반환하면 이번 좌표를 사용하지 않아야 함.
-    """
     global _gps_stable_count
-
     now = time.time()
-
     if not _prev_gps.initialized:
-        _prev_gps.lat = lat
-        _prev_gps.lon = lon
-        _prev_gps.time = now
         _prev_gps.initialized = True
-        _gps_stable_count = 1
-        return True  # 첫 Fix는 사용하지 않음
-
-    # Fix 직후 안정화 대기
-    if _gps_stable_count < GPS_STABLE_COUNT_REQUIRED:
-        _gps_stable_count += 1
         _prev_gps.lat = lat
         _prev_gps.lon = lon
         _prev_gps.time = now
+        return False
+
+    dt = max(now - _prev_gps.time, 1e-3)
+    dN, dE = _ll_to_ne(lat, lon, _prev_gps.lat, _prev_gps.lon)
+    jump = math.hypot(dN, dE) / dt > GPS_JUMP_MAX_SPEED
+    if jump:
+        _gps_stable_count = 0
         return True
-
-    dt = now - _prev_gps.time
-    if dt < 0.01:
-        dt = 0.01
-
-    dist = calculate_distance_haversine(_prev_gps.lat, _prev_gps.lon, lat, lon)
-    speed = dist / dt
 
     _prev_gps.lat = lat
     _prev_gps.lon = lon
     _prev_gps.time = now
-
-    if speed > GPS_JUMP_MAX_SPEED:
-        _gps_stable_count = 0  # 점프 발생 → 안정화 카운터 리셋
-        return True
-
+    _gps_stable_count += 1
     return False
 
 
-def calculate_distance_haversine(lat1: float, lon1: float,
-                                 lat2: float, lon2: float) -> float:
-    R = 6371000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = math.radians(lat2 - lat1)
-    d_lambda = math.radians(lon2 - lon1)
-    a = (math.sin(d_phi / 2.0) ** 2
-         + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2.0) ** 2)
-    return R * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
-
-
-def _llh_to_en(lat: float, lon: float) -> tuple:
-    """위도/경도 → start_point 기준 East/North (m) 변환."""
-    if start_point.lat is None or start_point.lon is None:
-        return 0.0, 0.0
-    N = (lat - start_point.lat) * LAT_TO_METER
-    E = (lon - start_point.lon) * LAT_TO_METER * math.cos(math.radians(start_point.lat))
-    return E, N
-
-
-def _en_to_ll(E: float, N: float) -> tuple:
-    """start_point 기준 EN(m) → 위도/경도 변환."""
-    if start_point.lat is None or start_point.lon is None:
-        return float("nan"), float("nan")
-    lat = start_point.lat + (N / LAT_TO_METER)
-    lon_scale = LAT_TO_METER * math.cos(math.radians(start_point.lat))
-    if abs(lon_scale) < 1e-6:
-        lon = start_point.lon
-    else:
-        lon = start_point.lon + (E / lon_scale)
-    return lat, lon
-
-
-def _carrot(my_E: float, my_N: float,
-            tgt_E: float, tgt_N: float) -> tuple:
-    """
-    L1 경로추적: start_point(원점) → target 기준선 위에서
-    차량 투영점 기준 L_DISTANCE 전방에 carrot 배치.
-    """
-    # 기준선 방향 단위벡터 (원점 = start_point = EN 원점)
-    line_len = math.hypot(tgt_E, tgt_N)
-    if line_len < 0.01:
-        return tgt_E, tgt_N
-    uE = tgt_E / line_len
-    uN = tgt_N / line_len
-
-    # 차량의 기준선 위 투영 거리
-    s = my_E * uE + my_N * uN
-
-    # carrot = 투영점에서 L_DISTANCE 전방, [origin, target] 범위로 클램프
-    # max(0.0,...): 기체가 start_point 뒤에 있을 때 carrot이 역방향으로 배치되는 것 방지
-    s_carrot = max(0.0, min(s + L_DISTANCE, line_len))
-    if s < 0.0 and DEBUG_GUIDANCE:
-        _dbg(f"[CARROT] vehicle behind origin: s={s:.1f}m -> clamped to {s_carrot:.1f}m")
-    return s_carrot * uE, s_carrot * uN
-
-
-def _eight(my_E: float, my_N: float,
-                         tgt_E: float, tgt_N: float) -> tuple:
-    now = time.time()
-
-    if now - _pattern.last_switch_time > _pattern.LOBE_PERIOD:
-        _pattern.lobe_sign *= -1
-        _pattern.last_switch_time = now
-
-    bearing_to_tgt = math.atan2(tgt_E - my_E, tgt_N - my_N)
-
-    perp_angle = bearing_to_tgt + math.pi / 2.0
-
-    offset_E = _pattern.RADIUS * _pattern.lobe_sign * math.sin(perp_angle)
-    offset_N = _pattern.RADIUS * _pattern.lobe_sign * math.cos(perp_angle)
-
-    return tgt_E + offset_E, tgt_N + offset_N
-
-
-def set_start_coordinates(lat: float, lon: float):
-    start_point.lat = lat
-    start_point.lon = lon
-
-
-def set_target_coord(lat: float, lon: float):
-    target.lat = lat
-    target.lon = lon
-
-def _outer_loop(angl_to_turn: float, V: float, L: float) -> float:
-    """
-    tanh 기반 outer-loop: heading error → desired_yaw_rate.
-
-    설계 원칙:
-      - 소각(track mode): tanh ≈ K*err → L1 공식(2V/L * err)과 동일한 감도
-      - 대각도(capture mode): tanh 자연 포화 → ±YR_MAX 로 부드럽게 수렴
-      - 90° 하드 스위치 없음, 전 구간 C∞ 연속
-      - 출력 범위 ⊆ [−YR_MAX, +YR_MAX] ⊂ [−MAX_CMD, +MAX_CMD]
-
-    K_outer = 2V / (L * YR_MAX)  [per degree]
-      → tanh 선형 근사 기울기가 L1 소각 감도와 일치
-    """
-    # L1 소각 감도 매칭: YR_MAX * K = 2V/L  →  K = 2V/(L*YR_MAX)
-    K = 2.0 * V / (L * YR_MAX)
-    return YR_MAX * math.tanh(K * angl_to_turn)
-
-
-def _yaw_rate_pi_control(desired_yaw_rate, measured_yaw_rate, dt):
-    rate_error = desired_yaw_rate - measured_yaw_rate
-    max_cmd = cascade_pi.MAX_CMD
-
-    u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
-
-    if abs(u) < max_cmd or (rate_error * u < 0):
-        cascade_pi.pi_integral += rate_error * dt
-        cascade_pi.pi_integral = max(-cascade_pi.MAX_INTEGRAL,
-                                     min(cascade_pi.MAX_INTEGRAL, cascade_pi.pi_integral))
-        u = cascade_pi.Kp_inner * rate_error + cascade_pi.Ki_inner * cascade_pi.pi_integral
-
-    u_sat = max(-max_cmd, min(max_cmd, u))
-    
-    # ----------------------------------------------------
-    # Slew Rate Limiter (변화율 제한기) 추가
-    # ----------------------------------------------------
-    max_delta = cascade_pi.MAX_ACCEL * dt
-    cmd_delta = u_sat - cascade_pi.last_cmd
-
-    if cmd_delta > max_delta:
-        u_sat = cascade_pi.last_cmd + max_delta
-    elif cmd_delta < -max_delta:
-        u_sat = cascade_pi.last_cmd - max_delta
-
-    cascade_pi.last_cmd = u_sat
-    # ----------------------------------------------------
-
-    return u_sat
-
-_guidance_tick = 0
-
-
-def guidance(imu_data, gps_vector, gps_fidelity, target,
-             baro_m: float = 0.0) -> types.SimpleNamespace:
-    global wind_effect, last_time, L_DISTANCE, _guidance_tick
-    _guidance_tick += 1
-    commanded_yaw_rate: float = 0.0  # 미초기화 참조 방지
-
-    now = time.time()
-    dt = now - last_time if last_time else 0.1
-    if dt <= DT_MIN or dt > DT_MAX:
-        dt = 0.1
-    last_time = now
-
-    if not is_gps_valid(gps_vector, gps_fidelity):
-        if DEBUG_GUIDANCE:
-            if hasattr(gps_fidelity, "pos_health"):
-                gps_detail = (
-                    f"pos_health={getattr(gps_fidelity, 'pos_health', 0)} "
-                    f"motion_health={getattr(gps_fidelity, 'motion_health', 0)}"
-                )
-            else:
-                gps_detail = (
-                    f"fix={gps_fidelity.fix_quality} sats={gps_fidelity.sats} "
-                    f"rmc={gps_fidelity.rmc_status}"
-                )
-            _dbg(f"[CTRL] GPS_INVALID - lat={gps_vector.lat} lon={gps_vector.lon} "
-                 f"{gps_detail}")
-        return types.SimpleNamespace(
-            state="GPS_INVALID",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float("nan"),
-            target_lon=float("nan"),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
-            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
-        )
-
-    if is_gps_jump(gps_vector.lat, gps_vector.lon):
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] GPS_JUMP - lat={gps_vector.lat:.6f} lon={gps_vector.lon:.6f} "
-                 f"pi_int_before={cascade_pi.pi_integral:.3f}")
-        cascade_pi.pi_integral = 0.0
-        return types.SimpleNamespace(
-            state="GPS_INVALID",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float("nan"),
-            target_lon=float("nan"),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
-            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
-        )
-    
-    if baro_m <= 0.0:
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] BARO_INVALID - baro_m={baro_m:.1f}")
-        return types.SimpleNamespace(
-            state="BARO_INVALID",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float("nan"),
-            target_lon=float("nan"),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
-            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
-        )
-
+def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceResult:
     if target is None:
-        if DEBUG_GUIDANCE:
-            _dbg("[CTRL] TARGET_UNSET - target is required before release guidance")
-        return types.SimpleNamespace(
-            state="TARGET_UNSET",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float("nan"),
-            target_lon=float("nan"),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
-            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
-        )
-    tgt_lat = getattr(target, "lat", None)
-    tgt_lon = getattr(target, "lon", None)
-    if (
-        tgt_lat is None
-        or tgt_lon is None
-        or not math.isfinite(float(tgt_lat))
-        or not math.isfinite(float(tgt_lon))
-        or not (-90.0 <= float(tgt_lat) <= 90.0 and -180.0 <= float(tgt_lon) <= 180.0)
-        or (float(tgt_lat) == 0.0 and float(tgt_lon) == 0.0)
-    ):
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] TARGET_UNSET - invalid target lat={tgt_lat} lon={tgt_lon}")
-        return types.SimpleNamespace(
-            state="TARGET_UNSET",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float("nan"),
-            target_lon=float("nan"),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat) if start_point.lat is not None else float("nan"),
-            start_lon=float(start_point.lon) if start_point.lon is not None else float("nan"),
-        )
-
+        return GuidanceResult("TARGET_UNSET")
+    if not is_gps_valid(gps_vec, gps_fidelity):
+        return GuidanceResult("GPS_INVALID")
     if start_point.lat is None or start_point.lon is None:
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] START_POINT_UNSET - waiting for valid GPS fix to set origin")
-        return types.SimpleNamespace(
-            state="START_UNSET",
-            distance=0.0,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float(tgt_lat),
-            target_lon=float(tgt_lon),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float("nan"),
-            start_lon=float("nan"),
-        )
+        return GuidanceResult("START_UNSET")
+    if is_gps_jump(float(gps_vec.lat), float(gps_vec.lon)):
+        return GuidanceResult("GPS_INVALID")
+    if _gps_stable_count < GPS_STABLE_COUNT_REQUIRED:
+        return GuidanceResult("GPS_INVALID")
+    if baro_m is not None and float(baro_m) <= 0.0:
+        return GuidanceResult("BARO_INVALID")
 
-    my_E, my_N = _llh_to_en(gps_vector.lat, gps_vector.lon)
-    tgt_E, tgt_N = _llh_to_en(float(tgt_lat), float(tgt_lon))
-
-    distance = math.hypot(tgt_E - my_E, tgt_N - my_N)
-
-    if distance < TARGET_REACHED_RADIUS:
-        if DEBUG_GUIDANCE:
-            _dbg(f"[CTRL] TARGET_REACHED - dist={distance:.1f}m")
-        return types.SimpleNamespace(
-            state="TARGET_REACHED",
-            distance=distance,
-            commanded_yaw_rate=0.0,
-            current_heading=float(getattr(imu_data, "yaw", 0.0)),
-            desired_heading=float("nan"),
-            target_lat=float(tgt_lat),
-            target_lon=float(tgt_lon),
-            carrot_lat=float("nan"),
-            carrot_lon=float("nan"),
-            start_lat=float(start_point.lat),
-            start_lon=float(start_point.lon),
-        )
-
-    if baro_m > ALT_HIGH:
-        L_DISTANCE = L_DISTANCE_HIGH
-    elif baro_m < ALT_LOW:
-        L_DISTANCE = L_DISTANCE_LOW
-    else:
-        L_DISTANCE = L_DISTANCE_BASE
-
-    # 고도에 따른 페이즈 결정:
-    #   > PATTERN_ALT_MAX(50m): carrot 직선 추적
-    #   PATTERN_ALT_MIN(10m) ~ PATTERN_ALT_MAX(50m): figure-8 (타겟 근처일 때)
-    #   < PATTERN_ALT_MIN(10m): carrot 직선 추적 (최종 접근)
-    patterned = PATTERN_ALT_MIN < baro_m < PATTERN_ALT_MAX
-
-    if patterned and distance < PATTERN_ENTRY_DIST:
-        guide_E, guide_N = _eight(my_E, my_N, tgt_E, tgt_N)
-        phase = "PATTERN"
-    else:
-        guide_E, guide_N = _carrot(my_E, my_N, tgt_E, tgt_N)
-        phase = "HOMING"
-
-    carrot_angl_north = math.degrees(
-        math.atan2(guide_E - my_E, guide_N - my_N)
+    now = time.time()
+    set_target_coord(float(target.lat), float(target.lon))
+    direction = getattr(gps_vec, "direction", getattr(gps_vec, "course", 0.0))
+    velocity = getattr(gps_vec, "velocity", getattr(gps_vec, "speed", 0.0))
+    _legacy_estimator.update_gnss(
+        float(gps_vec.lat),
+        float(gps_vec.lon),
+        math.radians(float(direction)),
+        float(velocity),
+        True,
+        True,
+        now,
     )
-    wind_carrot_angl_north = _wrap_180(carrot_angl_north - wind_effect)
-    angl_to_turn = _wrap_180(wind_carrot_angl_north - imu_data.yaw)
-
-    V = max(_gps_velocity(gps_vector), 1.0)
-
-    # ── Capture mode: 대각도 오차 시 integral freeze ──────────────────
-    # |error| > CAPTURE_THRESHOLD 이면 PI 적분기를 0으로 리셋.
-    # 이유: 대각도 선회 중 적분이 쌓이면 목표 통과 후 과도한 반대 제어 유발.
-    if abs(angl_to_turn) > CAPTURE_THRESHOLD:
-        cascade_pi.pi_integral = 0.0
-
-    # ── Outer loop: tanh 기반 desired_yaw_rate 계산 ───────────────────
-    desired_yaw_rate = _outer_loop(angl_to_turn, V, L_DISTANCE)
-
-    # ── Inner loop: PI 제어 ───────────────────────────────────────────
-    commanded_yaw_rate = _yaw_rate_pi_control(
-        desired_yaw_rate, math.degrees(imu_data.gyrz), dt
+    _legacy_estimator.update_imu(
+        yaw=float(getattr(imu_data, "yaw", 0.0)),
+        gz=float(getattr(imu_data, "gyrz", 0.0)),
+        ts=now,
     )
+    if baro_m is not None:
+        _legacy_estimator.update_baro(float(baro_m), now)
 
-    # ── 저고도 보수 클램프 (LANDING 보수 모드) ────────────────────────
-    # 지면 근처에서 과격한 제어로 인한 기체 불안정 방지.
-    if baro_m <= LANDING_ALT:
-        commanded_yaw_rate = max(-LANDING_YR_MAX,
-                                 min(LANDING_YR_MAX, commanded_yaw_rate))
+    est = _legacy_estimator.estimate(now)
+    out = _legacy_guidance.update(est, now)
+    if not out.active:
+        return GuidanceResult("FDIR", commanded_yaw_rate=0.0)
 
-    if phase == "HOMING":
-        if abs(angl_to_turn) <= 15.0:
-            phase = "STRAIGHT"
-        else:
-            phase = "TURNING"
+    tgt_N, tgt_E = _ll_to_ne(float(target.lat), float(target.lon), start_point.lat, start_point.lon)
+    pos_N = est.pos_N or 0.0
+    pos_E = est.pos_E or 0.0
+    distance = math.hypot(tgt_N - pos_N, tgt_E - pos_E)
+    cmd = out.courseRateCmd
+    if baro_m is not None and float(baro_m) <= 10.0:
+        cmd = _clamp(cmd, -LANDING_YR_MAX, LANDING_YR_MAX)
 
-    # 바람 학습 (Wind Learning)
-    if phase == "STRAIGHT" and _gps_velocity(gps_vector) > WIND_LEARN_MIN_SPEED:
-        current_crab = _wrap_180(_gps_direction(gps_vector) - imu_data.yaw)
-        wind_effect = (1.0 - WIND_EMA_ALPHA) * wind_effect + WIND_EMA_ALPHA * current_crab
-        wind_effect = max(-WIND_MAX_DEG, min(WIND_MAX_DEG, wind_effect))
+    if distance <= 3.0:
+        state = "TARGET_REACHED"
+    elif abs(cmd) < 1e-4:
+        state = "STRAIGHT"
+    else:
+        state = "TURNING"
 
-    capture = abs(angl_to_turn) > CAPTURE_THRESHOLD
-    sat     = abs(commanded_yaw_rate) >= cascade_pi.MAX_CMD - 0.5
-    landing_mode = baro_m <= LANDING_ALT
-
-    if DEBUG_GUIDANCE:
-        _dbg(
-            f"[CTRL] phase={phase:<8} "
-            f"dist={distance:.1f}m  L={L_DISTANCE:.1f}m | "
-            f"pos=({my_E:.1f},{my_N:.1f})  tgt=({tgt_E:.1f},{tgt_N:.1f})  "
-            f"carrot=({guide_E:.1f},{guide_N:.1f}) | "
-            f"des_crs={carrot_angl_north:.1f}°  wind={wind_effect:.1f}°  "
-            f"des_hdg={wind_carrot_angl_north:.1f}°  hdg_err={angl_to_turn:.1f}° | "
-            f"V={V:.1f}m/s  des_yr={desired_yaw_rate:.2f}°/s  "
-            f"pi_int={cascade_pi.pi_integral:.3f}  cmd_yr={commanded_yaw_rate:.2f}°/s"
-            + ("  [CAP]" if capture else "")
-            + ("  [SAT]" if sat else "")
-            + ("  [LND]" if landing_mode else "")
-            + (f"  lobe={_pattern.lobe_sign:+d}" if patterned else "")
-        )
-
-    carrot_lat, carrot_lon = _en_to_ll(guide_E, guide_N)
-    return types.SimpleNamespace(
-        state=phase,
+    return GuidanceResult(
+        state=state,
         distance=distance,
-        commanded_yaw_rate=commanded_yaw_rate,
-        current_heading=float(getattr(imu_data, "yaw", 0.0)),
-        desired_heading=float(wind_carrot_angl_north),
-        target_lat=float(tgt_lat),
-        target_lon=float(tgt_lon),
-        carrot_lat=float(carrot_lat),
-        carrot_lon=float(carrot_lon),
-        start_lat=float(start_point.lat),
-        start_lon=float(start_point.lon),
+        commanded_yaw_rate=cmd,
+        desired_yaw_rate=out.courseRateCmd,
+        crosstrack_error=out.crossTrack,
+        along_track=out.alongTrack,
+        heading_error=math.degrees(out.Nu),
     )

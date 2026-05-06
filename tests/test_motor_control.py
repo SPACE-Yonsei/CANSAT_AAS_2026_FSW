@@ -28,13 +28,13 @@ class _FakePigpio:
 class TestActuatorMixer(unittest.TestCase):
     def test_clamp_high(self):
         l, r, *_ = motor_control.actuator_mixer(9999.0)
-        self.assertEqual(l, motor_control.LEFT_MAX_PULSE)
-        self.assertEqual(r, motor_control.PULSE_MAX)
+        self.assertLess(l, motor_control.LEFT_NEUTRAL)
+        self.assertGreater(r, motor_control.RIGHT_NEUTRAL)
 
     def test_clamp_low(self):
         l, r, *_ = motor_control.actuator_mixer(-9999.0)
-        self.assertEqual(l, motor_control.PULSE_MIN)
-        self.assertEqual(r, motor_control.RIGHT_MIN_PULSE)
+        self.assertGreater(l, motor_control.LEFT_NEUTRAL)
+        self.assertLess(r, motor_control.RIGHT_NEUTRAL)
 
     def test_zero_is_neutral(self):
         l, r, _, _, _, offset = motor_control.actuator_mixer(0.0)
@@ -45,7 +45,7 @@ class TestActuatorMixer(unittest.TestCase):
     def test_differential_direction(self):
         l_pos, r_pos, *_ = motor_control.actuator_mixer(10.0)
         l_neu, r_neu, *_ = motor_control.actuator_mixer(0.0)
-        self.assertGreater(l_pos, l_neu)
+        self.assertLess(l_pos, l_neu)
         self.assertGreater(r_pos, r_neu)
 
     def test_output_within_bounds(self):

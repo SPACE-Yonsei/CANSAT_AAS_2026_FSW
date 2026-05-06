@@ -33,8 +33,8 @@
 
 ## 3) 즉시 보완 권고 (우선순위)
 
-1. IMU/BARO/GPS/Distance/Electro 실제 드라이버 교체
-2. Motor guidance 고급 로직 이식
+1. **[진행 중] Motor guidance L1 교체** — `_outer_loop()` tanh → ArduPilot `2V²/L·sin(η)` (Phase 1)
+2. IMU/BARO/GPS/Distance/Electro 실제 드라이버 교체 (하드웨어 연동 단계)
 3. 하드웨어 없는 CI 테스트 + 하드웨어 통합 테스트 분리
 4. systemd 실제 배포 경로로 실기기 검증
 5. TLM 스키마 고정 스냅샷 테스트 추가

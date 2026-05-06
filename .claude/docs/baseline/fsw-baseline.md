@@ -305,6 +305,7 @@ startup/systemd 스크립트를 정리해줘.
 - [x] Prompt 5: CommApp 명령/라우팅/TLM(distance 포함) 구현 + 테스트
 - [x] Prompt 6: FlightLogic 상태기계 구현 + 테스트
 - [x] Prompt 7: MotorApp/Guidance/Control/FDIR 베이스 구현 + 테스트
+- [ ] ArduPilot L1 통합 Phase 1: `_outer_loop()` → `2V²/L·sin(η)` 교체 (진행 중)
 - [x] Prompt 8: 센서 앱(BARO/IMU/GPS/DIST/ELECTRO) 베이스 구현
 - [x] Prompt 9: Camera 앱/드라이버 베이스 구현
 - [x] Prompt 10: 센서 없는 하네스 흐름 테스트 구현

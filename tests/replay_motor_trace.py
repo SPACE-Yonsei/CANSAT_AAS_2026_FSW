@@ -342,7 +342,7 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
                     feedback = motor_control.control(control_backend, current_cmd_yr)
                     left_pulse = feedback.left_pulse
                     right_pulse = feedback.right_pulse
-                    _, _, pulse_offset = motor_control.actuator_mixer(current_cmd_yr)
+                    _, _, *_, pulse_offset = motor_control.actuator_mixer(current_cmd_yr)
 
             out.append(
                 {
