@@ -10,7 +10,7 @@
       "Bash(git status*)",
       "Bash(.venv/Scripts/python.exe -m pytest*)",
       "Bash(.venv/Scripts/python.exe -m py_compile*)",
-      "Bash(.venv/Scripts/python.exe sim_verify.py*)",
+      "Bash(.venv/Scripts/python.exe tests/sim_verify.py*)",
       "Bash(.venv/Scripts/python.exe tests/replay_motor_trace.py*)",
       "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe*)"
     ]

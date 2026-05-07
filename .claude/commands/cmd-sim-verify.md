@@ -1,14 +1,14 @@
 ---
-description: sim_verify.py를 실행하고 4개 검증 질문의 핵심 지표를 추출한다 (Phase 4)
+description: tests/sim_verify.py를 실행하고 4개 검증 질문의 핵심 지표를 추출한다 (Phase 4)
 allowed-tools: Bash Read
 ---
 
-`sim_verify.py`를 실행하고 결과를 분석하라. 인자: `$ARGUMENTS` (없으면 기본값 사용)
+`tests/sim_verify.py`를 실행하고 결과를 분석하라. 인자: `$ARGUMENTS` (없으면 기본값 사용)
 
 ## 실행
 
 ```bash
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe sim_verify.py $ARGUMENTS 2>&1
+PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe tests/sim_verify.py $ARGUMENTS 2>&1
 ```
 
 ## 핵심 지표 추출

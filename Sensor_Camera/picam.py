@@ -62,15 +62,17 @@ def record(cam_handle: CameraHandle, enc, sec: float) -> Path | None:
             from picamera2.outputs import FfmpegOutput, FileOutput  # type: ignore
 
             mp4_path = cam_handle.output_dir / _timestamped_name("mp4")
+            out_path: Path = mp4_path
             try:
                 output = FfmpegOutput(str(mp4_path))
             except Exception:
                 h264_path = cam_handle.output_dir / _timestamped_name("h264")
+                out_path = h264_path
                 output = FileOutput(str(h264_path))
             cam_handle.cam.start_recording(enc, output)
             time.sleep(max(0.0, float(sec)))
             cam_handle.cam.stop_recording()
-            return mp4_path
+            return out_path
         except Exception:
             # fall through to placeholder when backend errors at runtime
             pass

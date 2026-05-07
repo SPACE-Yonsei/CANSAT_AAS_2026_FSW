@@ -73,7 +73,7 @@ _prev_eta.sign = math.copysign(1.0, eta)
 2. **Port**: `motor_guidance.py`의 `_outer_loop()` 교체, `_prev_eta` 상태 추가
 3. **Unit-test**: `tests/test_motor_guidance.py`에 eta/accel_lat/V=0 케이스 추가
 4. **Integration**: `tests/test_motor_ipc_harness.py`로 IPC 경로 검증
-5. **Sim**: `sim_verify.py` Q1(수렴), Q4(180° deadlock) 재검증
+5. **Sim**: `tests/sim_verify.py` Q1(수렴), Q4(180° deadlock) 재검증
 
 ## 주의사항
 

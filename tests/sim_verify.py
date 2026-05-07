@@ -9,7 +9,7 @@ Answers four specific verification questions about the guidance and control syst
   Q3: Jitter/Oscillation analysis — is the servo command smooth in steady state?
   Q4: 180-degree discontinuity — does the controller escape the anti-parallel deadlock?
 
-Run:  python sim_verify.py
+Run:  python tests/sim_verify.py
 """
 
 import io, sys, math, os, re, time as _real_time

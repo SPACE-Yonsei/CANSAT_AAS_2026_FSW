@@ -37,7 +37,7 @@ Read, Grep, Glob 도구만 사용하라. 파일을 수정하지 않는다.
 
 **분석 대상:**
 - `tests/replay_motor_trace.py`: CSV 리플레이 엔진 구조
-- `sim_verify.py`: Monte Carlo 수렴 지표
+- `tests/sim_verify.py`: Monte Carlo 수렴 지표
 - `Sensor_Motor/motor_guidance.py`: 튜닝 파라미터 목록
 
 **튜닝 파라미터 우선순위:**
