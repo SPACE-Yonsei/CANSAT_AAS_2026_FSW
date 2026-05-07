@@ -299,7 +299,10 @@ class GroundStation(tk.Tk):
         ttk.Button(bar, text="Refresh", command=self._refresh_ports).pack(side=tk.LEFT)
 
         ttk.Label(bar, text="  Baud:").pack(side=tk.LEFT)
-        self._baud_var = tk.StringVar(value="9600")
+        # Default 38400: matches FSW UART_BAUD default and XBee XCTU BD=5.
+        # 9600 saturates the XBee RX buffer at our ~430B telemetry frames
+        # and causes the bursty / merged-line arrival pattern.
+        self._baud_var = tk.StringVar(value="38400")
         baud = ttk.Combobox(
             bar, textvariable=self._baud_var, width=8, state="readonly",
             values=("9600", "19200", "38400", "57600", "115200"),
@@ -528,7 +531,7 @@ class GroundStation(tk.Tk):
         try:
             baud = int(self._baud_var.get())
         except ValueError:
-            baud = 9600
+            baud = 38400
         try:
             ser = serial.Serial(port, baud, timeout=0.2)
         except Exception as exc:

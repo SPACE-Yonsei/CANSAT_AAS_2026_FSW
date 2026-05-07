@@ -532,6 +532,8 @@ def read_cmd(main_queue, serial_instance) -> None:
         time.sleep(0.01)
 
 
+# Telemetry transmit rate is fixed at 1 Hz (CanSat competition spec).
+# Do not change unless you are explicitly off-spec for ground testing.
 def _tlm_sender(serial_instance) -> None:
     while COMMAPP_RUNSTATUS:
         send_tlm(serial_instance)

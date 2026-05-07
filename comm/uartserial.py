@@ -78,8 +78,11 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
     Tries multiple common Raspberry Pi UART device paths unless `UART_DEVICE`
     is set (comma-separated list, highest priority).
 
-    Baud rate: pass `baudrate` or set env `UART_BAUD` (default 9600). Match the
-    XBee module XCTU "Interface Data Rate".
+    Baud rate: pass `baudrate` or set env `UART_BAUD` (default 38400). Match
+    the XBee module XCTU "Interface Data Rate" (BD=5 for 38400). Lower rates
+    (9600) saturate the XBee internal RX buffer at our ~430-byte TLM frames
+    and produce dropped/merged lines on the GS; higher rates have no effect
+    on RF range — they only speed up the host↔XBee chip serial link.
 
     If pyserial is not installed or no port could be opened, returns a dummy
     serial object to keep non-hardware tests runnable.
@@ -92,9 +95,9 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
 
     if baudrate is None:
         try:
-            baudrate = int(os.environ.get("UART_BAUD", "9600"))
+            baudrate = int(os.environ.get("UART_BAUD", "38400"))
         except ValueError:
-            baudrate = 9600
+            baudrate = 38400
 
     default_port = "COM3" if sys.platform.startswith("win") else "/dev/serial0"
     candidates = _port_candidates(port or default_port)
