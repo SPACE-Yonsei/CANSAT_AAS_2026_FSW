@@ -128,6 +128,9 @@ class GuidanceInput:
     lcsg_case: str = "----"
     input_policy: str = ""
 
+    origin_lat: Optional[float] = None
+    origin_lon: Optional[float] = None
+
 
 @dataclass
 class GuidanceOutput:
@@ -145,6 +148,16 @@ class GuidanceOutput:
     L1_dist:      float = 0.0   # m
     groundSpeed:  float = 0.0   # m/s
     reason:       str   = ""
+
+    # Comm telemetry (MID_comm_motor_diag prefix; lat/lon deg, headings deg)
+    start_lat:           float = float("nan")
+    start_lon:           float = float("nan")
+    target_lat:          float = float("nan")
+    target_lon:          float = float("nan")
+    carrot_lat:          float = float("nan")
+    carrot_lon:          float = float("nan")
+    current_heading_deg: float = float("nan")
+    desired_heading_deg: float = float("nan")
 
 
 @dataclass
@@ -292,6 +305,8 @@ class GuidanceInputResolver:
         self._fill_tilt_rate(state)
         self._fill_lcsg_case(state)
         self._classify_guidance_mode(state)
+        state.origin_lat = self._origin_lat
+        state.origin_lon = self._origin_lon
         return state
 
     def estimate(self, now: float) -> GuidanceInput:
@@ -563,6 +578,56 @@ class L1Guidance:
         self._start_locked: bool  = False
         self._last_Nu:  float     = 0.0   # for _prevent_indecision
 
+    def _fill_tlm_core(self, out: GuidanceOutput, state: GuidanceInput) -> None:
+        """Populate comm lat/lon + coarse heading from N/E frame and sensors."""
+        lat0 = state.origin_lat
+        lon0 = state.origin_lon
+        if lat0 is not None and lon0 is not None:
+            if self._target_N is not None and self._target_E is not None:
+                out.target_lat, out.target_lon = ne_to_ll(
+                    self._target_N, self._target_E, lat0, lon0
+                )
+            if (
+                self._start_locked
+                and self._start_N is not None
+                and self._start_E is not None
+            ):
+                out.start_lat, out.start_lon = ne_to_ll(
+                    self._start_N, self._start_E, lat0, lon0
+                )
+        if state.course is not None:
+            out.current_heading_deg = math.degrees(state.course)
+        elif state.yaw is not None:
+            out.current_heading_deg = float(state.yaw)
+
+    def _fill_tlm_carrot(
+        self,
+        out: GuidanceOutput,
+        state: GuidanceInput,
+        pos_N: float,
+        pos_E: float,
+        A_N: float,
+        A_E: float,
+        e_N: float,
+        e_E: float,
+        alongTrack: float,
+        L1_dist: float,
+        AB_len: float,
+    ) -> None:
+        lat0 = state.origin_lat
+        lon0 = state.origin_lon
+        if lat0 is None or lon0 is None:
+            return
+        s_proj = max(0.0, min(alongTrack, AB_len))
+        s_carrot = min(s_proj + L1_dist, AB_len)
+        c_N = A_N + e_N * s_carrot
+        c_E = A_E + e_E * s_carrot
+        out.carrot_lat, out.carrot_lon = ne_to_ll(c_N, c_E, lat0, lon0)
+        d_N = c_N - pos_N
+        d_E = c_E - pos_E
+        if d_N * d_N + d_E * d_E > 1e-4:
+            out.desired_heading_deg = math.degrees(math.atan2(d_E, d_N))
+
     def set_target(self, target_N: float, target_E: float) -> None:
         self._target_N = target_N
         self._target_E = target_E
@@ -588,12 +653,14 @@ class L1Guidance:
 
         if state.guidance_mode == GuidanceMode.DISABLED:
             out.reason = state.reason
+            self._fill_tlm_core(out, state)
             return out
 
         pos_N = state.pos_N
         pos_E = state.pos_E
         if pos_N is None or pos_E is None:
             out.reason = "position missing"
+            self._fill_tlm_core(out, state)
             return out
 
         # ── Lock start point on first active position ────────────────────────
@@ -612,6 +679,7 @@ class L1Guidance:
 
         if AB_len < 1.0:
             out.reason = "start ≈ target"
+            self._fill_tlm_core(out, state)
             return out
 
         e_N = AB_N / AB_len
@@ -679,6 +747,12 @@ class L1Guidance:
         out.alongTrack    = alongTrack
         out.L1_dist       = L1_dist
         out.groundSpeed   = gs
+
+        self._fill_tlm_core(out, state)
+        self._fill_tlm_carrot(
+            out, state, pos_N, pos_E, A_N, A_E, e_N, e_E,
+            alongTrack, L1_dist, AB_len,
+        )
 
         if DEBUG_GUIDANCE:
             _dbg(

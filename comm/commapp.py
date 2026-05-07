@@ -80,6 +80,13 @@ class TelemetryData:
 tlm_data = TelemetryData()
 TEAM_ID = "1070"
 
+# Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX;OFF).
+_comm_serial: Optional[object] = None
+
+# Set by SIMP command; cleared on SIM,DISABLE (mode F). While mode A/S and this is set,
+# barometer IPC must not overwrite tlm_data.altitude (otherwise one row shows SIMP then HW).
+_simp_tlm_alt_hold: Optional[float] = None
+
 
 def set_cmdecho(cmd_str: str) -> None:
     # Single TLM CSV field: keep body readable (commas -> ';' avoids mangled SIMG/TC).
@@ -120,6 +127,10 @@ def cmd_cx(option: str, _main_queue) -> bool:
         return True
     if upper == "OFF":
         TELEMETRY_ENABLE = False
+        # Downlink stops after this frame: set_cmdecho already applied CX,OFF above.
+        ser = _comm_serial
+        if ser is not None and getattr(ser, "is_open", False):
+            _send_one_tlm_frame(ser)
         return True
     return False
 
@@ -142,10 +153,12 @@ def cmd_sim(option: str, main_queue) -> bool:
 
 
 def cmd_simp(option: str, main_queue) -> bool:
+    global _simp_tlm_alt_hold
     try:
         value = float(option)
     except ValueError:
         return False
+    _simp_tlm_alt_hold = value
     tlm_data.altitude = value
     return msgstructure.send_msg(
         main_queue,
@@ -316,7 +329,7 @@ def cmd_xrst(option: str, _main_queue) -> bool:
 
 
 def command_handler(recv_msg: str) -> None:
-    global COMMAPP_RUNSTATUS
+    global COMMAPP_RUNSTATUS, _simp_tlm_alt_hold
     unpacked = msgstructure.unpack_msg(recv_msg)
     if unpacked is False:
         return
@@ -330,7 +343,10 @@ def command_handler(recv_msg: str) -> None:
         elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
             tlm_data.pressure = float(fields[0])
             tlm_data.temperature = float(fields[1])
-            tlm_data.altitude = float(fields[2])
+            if tlm_data.mode in {"A", "S"} and _simp_tlm_alt_hold is not None:
+                pass
+            else:
+                tlm_data.altitude = float(fields[2])
         elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])
@@ -360,6 +376,8 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.state = fields[0]
         elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
             tlm_data.mode = fields[0]
+            if fields[0].strip().upper() == "F":
+                _simp_tlm_alt_hold = None
         elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 11:
             tlm_data.left_pulse = int(float(fields[0]))
             tlm_data.right_pulse = int(float(fields[1]))
@@ -421,11 +439,8 @@ def _fmt_opt_float(value: float, fmt: str) -> str:
     return format(v, fmt)
 
 
-def send_tlm(serial_instance) -> None:
+def _send_one_tlm_frame(serial_instance) -> None:
     global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS
-    if not TELEMETRY_ENABLE:
-        return
-
     tlm_data.packet_count += 1
     prevstate.update_packet_count(tlm_data.packet_count)
     line = (
@@ -462,6 +477,12 @@ def send_tlm(serial_instance) -> None:
             "Check UART mapping/permissions and explicit UART_DEVICE (Windows: COMx, Linux: /dev/tty*)."
         )
         _TLM_SEND_FAIL_LOGGED = True
+
+
+def send_tlm(serial_instance) -> None:
+    if not TELEMETRY_ENABLE:
+        return
+    _send_one_tlm_frame(serial_instance)
 
 
 def _dispatch_command(line: str, main_queue) -> bool:
@@ -511,6 +532,8 @@ def read_cmd(main_queue, serial_instance) -> None:
         time.sleep(0.01)
 
 
+# Telemetry transmit rate is fixed at 1 Hz (CanSat competition spec).
+# Do not change unless you are explicitly off-spec for ground testing.
 def _tlm_sender(serial_instance) -> None:
     while COMMAPP_RUNSTATUS:
         send_tlm(serial_instance)
@@ -518,12 +541,13 @@ def _tlm_sender(serial_instance) -> None:
 
 
 def commapp_main(main_queue, main_pipe) -> None:
-    global ST_timedelta
+    global ST_timedelta, _comm_serial
     prevstate.init_prevstate()
     ST_timedelta = timedelta(seconds=prevstate.PREV_ST_TIMEDELTA)
     tlm_data.packet_count = prevstate.PREV_PACKET_COUNT
 
     serial_instance = uartserial.init_serial()
+    _comm_serial = serial_instance
     if uartserial.is_dummy_serial(serial_instance):
         logger.warning(
             "Comm UART is in DummySerial mode (no hardware TX/RX). "
@@ -547,4 +571,5 @@ def commapp_main(main_queue, main_pipe) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        _comm_serial = None
         uartserial.terminate_serial(serial_instance)

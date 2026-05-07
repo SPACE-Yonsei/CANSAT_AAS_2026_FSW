@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from typing import Optional
 
 from lib import appargs, msgstructure
@@ -23,6 +24,9 @@ _last_update_ts = 0.0
 _reader = None  # dict (hardware) | False (synthetic-only) | None (not probed yet)
 _electro_lock = threading.Lock()
 _last_electro_read_warn_ts = 0.0
+_volt_window = deque(maxlen=5)
+_curr_window = deque(maxlen=5)
+_pwr_window = deque(maxlen=5)
 
 
 def command_handler(recv_msg: str) -> None:
@@ -41,6 +45,22 @@ def _synthetic_read() -> tuple[float, float, float]:
     curr = 0.75 + (phase * 0.02)
     pwr = volt * curr
     return volt, curr, pwr
+
+
+def _median(values) -> float:
+    if not values:
+        return 0.0
+    arr = sorted(float(v) for v in values)
+    n = len(arr)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(arr[mid])
+    return float((arr[mid - 1] + arr[mid]) / 2.0)
+
+
+def _median5_update(value: float, window: deque) -> float:
+    window.append(float(value))
+    return _median(window)
 
 
 def _read_sensor() -> Optional[tuple[float, float, float]]:
@@ -83,6 +103,9 @@ def read_electro_data() -> None:
             continue
         try:
             volt, curr, pwr = sample
+            volt = _median5_update(volt, _volt_window)
+            curr = _median5_update(curr, _curr_window)
+            pwr = _median5_update(pwr, _pwr_window)
             with _electro_lock:
                 VOLT = float(volt)
                 CURR = float(curr)

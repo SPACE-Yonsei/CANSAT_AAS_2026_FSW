@@ -7,6 +7,7 @@ lib/__pycache__/
 lib/config.txt
 
 sensorlogs/
+ground_station/logs/
 eventlogs/
 *.log
 *.txt

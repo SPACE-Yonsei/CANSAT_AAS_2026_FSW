@@ -14,7 +14,7 @@ Read, Grep 도구만 사용하라. 파일을 수정하지 않는다.
 - `Sensor_Motor/motor_control.py`: differential brake mixer, servo PWM mapping, slew/rate limit
 - `Sensor_Motor/motorapp.py`: 10Hz control loop, sensor/target/state gate, FDIR neutral path
 - `tests/replay_motor_trace.py`: 실제/리플레이 로그 기반 경로 추종 검증
-- `sim_verify.py`: Monte Carlo, jitter, FDIR, discontinuity 검증
+- `tests/sim_verify.py`: Monte Carlo, jitter, FDIR, discontinuity 검증
 
 ## ArduPilot 참고 기준
 다음 구현을 직접 참고해 리뷰한다. 코드를 그대로 복사하라는 뜻이 아니라, 안정장치와 수학적 계약을 CANSAT 제어에 맞게 적용했는지 확인하라는 뜻이다.

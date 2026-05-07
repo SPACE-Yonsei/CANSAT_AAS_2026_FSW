@@ -16,6 +16,9 @@ SIM mode (bench / map rehearsal) — send in order:
 Run:
     python ground_station/ground_station.py
 
+Map: wheel = zoom; Fit restores auto-bounds. SIMG from this UI clears the blue trail.
+Target (0,0) is ignored for map centering / marker.
+
 Standalone, no other repo modules required (only `pyserial` + tkinter).
 """
 
@@ -39,6 +42,27 @@ except Exception as exc:
     print("pyserial is required. Install with: pip install pyserial")
     print("Import error:", exc)
     sys.exit(1)
+
+# Scenario player lives next to this file; importable when run as a script
+# (`python ground_station/ground_station.py`) by re-using the script's dir on
+# sys.path. PyInstaller bundles already place this module alongside.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from scenario_runner import (  # type: ignore[import-not-found]
+        PRESETS as _SCENARIO_PRESETS,
+        ScenarioConfig as _ScenarioConfig,
+        ScenarioRunner as _ScenarioRunner,
+        get_preset as _scenario_get_preset,
+        list_preset_names as _scenario_list_presets,
+    )
+    _SCENARIO_AVAILABLE = True
+except Exception as _scenario_import_exc:  # pragma: no cover  (defensive)
+    _SCENARIO_PRESETS = {}
+    _ScenarioConfig = None  # type: ignore[assignment]
+    _ScenarioRunner = None  # type: ignore[assignment]
+    _scenario_get_preset = None  # type: ignore[assignment]
+    _scenario_list_presets = lambda: []  # type: ignore[assignment]
+    _SCENARIO_AVAILABLE = False
 
 
 TEAM_ID = "1070"
@@ -103,11 +127,23 @@ _RX_POLL_IDLE_MS = 22
 _RX_POLL_BACKLOG_MS = 1
 # Map trail: cap vertices sent to Canvas (full history kept in memory for bounds)
 _MAP_TRACK_DRAW_MAX = 450
-# Map view is centered on **start** (release origin). Extent from ref is capped (then fills plot):
-#   east–west ≤ ±1 km, north–south ≤ ±500 m. Wide canvases stretch longitude across pw and latitude across ph.
-_MAP_REF_MAX_HALF_EAST_M = 1000.0
-_MAP_REF_MAX_HALF_NORTH_M = 500.0
+# Map view: ref = **target** when telemetry has it (else start, else data centroid).
+# Half-extent uses max |E|/|N| from ref to all track + landmark points, × margin, capped symmetrically
+# so operator↔vehicle separation and full path stay on-screen (legacy ±1km/±500m clipped far fixes).
+_MAP_REF_MAX_HALF_M = 50_000.0
+_MAP_VIEW_MARGIN = 1.14
 _MAP_VIEW_MIN_HALF_M = 2.5
+# When start & target are both known, pad view so neither sits on the plot edge.
+_MAP_START_TARGET_PAD_FACTOR = 1.22
+# Ignore GPS→GPS trail segments longer than this (SIM jump / multimodal bug) to avoid one long blue chord.
+_MAP_TRAIL_MAX_SEGMENT_M = 25_000.0
+# User zoom: <1 zooms in (smaller half-extent), >1 zooms out. Clamped in handlers.
+_MAP_ZOOM_MIN_SCALE = 0.35
+_MAP_ZOOM_MAX_SCALE = 5.0
+_MAP_ZOOM_STEP = 1.18
+# Target at (0,0) is treated as unset — do not center map on null island.
+_MAP_NULL_LAT_TOL = 1.0e-4
+_MAP_NULL_LON_TOL = 1.0e-4
 
 # Map styling (dark plot, readable axes)
 _MAP_BG = "#0b1220"
@@ -158,6 +194,35 @@ def _map_geo_decimals(span_m: float) -> int:
     if span_m > 50:
         return 5
     return 6
+
+
+def _valid_gps_latlon(lat: float, lon: float) -> bool:
+    return (
+        math.isfinite(lat)
+        and math.isfinite(lon)
+        and -90.0 <= lat <= 90.0
+        and -180.0 <= lon <= 180.0
+    )
+
+
+def _is_meaningful_target_latlon(lat: float, lon: float) -> bool:
+    """False for (0,0) placeholder — map ref should fall back to start/centroid."""
+    if not _valid_gps_latlon(lat, lon):
+        return False
+    return abs(lat) > _MAP_NULL_LAT_TOL or abs(lon) > _MAP_NULL_LON_TOL
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2.0) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2
+    )
+    return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
 COMMAND_PRESETS = [
@@ -238,6 +303,8 @@ class GroundStation(tk.Tk):
         self._tlm_vars: dict[str, tk.StringVar] = {}
         self._track_points: list[tuple[float, float]] = []
         self._map_points: dict[str, tuple[float, float]] = {}
+        # 1.0 = auto fit; scale < 1 → zoom in, > 1 → zoom out (applied to map half-extents).
+        self._map_user_scale: float = 1.0
         self._current_heading_deg = math.nan
         self._desired_heading_deg = math.nan
         self._left_pulse_us = 0
@@ -247,6 +314,13 @@ class GroundStation(tk.Tk):
         self._map_redraw_after_id: str | None = None
         self._map_dirty: bool = False
         self._console_scroll_after_id: str | None = None
+        # Latest parsed TLM dict (also fed to the Scenario panel as a feedback
+        # source). Updated each time a frame survives _parse_tlm.
+        self._latest_tlm: dict[str, str] | None = None
+        # Scenario player state (None when no scenario active).
+        self._scenario_runner: "_ScenarioRunner | None" = None
+        self._scenario_after_id: str | None = None
+        self._scenario_status_var = tk.StringVar(value="idle")
 
         self._build_ui()
         self._refresh_ports()
@@ -283,6 +357,7 @@ class GroundStation(tk.Tk):
         self._build_telemetry_panel(left)
         self._build_map_and_motor(right)
         self._build_console_and_command(right, row_offset=1)
+        self._build_scenario_panel(right, row=3)
         self._build_status_bar()
 
     def _build_top_bar(self) -> None:
@@ -299,7 +374,10 @@ class GroundStation(tk.Tk):
         ttk.Button(bar, text="Refresh", command=self._refresh_ports).pack(side=tk.LEFT)
 
         ttk.Label(bar, text="  Baud:").pack(side=tk.LEFT)
-        self._baud_var = tk.StringVar(value="9600")
+        # Default 38400: matches FSW UART_BAUD default and XBee XCTU BD=5.
+        # 9600 saturates the XBee RX buffer at our ~430B telemetry frames
+        # and causes the bursty / merged-line arrival pattern.
+        self._baud_var = tk.StringVar(value="38400")
         baud = ttk.Combobox(
             bar, textvariable=self._baud_var, width=8, state="readonly",
             values=("9600", "19200", "38400", "57600", "115200"),
@@ -404,7 +482,24 @@ class GroundStation(tk.Tk):
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
         frame.grid(row=0, column=0, sticky="nsew")
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=0)
+        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=0)
+
+        map_tool = ttk.Frame(frame)
+        map_tool.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+        ttk.Button(map_tool, text="Zoom −", width=8, command=self._map_zoom_out).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Button(map_tool, text="Zoom +", width=8, command=self._map_zoom_in).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Button(map_tool, text="Fit", width=7, command=self._map_zoom_reset).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Button(map_tool, text="Clear trail", width=11, command=self._clear_gps_trail).pack(
+            side=tk.LEFT, padx=(8, 0)
+        )
 
         self._map_canvas = tk.Canvas(
             frame,
@@ -413,11 +508,12 @@ class GroundStation(tk.Tk):
             highlightthickness=1,
             highlightbackground="#2d3748",
         )
-        self._map_canvas.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self._map_canvas.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
         self._map_canvas.bind("<Configure>", lambda _e: self._request_map_redraw())
+        self._map_canvas.bind("<MouseWheel>", self._on_map_mousewheel)
 
         bars = ttk.Frame(frame)
-        bars.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        bars.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
         bars.columnconfigure(1, weight=1)
         bars.columnconfigure(3, weight=1)
 
@@ -433,7 +529,7 @@ class GroundStation(tk.Tk):
         self._right_pulse_var = tk.StringVar(value="0 us")
         ttk.Label(bars, textvariable=self._right_pulse_var, width=10).grid(row=1, column=2, sticky="e")
 
-        self._heading_var = tk.StringVar(value="heading: -- / target: --")
+        self._heading_var = tk.StringVar(value="heading: -- / desired hdg: --")
         ttk.Label(
             bars,
             textvariable=self._heading_var,
@@ -495,6 +591,219 @@ class GroundStation(tk.Tk):
             row=1, column=2, padx=6, pady=4
         )
 
+    def _build_scenario_panel(self, parent: ttk.Frame, row: int) -> None:
+        """Closed-loop scenario player panel — preset + overrides + controls.
+
+        Shows a brief description, lets the operator override the most common
+        environmental knobs, and animates the result on the existing map by
+        sending SIMG / SIMP at the scenario tick rate.
+        """
+        parent.rowconfigure(row, weight=0)
+
+        if not _SCENARIO_AVAILABLE:
+            box = ttk.LabelFrame(parent, text="Scenario player (unavailable)")
+            box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
+            ttk.Label(
+                box,
+                text="scenario_runner.py 가 import되지 않아 비활성. "
+                     "ground_station/scenario_runner.py 가 같은 폴더에 있는지 확인하세요.",
+                foreground="#f87171",
+                wraplength=500,
+            ).pack(padx=8, pady=6, anchor="w")
+            return
+
+        box = ttk.LabelFrame(parent, text="Scenario player (closed-loop SIM)")
+        box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
+        for c in range(6):
+            box.columnconfigure(c, weight=0)
+        box.columnconfigure(1, weight=1)
+
+        preset_names = _scenario_list_presets()
+        default_name = preset_names[0] if preset_names else ""
+
+        ttk.Label(box, text="Preset:").grid(row=0, column=0, padx=6, pady=4, sticky="w")
+        self._scenario_preset_var = tk.StringVar(value=default_name)
+        preset_combo = ttk.Combobox(
+            box, textvariable=self._scenario_preset_var,
+            state="readonly", values=preset_names, width=22,
+        )
+        preset_combo.grid(row=0, column=1, padx=6, pady=4, sticky="ew")
+        preset_combo.bind("<<ComboboxSelected>>", self._on_scenario_preset_change)
+
+        self._scenario_play_btn = ttk.Button(
+            box, text="Play", width=8, command=self._on_scenario_play
+        )
+        self._scenario_play_btn.grid(row=0, column=2, padx=(8, 4), pady=4)
+        self._scenario_stop_btn = ttk.Button(
+            box, text="Stop", width=8, state="disabled",
+            command=self._on_scenario_stop,
+        )
+        self._scenario_stop_btn.grid(row=0, column=3, padx=4, pady=4)
+
+        # Description / status spans the row.
+        self._scenario_desc_var = tk.StringVar(
+            value=_SCENARIO_PRESETS[default_name].description if default_name else ""
+        )
+        ttk.Label(
+            box, textvariable=self._scenario_desc_var,
+            foreground="#94a3b8", wraplength=560,
+        ).grid(row=1, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 4))
+
+        # Optional overrides — blank means "use preset value".
+        ttk.Label(box, text="Wind speed (m/s):").grid(row=2, column=0, sticky="w", padx=6, pady=2)
+        self._scenario_wind_speed_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_wind_speed_var, width=8).grid(
+            row=2, column=1, sticky="w", padx=6
+        )
+        ttk.Label(box, text="Wind dir FROM (deg):").grid(row=2, column=2, sticky="e", padx=6)
+        self._scenario_wind_dir_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_wind_dir_var, width=8).grid(
+            row=2, column=3, sticky="w", padx=6
+        )
+
+        ttk.Label(box, text="Descent (m/s):").grid(row=3, column=0, sticky="w", padx=6, pady=2)
+        self._scenario_descent_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_descent_var, width=8).grid(
+            row=3, column=1, sticky="w", padx=6
+        )
+        ttk.Label(box, text="Airspeed (m/s):").grid(row=3, column=2, sticky="e", padx=6)
+        self._scenario_airspeed_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_airspeed_var, width=8).grid(
+            row=3, column=3, sticky="w", padx=6
+        )
+
+        ttk.Label(box, textvariable=self._scenario_status_var,
+                  font=("Consolas", 9), foreground="#bae6fd").grid(
+            row=4, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6)
+        )
+
+    def _on_scenario_preset_change(self, _event=None) -> None:
+        if not _SCENARIO_AVAILABLE:
+            return
+        name = self._scenario_preset_var.get()
+        cfg = _SCENARIO_PRESETS.get(name)
+        if cfg is None:
+            return
+        self._scenario_desc_var.set(cfg.description)
+
+    def _scenario_override_config(self, cfg) -> None:
+        """Apply non-empty Entry overrides onto a preset config (in-place)."""
+        def _maybe_float(var: tk.StringVar) -> float | None:
+            s = var.get().strip()
+            if s == "":
+                return None
+            try:
+                v = float(s)
+            except ValueError:
+                return None
+            if not math.isfinite(v):
+                return None
+            return v
+
+        v = _maybe_float(self._scenario_wind_speed_var)
+        if v is not None and v >= 0.0:
+            cfg.wind_speed_ms = v
+        v = _maybe_float(self._scenario_wind_dir_var)
+        if v is not None:
+            cfg.wind_dir_met_deg = v % 360.0
+        v = _maybe_float(self._scenario_descent_var)
+        if v is not None and v > 0.0:
+            cfg.descent_rate_ms = v
+        v = _maybe_float(self._scenario_airspeed_var)
+        if v is not None and v > 0.0:
+            cfg.airspeed_ms = v
+
+    def _on_scenario_play(self) -> None:
+        if not _SCENARIO_AVAILABLE:
+            return
+        if self._ser is None:
+            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
+            return
+        if self._scenario_runner is not None:
+            return  # already running
+        name = self._scenario_preset_var.get()
+        try:
+            cfg = _scenario_get_preset(name)
+        except KeyError:
+            messagebox.showerror("Scenario", f"unknown preset: {name}")
+            return
+        # Each play uses a fresh dataclass copy so overrides don't pollute the
+        # global preset table across runs.
+        from copy import deepcopy
+        cfg = deepcopy(cfg)
+        self._scenario_override_config(cfg)
+
+        # Map view: clear leftover trail so the new run starts clean.
+        self._clear_gps_trail()
+
+        runner = _ScenarioRunner(
+            send_cb=self._send_body,
+            get_tlm_cb=self._get_latest_tlm,
+            log_cb=lambda msg: self._append_console(msg, "ok"),
+            config=cfg,
+        )
+        self._scenario_runner = runner
+        self._scenario_play_btn.configure(state="disabled")
+        self._scenario_stop_btn.configure(state="normal")
+        self._scenario_status_var.set(f"starting: {cfg.name}")
+        runner.start(sleep_fn=lambda _s: None)
+        # FlightLogic needs a beat to switch into SIM,ACTIVATE before the first
+        # SIMG; without this delay the first frame can be dropped.
+        first_tick_ms = max(400, int(cfg.setup_inter_cmd_delay_s * 4 * 1000))
+        self._scenario_after_id = self.after(first_tick_ms, self._scenario_tick)
+
+    def _scenario_tick(self) -> None:
+        self._scenario_after_id = None
+        runner = self._scenario_runner
+        if runner is None:
+            return
+        try:
+            still_running = runner.tick()
+        except Exception as exc:
+            self._append_console(f"[scenario] tick error: {exc}", "err")
+            still_running = False
+        s = runner.state
+        self._scenario_status_var.set(
+            f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
+            f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
+            f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s"
+        )
+        if still_running:
+            period_ms = max(50, int(runner.config.tick_period_s * 1000))
+            self._scenario_after_id = self.after(period_ms, self._scenario_tick)
+        else:
+            # tick() already called _finish; finalise teardown.
+            self._finalise_scenario(send_teardown=True, reason=s.finish_reason or "complete")
+
+    def _on_scenario_stop(self) -> None:
+        if self._scenario_runner is None:
+            return
+        self._finalise_scenario(send_teardown=True, reason="user-stop")
+
+    def _finalise_scenario(self, *, send_teardown: bool, reason: str) -> None:
+        runner = self._scenario_runner
+        if runner is None:
+            return
+        if self._scenario_after_id is not None:
+            try:
+                self.after_cancel(self._scenario_after_id)
+            except tk.TclError:
+                pass
+            self._scenario_after_id = None
+        try:
+            runner.stop(send_teardown=send_teardown, sleep_fn=lambda _s: None,
+                        reason=reason)
+        except Exception as exc:
+            self._append_console(f"[scenario] stop error: {exc}", "err")
+        s = runner.state
+        self._scenario_status_var.set(
+            f"done: {runner.config.name}  reason={s.finish_reason}  "
+            f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
+        )
+        self._scenario_runner = None
+        self._scenario_play_btn.configure(state="normal")
+        self._scenario_stop_btn.configure(state="disabled")
+
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -528,7 +837,7 @@ class GroundStation(tk.Tk):
         try:
             baud = int(self._baud_var.get())
         except ValueError:
-            baud = 9600
+            baud = 38400
         try:
             ser = serial.Serial(port, baud, timeout=0.2)
         except Exception as exc:
@@ -545,6 +854,11 @@ class GroundStation(tk.Tk):
         self._append_console(f"[connect] {port} @ {baud}", "ok")
 
     def _disconnect(self) -> None:
+        # Stop a running scenario first so it doesn't try to write to a closed
+        # serial port. send_teardown=False because the port may already be
+        # gone — best-effort cleanup only.
+        if self._scenario_runner is not None:
+            self._finalise_scenario(send_teardown=False, reason="serial-disconnect")
         if self._map_redraw_after_id is not None:
             try:
                 self.after_cancel(self._map_redraw_after_id)
@@ -619,12 +933,60 @@ class GroundStation(tk.Tk):
         body = self._cmd_var.get().strip()
         if not body:
             return
+        if not self._send_body(body):
+            return
+        ubody = body.strip().upper().replace(" ", "")
+        # Manual SIMG entry = new leg, so reset the blue trail. Scenario-mode
+        # SIMGs go through _send_body without this reset and accumulate.
+        if ubody.startswith("SIMG,"):
+            self._clear_gps_trail()
+
+    def _send_body(self, body: str) -> bool:
+        """Low-level CMD send used by both manual entry and scenario player.
+
+        Does NOT reset the GPS trail; the caller decides (the manual UI does).
+        """
+        if self._ser is None or not body:
+            return False
         line = f"CMD,{TEAM_ID},{body}\n"
         try:
             self._ser.write(line.encode("utf-8"))
             self._append_console(f"[TX] {line.strip()}", "tx")
+            return True
         except Exception as exc:
             self._append_console(f"[TX-error] {exc}", "err")
+            return False
+
+    def _get_latest_tlm(self) -> dict | None:
+        """Hook exposed to the Scenario runner for closed-loop feedback."""
+        return self._latest_tlm
+
+    def _clear_gps_trail(self) -> None:
+        """Drop path history (e.g. new SIMG leg or operator reset)."""
+        self._track_points.clear()
+        self._request_map_redraw()
+
+    def _map_zoom_in(self) -> None:
+        self._map_user_scale = max(
+            _MAP_ZOOM_MIN_SCALE, self._map_user_scale / _MAP_ZOOM_STEP
+        )
+        self._request_map_redraw()
+
+    def _map_zoom_out(self) -> None:
+        self._map_user_scale = min(
+            _MAP_ZOOM_MAX_SCALE, self._map_user_scale * _MAP_ZOOM_STEP
+        )
+        self._request_map_redraw()
+
+    def _map_zoom_reset(self) -> None:
+        self._map_user_scale = 1.0
+        self._request_map_redraw()
+
+    def _on_map_mousewheel(self, event: tk.Event) -> None:
+        if getattr(event, "delta", 0) > 0:
+            self._map_zoom_in()
+        else:
+            self._map_zoom_out()
 
     def _parse_optional_float(self, value: str) -> float | None:
         try:
@@ -639,13 +1001,23 @@ class GroundStation(tk.Tk):
         """Append GPS to trail — call for every telemetry row so the path stays correct when UI is coalesced."""
         cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
         cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
-        if cur_lat is not None and cur_lon is not None:
-            self._track_points.append((cur_lat, cur_lon))
-            if len(self._track_points) > 500:
-                self._track_points = self._track_points[-500:]
+        if cur_lat is None or cur_lon is None:
+            return
+        if not _valid_gps_latlon(cur_lat, cur_lon):
+            return
+        if self._track_points:
+            la, lo = self._track_points[-1]
+            if _haversine_m(la, lo, cur_lat, cur_lon) > _MAP_TRAIL_MAX_SEGMENT_M:
+                return
+        self._track_points.append((cur_lat, cur_lon))
+        if len(self._track_points) > 500:
+            self._track_points = self._track_points[-500:]
 
     def _apply_telemetry_ui(self, parsed: dict[str, str]) -> None:
         """Refresh telemetry labels, motor bars, map layers from one frame (latest in a batch)."""
+        # Cache so the Scenario runner can read closed-loop feedback (left/right
+        # pulse, etc.) without re-parsing the raw line.
+        self._latest_tlm = parsed
         self._apply_to_ui(parsed)
         cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
         cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
@@ -662,10 +1034,15 @@ class GroundStation(tk.Tk):
         if start_lat is not None and start_lon is not None:
             self._map_points["start"] = (start_lat, start_lon)
         if target_lat is not None and target_lon is not None:
-            self._map_points["target"] = (target_lat, target_lon)
+            if _is_meaningful_target_latlon(target_lat, target_lon):
+                self._map_points["target"] = (target_lat, target_lon)
         if carrot_lat is not None and carrot_lon is not None:
             self._map_points["carrot"] = (carrot_lat, carrot_lon)
-        if cur_lat is not None and cur_lon is not None:
+        if (
+            cur_lat is not None
+            and cur_lon is not None
+            and _valid_gps_latlon(cur_lat, cur_lon)
+        ):
             self._map_points["current"] = (cur_lat, cur_lon)
 
         self._current_heading_deg = cur_hdg if cur_hdg is not None else math.nan
@@ -681,7 +1058,7 @@ class GroundStation(tk.Tk):
         self._right_pulse_var.set(f"{self._right_pulse_us} us")
         ch = "--" if not math.isfinite(self._current_heading_deg) else f"{self._current_heading_deg:.1f}deg"
         dh = "--" if not math.isfinite(self._desired_heading_deg) else f"{self._desired_heading_deg:.1f}deg"
-        self._heading_var.set(f"heading: {ch} / target: {dh}")
+        self._heading_var.set(f"heading: {ch} / desired hdg: {dh}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
         self._guidance_var.set(f"guidance: {gstate}")
         self._request_map_redraw()
@@ -723,7 +1100,13 @@ class GroundStation(tk.Tk):
         lons = [p[1] for p in all_pts]
         lat_min, lat_max = min(lats), max(lats)
         lon_min, lon_max = min(lons), max(lons)
-        if "start" in self._map_points:
+
+        ref_lat: float
+        ref_lon: float
+        tg = self._map_points.get("target")
+        if tg is not None and _is_meaningful_target_latlon(tg[0], tg[1]):
+            ref_lat, ref_lon = tg[0], tg[1]
+        elif "start" in self._map_points:
             ref_lat, ref_lon = self._map_points["start"]
         else:
             ref_lat = (lat_min + lat_max) / 2.0
@@ -740,14 +1123,24 @@ class GroundStation(tk.Tk):
             half_e_data = max(half_e_data, abs(east))
             half_n_data = max(half_n_data, abs(north))
 
-        half_e = min(
-            _MAP_REF_MAX_HALF_EAST_M,
-            max(half_e_data, _MAP_VIEW_MIN_HALF_M),
-        )
-        half_n = min(
-            _MAP_REF_MAX_HALF_NORTH_M,
-            max(half_n_data, _MAP_VIEW_MIN_HALF_M),
-        )
+        st_pair = self._map_points.get("start")
+        tg_pair = self._map_points.get("target")
+        if (
+            st_pair is not None
+            and tg_pair is not None
+            and _is_meaningful_target_latlon(tg_pair[0], tg_pair[1])
+        ):
+            dlat_m = abs(st_pair[0] - tg_pair[0]) * 111320.0
+            dlon_m = abs(st_pair[1] - tg_pair[1]) * meter_per_lon
+            sep_m = math.hypot(dlat_m, dlon_m)
+            pad_m = sep_m * _MAP_START_TARGET_PAD_FACTOR / 2.0
+            half_e_data = max(half_e_data, pad_m)
+            half_n_data = max(half_n_data, pad_m)
+
+        base_e = max(half_e_data * _MAP_VIEW_MARGIN, _MAP_VIEW_MIN_HALF_M)
+        base_n = max(half_n_data * _MAP_VIEW_MARGIN, _MAP_VIEW_MIN_HALF_M)
+        half_e = min(_MAP_REF_MAX_HALF_M, base_e * self._map_user_scale)
+        half_n = min(_MAP_REF_MAX_HALF_M, base_n * self._map_user_scale)
         dec = _map_geo_decimals(max(2.0 * half_e, 2.0 * half_n, 5.0))
 
         pl = float(margin_l)
@@ -841,9 +1234,18 @@ class GroundStation(tk.Tk):
             font=("Segoe UI", 11, "bold"),
         )
 
+        if "target" in self._map_points and _is_meaningful_target_latlon(
+            self._map_points["target"][0], self._map_points["target"][1]
+        ):
+            _ref_lbl = "target"
+        elif "start" in self._map_points:
+            _ref_lbl = "start"
+        else:
+            _ref_lbl = "centroid"
         scale_txt = (
-            f"ref start  E±{half_e:.0f}m  N±{half_n:.0f}m  (cap {int(_MAP_REF_MAX_HALF_EAST_M)}m / "
-            f"{int(_MAP_REF_MAX_HALF_NORTH_M)}m)"
+            f"ref {_ref_lbl}  E±{half_e:.0f}m  N±{half_n:.0f}m"
+            f"  scale×{self._map_user_scale:.2f}"
+            f"  (max ±{int(_MAP_REF_MAX_HALF_M / 1000)}km)"
         )
         c.create_text(pl + 4, pt + 4, text=scale_txt, anchor="nw", fill=_MAP_AXIS_LABEL, font=_MAP_FONT_SMALL)
 
@@ -970,8 +1372,20 @@ class GroundStation(tk.Tk):
 
     def _apply_to_ui(self, parsed: dict[str, str]) -> None:
         for key, var in self._tlm_vars.items():
+            if key in ("gps_lat", "gps_lon"):
+                continue
             val = parsed.get(key, "")
             var.set(val if val != "" else "—")
+        la_s = parsed.get("gps_lat", "").strip()
+        lo_s = parsed.get("gps_lon", "").strip()
+        gla = self._parse_optional_float(la_s)
+        glo = self._parse_optional_float(lo_s)
+        if gla is not None and glo is not None and _valid_gps_latlon(gla, glo):
+            self._tlm_vars["gps_lat"].set(la_s)
+            self._tlm_vars["gps_lon"].set(lo_s)
+        elif la_s == "" and lo_s == "":
+            pass
+        # Malformed / out-of-range GPS: keep previous display to avoid one-frame garbage.
 
     def _write_csv_row(self, parsed: dict[str, str], raw: str) -> None:
         if self._csv_writer is None:
