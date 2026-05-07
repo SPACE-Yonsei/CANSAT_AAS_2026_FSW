@@ -6,10 +6,11 @@ import logging
 import math
 import threading
 import time
+from collections import deque
 from math import atan2, cos, degrees, radians, sqrt
 from typing import Optional
 
-from lib import appargs, msgstructure
+from lib import appargs, config, msgstructure
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ GPS_HEALTH = 0
 
 GPS_POS_STALE_TIMEOUT_SEC = 1.5
 GPS_MOTION_STALE_TIMEOUT_SEC = 1.5
-GPS_DUPLICATE_TIME_MAX = 15
+GPS_DUPLICATE_TIME_MAX = 30
 GPS_JUMP_MAX_SPEED = 200.0
 GPS_MAX_VALID_SPEED = 40.0
 GPS_MIN_COURSE_SPEED = 0.5
@@ -45,6 +46,7 @@ GPS_LOCAL_RADIUS_M = 5_000.0
 GPS_MAX_H_ACC_M = 25.0
 GPS_MAX_S_ACC_MPS = 3.0
 GPS_MAX_HEAD_ACC_DEG = 60.0
+GPS_MIN_POSITION_DELTA_SEC = 0.02
 
 _last_update_ts = 0.0
 _last_fix: Optional[dict] = None
@@ -54,9 +56,44 @@ _anchor_position: Optional[dict] = None
 _last_gps_time: Optional[str] = None
 _duplicate_gps_time_count = 0
 _gps_lock = threading.Lock()
+_lat_window = deque(maxlen=5)
+_lon_window = deque(maxlen=5)
+_speed_window = deque(maxlen=5)
 
 # SIM inject (FlightLogic -> MID_flight_gps_sim): bench / SIM ACTIVATE mode only.
 _sim_fix: Optional[dict] = None
+
+
+def _gps_rate_hz() -> float:
+    try:
+        return max(0.1, float(config.GPS_RATE_HZ))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _gps_period_sec() -> float:
+    return 1.0 / _gps_rate_hz()
+
+
+def _comm_tick_interval() -> int:
+    # Keep comm GGA downlink near 1 Hz regardless of GPS polling rate.
+    return max(1, int(round(_gps_rate_hz())))
+
+
+def _median(values) -> float:
+    arr = sorted(float(v) for v in values)
+    n = len(arr)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    if n % 2 == 1:
+        return float(arr[mid])
+    return float((arr[mid - 1] + arr[mid]) / 2.0)
+
+
+def _median5_update(value: float, window: deque) -> float:
+    window.append(float(value))
+    return _median(window)
 
 
 def _set_sim_fix(payload: Optional[dict]) -> None:
@@ -243,7 +280,7 @@ def _position_delta(lat: float, lon: float, now: float, gps_time_s: Optional[int
             dt += 86_400.0
     else:
         dt = now - float(_last_good_position["ts"])
-    if dt <= 0.05:
+    if dt <= GPS_MIN_POSITION_DELTA_SEC:
         return None
     prev_lat = float(_last_good_position["lat"])
     prev_lon = float(_last_good_position["lon"])
@@ -474,11 +511,16 @@ def read_and_send_gps_data(main_queue) -> None:
     global LAT, LON, ALT, VELOCITY, DIRECTION, SATS, FIX_QUALITY, RMC_STATUS
     global POS_HEALTH, MOTION_HEALTH, GPS_HEALTH, _last_update_ts
     tick = 0
+    period = _gps_period_sec()
+    comm_tick_interval = _comm_tick_interval()
     while GPSAPP_RUNSTATUS:
         sample = _parse_sample(_read_gps())
         now = time.time()
 
         if sample is not None:
+            sample["lat"] = _median5_update(sample["lat"], _lat_window)
+            sample["lon"] = _median5_update(sample["lon"], _lon_window)
+            sample["speed"] = _median5_update(sample["speed"], _speed_window)
             pos_health, position_delta = _position_health(
                 sample["lat"],
                 sample["lon"],
@@ -550,7 +592,7 @@ def read_and_send_gps_data(main_queue) -> None:
             payload_motor,
         )
         tick += 1
-        if tick >= 10:
+        if tick >= comm_tick_interval:
             tick = 0
             msgstructure.send_msg(
                 main_queue,
@@ -559,16 +601,17 @@ def read_and_send_gps_data(main_queue) -> None:
                 appargs.GpsAppArg.MID_comm_gga,
                 f"000000,{ALT},{LAT},{LON},{SATS}",
             )
-        time.sleep(0.1)
+        time.sleep(period)
 
 
 def gpsapp_main(main_queue, main_pipe) -> None:
     t = threading.Thread(target=read_and_send_gps_data, args=(main_queue,), daemon=True)
     t.start()
+    poll_period = _gps_period_sec()
     try:
         while GPSAPP_RUNSTATUS:
             try:
-                has_msg = main_pipe.poll(0.1)
+                has_msg = main_pipe.poll(poll_period)
             except (KeyboardInterrupt, EOFError, OSError):
                 break
             if has_msg:

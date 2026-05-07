@@ -40,7 +40,7 @@ _imu_instance = None
 _i2c_instance = None
 _yaw_ema = None
 _gyrz_ema = None
-EMA_ALPHA = 0.25
+EMA_ALPHA = 0.5
 
 
 def _imu_read_period_sec() -> float:

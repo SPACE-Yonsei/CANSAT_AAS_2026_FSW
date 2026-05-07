@@ -22,7 +22,7 @@ import time
 from types import SimpleNamespace
 from typing import Optional
 
-from lib import appargs, msgstructure
+from lib import appargs, config, msgstructure
 from Sensor_Motor import motor_guidance
 from Sensor_Motor import Motor_Egg, Motor_Release
 from Sensor_Motor.motor_guidance import (
@@ -72,6 +72,17 @@ TARGET = None
 ALT = 0.0
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
+
+
+def _motor_rate_hz() -> float:
+    try:
+        return max(0.1, float(config.MOTOR_RATE_HZ))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _motor_period_sec() -> float:
+    return 1.0 / _motor_rate_hz()
 
 
 # ── Message handlers ───────────────────────────────────────────────────────────
@@ -375,6 +386,7 @@ def ctrl_paragldr(main_queue=None) -> None:
     """
     _null_g = GuidanceOutput(timestamp=0.0)
 
+    period = _motor_period_sec()
     while MOTORAPP_RUNSTATUS:
         try:
             now = time.time()
@@ -383,7 +395,7 @@ def ctrl_paragldr(main_queue=None) -> None:
                 if PI is not None:
                     set_neutral(PI)
                 _send_diag(main_queue, BrakeCommand(now), _null_g, "IDLE")
-                time.sleep(0.1)
+                time.sleep(period)
                 continue
 
             if STATE == 5:
@@ -394,7 +406,7 @@ def ctrl_paragldr(main_queue=None) -> None:
                     BrakeCommand(now, left_pw=0, right_pw=0),
                     _null_g, "LANDED",
                 )
-                time.sleep(0.1)
+                time.sleep(period)
                 continue
 
             with _UPDATE_LOCK:
@@ -438,7 +450,7 @@ def ctrl_paragldr(main_queue=None) -> None:
             except Exception:
                 pass
 
-        time.sleep(0.1)
+        time.sleep(period)
 
 
 # ── Message dispatcher ─────────────────────────────────────────────────────────
@@ -492,10 +504,11 @@ def motorapp_main(main_queue, main_pipe=None) -> None:
     ctrl_thread.start()
     LOGGER.info("MotorControlLoop started")
 
+    poll_period = _motor_period_sec()
     try:
         while MOTORAPP_RUNSTATUS:
             try:
-                if main_pipe.poll(0.1):
+                if main_pipe.poll(poll_period):
                     dispatch(main_pipe.recv())
             except (KeyboardInterrupt, EOFError, OSError):
                 break
