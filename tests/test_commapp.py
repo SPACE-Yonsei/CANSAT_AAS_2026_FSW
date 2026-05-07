@@ -19,6 +19,8 @@ class TestCommApp(unittest.TestCase):
     def setUp(self):
         commapp.COMMAPP_RUNSTATUS = True
         commapp.TELEMETRY_ENABLE = True
+        commapp._comm_serial = None
+        commapp._simp_tlm_alt_hold = None
         commapp.tlm_data = commapp.TelemetryData()
         commapp.tlm_data.state = "0"
         commapp._RBT_AUTH_TOKEN = "SECRET"
@@ -93,13 +95,53 @@ class TestCommApp(unittest.TestCase):
         self.assertEqual(commapp._parse_rbt_auth("SECRET:11:def"), ("SECRET", 11, "def"))
         self.assertEqual(commapp._parse_rbt_auth("SECRET"), ("SECRET", None, None))
 
+    def test_cx_off_sends_one_final_tlm_frame(self):
+        ser = DummySerial()
+        commapp._comm_serial = ser
+        commapp.tlm_data.packet_count = 10
+        q = queue.Queue()
+        self.assertTrue(commapp._dispatch_command("CMD,1070,CX,OFF", q))
+        self.assertFalse(commapp.TELEMETRY_ENABLE)
+        self.assertEqual(len(ser.writes), 1)
+        line = ser.writes[0].decode("utf-8")
+        self.assertIn("CX;OFF", line)
+        commapp.send_tlm(ser)
+        self.assertEqual(len(ser.writes), 1)
+
     def test_tlm_contains_distance(self):
+        commapp.TELEMETRY_ENABLE = True
         ser = DummySerial()
         commapp.tlm_data.distance = 4321.0
         commapp.send_tlm(ser)
         self.assertTrue(ser.writes)
         line = ser.writes[-1].decode("utf-8")
         self.assertIn(",4321.0,", line)
+
+    def test_simp_baro_does_not_overwrite_tlm_alt_in_sim_mode(self):
+        commapp.tlm_data.mode = "S"
+        commapp._simp_tlm_alt_hold = 120.0
+        commapp.tlm_data.altitude = 120.0
+        msg = msgstructure.fill_msg(
+            appargs.BarometerAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.BarometerAppArg.MID_comm_alt,
+            "1013.0,20.0,59.99",
+        )
+        commapp.command_handler(msgstructure.pack_msg(msg))
+        self.assertEqual(commapp.tlm_data.altitude, 120.0)
+        self.assertAlmostEqual(commapp.tlm_data.pressure, 1013.0)
+
+    def test_simp_hold_cleared_when_sim_disabled(self):
+        commapp._simp_tlm_alt_hold = 120.0
+        msg = msgstructure.fill_msg(
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.FlightlogicAppArg.MID_comm_sim,
+            "F",
+        )
+        commapp.command_handler(msgstructure.pack_msg(msg))
+        self.assertIsNone(commapp._simp_tlm_alt_hold)
+        self.assertEqual(commapp.tlm_data.mode, "F")
 
     def test_tlm_multiline_for_console(self):
         line = "$1070," + ",".join(str(i) for i in range(29)) + "\n"
