@@ -37,15 +37,15 @@ PARAFOIL_RIGHT_MOTOR_PIN: int = 12  # GPIO BCM pin
 LEFT_GPIO = PARAFOIL_LEFT_MOTOR_PIN
 RIGHT_GPIO = PARAFOIL_RIGHT_MOTOR_PIN
 
-# Servo calibration: 0 deg is arm down, 180 deg is arm up.
+# Servo calibration: 0 deg is arm down, 120 deg is full travel.
 PULSE_PER_DEG: float = 2000.0 / 180.0  # us/deg, fixed servo calibration
 LEFT_ZERO: int = 600                   # us, servo 0 deg pulse width
 RIGHT_ZERO: int = 2500                 # us, servo 0 deg pulse width
 
 ARM_MIN_DEG = 0.0
-ARM_MAX_DEG = 180.0
+ARM_MAX_DEG = 120.0
 NEUTRAL_ARM_DEG = 60.0
-DELTA_ARM_MAX_DEG = 60.0
+DELTA_ARM_MAX_DEG = 120.0
 MAX_ARM_RATE_DEG_S = 60.0
 MIN_GROUND_SPEED_MPS = 1.0
 

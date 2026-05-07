@@ -26,19 +26,25 @@ class _FakePigpio:
 
 
 class TestActuatorMixer(unittest.TestCase):
+    def test_arm_travel_is_zero_to_120_degrees(self):
+        self.assertEqual(motor_control.ARM_MIN_DEG, 0.0)
+        self.assertEqual(motor_control.ARM_MAX_DEG, 120.0)
+        self.assertEqual(motor_control.NEUTRAL_ARM_DEG, 60.0)
+        self.assertEqual(motor_control.DELTA_ARM_MAX_DEG, 120.0)
+
     def test_clamp_high(self):
         l, r, left_angle, right_angle, delta, _ = motor_control.actuator_mixer(9999.0)
         self.assertGreater(delta, 0.0)
-        self.assertGreater(left_angle, motor_control.NEUTRAL_ARM_DEG)
-        self.assertLess(right_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(left_angle, motor_control.ARM_MAX_DEG)
+        self.assertAlmostEqual(right_angle, motor_control.ARM_MIN_DEG)
         self.assertGreater(l, motor_control.LEFT_NEUTRAL)
         self.assertGreater(r, motor_control.RIGHT_NEUTRAL)
 
     def test_clamp_low(self):
         l, r, left_angle, right_angle, delta, _ = motor_control.actuator_mixer(-9999.0)
         self.assertLess(delta, 0.0)
-        self.assertLess(left_angle, motor_control.NEUTRAL_ARM_DEG)
-        self.assertGreater(right_angle, motor_control.NEUTRAL_ARM_DEG)
+        self.assertAlmostEqual(left_angle, motor_control.ARM_MIN_DEG)
+        self.assertAlmostEqual(right_angle, motor_control.ARM_MAX_DEG)
         self.assertLess(l, motor_control.LEFT_NEUTRAL)
         self.assertLess(r, motor_control.RIGHT_NEUTRAL)
 
