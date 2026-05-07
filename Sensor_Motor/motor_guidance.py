@@ -101,15 +101,15 @@ class GuidanceInput:
     vel_E:       Optional[float] = None   # m/s
     course:      Optional[float] = None   # rad, chi
     groundSpeed: Optional[float] = None   # m/s
-    motion_status: FieldStatus = FieldStatus.MISSING
+    motion_health: FieldStatus = FieldStatus.MISSING
 
     # Yaw rate from gz [rad/s]
     gyrz: Optional[float] = None
-    yaw_rate_status: FieldStatus = FieldStatus.MISSING
+    gyrz_health: FieldStatus = FieldStatus.MISSING
 
     # Barometer altitude [m]
     altitude: Optional[float] = None
-    alt_status: FieldStatus = FieldStatus.MISSING
+    alt_health: FieldStatus = FieldStatus.MISSING
 
     # IMU attitude — for propagation and logging, not L1 core input
     roll:  Optional[float] = None  # deg
@@ -348,7 +348,7 @@ class GuidanceInputResolver:
 
         if c_rec is None and gs_rec is None:
             # Case D/F/G/J skeleton: no motion data at all
-            state.motion_status = FieldStatus.MISSING
+            state.motion_health = FieldStatus.MISSING
             return
 
         if c_age <= MOTION_FRESH_AGE and gs_age <= MOTION_FRESH_AGE:
@@ -357,7 +357,7 @@ class GuidanceInputResolver:
             state.groundSpeed = gs_rec.value
             state.vel_N = gs_rec.value * math.cos(c_rec.value)
             state.vel_E = gs_rec.value * math.sin(c_rec.value)
-            state.motion_status = FieldStatus.FRESH
+            state.motion_health = FieldStatus.FRESH
 
         elif c_age <= MOTION_PROPAGATE_MAX_AGE and gs_age <= MOTION_PROPAGATE_MAX_AGE:
             # Cases D/E skeleton: propagatable stale motion
@@ -365,7 +365,7 @@ class GuidanceInputResolver:
             state.groundSpeed = gs_rec.value
             state.vel_N = gs_rec.value * math.cos(c_rec.value)
             state.vel_E = gs_rec.value * math.sin(c_rec.value)
-            state.motion_status = FieldStatus.PROPAGATABLE
+            state.motion_health = FieldStatus.PROPAGATABLE
 
         elif c_rec is None and gs_rec is not None and gs_age <= MOTION_PROPAGATE_MAX_AGE:
             # Case I skeleton: groundSpeed present, course missing
@@ -376,48 +376,48 @@ class GuidanceInputResolver:
                 state.groundSpeed = gs_rec.value
                 state.vel_N = gs_rec.value * math.cos(course_est)
                 state.vel_E = gs_rec.value * math.sin(course_est)
-                state.motion_status = FieldStatus.PROPAGATABLE
+                state.motion_health = FieldStatus.PROPAGATABLE
             else:
-                state.motion_status = FieldStatus.MISSING
+                state.motion_health = FieldStatus.MISSING
 
         elif c_rec is not None and c_age <= MOTION_PROPAGATE_MAX_AGE and gs_rec is None:
             # Case H skeleton: course present, groundSpeed missing
-            state.motion_status = FieldStatus.MISSING
+            state.motion_health = FieldStatus.MISSING
 
         else:
-            state.motion_status = FieldStatus.HARD_STALE
+            state.motion_health = FieldStatus.HARD_STALE
 
     def _fill_yaw_rate(self, state: GuidanceInput, now: float) -> None:
         """Cases B/C/F/J: gz → gyrz [rad/s]."""
         gz_rec = self._gz
         if gz_rec is None:
-            state.yaw_rate_status = FieldStatus.MISSING
+            state.gyrz_health = FieldStatus.MISSING
             return
         age = now - gz_rec.ts
         if age <= YAW_RATE_FRESH_AGE:
             state.gyrz            = math.radians(gz_rec.value)
-            state.yaw_rate_status = FieldStatus.FRESH
+            state.gyrz_health = FieldStatus.FRESH
         elif age <= YAW_RATE_PROPAGATE_MAX_AGE:
             state.gyrz            = math.radians(gz_rec.value)
-            state.yaw_rate_status = FieldStatus.PROPAGATABLE
+            state.gyrz_health = FieldStatus.PROPAGATABLE
         else:
-            state.yaw_rate_status = FieldStatus.HARD_STALE
+            state.gyrz_health = FieldStatus.HARD_STALE
 
     def _fill_altitude(self, state: GuidanceInput, now: float) -> None:
         """Cases C/G: barometer altitude."""
         alt_rec = self._altitude
         if alt_rec is None:
-            state.alt_status = FieldStatus.MISSING
+            state.alt_health = FieldStatus.MISSING
             return
         age = now - alt_rec.ts
         if age <= ALT_FRESH_AGE:
             state.altitude   = alt_rec.value
-            state.alt_status = FieldStatus.FRESH
+            state.alt_health = FieldStatus.FRESH
         elif age <= ALT_PROPAGATE_MAX_AGE:
             state.altitude   = alt_rec.value
-            state.alt_status = FieldStatus.PROPAGATABLE
+            state.alt_health = FieldStatus.PROPAGATABLE
         else:
-            state.alt_status = FieldStatus.HARD_STALE
+            state.alt_health = FieldStatus.HARD_STALE
 
     def _fill_attitude(self, state: GuidanceInput) -> None:
         if self._roll  is not None: state.roll  = self._roll.value
@@ -440,8 +440,8 @@ class GuidanceInputResolver:
         course-from-position history, or yaw-rate hold/observer logic.
         """
         pos_ok = state.pos_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
-        motion_ok = state.motion_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
-        yaw_ok = state.yaw_rate_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        motion_ok = state.motion_health in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        yaw_ok = state.gyrz_health in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
 
         has_l = pos_ok and state.pos_N is not None and state.pos_E is not None
         has_c = motion_ok and state.course is not None
@@ -506,7 +506,7 @@ class GuidanceInputResolver:
 
     def _classify_guidance_mode(self, state: GuidanceInput) -> None:
         pos_ok    = state.pos_status    in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
-        motion_ok = state.motion_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
+        motion_ok = state.motion_health in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
 
         if not pos_ok and not motion_ok:
             state.guidance_mode = GuidanceMode.DISABLED
@@ -518,7 +518,7 @@ class GuidanceInputResolver:
             state.guidance_mode = GuidanceMode.DISABLED
             state.reason        = "motion unavailable"
         elif (state.pos_status    == FieldStatus.PROPAGATABLE
-              or state.motion_status == FieldStatus.PROPAGATABLE):
+              or state.motion_health == FieldStatus.PROPAGATABLE):
             state.guidance_mode = GuidanceMode.DEGRADED
             state.reason        = "propagated data in use"
         else:
