@@ -332,12 +332,47 @@ def _check_fdir(snap) -> Optional[str]:
     return None
 
 
+def _apply_comm_tlm_fallback(g_out: GuidanceOutput) -> None:
+    """Fill comm CSV geo fields when L1 left them unset (no target in NE yet, etc.)."""
+    if _TARGET_LAT is not None and _TARGET_LON is not None:
+        if not math.isfinite(g_out.target_lat):
+            g_out.target_lat = float(_TARGET_LAT)
+            g_out.target_lon = float(_TARGET_LON)
+    if not GPS_HEALTH.pos_health:
+        return
+    lat, lon = float(GPS_VECTOR.lat), float(GPS_VECTOR.lon)
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return
+    if not math.isfinite(g_out.current_heading_deg):
+        if GPS_HEALTH.motion_health:
+            g_out.current_heading_deg = float(GPS_VECTOR.direction)
+        elif IMU.imu_health:
+            g_out.current_heading_deg = float(IMU.yaw)
+    if (
+        _TARGET_LAT is not None
+        and _TARGET_LON is not None
+        and not math.isfinite(g_out.desired_heading_deg)
+    ):
+        tN, tE = _ll_to_ne(
+            float(_TARGET_LAT), float(_TARGET_LON), lat, lon
+        )
+        if tN * tN + tE * tE > 1e-6:
+            g_out.desired_heading_deg = math.degrees(math.atan2(tE, tN))
+
+
 # ── Diagnostics ────────────────────────────────────────────────────────────────
 
 def _send_diag(main_queue, cmd: BrakeCommand, g_out: GuidanceOutput,
                diag_state: str) -> None:
     if main_queue is None:
         return
+
+    now = time.time()
+    with _UPDATE_LOCK:
+        if diag_state in ("IDLE", "LANDED"):
+            inp = _INPUT_RESOLVER.resolve(now)
+            g_out = _GUIDANCE.update(inp, now)
+        _apply_comm_tlm_fallback(g_out)
 
     def _fmt(v) -> str:
         try:
@@ -346,9 +381,34 @@ def _send_diag(main_queue, cmd: BrakeCommand, g_out: GuidanceOutput,
         except (TypeError, ValueError):
             return "nan"
 
-    payload = ",".join([
+    def _fmt_ll(v: float) -> str:
+        try:
+            f = float(v)
+            return "nan" if (f != f) else f"{f:.6f}"
+        except (TypeError, ValueError):
+            return "nan"
+
+    def _fmt_hdg(v: float) -> str:
+        try:
+            f = float(v)
+            return "nan" if (f != f) else f"{f:.2f}"
+        except (TypeError, ValueError):
+            return "nan"
+
+    head = [
         str(cmd.left_pw),
         str(cmd.right_pw),
+        _fmt_ll(g_out.start_lat),
+        _fmt_ll(g_out.start_lon),
+        _fmt_ll(g_out.target_lat),
+        _fmt_ll(g_out.target_lon),
+        _fmt_ll(g_out.carrot_lat),
+        _fmt_ll(g_out.carrot_lon),
+        _fmt_hdg(g_out.current_heading_deg),
+        _fmt_hdg(g_out.desired_heading_deg),
+        diag_state,
+    ]
+    tail = [
         _fmt(g_out.crossTrack),
         _fmt(g_out.alongTrack),
         _fmt(cmd.yaw_rate_cmd_deg_s),
@@ -364,8 +424,8 @@ def _send_diag(main_queue, cmd: BrakeCommand, g_out: GuidanceOutput,
         _fmt(cmd.guidance_command_age_s),
         cmd.fallback_mode,
         cmd.mode,
-        diag_state,
-    ])
+    ]
+    payload = ",".join(head + tail)
     msgstructure.send_msg(
         main_queue,
         appargs.MotorAppArg.AppID,

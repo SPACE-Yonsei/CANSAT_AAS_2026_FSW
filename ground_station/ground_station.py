@@ -437,7 +437,7 @@ class GroundStation(tk.Tk):
         self._right_pulse_var = tk.StringVar(value="0 us")
         ttk.Label(bars, textvariable=self._right_pulse_var, width=10).grid(row=1, column=2, sticky="e")
 
-        self._heading_var = tk.StringVar(value="heading: -- / target: --")
+        self._heading_var = tk.StringVar(value="heading: -- / desired hdg: --")
         ttk.Label(
             bars,
             textvariable=self._heading_var,
@@ -685,7 +685,7 @@ class GroundStation(tk.Tk):
         self._right_pulse_var.set(f"{self._right_pulse_us} us")
         ch = "--" if not math.isfinite(self._current_heading_deg) else f"{self._current_heading_deg:.1f}deg"
         dh = "--" if not math.isfinite(self._desired_heading_deg) else f"{self._desired_heading_deg:.1f}deg"
-        self._heading_var.set(f"heading: {ch} / target: {dh}")
+        self._heading_var.set(f"heading: {ch} / desired hdg: {dh}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
         self._guidance_var.set(f"guidance: {gstate}")
         self._request_map_redraw()
