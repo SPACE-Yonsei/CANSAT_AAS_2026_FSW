@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -412,7 +413,14 @@ def _clamp_pw(pw: float, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(pw)))
 
 
+def _debug_control_enabled() -> bool:
+    v = os.environ.get("CANSAT_DEBUG_CONTROL", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _log_command(cmd: BrakeCommand) -> None:
+    if not _debug_control_enabled():
+        return
     LOGGER.info(
         "parafoil_control mode=%s valid=%s yaw_cmd=%.3f yaw_meas=%.3f "
         "yaw_err=%.3f delta_ff=%.3f delta_pid=%.3f delta=%.3f "
