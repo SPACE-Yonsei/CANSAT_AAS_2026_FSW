@@ -43,6 +43,27 @@ except Exception as exc:
     print("Import error:", exc)
     sys.exit(1)
 
+# Scenario player lives next to this file; importable when run as a script
+# (`python ground_station/ground_station.py`) by re-using the script's dir on
+# sys.path. PyInstaller bundles already place this module alongside.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from scenario_runner import (  # type: ignore[import-not-found]
+        PRESETS as _SCENARIO_PRESETS,
+        ScenarioConfig as _ScenarioConfig,
+        ScenarioRunner as _ScenarioRunner,
+        get_preset as _scenario_get_preset,
+        list_preset_names as _scenario_list_presets,
+    )
+    _SCENARIO_AVAILABLE = True
+except Exception as _scenario_import_exc:  # pragma: no cover  (defensive)
+    _SCENARIO_PRESETS = {}
+    _ScenarioConfig = None  # type: ignore[assignment]
+    _ScenarioRunner = None  # type: ignore[assignment]
+    _scenario_get_preset = None  # type: ignore[assignment]
+    _scenario_list_presets = lambda: []  # type: ignore[assignment]
+    _SCENARIO_AVAILABLE = False
+
 
 TEAM_ID = "1070"
 
@@ -293,6 +314,13 @@ class GroundStation(tk.Tk):
         self._map_redraw_after_id: str | None = None
         self._map_dirty: bool = False
         self._console_scroll_after_id: str | None = None
+        # Latest parsed TLM dict (also fed to the Scenario panel as a feedback
+        # source). Updated each time a frame survives _parse_tlm.
+        self._latest_tlm: dict[str, str] | None = None
+        # Scenario player state (None when no scenario active).
+        self._scenario_runner: "_ScenarioRunner | None" = None
+        self._scenario_after_id: str | None = None
+        self._scenario_status_var = tk.StringVar(value="idle")
 
         self._build_ui()
         self._refresh_ports()
@@ -329,6 +357,7 @@ class GroundStation(tk.Tk):
         self._build_telemetry_panel(left)
         self._build_map_and_motor(right)
         self._build_console_and_command(right, row_offset=1)
+        self._build_scenario_panel(right, row=3)
         self._build_status_bar()
 
     def _build_top_bar(self) -> None:
@@ -562,6 +591,219 @@ class GroundStation(tk.Tk):
             row=1, column=2, padx=6, pady=4
         )
 
+    def _build_scenario_panel(self, parent: ttk.Frame, row: int) -> None:
+        """Closed-loop scenario player panel — preset + overrides + controls.
+
+        Shows a brief description, lets the operator override the most common
+        environmental knobs, and animates the result on the existing map by
+        sending SIMG / SIMP at the scenario tick rate.
+        """
+        parent.rowconfigure(row, weight=0)
+
+        if not _SCENARIO_AVAILABLE:
+            box = ttk.LabelFrame(parent, text="Scenario player (unavailable)")
+            box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
+            ttk.Label(
+                box,
+                text="scenario_runner.py 가 import되지 않아 비활성. "
+                     "ground_station/scenario_runner.py 가 같은 폴더에 있는지 확인하세요.",
+                foreground="#f87171",
+                wraplength=500,
+            ).pack(padx=8, pady=6, anchor="w")
+            return
+
+        box = ttk.LabelFrame(parent, text="Scenario player (closed-loop SIM)")
+        box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
+        for c in range(6):
+            box.columnconfigure(c, weight=0)
+        box.columnconfigure(1, weight=1)
+
+        preset_names = _scenario_list_presets()
+        default_name = preset_names[0] if preset_names else ""
+
+        ttk.Label(box, text="Preset:").grid(row=0, column=0, padx=6, pady=4, sticky="w")
+        self._scenario_preset_var = tk.StringVar(value=default_name)
+        preset_combo = ttk.Combobox(
+            box, textvariable=self._scenario_preset_var,
+            state="readonly", values=preset_names, width=22,
+        )
+        preset_combo.grid(row=0, column=1, padx=6, pady=4, sticky="ew")
+        preset_combo.bind("<<ComboboxSelected>>", self._on_scenario_preset_change)
+
+        self._scenario_play_btn = ttk.Button(
+            box, text="Play", width=8, command=self._on_scenario_play
+        )
+        self._scenario_play_btn.grid(row=0, column=2, padx=(8, 4), pady=4)
+        self._scenario_stop_btn = ttk.Button(
+            box, text="Stop", width=8, state="disabled",
+            command=self._on_scenario_stop,
+        )
+        self._scenario_stop_btn.grid(row=0, column=3, padx=4, pady=4)
+
+        # Description / status spans the row.
+        self._scenario_desc_var = tk.StringVar(
+            value=_SCENARIO_PRESETS[default_name].description if default_name else ""
+        )
+        ttk.Label(
+            box, textvariable=self._scenario_desc_var,
+            foreground="#94a3b8", wraplength=560,
+        ).grid(row=1, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 4))
+
+        # Optional overrides — blank means "use preset value".
+        ttk.Label(box, text="Wind speed (m/s):").grid(row=2, column=0, sticky="w", padx=6, pady=2)
+        self._scenario_wind_speed_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_wind_speed_var, width=8).grid(
+            row=2, column=1, sticky="w", padx=6
+        )
+        ttk.Label(box, text="Wind dir FROM (deg):").grid(row=2, column=2, sticky="e", padx=6)
+        self._scenario_wind_dir_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_wind_dir_var, width=8).grid(
+            row=2, column=3, sticky="w", padx=6
+        )
+
+        ttk.Label(box, text="Descent (m/s):").grid(row=3, column=0, sticky="w", padx=6, pady=2)
+        self._scenario_descent_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_descent_var, width=8).grid(
+            row=3, column=1, sticky="w", padx=6
+        )
+        ttk.Label(box, text="Airspeed (m/s):").grid(row=3, column=2, sticky="e", padx=6)
+        self._scenario_airspeed_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_airspeed_var, width=8).grid(
+            row=3, column=3, sticky="w", padx=6
+        )
+
+        ttk.Label(box, textvariable=self._scenario_status_var,
+                  font=("Consolas", 9), foreground="#bae6fd").grid(
+            row=4, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6)
+        )
+
+    def _on_scenario_preset_change(self, _event=None) -> None:
+        if not _SCENARIO_AVAILABLE:
+            return
+        name = self._scenario_preset_var.get()
+        cfg = _SCENARIO_PRESETS.get(name)
+        if cfg is None:
+            return
+        self._scenario_desc_var.set(cfg.description)
+
+    def _scenario_override_config(self, cfg) -> None:
+        """Apply non-empty Entry overrides onto a preset config (in-place)."""
+        def _maybe_float(var: tk.StringVar) -> float | None:
+            s = var.get().strip()
+            if s == "":
+                return None
+            try:
+                v = float(s)
+            except ValueError:
+                return None
+            if not math.isfinite(v):
+                return None
+            return v
+
+        v = _maybe_float(self._scenario_wind_speed_var)
+        if v is not None and v >= 0.0:
+            cfg.wind_speed_ms = v
+        v = _maybe_float(self._scenario_wind_dir_var)
+        if v is not None:
+            cfg.wind_dir_met_deg = v % 360.0
+        v = _maybe_float(self._scenario_descent_var)
+        if v is not None and v > 0.0:
+            cfg.descent_rate_ms = v
+        v = _maybe_float(self._scenario_airspeed_var)
+        if v is not None and v > 0.0:
+            cfg.airspeed_ms = v
+
+    def _on_scenario_play(self) -> None:
+        if not _SCENARIO_AVAILABLE:
+            return
+        if self._ser is None:
+            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
+            return
+        if self._scenario_runner is not None:
+            return  # already running
+        name = self._scenario_preset_var.get()
+        try:
+            cfg = _scenario_get_preset(name)
+        except KeyError:
+            messagebox.showerror("Scenario", f"unknown preset: {name}")
+            return
+        # Each play uses a fresh dataclass copy so overrides don't pollute the
+        # global preset table across runs.
+        from copy import deepcopy
+        cfg = deepcopy(cfg)
+        self._scenario_override_config(cfg)
+
+        # Map view: clear leftover trail so the new run starts clean.
+        self._clear_gps_trail()
+
+        runner = _ScenarioRunner(
+            send_cb=self._send_body,
+            get_tlm_cb=self._get_latest_tlm,
+            log_cb=lambda msg: self._append_console(msg, "ok"),
+            config=cfg,
+        )
+        self._scenario_runner = runner
+        self._scenario_play_btn.configure(state="disabled")
+        self._scenario_stop_btn.configure(state="normal")
+        self._scenario_status_var.set(f"starting: {cfg.name}")
+        runner.start(sleep_fn=lambda _s: None)
+        # FlightLogic needs a beat to switch into SIM,ACTIVATE before the first
+        # SIMG; without this delay the first frame can be dropped.
+        first_tick_ms = max(400, int(cfg.setup_inter_cmd_delay_s * 4 * 1000))
+        self._scenario_after_id = self.after(first_tick_ms, self._scenario_tick)
+
+    def _scenario_tick(self) -> None:
+        self._scenario_after_id = None
+        runner = self._scenario_runner
+        if runner is None:
+            return
+        try:
+            still_running = runner.tick()
+        except Exception as exc:
+            self._append_console(f"[scenario] tick error: {exc}", "err")
+            still_running = False
+        s = runner.state
+        self._scenario_status_var.set(
+            f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
+            f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
+            f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s"
+        )
+        if still_running:
+            period_ms = max(50, int(runner.config.tick_period_s * 1000))
+            self._scenario_after_id = self.after(period_ms, self._scenario_tick)
+        else:
+            # tick() already called _finish; finalise teardown.
+            self._finalise_scenario(send_teardown=True, reason=s.finish_reason or "complete")
+
+    def _on_scenario_stop(self) -> None:
+        if self._scenario_runner is None:
+            return
+        self._finalise_scenario(send_teardown=True, reason="user-stop")
+
+    def _finalise_scenario(self, *, send_teardown: bool, reason: str) -> None:
+        runner = self._scenario_runner
+        if runner is None:
+            return
+        if self._scenario_after_id is not None:
+            try:
+                self.after_cancel(self._scenario_after_id)
+            except tk.TclError:
+                pass
+            self._scenario_after_id = None
+        try:
+            runner.stop(send_teardown=send_teardown, sleep_fn=lambda _s: None,
+                        reason=reason)
+        except Exception as exc:
+            self._append_console(f"[scenario] stop error: {exc}", "err")
+        s = runner.state
+        self._scenario_status_var.set(
+            f"done: {runner.config.name}  reason={s.finish_reason}  "
+            f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
+        )
+        self._scenario_runner = None
+        self._scenario_play_btn.configure(state="normal")
+        self._scenario_stop_btn.configure(state="disabled")
+
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -612,6 +854,11 @@ class GroundStation(tk.Tk):
         self._append_console(f"[connect] {port} @ {baud}", "ok")
 
     def _disconnect(self) -> None:
+        # Stop a running scenario first so it doesn't try to write to a closed
+        # serial port. send_teardown=False because the port may already be
+        # gone — best-effort cleanup only.
+        if self._scenario_runner is not None:
+            self._finalise_scenario(send_teardown=False, reason="serial-disconnect")
         if self._map_redraw_after_id is not None:
             try:
                 self.after_cancel(self._map_redraw_after_id)
@@ -686,15 +933,33 @@ class GroundStation(tk.Tk):
         body = self._cmd_var.get().strip()
         if not body:
             return
+        if not self._send_body(body):
+            return
+        ubody = body.strip().upper().replace(" ", "")
+        # Manual SIMG entry = new leg, so reset the blue trail. Scenario-mode
+        # SIMGs go through _send_body without this reset and accumulate.
+        if ubody.startswith("SIMG,"):
+            self._clear_gps_trail()
+
+    def _send_body(self, body: str) -> bool:
+        """Low-level CMD send used by both manual entry and scenario player.
+
+        Does NOT reset the GPS trail; the caller decides (the manual UI does).
+        """
+        if self._ser is None or not body:
+            return False
         line = f"CMD,{TEAM_ID},{body}\n"
         try:
             self._ser.write(line.encode("utf-8"))
             self._append_console(f"[TX] {line.strip()}", "tx")
-            ubody = body.strip().upper().replace(" ", "")
-            if ubody.startswith("SIMG,"):
-                self._clear_gps_trail()
+            return True
         except Exception as exc:
             self._append_console(f"[TX-error] {exc}", "err")
+            return False
+
+    def _get_latest_tlm(self) -> dict | None:
+        """Hook exposed to the Scenario runner for closed-loop feedback."""
+        return self._latest_tlm
 
     def _clear_gps_trail(self) -> None:
         """Drop path history (e.g. new SIMG leg or operator reset)."""
@@ -750,6 +1015,9 @@ class GroundStation(tk.Tk):
 
     def _apply_telemetry_ui(self, parsed: dict[str, str]) -> None:
         """Refresh telemetry labels, motor bars, map layers from one frame (latest in a batch)."""
+        # Cache so the Scenario runner can read closed-loop feedback (left/right
+        # pulse, etc.) without re-parsing the raw line.
+        self._latest_tlm = parsed
         self._apply_to_ui(parsed)
         cur_lat = self._parse_optional_float(parsed.get("gps_lat", ""))
         cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
