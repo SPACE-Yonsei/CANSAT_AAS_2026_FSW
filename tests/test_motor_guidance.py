@@ -66,10 +66,10 @@ class TestMotorGuidance(unittest.TestCase):
         out = motor_guidance.guidance(imu, gps, fid, None, 120.0)
         self.assertEqual(out.state, "TARGET_UNSET")
 
-    def test_estimator_reports_nominal_lcsg_case(self):
-        est = motor_guidance.NavigationStateEstimator()
+    def test_input_resolver_reports_nominal_lcsg_case(self):
+        resolver = motor_guidance.GuidanceInputResolver()
         now = time.time()
-        est.update_gnss(
+        resolver.update_gnss(
             lat=37.55,
             lon=126.95,
             course_rad=math.radians(90.0),
@@ -78,18 +78,18 @@ class TestMotorGuidance(unittest.TestCase):
             motionHealth=True,
             ts=now,
         )
-        est.update_imu(gz=5.0, ts=now)
+        resolver.update_imu(gz=5.0, ts=now)
 
-        state = est.estimate(now)
+        guidance_input = resolver.resolve(now)
 
-        self.assertEqual(state.sensor_case, "LCSG")
-        self.assertEqual(state.case_policy, "nominal_l1_with_yaw_rate_feedback")
-        self.assertEqual(state.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+        self.assertEqual(guidance_input.lcsg_case, "LCSG")
+        self.assertEqual(guidance_input.input_policy, "nominal_l1_with_yaw_rate_feedback")
+        self.assertEqual(guidance_input.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
 
-    def test_estimator_reports_feedforward_only_when_gyro_missing(self):
-        est = motor_guidance.NavigationStateEstimator()
+    def test_input_resolver_reports_feedforward_only_when_gyro_missing(self):
+        resolver = motor_guidance.GuidanceInputResolver()
         now = time.time()
-        est.update_gnss(
+        resolver.update_gnss(
             lat=37.55,
             lon=126.95,
             course_rad=math.radians(90.0),
@@ -99,11 +99,11 @@ class TestMotorGuidance(unittest.TestCase):
             ts=now,
         )
 
-        state = est.estimate(now)
+        guidance_input = resolver.resolve(now)
 
-        self.assertEqual(state.sensor_case, "LCS-")
-        self.assertEqual(state.case_policy, "l1_valid_feedforward_only_no_gyro")
-        self.assertEqual(state.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+        self.assertEqual(guidance_input.lcsg_case, "LCS-")
+        self.assertEqual(guidance_input.input_policy, "l1_valid_feedforward_only_no_gyro")
+        self.assertEqual(guidance_input.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
 
 
 if __name__ == "__main__":

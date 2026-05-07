@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Navigation state estimation and L1 guidance for CanSat parafoil FSW.
+Guidance input resolution and L1 guidance for CanSat parafoil FSW.
 
 Architecture:
-  sensor apps → NavigationStateEstimator → L1Guidance → ParafoilBrakeController
+  sensor apps → GuidanceInputResolver → L1Guidance → ParafoilBrakeController
 
 Coordinate convention:
   Local N/E frame.  +N = north, +E = east.
@@ -87,8 +87,8 @@ class _FieldRecord:
 
 
 @dataclass
-class EstimatedState:
-    """Best-estimate navigation state produced by NavigationStateEstimator."""
+class GuidanceInput:
+    """Resolved navigation input passed into L1Guidance."""
     timestamp: float
 
     # Position in local N/E [m]
@@ -125,8 +125,8 @@ class EstimatedState:
     # Sensor availability case for missing-data policy research.
     # L = Lat/Lon position, C = course over ground, S = ground speed,
     # G = GyroZ yaw-rate. Missing fields are shown as "-"; e.g. "LCS-".
-    sensor_case: str = "----"
-    case_policy: str = ""
+    lcsg_case: str = "----"
+    input_policy: str = ""
 
 
 @dataclass
@@ -158,11 +158,11 @@ class L1Config:
     COURSE_RATE_MAX: float = 0.6   # rad/s
 
 
-# ── NavigationStateEstimator ───────────────────────────────────────────────────
-class NavigationStateEstimator:
+# ── GuidanceInputResolver ───────────────────────────────────────────────────
+class GuidanceInputResolver:
     """
     Receives sensor fields from message handlers, tracks their age, and
-    produces the best EstimatedState for guidance.
+    produces the best GuidanceInput for guidance.
 
     This is field-availability and data-age management.
     It is NOT a sensor reliability checker — raw sensor validity is the
@@ -278,12 +278,12 @@ class NavigationStateEstimator:
 
     # ── Primary query ─────────────────────────────────────────────────────────
 
-    def estimate(self, now: float) -> EstimatedState:
+    def resolve(self, now: float) -> GuidanceInput:
         """
-        Build the best EstimatedState at time `now`.
-        Input combination cases A–L are dispatched by the fill methods.
+        Build the GuidanceInput at time `now`.
+        Input combination cases are reported as L/C/S/G availability.
         """
-        state = EstimatedState(timestamp=now)
+        state = GuidanceInput(timestamp=now)
         self._fill_position(state, now)
         self._fill_motion(state, now)
         self._fill_yaw_rate(state, now)
@@ -294,9 +294,13 @@ class NavigationStateEstimator:
         self._classify_guidance_mode(state)
         return state
 
+    def estimate(self, now: float) -> GuidanceInput:
+        """Backward-compatible alias for older tests/replay tools."""
+        return self.resolve(now)
+
     # ── Private fill methods (Section 7 skeleton) ─────────────────────────────
 
-    def _fill_position(self, state: EstimatedState, now: float) -> None:
+    def _fill_position(self, state: GuidanceInput, now: float) -> None:
         """Cases A/B/C/D/E/H/I/K: resolve pos_N, pos_E."""
         lat_rec = self._lat
         lon_rec = self._lon
@@ -331,7 +335,7 @@ class NavigationStateEstimator:
         else:
             state.pos_status = FieldStatus.HARD_STALE
 
-    def _fill_motion(self, state: EstimatedState, now: float) -> None:
+    def _fill_motion(self, state: GuidanceInput, now: float) -> None:
         """Cases A/B/C/D/E/H/I/J: resolve course, groundSpeed, vel_N, vel_E."""
         c_rec  = self._course
         gs_rec = self._groundSpeed
@@ -383,7 +387,7 @@ class NavigationStateEstimator:
         else:
             state.motion_status = FieldStatus.HARD_STALE
 
-    def _fill_yaw_rate(self, state: EstimatedState, now: float) -> None:
+    def _fill_yaw_rate(self, state: GuidanceInput, now: float) -> None:
         """Cases B/C/F/J: gz → gyrz [rad/s]."""
         gz_rec = self._gz
         if gz_rec is None:
@@ -399,7 +403,7 @@ class NavigationStateEstimator:
         else:
             state.yaw_rate_status = FieldStatus.HARD_STALE
 
-    def _fill_altitude(self, state: EstimatedState, now: float) -> None:
+    def _fill_altitude(self, state: GuidanceInput, now: float) -> None:
         """Cases C/G: barometer altitude."""
         alt_rec = self._altitude
         if alt_rec is None:
@@ -415,17 +419,17 @@ class NavigationStateEstimator:
         else:
             state.alt_status = FieldStatus.HARD_STALE
 
-    def _fill_attitude(self, state: EstimatedState) -> None:
+    def _fill_attitude(self, state: GuidanceInput) -> None:
         if self._roll  is not None: state.roll  = self._roll.value
         if self._pitch is not None: state.pitch = self._pitch.value
         if self._yaw   is not None: state.yaw   = self._yaw.value
 
-    def _fill_tilt_rate(self, state: EstimatedState) -> None:
+    def _fill_tilt_rate(self, state: GuidanceInput) -> None:
         """Case L: tilt rate from gx, gy for payload oscillation detection."""
         if self._gx is not None and self._gy is not None:
             state.tilt_rate = math.hypot(self._gx.value, self._gy.value)
 
-    def _fill_lcsg_case(self, state: EstimatedState) -> None:
+    def _fill_lcsg_case(self, state: GuidanceInput) -> None:
         """
         Classify the active sensor combination for missing-data control policy.
 
@@ -444,16 +448,16 @@ class NavigationStateEstimator:
         has_s = motion_ok and state.groundSpeed is not None
         has_g = yaw_ok and state.gyrz is not None
 
-        state.sensor_case = "".join([
+        state.lcsg_case = "".join([
             "L" if has_l else "-",
             "C" if has_c else "-",
             "S" if has_s else "-",
             "G" if has_g else "-",
         ])
-        state.case_policy = self._lcsg_policy_skeleton(state.sensor_case)
+        state.input_policy = self._lcsg_policy_skeleton(state.lcsg_case)
 
     @staticmethod
-    def _lcsg_policy_skeleton(sensor_case: str) -> str:
+    def _lcsg_policy_skeleton(lcsg_case: str) -> str:
         """
         Missing-data policy map for L/C/S/G.
 
@@ -484,23 +488,23 @@ class NavigationStateEstimator:
               Insufficient for reliable L1 path following. Keep neutral/safe
               glide unless a validated observer supplies the missing fields.
         """
-        if sensor_case == "LCSG":
+        if lcsg_case == "LCSG":
             return "nominal_l1_with_yaw_rate_feedback"
-        if sensor_case == "LCS-":
+        if lcsg_case == "LCS-":
             return "l1_valid_feedforward_only_no_gyro"
-        if sensor_case == "LC-G":
+        if lcsg_case == "LC-G":
             return "hold_or_estimate_ground_speed_from_position_history"
-        if sensor_case == "L-SG":
+        if lcsg_case == "L-SG":
             return "hold_or_estimate_course_from_position_history"
-        if sensor_case == "-CSG":
+        if lcsg_case == "-CSG":
             return "no_position_short_dead_reckoning_or_safe_glide"
-        if sensor_case.startswith("L") and sensor_case[1:3] == "--":
+        if lcsg_case.startswith("L") and lcsg_case[1:3] == "--":
             return "position_only_no_l1_motion_safe_glide"
-        if sensor_case.endswith("G"):
+        if lcsg_case.endswith("G"):
             return "gyro_only_or_partial_motion_no_l1_safe_glide"
         return "insufficient_l1_inputs_safe_glide"
 
-    def _classify_guidance_mode(self, state: EstimatedState) -> None:
+    def _classify_guidance_mode(self, state: GuidanceInput) -> None:
         pos_ok    = state.pos_status    in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
         motion_ok = state.motion_status in (FieldStatus.FRESH, FieldStatus.PROPAGATABLE)
 
@@ -574,7 +578,7 @@ class L1Guidance:
         self._start_E      = None
         self._last_Nu      = 0.0
 
-    def update(self, state: EstimatedState, now: float) -> GuidanceOutput:
+    def update(self, state: GuidanceInput, now: float) -> GuidanceOutput:
         out = GuidanceOutput(timestamp=now)
 
         # ── Preconditions ────────────────────────────────────────────────────
@@ -745,7 +749,7 @@ def ne_to_ll(N: float, E: float,
 
 # Legacy facade ---------------------------------------------------------------
 #
-# The new runtime uses NavigationStateEstimator and L1Guidance directly.  These
+# The new runtime uses GuidanceInputResolver and L1Guidance directly.  These
 # wrappers keep replay tools and older unit tests callable while they migrate to
 # the class-based API.
 
@@ -808,27 +812,27 @@ start_point = SimpleNamespace(lat=None, lon=None)
 target_coord = SimpleNamespace(lat=None, lon=None)
 _prev_gps = _GpsJumpState()
 _gps_stable_count = 0
-_legacy_estimator = NavigationStateEstimator()
+_legacy_input_resolver = GuidanceInputResolver()
 _legacy_guidance = L1Guidance(L1Config())
 cascade_pi = SimpleNamespace(MAX_CMD=L1Config().COURSE_RATE_MAX)
 
 
 def init_guidance() -> None:
-    global _prev_gps, _gps_stable_count, _legacy_estimator, _legacy_guidance
+    global _prev_gps, _gps_stable_count, _legacy_input_resolver, _legacy_guidance
     start_point.lat = None
     start_point.lon = None
     target_coord.lat = None
     target_coord.lon = None
     _prev_gps = _GpsJumpState()
     _gps_stable_count = 0
-    _legacy_estimator = NavigationStateEstimator()
+    _legacy_input_resolver = GuidanceInputResolver()
     _legacy_guidance = L1Guidance(L1Config())
 
 
 def set_start_coordinates(lat: float, lon: float) -> None:
     start_point.lat = lat
     start_point.lon = lon
-    _legacy_estimator.set_origin(lat, lon)
+    _legacy_input_resolver.set_origin(lat, lon)
     _legacy_guidance.set_start(0.0, 0.0)
 
 
@@ -905,7 +909,7 @@ def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceRe
     set_target_coord(float(target.lat), float(target.lon))
     direction = getattr(gps_vec, "direction", getattr(gps_vec, "course", 0.0))
     velocity = getattr(gps_vec, "velocity", getattr(gps_vec, "speed", 0.0))
-    _legacy_estimator.update_gnss(
+    _legacy_input_resolver.update_gnss(
         float(gps_vec.lat),
         float(gps_vec.lon),
         math.radians(float(direction)),
@@ -914,22 +918,22 @@ def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceRe
         True,
         now,
     )
-    _legacy_estimator.update_imu(
+    _legacy_input_resolver.update_imu(
         yaw=float(getattr(imu_data, "yaw", 0.0)),
         gz=float(getattr(imu_data, "gyrz", 0.0)),
         ts=now,
     )
     if baro_m is not None:
-        _legacy_estimator.update_baro(float(baro_m), now)
+        _legacy_input_resolver.update_baro(float(baro_m), now)
 
-    est = _legacy_estimator.estimate(now)
-    out = _legacy_guidance.update(est, now)
+    guidance_input = _legacy_input_resolver.resolve(now)
+    out = _legacy_guidance.update(guidance_input, now)
     if not out.active:
         return GuidanceResult("FDIR", commanded_yaw_rate=0.0)
 
     tgt_N, tgt_E = _ll_to_ne(float(target.lat), float(target.lon), start_point.lat, start_point.lon)
-    pos_N = est.pos_N or 0.0
-    pos_E = est.pos_E or 0.0
+    pos_N = guidance_input.pos_N or 0.0
+    pos_E = guidance_input.pos_E or 0.0
     distance = math.hypot(tgt_N - pos_N, tgt_E - pos_E)
     cmd = out.courseRateCmd
     if baro_m is not None and float(baro_m) <= 10.0:

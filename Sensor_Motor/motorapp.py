@@ -1,11 +1,11 @@
 """Motor app: sensor ingestion, L1 guidance, and brake control.
 
 Architecture:
-  sensor apps → NavigationStateEstimator → L1Guidance → ParafoilBrakeController → servo
+  sensor apps → GuidanceInputResolver → L1Guidance → ParafoilBrakeController → servo
 
 Responsibilities:
-  - Receive sensor messages, update NavigationStateEstimator
-  - ~10 Hz control loop: estimate → guidance → controller → servo PWM
+  - Receive sensor messages, update GuidanceInputResolver
+  - ~10 Hz control loop: resolve input → guidance → controller → servo PWM
   - STATE gate: active guidance only in STATE 3 / 4
   - Burnwire and egg-drop activation (pass-through to hardware threads)
   - Send diagnostics to Comm
@@ -26,7 +26,7 @@ from lib import appargs, msgstructure
 from Sensor_Motor import motor_guidance
 from Sensor_Motor import Motor_Egg, Motor_Release
 from Sensor_Motor.motor_guidance import (
-    NavigationStateEstimator,
+    GuidanceInputResolver,
     L1Guidance,
     L1Config,
     GuidanceMode,
@@ -57,7 +57,7 @@ PI                       = None
 
 _UPDATE_LOCK = threading.Lock()
 
-_estimator  = NavigationStateEstimator()
+_input_resolver  = GuidanceInputResolver()
 _guidance   = L1Guidance(L1Config())
 _controller = ParafoilBrakeController(ControlConfig())
 
@@ -100,7 +100,7 @@ def handle_gnss(data: str) -> None:
         GPS_VECTOR.velocity = groundSpeed
         GPS_HEALTH.pos_health = int(posHealth)
         GPS_HEALTH.motion_health = int(motionHealth)
-        _estimator.update_gnss(
+        _input_resolver.update_gnss(
             lat, lon,
             math.radians(course_deg), groundSpeed,
             posHealth, motionHealth,
@@ -149,7 +149,7 @@ def handle_imu(data: str) -> None:
                 IMU.yaw = v[2]
                 IMU.gyrz = v[8]
                 IMU.imu_health = 1
-                _estimator.update_imu(
+                _input_resolver.update_imu(
                     roll=v[0], pitch=v[1], yaw=v[2],
                     ax=v[3],   ay=v[4],   az=v[5],
                     gx=v[6],   gy=v[7],   gz=v[8],
@@ -164,7 +164,7 @@ def handle_imu(data: str) -> None:
                 IMU.yaw = yaw_deg
                 IMU.gyrz = gyrz_degs
                 IMU.imu_health = imu_health
-                _estimator.update_imu(yaw=yaw_deg, gz=gyrz_degs, ts=ts)
+                _input_resolver.update_imu(yaw=yaw_deg, gz=gyrz_degs, ts=ts)
         else:
             logger.warning("IMU parse: too few fields | raw=%r", data)
     except (ValueError, IndexError) as exc:
@@ -181,7 +181,7 @@ def handle_barometer(data: str) -> None:
         return
     with _UPDATE_LOCK:
         ALT = alt
-        _estimator.update_baro(alt, time.time())
+        _input_resolver.update_baro(alt, time.time())
 
 
 def handle_target_coord(data: str) -> None:
@@ -224,7 +224,7 @@ def handle_flight_state(data: str) -> None:
         if new_state < 3:
             _guidance.reset()
             _controller.reset()
-            _estimator.reset_origin()
+            _input_resolver.reset_origin()
             _START_POINT_LOCKED = False
         elif new_state in (3, 4):
             _lock_start_for_legacy_if_ready()
@@ -264,11 +264,11 @@ def _maybe_push_target() -> None:
     """Convert target lat/lon to N/E and push to guidance. Call under _UPDATE_LOCK."""
     if _target_lat is None or _target_lon is None:
         return
-    if _estimator.origin_lat is None:
+    if _input_resolver.origin_lat is None:
         return
     tgt_N, tgt_E = _ll_to_ne(
         _target_lat, _target_lon,
-        _estimator.origin_lat, _estimator.origin_lon,
+        _input_resolver.origin_lat, _input_resolver.origin_lon,
     )
     _guidance.set_target(tgt_N, tgt_E)
 
@@ -284,7 +284,7 @@ def _lock_start_for_legacy_if_ready() -> None:
     lon = float(GPS_VECTOR.lon)
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return
-    _estimator.set_origin(lat, lon)
+    _input_resolver.set_origin(lat, lon)
     motor_guidance.set_start_coordinates(lat, lon)
     _guidance.set_start(0.0, 0.0)
     _START_POINT_LOCKED = True
@@ -371,7 +371,7 @@ def ctrl_paragldr(main_queue=None) -> None:
 
     STATE < 3 or !MOTOR_ENABLED  → servo neutral
     STATE == 5                   → servo off
-    STATE 3 / 4, MOTOR_ENABLED   → estimate → guidance → controller → servo
+    STATE 3 / 4, MOTOR_ENABLED   → resolve input → guidance → controller → servo
     """
     _null_g = GuidanceOutput(timestamp=0.0)
 
@@ -398,9 +398,9 @@ def ctrl_paragldr(main_queue=None) -> None:
                 continue
 
             with _UPDATE_LOCK:
-                est = _estimator.estimate(now)
+                guidance_input = _input_resolver.resolve(now)
 
-            g_out = _guidance.update(est, now)
+            g_out = _guidance.update(guidance_input, now)
 
             if g_out.active:
                 guidance_cmd = GuidanceCommand(
@@ -410,7 +410,10 @@ def ctrl_paragldr(main_queue=None) -> None:
                     valid=True,
                     timestamp=g_out.timestamp,
                 )
-                yaw_rate_meas_deg_s = math.degrees(est.gyrz) if est.gyrz is not None else None
+                yaw_rate_meas_deg_s = (
+                    math.degrees(guidance_input.gyrz)
+                    if guidance_input.gyrz is not None else None
+                )
                 cmd = _controller.update(guidance_cmd, yaw_rate_meas_deg_s, now)
             else:
                 _controller.reset()
