@@ -76,7 +76,7 @@ class FieldStatus(Enum):
 class GuidanceMode(Enum):
     ACTIVE   = "ACTIVE"
     DEGRADED = "DEGRADED"
-    DISABLED = "DISABLED"
+    DISABLED = "DISABLED"#yaw 값으로 자향
 
 
 # ── Data classes ───────────────────────────────────────────────────────────────
