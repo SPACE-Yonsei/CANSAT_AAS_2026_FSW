@@ -28,7 +28,7 @@ try:
 except ImportError:
     _pigpio_module = None
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 _WARNED_FALLBACKS: set[str] = set()
 
 # Hardware pins
@@ -333,7 +333,7 @@ def actuator_mixer(yaw_rate_cmd_deg_s: float) -> tuple:
     return left_pw, right_pw, left_angle, right_angle, delta, delta
 
 
-_legacy_controller = ParafoilBrakeController(ControlConfig())
+_LEGACY_CONTROLLER = ParafoilBrakeController(ControlConfig())
 
 
 def control(pi, courseRateCmd: float, yawRateMeas: Optional[float] = None):
@@ -343,7 +343,7 @@ def control(pi, courseRateCmd: float, yawRateMeas: Optional[float] = None):
     New runtime code should use ParafoilBrakeController.update(GuidanceCommand).
     """
     yaw_meas_deg = math.degrees(yawRateMeas) if _is_finite(yawRateMeas) else None
-    cmd = _legacy_controller.update(courseRateCmd, yaw_meas_deg, time.time())
+    cmd = _LEGACY_CONTROLLER.update(courseRateCmd, yaw_meas_deg, time.time())
     set_brake_command(pi, cmd)
     return SimpleNamespace(
         left_pulse=cmd.left_pw,
@@ -413,7 +413,7 @@ def _clamp_pw(pw: float, lo: int, hi: int) -> int:
 
 
 def _log_command(cmd: BrakeCommand) -> None:
-    logger.info(
+    LOGGER.info(
         "parafoil_control mode=%s valid=%s yaw_cmd=%.3f yaw_meas=%.3f "
         "yaw_err=%.3f delta_ff=%.3f delta_pid=%.3f delta=%.3f "
         "left=%.2f right=%.2f sat=%s fallback=%s sensor_valid=%s age=%.3f",
@@ -438,4 +438,4 @@ def _log_fallback_once(reason: str) -> None:
     if reason in _WARNED_FALLBACKS:
         return
     _WARNED_FALLBACKS.add(reason)
-    logger.warning("Parafoil control fallback: %s", reason)
+    LOGGER.warning("Parafoil control fallback: %s", reason)

@@ -19,11 +19,11 @@ class TestMotorGuidance(unittest.TestCase):
         return imu, gps, fid, tgt
 
     def _prime_gps_jump_gate(self, gps):
-        motor_guidance._prev_gps.initialized = True
-        motor_guidance._prev_gps.lat = gps.lat
-        motor_guidance._prev_gps.lon = gps.lon
-        motor_guidance._prev_gps.time = time.time() - 1.0
-        motor_guidance._gps_stable_count = motor_guidance.GPS_STABLE_COUNT_REQUIRED
+        motor_guidance._PREV_GPS.initialized = True
+        motor_guidance._PREV_GPS.lat = gps.lat
+        motor_guidance._PREV_GPS.lon = gps.lon
+        motor_guidance._PREV_GPS.time = time.time() - 1.0
+        motor_guidance._GPS_STABLE_COUNT = motor_guidance.GPS_STABLE_COUNT_REQUIRED
 
     def test_invalid_gps_returns_gps_invalid(self):
         imu, gps, _, tgt = self._good_inputs()
@@ -39,7 +39,7 @@ class TestMotorGuidance(unittest.TestCase):
         out2 = motor_guidance.guidance(imu, gps, fid, tgt, 100.0)
         self.assertEqual(out2.state, "GPS_INVALID")
 
-        motor_guidance._prev_gps.time = time.time() - 1.0
+        motor_guidance._PREV_GPS.time = time.time() - 1.0
         gps2 = SimpleNamespace(lat=37.55005, lon=126.95005, direction=90.0, velocity=12.0)
         out3 = motor_guidance.guidance(imu, gps2, fid, tgt, 100.0)
         self.assertIn(out3.state, {"STRAIGHT", "TURNING", "PATTERN", "TARGET_REACHED"})

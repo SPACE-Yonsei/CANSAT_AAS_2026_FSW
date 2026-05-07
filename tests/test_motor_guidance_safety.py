@@ -13,11 +13,11 @@ class TestMotorGuidanceSafety(unittest.TestCase):
         self.fid = SimpleNamespace(pos_health=1, motion_health=1)
 
         # Bypass initial GPS jump warm-up for deterministic unit tests.
-        motor_guidance._prev_gps.initialized = True
-        motor_guidance._prev_gps.lat = self.gps.lat
-        motor_guidance._prev_gps.lon = self.gps.lon
-        motor_guidance._prev_gps.time = time.time() - 1.0
-        motor_guidance._gps_stable_count = motor_guidance.GPS_STABLE_COUNT_REQUIRED
+        motor_guidance._PREV_GPS.initialized = True
+        motor_guidance._PREV_GPS.lat = self.gps.lat
+        motor_guidance._PREV_GPS.lon = self.gps.lon
+        motor_guidance._PREV_GPS.time = time.time() - 1.0
+        motor_guidance._GPS_STABLE_COUNT = motor_guidance.GPS_STABLE_COUNT_REQUIRED
 
     def test_target_required(self):
         motor_guidance.set_start_coordinates(self.gps.lat, self.gps.lon)

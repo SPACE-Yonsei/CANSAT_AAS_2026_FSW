@@ -22,7 +22,7 @@ from typing import Optional, Tuple
 
 # ── Debug log ──────────────────────────────────────────────────────────────────
 _SIM_LOG_PATH = os.getenv("CANSAT_SIM_LOG", datetime.now().strftime("%m%d_sim.txt"))
-_sim_log = open(_SIM_LOG_PATH, "a", encoding="utf-8")
+_SIM_LOG = open(_SIM_LOG_PATH, "a", encoding="utf-8")
 DEBUG_GUIDANCE: bool = os.environ.get("CANSAT_DEBUG_GUIDANCE", "").strip().lower() in (
     "1", "true", "yes", "on",
 )
@@ -37,8 +37,8 @@ def _dbg(line: str) -> None:
         enc = getattr(_sys.stdout, "encoding", None) or "ascii"
         _sys.stdout.write(full.encode(enc, errors="replace").decode(enc, errors="replace") + "\n")
         _sys.stdout.flush()
-    _sim_log.write(full + "\n")
-    _sim_log.flush()
+    _SIM_LOG.write(full + "\n")
+    _SIM_LOG.flush()
 
 
 # ── Earth radius ───────────────────────────────────────────────────────────────
@@ -808,40 +808,40 @@ class _GpsJumpState:
     time: float = 0.0
 
 
-start_point = SimpleNamespace(lat=None, lon=None)
-target_coord = SimpleNamespace(lat=None, lon=None)
-_prev_gps = _GpsJumpState()
-_gps_stable_count = 0
-_legacy_input_resolver = GuidanceInputResolver()
-_legacy_guidance = L1Guidance(L1Config())
-cascade_pi = SimpleNamespace(MAX_CMD=L1Config().COURSE_RATE_MAX)
+START_POINT = SimpleNamespace(lat=None, lon=None)
+TARGET_COORD = SimpleNamespace(lat=None, lon=None)
+_PREV_GPS = _GpsJumpState()
+_GPS_STABLE_COUNT = 0
+_LEGACY_INPUT_RESOLVER = GuidanceInputResolver()
+_LEGACY_GUIDANCE = L1Guidance(L1Config())
+CASCADE_PI = SimpleNamespace(MAX_CMD=L1Config().COURSE_RATE_MAX)
 
 
 def init_guidance() -> None:
-    global _prev_gps, _gps_stable_count, _legacy_input_resolver, _legacy_guidance
-    start_point.lat = None
-    start_point.lon = None
-    target_coord.lat = None
-    target_coord.lon = None
-    _prev_gps = _GpsJumpState()
-    _gps_stable_count = 0
-    _legacy_input_resolver = GuidanceInputResolver()
-    _legacy_guidance = L1Guidance(L1Config())
+    global _PREV_GPS, _GPS_STABLE_COUNT, _LEGACY_INPUT_RESOLVER, _LEGACY_GUIDANCE
+    START_POINT.lat = None
+    START_POINT.lon = None
+    TARGET_COORD.lat = None
+    TARGET_COORD.lon = None
+    _PREV_GPS = _GpsJumpState()
+    _GPS_STABLE_COUNT = 0
+    _LEGACY_INPUT_RESOLVER = GuidanceInputResolver()
+    _LEGACY_GUIDANCE = L1Guidance(L1Config())
 
 
 def set_start_coordinates(lat: float, lon: float) -> None:
-    start_point.lat = lat
-    start_point.lon = lon
-    _legacy_input_resolver.set_origin(lat, lon)
-    _legacy_guidance.set_start(0.0, 0.0)
+    START_POINT.lat = lat
+    START_POINT.lon = lon
+    _LEGACY_INPUT_RESOLVER.set_origin(lat, lon)
+    _LEGACY_GUIDANCE.set_start(0.0, 0.0)
 
 
 def set_target_coord(lat: float, lon: float) -> None:
-    target_coord.lat = lat
-    target_coord.lon = lon
-    if start_point.lat is not None and start_point.lon is not None:
-        tgt_N, tgt_E = _ll_to_ne(lat, lon, start_point.lat, start_point.lon)
-        _legacy_guidance.set_target(tgt_N, tgt_E)
+    TARGET_COORD.lat = lat
+    TARGET_COORD.lon = lon
+    if START_POINT.lat is not None and START_POINT.lon is not None:
+        tgt_N, tgt_E = _ll_to_ne(lat, lon, START_POINT.lat, START_POINT.lon)
+        _LEGACY_GUIDANCE.set_target(tgt_N, tgt_E)
 
 
 def is_gps_valid(gps, gps_fidelity) -> bool:
@@ -868,26 +868,26 @@ def is_gps_valid(gps, gps_fidelity) -> bool:
 
 
 def is_gps_jump(lat: float, lon: float) -> bool:
-    global _gps_stable_count
+    global _GPS_STABLE_COUNT
     now = time.time()
-    if not _prev_gps.initialized:
-        _prev_gps.initialized = True
-        _prev_gps.lat = lat
-        _prev_gps.lon = lon
-        _prev_gps.time = now
+    if not _PREV_GPS.initialized:
+        _PREV_GPS.initialized = True
+        _PREV_GPS.lat = lat
+        _PREV_GPS.lon = lon
+        _PREV_GPS.time = now
         return False
 
-    dt = max(now - _prev_gps.time, 1e-3)
-    dN, dE = _ll_to_ne(lat, lon, _prev_gps.lat, _prev_gps.lon)
+    dt = max(now - _PREV_GPS.time, 1e-3)
+    dN, dE = _ll_to_ne(lat, lon, _PREV_GPS.lat, _PREV_GPS.lon)
     jump = math.hypot(dN, dE) / dt > GPS_JUMP_MAX_SPEED
     if jump:
-        _gps_stable_count = 0
+        _GPS_STABLE_COUNT = 0
         return True
 
-    _prev_gps.lat = lat
-    _prev_gps.lon = lon
-    _prev_gps.time = now
-    _gps_stable_count += 1
+    _PREV_GPS.lat = lat
+    _PREV_GPS.lon = lon
+    _PREV_GPS.time = now
+    _GPS_STABLE_COUNT += 1
     return False
 
 
@@ -896,11 +896,11 @@ def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceRe
         return GuidanceResult("TARGET_UNSET")
     if not is_gps_valid(gps_vec, gps_fidelity):
         return GuidanceResult("GPS_INVALID")
-    if start_point.lat is None or start_point.lon is None:
+    if START_POINT.lat is None or START_POINT.lon is None:
         return GuidanceResult("START_UNSET")
     if is_gps_jump(float(gps_vec.lat), float(gps_vec.lon)):
         return GuidanceResult("GPS_INVALID")
-    if _gps_stable_count < GPS_STABLE_COUNT_REQUIRED:
+    if _GPS_STABLE_COUNT < GPS_STABLE_COUNT_REQUIRED:
         return GuidanceResult("GPS_INVALID")
     if baro_m is not None and float(baro_m) <= 0.0:
         return GuidanceResult("BARO_INVALID")
@@ -909,7 +909,7 @@ def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceRe
     set_target_coord(float(target.lat), float(target.lon))
     direction = getattr(gps_vec, "direction", getattr(gps_vec, "course", 0.0))
     velocity = getattr(gps_vec, "velocity", getattr(gps_vec, "speed", 0.0))
-    _legacy_input_resolver.update_gnss(
+    _LEGACY_INPUT_RESOLVER.update_gnss(
         float(gps_vec.lat),
         float(gps_vec.lon),
         math.radians(float(direction)),
@@ -918,20 +918,20 @@ def guidance(imu_data, gps_vec, gps_fidelity, target, baro_m=None) -> GuidanceRe
         True,
         now,
     )
-    _legacy_input_resolver.update_imu(
+    _LEGACY_INPUT_RESOLVER.update_imu(
         yaw=float(getattr(imu_data, "yaw", 0.0)),
         gz=float(getattr(imu_data, "gyrz", 0.0)),
         ts=now,
     )
     if baro_m is not None:
-        _legacy_input_resolver.update_baro(float(baro_m), now)
+        _LEGACY_INPUT_RESOLVER.update_baro(float(baro_m), now)
 
-    guidance_input = _legacy_input_resolver.resolve(now)
-    out = _legacy_guidance.update(guidance_input, now)
+    guidance_input = _LEGACY_INPUT_RESOLVER.resolve(now)
+    out = _LEGACY_GUIDANCE.update(guidance_input, now)
     if not out.active:
         return GuidanceResult("FDIR", commanded_yaw_rate=0.0)
 
-    tgt_N, tgt_E = _ll_to_ne(float(target.lat), float(target.lon), start_point.lat, start_point.lon)
+    tgt_N, tgt_E = _ll_to_ne(float(target.lat), float(target.lon), START_POINT.lat, START_POINT.lon)
     pos_N = guidance_input.pos_N or 0.0
     pos_E = guidance_input.pos_E or 0.0
     distance = math.hypot(tgt_N - pos_N, tgt_E - pos_E)

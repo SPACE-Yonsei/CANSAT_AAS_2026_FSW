@@ -132,8 +132,8 @@ class TestHandlers(unittest.TestCase):
         motorapp.GPS_VECTOR.lon        = 126.95
         motorapp.GPS_HEALTH.pos_health = 1
         motorapp.handle_flight_state("3")
-        self.assertAlmostEqual(motor_guidance.start_point.lat, 37.55)
-        self.assertAlmostEqual(motor_guidance.start_point.lon, 126.95)
+        self.assertAlmostEqual(motor_guidance.START_POINT.lat, 37.55)
+        self.assertAlmostEqual(motor_guidance.START_POINT.lon, 126.95)
 
     def test_state3_defers_start_point_until_valid_gps(self):
         motorapp.GPS_VECTOR.lat        = 37.55
@@ -143,7 +143,7 @@ class TestHandlers(unittest.TestCase):
         self.assertFalse(motorapp._START_POINT_LOCKED)
         motorapp.handle_gps("37.55,126.95,90.0,12.0,1,1")
         self.assertTrue(motorapp._START_POINT_LOCKED)
-        self.assertAlmostEqual(motor_guidance.start_point.lon, 126.95)
+        self.assertAlmostEqual(motor_guidance.START_POINT.lon, 126.95)
 
 
 class TestSnapshot(unittest.TestCase):

@@ -68,8 +68,8 @@ class TestMessageRouting(unittest.TestCase):
         motorapp.GPS_VECTOR.lon = 126.95
         motorapp.GPS_HEALTH.pos_health = 1
         _dispatch(appargs.FlightlogicAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_state, "3")
-        self.assertAlmostEqual(motor_guidance.start_point.lat, 37.55)
-        self.assertAlmostEqual(motor_guidance.start_point.lon, 126.95)
+        self.assertAlmostEqual(motor_guidance.START_POINT.lat, 37.55)
+        self.assertAlmostEqual(motor_guidance.START_POINT.lon, 126.95)
 
     def test_terminate_message_stops_runstatus(self):
         _dispatch(appargs.MainAppArg.AppID, appargs.MainAppArg.MID_TerminateProcess, "")
@@ -84,11 +84,11 @@ class TestGuidanceAndActuator(unittest.TestCase):
         _dispatch(appargs.BarometerAppArg.AppID, appargs.BarometerAppArg.MID_motor_alt, "200.0")
         _dispatch(appargs.FlightlogicAppArg.AppID, appargs.FlightlogicAppArg.MID_motor_TargetCor, "37.56,126.96")
         motor_guidance.set_start_coordinates(37.55, 126.95)
-        motor_guidance._prev_gps.initialized = True
-        motor_guidance._prev_gps.lat = 37.55
-        motor_guidance._prev_gps.lon = 126.95
-        motor_guidance._prev_gps.time = time.time() - 1.0
-        motor_guidance._gps_stable_count = motor_guidance.GPS_STABLE_COUNT_REQUIRED
+        motor_guidance._PREV_GPS.initialized = True
+        motor_guidance._PREV_GPS.lat = 37.55
+        motor_guidance._PREV_GPS.lon = 126.95
+        motor_guidance._PREV_GPS.time = time.time() - 1.0
+        motor_guidance._GPS_STABLE_COUNT = motor_guidance.GPS_STABLE_COUNT_REQUIRED
 
     def test_guidance_output_finite(self):
         snap = motorapp._snapshot_sensors()
@@ -97,7 +97,7 @@ class TestGuidanceAndActuator(unittest.TestCase):
         fid = SimpleNamespace(pos_health=1, motion_health=1)
         result = motor_guidance.guidance(imu, gps, fid, snap.target, 200.0)
         self.assertIn(result.state, {"STRAIGHT", "TURNING", "PATTERN", "TARGET_REACHED"})
-        self.assertTrue(abs(result.commanded_yaw_rate) <= motor_guidance.cascade_pi.MAX_CMD + 1e-6)
+        self.assertTrue(abs(result.commanded_yaw_rate) <= motor_guidance.CASCADE_PI.MAX_CMD + 1e-6)
 
     def test_actuator_paths_without_hardware(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):

@@ -47,7 +47,7 @@ from Sensor_Motor.motor_control import (
     RIGHT_NEUTRAL,
 )
 
-logger = logging.getLogger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 # ── Runtime state ──────────────────────────────────────────────────────────────
 MOTORAPP_RUNSTATUS: bool = True
@@ -57,12 +57,12 @@ PI                       = None
 
 _UPDATE_LOCK = threading.Lock()
 
-_input_resolver  = GuidanceInputResolver()
-_guidance   = L1Guidance(L1Config())
-_controller = ParafoilBrakeController(ControlConfig())
+_INPUT_RESOLVER = GuidanceInputResolver()
+_GUIDANCE       = L1Guidance(L1Config())
+_CONTROLLER     = ParafoilBrakeController(ControlConfig())
 
-_target_lat: Optional[float] = None
-_target_lon: Optional[float] = None
+_TARGET_LAT: Optional[float] = None
+_TARGET_LON: Optional[float] = None
 
 # Legacy observable state kept for tests/replay scripts during migration.
 IMU = SimpleNamespace(yaw=0.0, gyrz=0.0, imu_health=0)
@@ -80,7 +80,7 @@ def handle_gnss(data: str) -> None:
     """lat,lon,course_deg,groundSpeed_ms,posHealth,motionHealth"""
     fields = data.split(",")
     if len(fields) != 6:
-        logger.warning("GNSS parse: expected 6 fields | raw=%r", data)
+        LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
         return
     try:
         lat          = float(fields[0])
@@ -90,7 +90,7 @@ def handle_gnss(data: str) -> None:
         posHealth    = bool(int(float(fields[4])))
         motionHealth = bool(int(float(fields[5])))
     except (ValueError, IndexError) as exc:
-        logger.warning("GNSS parse error: %s | raw=%r", exc, data)
+        LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
     with _UPDATE_LOCK:
@@ -100,7 +100,7 @@ def handle_gnss(data: str) -> None:
         GPS_VECTOR.velocity = groundSpeed
         GPS_HEALTH.pos_health = int(posHealth)
         GPS_HEALTH.motion_health = int(motionHealth)
-        _input_resolver.update_gnss(
+        _INPUT_RESOLVER.update_gnss(
             lat, lon,
             math.radians(course_deg), groundSpeed,
             posHealth, motionHealth,
@@ -127,12 +127,12 @@ def handle_gps(data: str) -> None:
             rmc_status = fields[6].strip().upper()
             gps_health = int(float(fields[7]))
         except (ValueError, IndexError) as exc:
-            logger.warning("GPS parse error: %s | raw=%r", exc, data)
+            LOGGER.warning("GPS parse error: %s | raw=%r", exc, data)
             return
         ok = fix_quality >= 1 and sats >= 4 and rmc_status == "A" and gps_health >= 1
         handle_gnss(f"{lat},{lon},{course},{speed},{int(ok)},{int(ok)}")
         return
-    logger.warning("GPS parse: expected 6 or 8 fields | raw=%r", data)
+    LOGGER.warning("GPS parse: expected 6 or 8 fields | raw=%r", data)
 
 
 def handle_imu(data: str) -> None:
@@ -149,7 +149,7 @@ def handle_imu(data: str) -> None:
                 IMU.yaw = v[2]
                 IMU.gyrz = v[8]
                 IMU.imu_health = 1
-                _input_resolver.update_imu(
+                _INPUT_RESOLVER.update_imu(
                     roll=v[0], pitch=v[1], yaw=v[2],
                     ax=v[3],   ay=v[4],   az=v[5],
                     gx=v[6],   gy=v[7],   gz=v[8],
@@ -164,11 +164,11 @@ def handle_imu(data: str) -> None:
                 IMU.yaw = yaw_deg
                 IMU.gyrz = gyrz_degs
                 IMU.imu_health = imu_health
-                _input_resolver.update_imu(yaw=yaw_deg, gz=gyrz_degs, ts=ts)
+                _INPUT_RESOLVER.update_imu(yaw=yaw_deg, gz=gyrz_degs, ts=ts)
         else:
-            logger.warning("IMU parse: too few fields | raw=%r", data)
+            LOGGER.warning("IMU parse: too few fields | raw=%r", data)
     except (ValueError, IndexError) as exc:
-        logger.warning("IMU parse error: %s | raw=%r", exc, data)
+        LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
 
 
 def handle_barometer(data: str) -> None:
@@ -177,35 +177,35 @@ def handle_barometer(data: str) -> None:
     try:
         alt = float(data.split(",")[0].strip())
     except (ValueError, IndexError) as exc:
-        logger.warning("Baro parse error: %s | raw=%r", exc, data)
+        LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
     with _UPDATE_LOCK:
         ALT = alt
-        _input_resolver.update_baro(alt, time.time())
+        _INPUT_RESOLVER.update_baro(alt, time.time())
 
 
 def handle_target_coord(data: str) -> None:
     """lat,lon"""
-    global _target_lat, _target_lon, TARGET
+    global _TARGET_LAT, _TARGET_LON, TARGET
     fields = data.split(",")
     if len(fields) != 2:
-        logger.warning("Target parse: expected 2 fields | raw=%r", data)
+        LOGGER.warning("Target parse: expected 2 fields | raw=%r", data)
         return
     try:
         lat = float(fields[0])
         lon = float(fields[1])
     except (ValueError, IndexError) as exc:
-        logger.warning("Target parse error: %s | raw=%r", exc, data)
+        LOGGER.warning("Target parse error: %s | raw=%r", exc, data)
         return
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        logger.warning("Target coord out of range: %.6f, %.6f", lat, lon)
+        LOGGER.warning("Target coord out of range: %.6f, %.6f", lat, lon)
         return
     with _UPDATE_LOCK:
-        _target_lat = lat
-        _target_lon = lon
+        _TARGET_LAT = lat
+        _TARGET_LON = lon
         TARGET = SimpleNamespace(lat=lat, lon=lon)
         _maybe_push_target()
-    logger.info("Target updated: %.6f, %.6f", lat, lon)
+    LOGGER.info("Target updated: %.6f, %.6f", lat, lon)
 
 
 def handle_flight_state(data: str) -> None:
@@ -213,18 +213,18 @@ def handle_flight_state(data: str) -> None:
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError) as exc:
-        logger.warning("State parse error: %s | raw=%r", exc, data)
+        LOGGER.warning("State parse error: %s | raw=%r", exc, data)
         return
     if new_state == STATE:
         return
-    logger.info("State %d → %d", STATE, new_state)
+    LOGGER.info("State %d → %d", STATE, new_state)
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE = new_state
         if new_state < 3:
-            _guidance.reset()
-            _controller.reset()
-            _input_resolver.reset_origin()
+            _GUIDANCE.reset()
+            _CONTROLLER.reset()
+            _INPUT_RESOLVER.reset_origin()
             _START_POINT_LOCKED = False
         elif new_state in (3, 4):
             _lock_start_for_legacy_if_ready()
@@ -247,30 +247,30 @@ def handle_mec(data: str) -> None:
     cmd = data.strip().upper()
     if cmd == "ON":
         MOTOR_ENABLED = True
-        logger.info("MOTOR_ENABLED = True")
+        LOGGER.info("MOTOR_ENABLED = True")
     elif cmd == "OFF":
         MOTOR_ENABLED = False
         with _UPDATE_LOCK:
             if PI is not None:
                 set_neutral(PI)
-        logger.info("MOTOR_ENABLED = False → neutral")
+        LOGGER.info("MOTOR_ENABLED = False → neutral")
     else:
-        logger.warning("Unknown MEC command: %r", data)
+        LOGGER.warning("Unknown MEC command: %r", data)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _maybe_push_target() -> None:
     """Convert target lat/lon to N/E and push to guidance. Call under _UPDATE_LOCK."""
-    if _target_lat is None or _target_lon is None:
+    if _TARGET_LAT is None or _TARGET_LON is None:
         return
-    if _input_resolver.origin_lat is None:
+    if _INPUT_RESOLVER.origin_lat is None:
         return
     tgt_N, tgt_E = _ll_to_ne(
-        _target_lat, _target_lon,
-        _input_resolver.origin_lat, _input_resolver.origin_lon,
+        _TARGET_LAT, _TARGET_LON,
+        _INPUT_RESOLVER.origin_lat, _INPUT_RESOLVER.origin_lon,
     )
-    _guidance.set_target(tgt_N, tgt_E)
+    _GUIDANCE.set_target(tgt_N, tgt_E)
 
 
 def _lock_start_for_legacy_if_ready() -> None:
@@ -284,9 +284,9 @@ def _lock_start_for_legacy_if_ready() -> None:
     lon = float(GPS_VECTOR.lon)
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return
-    _input_resolver.set_origin(lat, lon)
+    _INPUT_RESOLVER.set_origin(lat, lon)
     motor_guidance.set_start_coordinates(lat, lon)
-    _guidance.set_start(0.0, 0.0)
+    _GUIDANCE.set_start(0.0, 0.0)
     _START_POINT_LOCKED = True
     _maybe_push_target()
 
@@ -398,9 +398,9 @@ def ctrl_paragldr(main_queue=None) -> None:
                 continue
 
             with _UPDATE_LOCK:
-                guidance_input = _input_resolver.resolve(now)
+                guidance_input = _INPUT_RESOLVER.resolve(now)
 
-            g_out = _guidance.update(guidance_input, now)
+            g_out = _GUIDANCE.update(guidance_input, now)
 
             if g_out.active:
                 guidance_cmd = GuidanceCommand(
@@ -414,11 +414,11 @@ def ctrl_paragldr(main_queue=None) -> None:
                     math.degrees(guidance_input.gyrz)
                     if guidance_input.gyrz is not None else None
                 )
-                cmd = _controller.update(guidance_cmd, yaw_rate_meas_deg_s, now)
+                cmd = _CONTROLLER.update(guidance_cmd, yaw_rate_meas_deg_s, now)
             else:
-                _controller.reset()
+                _CONTROLLER.reset()
                 guidance_cmd = GuidanceCommand(valid=False, timestamp=now)
-                cmd = _controller.update(guidance_cmd, None, now)
+                cmd = _CONTROLLER.update(guidance_cmd, None, now)
 
             if PI is not None:
                 set_brake_command(PI, cmd)
@@ -431,7 +431,7 @@ def ctrl_paragldr(main_queue=None) -> None:
             _send_diag(main_queue, cmd, g_out, diag_state)
 
         except Exception as exc:
-            logger.error("ctrl_paragldr exception: %s", exc, exc_info=True)
+            LOGGER.error("ctrl_paragldr exception: %s", exc, exc_info=True)
             try:
                 if PI is not None:
                     set_neutral(PI)
@@ -476,7 +476,7 @@ def init() -> None:
     Motor_Release.init_burnwire()
     Motor_Egg.init_solenoid()
     PI = init_control()
-    logger.info("MotorApp init | pigpio: %s", getattr(PI, "connected", "N/A"))
+    LOGGER.info("MotorApp init | pigpio: %s", getattr(PI, "connected", "N/A"))
 
 
 def motorapp_main(main_queue, main_pipe=None) -> None:
@@ -490,7 +490,7 @@ def motorapp_main(main_queue, main_pipe=None) -> None:
         daemon=True, name="MotorControlLoop",
     )
     ctrl_thread.start()
-    logger.info("MotorControlLoop started")
+    LOGGER.info("MotorControlLoop started")
 
     try:
         while MOTORAPP_RUNSTATUS:
@@ -502,4 +502,4 @@ def motorapp_main(main_queue, main_pipe=None) -> None:
     except KeyboardInterrupt:
         pass
 
-    logger.info("MotorApp exiting")
+    LOGGER.info("MotorApp exiting")
