@@ -103,10 +103,11 @@ _RX_POLL_IDLE_MS = 22
 _RX_POLL_BACKLOG_MS = 1
 # Map trail: cap vertices sent to Canvas (full history kept in memory for bounds)
 _MAP_TRACK_DRAW_MAX = 450
-# Map view is centered on **start** (release origin). Extent from ref is capped (then fills plot):
-#   east–west ≤ ±1 km, north–south ≤ ±500 m. Wide canvases stretch longitude across pw and latitude across ph.
-_MAP_REF_MAX_HALF_EAST_M = 1000.0
-_MAP_REF_MAX_HALF_NORTH_M = 500.0
+# Map view: ref = **target** when telemetry has it (else start, else data centroid).
+# Half-extent uses max |E|/|N| from ref to all track + landmark points, × margin, capped symmetrically
+# so operator↔vehicle separation and full path stay on-screen (legacy ±1km/±500m clipped far fixes).
+_MAP_REF_MAX_HALF_M = 50_000.0
+_MAP_VIEW_MARGIN = 1.14
 _MAP_VIEW_MIN_HALF_M = 2.5
 
 # Map styling (dark plot, readable axes)
@@ -726,7 +727,9 @@ class GroundStation(tk.Tk):
         lons = [p[1] for p in all_pts]
         lat_min, lat_max = min(lats), max(lats)
         lon_min, lon_max = min(lons), max(lons)
-        if "start" in self._map_points:
+        if "target" in self._map_points:
+            ref_lat, ref_lon = self._map_points["target"]
+        elif "start" in self._map_points:
             ref_lat, ref_lon = self._map_points["start"]
         else:
             ref_lat = (lat_min + lat_max) / 2.0
@@ -744,12 +747,12 @@ class GroundStation(tk.Tk):
             half_n_data = max(half_n_data, abs(north))
 
         half_e = min(
-            _MAP_REF_MAX_HALF_EAST_M,
-            max(half_e_data, _MAP_VIEW_MIN_HALF_M),
+            _MAP_REF_MAX_HALF_M,
+            max(half_e_data * _MAP_VIEW_MARGIN, _MAP_VIEW_MIN_HALF_M),
         )
         half_n = min(
-            _MAP_REF_MAX_HALF_NORTH_M,
-            max(half_n_data, _MAP_VIEW_MIN_HALF_M),
+            _MAP_REF_MAX_HALF_M,
+            max(half_n_data * _MAP_VIEW_MARGIN, _MAP_VIEW_MIN_HALF_M),
         )
         dec = _map_geo_decimals(max(2.0 * half_e, 2.0 * half_n, 5.0))
 
@@ -844,9 +847,14 @@ class GroundStation(tk.Tk):
             font=("Segoe UI", 11, "bold"),
         )
 
+        if "target" in self._map_points:
+            _ref_lbl = "target"
+        elif "start" in self._map_points:
+            _ref_lbl = "start"
+        else:
+            _ref_lbl = "centroid"
         scale_txt = (
-            f"ref start  E±{half_e:.0f}m  N±{half_n:.0f}m  (cap {int(_MAP_REF_MAX_HALF_EAST_M)}m / "
-            f"{int(_MAP_REF_MAX_HALF_NORTH_M)}m)"
+            f"ref {_ref_lbl}  E±{half_e:.0f}m  N±{half_n:.0f}m  (max ±{int(_MAP_REF_MAX_HALF_M / 1000)}km)"
         )
         c.create_text(pl + 4, pt + 4, text=scale_txt, anchor="nw", fill=_MAP_AXIS_LABEL, font=_MAP_FONT_SMALL)
 
