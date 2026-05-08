@@ -76,10 +76,13 @@ class TestHandlers(unittest.TestCase):
         self.assertEqual(motorapp.GPS_VECTOR.lat, old_lat)
 
     def test_handle_imu_valid(self):
-        motorapp.handle_imu("45.0,2.5,1")
+        motorapp.handle_imu("1.0,2.0,45.0,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,2.5,1")
         self.assertAlmostEqual(motorapp.IMU.yaw,  45.0)
         self.assertAlmostEqual(motorapp.IMU.gyrz, 2.5)
         self.assertEqual(motorapp.IMU.imu_health, 1)
+        self.assertAlmostEqual(motorapp.IMU.roll,  1.0)
+        self.assertAlmostEqual(motorapp.IMU.pitch, 2.0)
+        self.assertAlmostEqual(motorapp.IMU.accx,  0.1)
 
     def test_handle_imu_bad_data(self):
         old_yaw = motorapp.IMU.yaw
@@ -87,8 +90,9 @@ class TestHandlers(unittest.TestCase):
         self.assertEqual(motorapp.IMU.yaw, old_yaw)
 
     def test_handle_barometer_valid(self):
-        motorapp.handle_barometer("200.5,1013.2")
+        motorapp.handle_barometer("200.5,1")
         self.assertAlmostEqual(motorapp.ALT, 200.5)
+        self.assertEqual(motorapp.BARO_HEALTH, 1)
 
     def test_handle_barometer_bad_data(self):
         old_baro = motorapp.ALT
