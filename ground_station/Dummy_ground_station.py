@@ -25,7 +25,6 @@ Standalone, no other repo modules required (only `pyserial` + tkinter).
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
 import math
 import os
 import queue
@@ -158,28 +157,6 @@ _MAP_FONT_TICK = ("Consolas", 9)
 _MAP_FONT_AXIS = ("Segoe UI", 9, "bold")
 _MAP_FONT_LEGEND = ("Consolas", 8)
 
-# Sensor-fallback guidance thresholds (seconds).
-_FRESH_LOCATION_CURRENT_S = 0.35
-_FRESH_LOCATION_STALE_S = 1.00
-_FRESH_COURSE_SPEED_CURRENT_S = 0.50
-_FRESH_COURSE_SPEED_STALE_S = 1.00
-_FRESH_GYROZ_CURRENT_S = 0.35
-_FRESH_BMP_ALT_CURRENT_S = 0.60
-
-_LEVEL_RECOVERY_HOLD_S = 3.0
-_LEVEL_MIN_DWELL_S = 1.0
-
-_GPS_SATS_MIN = 4
-_GYROZ_ABS_MAX_DEG_S = 1500.0
-_ALT_ABS_MAX_M = 60000.0
-_ALT_ABS_MIN_M = -1500.0
-_COURSE_SPEED_MIN_M_S = 0.8
-_COURSE_SPEED_MAX_M_S = 35.0
-_COURSE_EST_MIN_DT_S = 0.2
-_COURSE_EST_MAX_DT_S = 2.5
-_COURSE_EST_MIN_DIST_M = 1.0
-_COURSE_EST_MAX_DIST_M = 120.0
-
 
 def _decimate_trail(
     trail: list[tuple[float, float]], max_points: int
@@ -246,212 +223,6 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
         + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2
     )
     return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
-
-
-def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Initial bearing from p1->p2 in degrees [0, 360)."""
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dlmb = math.radians(lon2 - lon1)
-    y = math.sin(dlmb) * math.cos(p2)
-    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dlmb)
-    b = math.degrees(math.atan2(y, x))
-    return (b + 360.0) % 360.0
-
-
-@dataclass
-class _FallbackAges:
-    location_s: float = math.inf
-    course_speed_s: float = math.inf
-    gyroz_s: float = math.inf
-    altitude_s: float = math.inf
-
-
-@dataclass
-class _FallbackStatus:
-    level_idx: int
-    level_name: str
-    reason: str
-    ages: _FallbackAges
-
-
-class GuidanceFallbackEstimator:
-    """Estimate fallback guidance level from sensor freshness + plausibility."""
-
-    LEVEL_NAMES = (
-        "NORMAL_L1_PID",
-        "DEGRADED_L1_PID",
-        "L1_FF_ONLY",
-        "TARGET_BEARING_HOLD",
-        "YAW_DAMPING_ONLY",
-        "SAFE_GLIDE_NEUTRAL",
-    )
-
-    def __init__(self) -> None:
-        self._last_valid_location_ts = math.inf
-        self._last_valid_course_speed_ts = math.inf
-        self._last_valid_gyroz_ts = math.inf
-        self._last_valid_altitude_ts = math.inf
-        self._last_valid_gps_fix: tuple[float, float, float] | None = None
-        self._last_course_deg = math.nan
-        self._last_speed_m_s = math.nan
-
-        self._level_idx = 5
-        self._level_reason = "BOOT_NO_VALID_SENSOR"
-        self._level_since_ts = 0.0
-        self._recover_candidate_idx: int | None = None
-        self._recover_candidate_since_ts = 0.0
-
-    @staticmethod
-    def _age(last_ts: float, now_ts: float) -> float:
-        if not math.isfinite(last_ts):
-            return math.inf
-        return max(0.0, now_ts - last_ts)
-
-    @staticmethod
-    def _fmt_age(age_s: float) -> str:
-        if not math.isfinite(age_s):
-            return "--"
-        return f"{age_s:.1f}"
-
-    @staticmethod
-    def _parse_int(value: str) -> int | None:
-        try:
-            return int(value.strip())
-        except Exception:
-            return None
-
-    @staticmethod
-    def _is_finite_in_range(value: float | None, vmin: float, vmax: float) -> bool:
-        return value is not None and math.isfinite(value) and vmin <= value <= vmax
-
-    def _estimate_course_speed(
-        self, lat: float, lon: float, now_ts: float
-    ) -> None:
-        prev = self._last_valid_gps_fix
-        self._last_valid_gps_fix = (lat, lon, now_ts)
-        if prev is None:
-            return
-        prev_lat, prev_lon, prev_ts = prev
-        dt = now_ts - prev_ts
-        if dt < _COURSE_EST_MIN_DT_S or dt > _COURSE_EST_MAX_DT_S:
-            return
-        dist_m = _haversine_m(prev_lat, prev_lon, lat, lon)
-        if dist_m < _COURSE_EST_MIN_DIST_M or dist_m > _COURSE_EST_MAX_DIST_M:
-            return
-        speed_m_s = dist_m / max(dt, 1e-6)
-        if speed_m_s < _COURSE_SPEED_MIN_M_S or speed_m_s > _COURSE_SPEED_MAX_M_S:
-            return
-        self._last_valid_course_speed_ts = now_ts
-        self._last_course_deg = _bearing_deg(prev_lat, prev_lon, lat, lon)
-        self._last_speed_m_s = speed_m_s
-
-    def _decide_raw_level(self, ages: _FallbackAges) -> tuple[int, str]:
-        loc_cur = ages.location_s <= _FRESH_LOCATION_CURRENT_S
-        loc_ok = ages.location_s <= _FRESH_LOCATION_STALE_S
-        cs_cur = ages.course_speed_s <= _FRESH_COURSE_SPEED_CURRENT_S
-        cs_ok = ages.course_speed_s <= _FRESH_COURSE_SPEED_STALE_S
-        gz_cur = ages.gyroz_s <= _FRESH_GYROZ_CURRENT_S
-        alt_cur = ages.altitude_s <= _FRESH_BMP_ALT_CURRENT_S
-
-        if loc_cur and cs_cur and gz_cur and alt_cur:
-            return 0, "ALL_CURRENT"
-        if gz_cur and loc_ok and cs_ok and (not loc_cur or not cs_cur or not alt_cur):
-            if not alt_cur:
-                return 1, "BMP_ALT_STALE"
-            if not loc_cur:
-                return 1, "LOCATION_STALE_EST"
-            return 1, "COURSE_SPEED_STALE_EST"
-        if loc_cur and not cs_ok:
-            return 3, "COURSE_SPEED_UNCERTAIN"
-        if loc_ok and cs_ok and not gz_cur:
-            return 2, "GYROZ_MISSING_FF_ONLY"
-        if gz_cur and not loc_ok:
-            return 4, "NAV_UNAVAILABLE_GYRO_ONLY"
-        return 5, "NO_TRUSTED_STATE"
-
-    def _apply_hysteresis(self, raw_idx: int, raw_reason: str, now_ts: float) -> None:
-        # Fail-safe side (higher index == more degraded): immediate downgrade.
-        if raw_idx > self._level_idx:
-            self._level_idx = raw_idx
-            self._level_reason = raw_reason
-            self._level_since_ts = now_ts
-            self._recover_candidate_idx = None
-            return
-        if raw_idx == self._level_idx:
-            self._level_reason = raw_reason
-            self._recover_candidate_idx = None
-            return
-
-        # Recovery side: require sustained healthy evidence.
-        if self._recover_candidate_idx != raw_idx:
-            self._recover_candidate_idx = raw_idx
-            self._recover_candidate_since_ts = now_ts
-            return
-
-        stable_for = now_ts - self._recover_candidate_since_ts
-        dwell_for = now_ts - self._level_since_ts
-        if stable_for >= _LEVEL_RECOVERY_HOLD_S and dwell_for >= _LEVEL_MIN_DWELL_S:
-            self._level_idx = raw_idx
-            self._level_reason = raw_reason
-            self._level_since_ts = now_ts
-            self._recover_candidate_idx = None
-
-    def update(self, parsed: dict[str, str], now_ts: float) -> _FallbackStatus:
-        lat = self._parse_optional_float(parsed.get("gps_lat", ""))
-        lon = self._parse_optional_float(parsed.get("gps_lon", ""))
-        sats = self._parse_int(parsed.get("gps_sats", ""))
-        gps_quality_ok = sats is None or sats >= _GPS_SATS_MIN
-        if (
-            gps_quality_ok
-            and lat is not None
-            and lon is not None
-            and _valid_gps_latlon(lat, lon)
-        ):
-            self._last_valid_location_ts = now_ts
-            self._estimate_course_speed(lat, lon, now_ts)
-
-        gyroz = self._parse_optional_float(parsed.get("gyro_yaw", ""))
-        if self._is_finite_in_range(gyroz, -_GYROZ_ABS_MAX_DEG_S, _GYROZ_ABS_MAX_DEG_S):
-            self._last_valid_gyroz_ts = now_ts
-
-        altitude = self._parse_optional_float(parsed.get("altitude_m", ""))
-        if self._is_finite_in_range(altitude, _ALT_ABS_MIN_M, _ALT_ABS_MAX_M):
-            self._last_valid_altitude_ts = now_ts
-
-        ages = _FallbackAges(
-            location_s=self._age(self._last_valid_location_ts, now_ts),
-            course_speed_s=self._age(self._last_valid_course_speed_ts, now_ts),
-            gyroz_s=self._age(self._last_valid_gyroz_ts, now_ts),
-            altitude_s=self._age(self._last_valid_altitude_ts, now_ts),
-        )
-        raw_idx, raw_reason = self._decide_raw_level(ages)
-        self._apply_hysteresis(raw_idx, raw_reason, now_ts)
-        return _FallbackStatus(
-            level_idx=self._level_idx,
-            level_name=self.LEVEL_NAMES[self._level_idx],
-            reason=self._level_reason,
-            ages=ages,
-        )
-
-    def summary_text(self, status: _FallbackStatus) -> str:
-        return (
-            f"L{status.level_idx} {status.level_name} ({status.reason}) "
-            f"[L:{self._fmt_age(status.ages.location_s)} "
-            f"CS:{self._fmt_age(status.ages.course_speed_s)} "
-            f"G:{self._fmt_age(status.ages.gyroz_s)} "
-            f"A:{self._fmt_age(status.ages.altitude_s)}s]"
-        )
-
-    @staticmethod
-    def _parse_optional_float(value: str) -> float | None:
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(v):
-            return None
-        return v
 
 
 COMMAND_PRESETS = [
@@ -550,7 +321,6 @@ class GroundStation(tk.Tk):
         self._scenario_runner: "_ScenarioRunner | None" = None
         self._scenario_after_id: str | None = None
         self._scenario_status_var = tk.StringVar(value="idle")
-        self._fallback_estimator = GuidanceFallbackEstimator()
 
         self._build_ui()
         self._refresh_ports()
@@ -773,13 +543,6 @@ class GroundStation(tk.Tk):
             width=96,
             anchor="w",
         ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
-        self._fallback_var = tk.StringVar(value="fallback: --")
-        ttk.Label(
-            bars,
-            textvariable=self._fallback_var,
-            width=96,
-            anchor="w",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
     def _build_console_and_command(self, parent: ttk.Frame, row_offset: int = 0) -> None:
         parent.rowconfigure(row_offset, weight=1)
@@ -1250,9 +1013,7 @@ class GroundStation(tk.Tk):
         if len(self._track_points) > 500:
             self._track_points = self._track_points[-500:]
 
-    def _apply_telemetry_ui(
-        self, parsed: dict[str, str], host_ts: float | None = None
-    ) -> None:
+    def _apply_telemetry_ui(self, parsed: dict[str, str]) -> None:
         """Refresh telemetry labels, motor bars, map layers from one frame (latest in a batch)."""
         # Cache so the Scenario runner can read closed-loop feedback (left/right
         # pulse, etc.) without re-parsing the raw line.
@@ -1299,12 +1060,7 @@ class GroundStation(tk.Tk):
         dh = "--" if not math.isfinite(self._desired_heading_deg) else f"{self._desired_heading_deg:.1f}deg"
         self._heading_var.set(f"heading: {ch} / desired hdg: {dh}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
-        self._guidance_var.set(f"guidance(fs): {gstate}")
-        now_ts = host_ts if host_ts is not None else time.time()
-        fb_status = self._fallback_estimator.update(parsed, now_ts)
-        self._fallback_var.set(
-            f"fallback(local): {self._fallback_estimator.summary_text(fb_status)}"
-        )
+        self._guidance_var.set(f"guidance: {gstate}")
         self._request_map_redraw()
 
     def _request_map_redraw(self) -> None:
@@ -1566,7 +1322,6 @@ class GroundStation(tk.Tk):
         last_tlm: dict[str, str] | None = None
         last_tlm_line: str | None = None
         last_host_ts = ""
-        last_host_epoch: float | None = None
         tlm_in_tick = 0
         try:
             while n < _RX_MAX_LINES_PER_TICK:
@@ -1576,15 +1331,13 @@ class GroundStation(tk.Tk):
                 parsed = self._parse_tlm(line)
                 if parsed is not None:
                     self._packet_count += 1
-                    packet_ts = time.time()
-                    self._last_packet_ts = packet_ts
+                    self._last_packet_ts = time.time()
                     self._ingest_tlm_track(parsed)
                     self._write_csv_row(parsed, line)
                     tlm_in_tick += 1
                     last_tlm = parsed
                     last_tlm_line = line
                     last_host_ts = host_ts
-                    last_host_epoch = packet_ts
                 else:
                     self._bad_packet_count += 1
                     tag = "warn"
@@ -1595,7 +1348,7 @@ class GroundStation(tk.Tk):
             pass
 
         if last_tlm is not None:
-            self._apply_telemetry_ui(last_tlm, last_host_epoch)
+            self._apply_telemetry_ui(last_tlm)
             if tlm_in_tick > 1:
                 self._append_console(f"{last_host_ts}  (×{tlm_in_tick}) {last_tlm_line}", "ok")
             else:

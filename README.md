@@ -49,7 +49,7 @@ The current implementation uses `Sensor_Camera/picam.py` and `Sensor_Camera/came
 
 ### Hardware config example (Pi Cam v3 / IMX708)
 
-Edit `/boot/firmware/config.txt`:
+Edit ``:
 
 ```ini
 camera_auto_detect=0
@@ -58,7 +58,7 @@ dtoverlay=imx708
 ```
 
 Then reboot.
-
+/boot/firmware/config.txt
 ### Runtime camera behavior
 
 - Camera init tries `picamera2` first.
@@ -238,3 +238,19 @@ FSW_LOG_TLM=0 python3 main.py
 - **Baud match**: set XCTU **Interface Data Rate** to the same value as FSW `UART_BAUD` (default `9600`). Example: `UART_BAUD=115200 python3 main.py`.
 - **Wiring**: XBee DIN → Pi TX, DOUT → Pi RX, common GND; logic is 3.3 V.
 - **Sanity check**: loop back or use another PC serial monitor at the same baud to confirm bytes leave the Pi when TLM logging is on.
+
+
+# 전체 로그 통채로로
+scp -r root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/eventlogs .
+scp -r root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/sensorlogs .
+
+# csv만
+scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/*.csv" "$env:USERPROFILE\Desktop\fsw_logs\"
+
+# 최신 파일 1개
+ssh root@192.168.1.100 "ls -t /root/CANSAT_AAS_2026_FSW/logs/*.csv | head -1"
+# 위 출력 경로를 그대로 scp:
+scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/<위에서_나온_파일>.csv" .
+
+# 영상
+scp "root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.mp4" .

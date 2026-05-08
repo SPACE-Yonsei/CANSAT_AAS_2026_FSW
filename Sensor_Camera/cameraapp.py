@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -13,15 +14,20 @@ CAMERAAPP_RUNSTATUS = True
 PICAM_RECORDING = False
 CAMERA_HEALTH = 0
 SEGMENT_SEC = 1.0
+logger = logging.getLogger(__name__)
 
 
 def picam_start_recording() -> None:
     global PICAM_RECORDING
+    if not PICAM_RECORDING:
+        logger.info("Camera recording START")
     PICAM_RECORDING = True
 
 
 def picam_stop_recording() -> None:
     global PICAM_RECORDING
+    if PICAM_RECORDING:
+        logger.info("Camera recording STOP")
     PICAM_RECORDING = False
 
 
@@ -32,12 +38,16 @@ def command_handler(recv_msg: str) -> None:
         return
     if unpacked.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         CAMERAAPP_RUNSTATUS = False
+        logger.info("Camera terminate command received")
     elif unpacked.msg_id == appargs.CommAppArg.MID_RouteCmd_CAM:
         if unpacked.data.strip().upper() == "ON":
+            logger.info("Camera command CAM,ON received from Comm")
             picam_start_recording()
         elif unpacked.data.strip().upper() == "OFF":
+            logger.info("Camera command CAM,OFF received from Comm")
             picam_stop_recording()
     elif unpacked.msg_id == appargs.CameraAppArg.MID_cam_activate:
+        logger.info("Camera activation message received from FlightLogic")
         picam_start_recording()
 
 
@@ -47,6 +57,10 @@ def picam_record_thread(cam, enc) -> None:
         if PICAM_RECORDING:
             out = picam.record(cam, enc, SEGMENT_SEC)
             CAMERA_HEALTH = 1 if out is not None else 0
+            if out is not None:
+                logger.debug("Camera segment saved: %s", out)
+            else:
+                logger.warning("Camera segment save failed")
         else:
             time.sleep(0.1)
 
@@ -56,6 +70,7 @@ def cameraapp_main(main_pipe) -> None:
     if cam is not None:
         global CAMERA_HEALTH
         CAMERA_HEALTH = 1
+    logger.info("Camera app started")
     t = threading.Thread(target=picam_record_thread, args=(cam, enc), daemon=True)
     t.start()
     try:
@@ -69,4 +84,5 @@ def cameraapp_main(main_pipe) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        logger.info("Camera app terminating")
         picam.terminate(cam)

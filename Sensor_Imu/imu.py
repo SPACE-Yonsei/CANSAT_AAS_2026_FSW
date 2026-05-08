@@ -68,6 +68,10 @@ YAW_CORRECTION_GAIN = _env_float("IMU_YAW_CORRECTION_GAIN", 0.02, 0.0, 1.0)
 HAMPEL_WINDOW_SIZE = _env_int("IMU_HAMPEL_WINDOW_SIZE", 3, 3, 31)
 HAMPEL_THRESHOLD = _env_float("IMU_HAMPEL_THRESHOLD", 3.0, 0.1, 20.0)
 HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
+# Quaternion-frozen watchdog: if the raw quat is bit-identical for this many consecutive
+# reads, treat the chip as hung and surface a soft failure so ``imuapp`` triggers reinit
+# (which pulses ``IMU_BNO085_RST_PIN`` when ``IMU_BNO085_RST_ENABLE=1``).
+FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 12, 3, 500)
 
 _ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
 _LAST_VALID = {
@@ -76,6 +80,7 @@ _LAST_VALID = {
     "gyr": (0.0, 0.0, 0.0),
 }
 _MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
+_FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0}
 
 
 
@@ -340,7 +345,18 @@ def _init_imu_once() -> tuple[Any, Any]:
             _enable_feature_retry(bno, BNO_REPORT_GAME_ROTATION_VECTOR)
             bno._fsw_use_game_quat = True  # type: ignore[attr-defined]
 
-    logger.info("IMU BNO08x OK at 0x%02x", addr)
+    if BNO085_RST_USE:
+        logger.info(
+            "IMU BNO08x OK at 0x%02x (HW RST watchdog armed on %s, freeze>=%d samples)",
+            addr,
+            BNO085_RST_PIN,
+            FREEZE_DETECT_SAMPLES,
+        )
+    else:
+        logger.info(
+            "IMU BNO08x OK at 0x%02x (HW RST disabled; set IMU_BNO085_RST_ENABLE=1 + IMU_BNO085_RST_PIN to wire watchdog)",
+            addr,
+        )
     return i2c, bno
 
 
@@ -381,6 +397,26 @@ def read_sensor_data(bno) -> Any:
             if quat is None or any(v is None for v in quat):
                 raise RuntimeError("BNO08x quaternion unavailable")
             qi, qj, qk, qr = quat
+            quat_key = (
+                round(float(qi), 6),
+                round(float(qj), 6),
+                round(float(qk), 6),
+                round(float(qr), 6),
+            )
+            if quat_key == _FREEZE_STATE["prev_quat"]:
+                _FREEZE_STATE["count"] = int(_FREEZE_STATE["count"]) + 1
+                if _FREEZE_STATE["count"] >= FREEZE_DETECT_SAMPLES:
+                    logger.warning(
+                        "IMU: quaternion frozen for %d reads (%s); requesting reinit",
+                        _FREEZE_STATE["count"],
+                        quat_key,
+                    )
+                    _FREEZE_STATE["prev_quat"] = None
+                    _FREEZE_STATE["count"] = 0
+                    return False
+            else:
+                _FREEZE_STATE["prev_quat"] = quat_key
+                _FREEZE_STATE["count"] = 0
             roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
 
             if acc is not None and not any(v is None for v in acc):
@@ -438,6 +474,7 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     for window in _ANGLE_WINDOWS.values():
         window.clear()
     _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
+    _FREEZE_STATE.update({"prev_quat": None, "count": 0})
     return init_imu()
 
 

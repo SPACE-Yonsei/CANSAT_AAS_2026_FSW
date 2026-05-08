@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import time
+
+logger = logging.getLogger(__name__)
+_INIT_FAILURE_REASON: str | None = None
 
 
 @dataclass
@@ -25,8 +29,10 @@ def _default_output_dir() -> Path:
 def init_cam() -> tuple[CameraHandle, object]:
     """Initialize camera backend.
 
-    Returns a handle even when hardware backend is unavailable.
+    Returns a handle even when hardware backend is unavailable. Logs the actual
+    failure reason once so ``.txt`` placeholders aren't silent.
     """
+    global _INIT_FAILURE_REASON
     output_dir = _default_output_dir()
     try:
         from picamera2 import Picamera2  # type: ignore
@@ -38,10 +44,26 @@ def init_cam() -> tuple[CameraHandle, object]:
         cam.start()
         enc = H264Encoder()
         handle = CameraHandle(cam=cam, encoder=enc, available=True, output_dir=output_dir)
+        logger.info("PICAM: Picamera2 ready (output_dir=%s)", output_dir)
         return handle, enc
-    except Exception:
-        handle = CameraHandle(cam=None, encoder=None, available=False, output_dir=output_dir)
-        return handle, None
+    except ImportError as exc:
+        _INIT_FAILURE_REASON = f"picamera2 import failed: {exc}"
+        logger.warning(
+            "PICAM: picamera2 not installed (%s). Install via "
+            "`sudo apt install -y python3-picamera2 python3-libcamera`. "
+            "Recording will produce .txt placeholders only.",
+            exc,
+        )
+    except Exception as exc:
+        _INIT_FAILURE_REASON = f"{type(exc).__name__}: {exc}"
+        logger.warning(
+            "PICAM: camera init failed (%s). Check `libcamera-hello --list-cameras` "
+            "and /boot/firmware/config.txt (camera_auto_detect=1). "
+            "Recording will produce .txt placeholders only.",
+            _INIT_FAILURE_REASON,
+        )
+    handle = CameraHandle(cam=None, encoder=None, available=False, output_dir=output_dir)
+    return handle, None
 
 
 def _timestamped_name(ext: str) -> str:

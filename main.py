@@ -10,6 +10,7 @@ MAINAPP_RUNSTATUS = True
 from lib import appargs
 from lib import msgstructure
 from lib import events
+from lib import sensorlog
 
 # Multiprocessing Library is used on Python FSW V2
 # Each application should have its own runloop
@@ -23,6 +24,7 @@ APP_DICT_LOCK = threading.RLock()
 
 # Initialize logging system FIRST (before any LogEvent calls)
 log_queue = events.init_events_main_process()
+sensorlog.init_sensorlog_main_process()
 
 # Read prev state, altitude calibration for recovery
 from lib import prevstate
@@ -284,6 +286,7 @@ def terminate_FSW():
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"All Termination Process complete, terminating FSW")
     
     # Shutdown logging system
+    sensorlog.shutdown_sensorlog()
     events.shutdown_events()
     
     sys.exit()
@@ -400,6 +403,8 @@ def runloop(Main_Queue : Queue):
             if unpacked_msg == False:
                 continue
 
+            sensorlog.log_bus_message(unpacked_msg)
+
             with APP_DICT_LOCK:
                 app_entry = app_dict.get(unpacked_msg.receiver_app)
             if app_entry is None:
@@ -427,6 +432,7 @@ def runloop(Main_Queue : Queue):
         for app_entry in app_entries:
             if app_entry.process.is_alive():
                 app_entry.process.kill()
+        sensorlog.shutdown_sensorlog()
         events.shutdown_events()
         sys.exit(1)
     return

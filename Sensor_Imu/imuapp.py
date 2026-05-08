@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Optional, Tuple
@@ -34,7 +35,24 @@ HEALTH = 1
 IMU_ERROR_COUNT = 0
 IMU_MAX_CONSECUTIVE_ERRORS = 50
 IMU_STALE_TIMEOUT_SEC = 1.0
+
+
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(lo, min(value, hi))
+
+
+# Stale-sample watchdog: if no fresh sample for ``IMU_STALE_REINIT_SEC`` seconds,
+# force a reinit (which pulses the BNO085 RST pin when ``IMU_BNO085_RST_ENABLE=1``).
+# Cooldown prevents reinit storms when reinit itself is also failing.
+IMU_STALE_REINIT_SEC = _env_float("IMU_STALE_REINIT_SEC", 2.0, 0.5, 30.0)
+IMU_REINIT_COOLDOWN_SEC = _env_float("IMU_REINIT_COOLDOWN_SEC", 5.0, 1.0, 60.0)
+
 _last_sample_ts = 0.0
+_last_reinit_ts = 0.0
 _imu_lock = threading.Lock()
 _imu_instance = None
 _i2c_instance = None
@@ -119,7 +137,8 @@ def imuapp_init() -> None:
 
 
 def _try_reinit() -> None:
-    global _i2c_instance, _imu_instance
+    global _i2c_instance, _imu_instance, _last_reinit_ts
+    _last_reinit_ts = time.time()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -132,11 +151,39 @@ def _try_reinit() -> None:
         _i2c_instance, _imu_instance = None, None
 
 
+def _stale_watchdog_check() -> bool:
+    """Force reinit when no fresh sample arrived for ``IMU_STALE_REINIT_SEC``.
+
+    Returns ``True`` if a reinit was triggered (so caller can skip the rest of the
+    loop iteration). Debounced by ``IMU_REINIT_COOLDOWN_SEC`` to avoid reinit storms.
+    """
+    now = time.time()
+    if _last_sample_ts <= 0.0:
+        return False
+    if (now - _last_sample_ts) <= IMU_STALE_REINIT_SEC:
+        return False
+    if (now - _last_reinit_ts) <= IMU_REINIT_COOLDOWN_SEC:
+        return False
+    logger.warning(
+        "IMU stale watchdog: %.2fs without fresh sample; forcing reinit "
+        "(HW RST pulse if IMU_BNO085_RST_ENABLE=1)",
+        now - _last_sample_ts,
+    )
+    _try_reinit()
+    return True
+
+
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _yaw_ema, _gyrz_ema
     period = _imu_read_period_sec()
     while IMUAPP_RUNSTATUS:
+        if _stale_watchdog_check():
+            IMU_ERROR_COUNT = 0
+            HEALTH = 0
+            time.sleep(period)
+            continue
+
         sample = _read_sensor_sample()
         if sample is False:
             IMU_ERROR_COUNT += 1
