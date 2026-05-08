@@ -67,9 +67,10 @@ class TestMotorGuidance(unittest.TestCase):
         self.assertEqual(out.state, "TARGET_UNSET")
 
     def test_input_resolver_reports_nominal_lcsg_case(self):
-        resolver = motor_guidance.GuidanceInputResolver()
+        resolver = motor_guidance.make_resolver_state()
         now = time.time()
-        resolver.update_gnss(
+        motor_guidance.resolver_update_gnss(
+            resolver,
             lat=37.55,
             lon=126.95,
             course_rad=math.radians(90.0),
@@ -78,18 +79,20 @@ class TestMotorGuidance(unittest.TestCase):
             motionHealth=True,
             ts=now,
         )
-        resolver.update_imu(gz=5.0, ts=now)
+        # imu_health=True required so GYRZ is classified FRESH → closed-loop
+        motor_guidance.resolver_update_imu(resolver, gz=5.0, imu_health=True, ts=now)
 
-        guidance_input = resolver.resolve(now)
+        guidance_input = motor_guidance.resolver_resolve(resolver, now)
 
         self.assertEqual(guidance_input.lcsg_case, "LCSG")
         self.assertEqual(guidance_input.input_policy, "nominal_l1_with_yaw_rate_feedback")
-        self.assertEqual(guidance_input.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+        self.assertEqual(guidance_input.control_mode, motor_guidance.ControlMode.ACTIVE_CLOSED_LOOP)
 
     def test_input_resolver_reports_feedforward_only_when_gyro_missing(self):
-        resolver = motor_guidance.GuidanceInputResolver()
+        resolver = motor_guidance.make_resolver_state()
         now = time.time()
-        resolver.update_gnss(
+        motor_guidance.resolver_update_gnss(
+            resolver,
             lat=37.55,
             lon=126.95,
             course_rad=math.radians(90.0),
@@ -99,11 +102,102 @@ class TestMotorGuidance(unittest.TestCase):
             ts=now,
         )
 
-        guidance_input = resolver.resolve(now)
+        guidance_input = motor_guidance.resolver_resolve(resolver, now)
 
         self.assertEqual(guidance_input.lcsg_case, "LCS-")
         self.assertEqual(guidance_input.input_policy, "l1_valid_feedforward_only_no_gyro")
-        self.assertEqual(guidance_input.guidance_mode, motor_guidance.GuidanceMode.ACTIVE)
+        self.assertEqual(guidance_input.control_mode, motor_guidance.ControlMode.ACTIVE_FEEDFORWARD)
+
+    def test_fill_current_data_fresh(self):
+        """pos_health=True, fresh data → FRESH status + values populated."""
+        s = motor_guidance.make_resolver_state()
+        now = time.time()
+        motor_guidance.resolver_update_gnss(
+            s, 37.55, 126.95, math.radians(90.0), 12.0, True, True, now,
+        )
+        motor_guidance.resolver_update_imu(s, gz=5.0, imu_health=True, ts=now)
+        motor_guidance.resolver_update_baro(s, 100.0, now, baro_health=True)
+
+        state = motor_guidance.GuidanceInput(timestamp=now)
+        motor_guidance.fill_current_data(s, state, now)
+
+        self.assertEqual(state.pos_status, motor_guidance.FieldStatus.FRESH)
+        self.assertEqual(state.motion_health, motor_guidance.FieldStatus.FRESH)
+        self.assertEqual(state.gyrz_health, motor_guidance.FieldStatus.FRESH)
+        self.assertEqual(state.alt_health, motor_guidance.FieldStatus.FRESH)
+        self.assertIsNotNone(state.pos_N)
+        self.assertIsNotNone(state.course)
+        self.assertIsNotNone(state.gyrz)
+        self.assertIsNotNone(state.altitude)
+
+    def test_fill_current_data_health_false_gives_stale(self):
+        """health=False with fresh timestamps → STALE, values not yet filled."""
+        s = motor_guidance.make_resolver_state()
+        now = time.time()
+        motor_guidance.resolver_update_gnss(
+            s, 37.55, 126.95, math.radians(90.0), 12.0, False, False, now,
+        )
+        motor_guidance.resolver_update_imu(s, gz=5.0, imu_health=False, ts=now)
+        motor_guidance.resolver_update_baro(s, 100.0, now, baro_health=False)
+
+        state = motor_guidance.GuidanceInput(timestamp=now)
+        motor_guidance.fill_current_data(s, state, now)
+
+        self.assertEqual(state.pos_status, motor_guidance.FieldStatus.STALE)
+        self.assertEqual(state.motion_health, motor_guidance.FieldStatus.STALE)
+        self.assertEqual(state.gyrz_health, motor_guidance.FieldStatus.STALE)
+        self.assertEqual(state.alt_health, motor_guidance.FieldStatus.STALE)
+        # Values not yet written — fill_stale_data has not run
+        self.assertIsNone(state.pos_N)
+        self.assertIsNone(state.course)
+
+    def test_fill_stale_data_fills_stale_fields(self):
+        """fill_stale_data populates values for STALE fields."""
+        s = motor_guidance.make_resolver_state()
+        now = time.time()
+        motor_guidance.resolver_update_gnss(
+            s, 37.55, 126.95, math.radians(90.0), 12.0, False, False, now,
+        )
+        motor_guidance.resolver_update_imu(s, gz=5.0, imu_health=False, ts=now)
+        motor_guidance.resolver_update_baro(s, 100.0, now, baro_health=False)
+
+        state = motor_guidance.GuidanceInput(timestamp=now)
+        motor_guidance.fill_current_data(s, state, now)
+        motor_guidance.fill_stale_data(s, state, now)
+
+        self.assertIsNotNone(state.course)
+        self.assertIsNotNone(state.gyrz)
+        self.assertIsNotNone(state.altitude)
+
+    def test_decide_control_mode_active(self):
+        """FRESH data → ACTIVE guidance mode."""
+        s = motor_guidance.make_resolver_state()
+        now = time.time()
+        motor_guidance.resolver_update_gnss(
+            s, 37.55, 126.95, math.radians(90.0), 12.0, True, True, now,
+        )
+        state = motor_guidance.GuidanceInput(timestamp=now)
+        motor_guidance.fill_current_data(s, state, now)
+        motor_guidance.fill_stale_data(s, state, now)
+        motor_guidance.decide_control_mode(state)
+
+        self.assertEqual(state.control_mode, motor_guidance.ControlMode.ACTIVE_FEEDFORWARD)
+
+    def test_decide_control_mode_degraded_stale(self):
+        """STALE data → DEGRADED guidance mode."""
+        s = motor_guidance.make_resolver_state()
+        now = time.time()
+        motor_guidance.resolver_update_gnss(
+            s, 37.55, 126.95, math.radians(90.0), 12.0, False, False, now,
+        )
+        motor_guidance.resolver_set_origin(s, 37.55, 126.95)
+        state = motor_guidance.GuidanceInput(timestamp=now)
+        motor_guidance.fill_current_data(s, state, now)
+        motor_guidance.fill_stale_data(s, state, now)
+        motor_guidance.decide_control_mode(state)
+
+        self.assertEqual(state.control_mode, motor_guidance.ControlMode.DEGRADED_FEEDFORWARD)
+        self.assertIn("stale", state.reason)
 
 
 if __name__ == "__main__":
