@@ -93,17 +93,24 @@ class TestFlightLogicApp(unittest.TestCase):
                 break
         self.assertTrue(found)
 
-    def test_predictive_release_fires_above_80_percent(self):
+    def test_release_sends_reason_payload(self):
         q = queue.Queue()
         flightlogicapp.state = 2
         flightlogicapp.max_alt = 1000.0
-        with mock.patch("flight_logic.flightlogicapp.time.time", side_effect=[1.0, 2.0, 3.0, 4.0, 5.0]):
-            flightlogicapp.barometer_logic(q, 860.0)
-            flightlogicapp.barometer_logic(q, 850.0)
-            flightlogicapp.barometer_logic(q, 830.0)
-            flightlogicapp.barometer_logic(q, 820.0)
-            flightlogicapp.barometer_logic(q, 810.0)
+        flightlogicapp.cnt_release = 2
+        with mock.patch("flight_logic.flightlogicapp.time.time", side_effect=[1.0]):
+            flightlogicapp.barometer_logic(q, 849.0)
         self.assertEqual(flightlogicapp.state, 3)
+        found_release_reason = False
+        while not q.empty():
+            msg = q.get_nowait()
+            if (
+                f"|{appargs.MotorAppArg.AppID}|" in msg
+                and str(appargs.FlightlogicAppArg.MID_motor_burnwire) in msg
+                and "TRIGGER:" in msg
+            ):
+                found_release_reason = True
+        self.assertTrue(found_release_reason)
 
 
 if __name__ == "__main__":

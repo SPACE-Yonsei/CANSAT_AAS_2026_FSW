@@ -263,7 +263,13 @@ def handle_flight_state(data: str) -> None:
             _lock_start_for_legacy_if_ready()
 
 
-def handle_release() -> None:
+def handle_release(data: str = "TRIGGER") -> None:
+    reason = "UNKNOWN"
+    if isinstance(data, str) and ":" in data:
+        _, reason = data.split(":", 1)
+    elif isinstance(data, str) and data.strip():
+        reason = data.strip()
+    LOGGER.warning("Burnwire trigger received | reason=%s", reason)
     threading.Thread(
         target=Motor_Release.activate_burnwire, daemon=True, name="Burnwire"
     ).start()
@@ -549,7 +555,7 @@ def dispatch(msg: str) -> None:
     elif mid == appargs.FlightlogicAppArg.MID_motor_state:
         handle_flight_state(unpacked.data)
     elif mid == appargs.FlightlogicAppArg.MID_motor_burnwire:
-        handle_release()
+        handle_release(unpacked.data)
     elif mid == appargs.FlightlogicAppArg.MID_motor_EggDrop:
         handle_egg_drop()
     elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:

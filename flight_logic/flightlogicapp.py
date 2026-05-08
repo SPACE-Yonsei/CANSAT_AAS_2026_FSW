@@ -378,6 +378,7 @@ def _release_condition(alt: float, now_s: float) -> ReleaseDecision:
 def barometer_logic(main_queue, alt: float) -> None:
     global max_alt, recent_alt, cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop, release_reason
     now_s = time.time()
+    filtered_alt = alt
     recent_alt.append(alt)
     if len(recent_alt) > 3:
         recent_alt = recent_alt[-3:]
@@ -385,6 +386,7 @@ def barometer_logic(main_queue, alt: float) -> None:
     if len(recent_alt) >= 2:
         sorted_win = sorted(recent_alt, reverse=True)
         candidate = sorted_win[1] if len(sorted_win) > 1 else sorted_win[0]
+        filtered_alt = candidate
         max_alt = max(max_alt, candidate)
     else:
         max_alt = max(max_alt, alt)
@@ -396,7 +398,7 @@ def barometer_logic(main_queue, alt: float) -> None:
             reset_release_predictor(release_predictor)
             to_ascent(main_queue)
     elif state == 1:
-        rel_decision = _release_condition(alt, now_s)
+        rel_decision = _release_condition(filtered_alt, now_s)
         rel_cond = rel_decision.trigger
         if rel_cond:
             release_reason = rel_decision.reason
@@ -410,7 +412,7 @@ def barometer_logic(main_queue, alt: float) -> None:
             _reset_transition_counters()
             to_apogee(main_queue)
     elif state == 2:
-        rel_decision = _release_condition(alt, now_s)
+        rel_decision = _release_condition(filtered_alt, now_s)
         if rel_decision.trigger:
             release_reason = rel_decision.reason
         cnt_release = cnt_release + 1 if rel_decision.trigger else 0
