@@ -65,11 +65,18 @@ _TARGET_LAT: Optional[float] = None
 _TARGET_LON: Optional[float] = None
 
 # Legacy observable state kept for tests/replay scripts during migration.
-IMU = SimpleNamespace(yaw=0.0, gyrz=0.0, imu_health=0)
+IMU = SimpleNamespace(
+    roll=0.0, pitch=0.0, yaw=0.0,
+    accx=0.0, accy=0.0, accz=0.0,
+    magx=0.0, magy=0.0, magz=0.0,
+    gyrx=0.0, gyry=0.0, gyrz=0.0,
+    imu_health=0,
+)
 GPS_VECTOR = SimpleNamespace(lat=0.0, lon=0.0, direction=0.0, velocity=0.0)
 GPS_HEALTH = SimpleNamespace(pos_health=0, motion_health=0)
 TARGET = None
 ALT = 0.0
+BARO_HEALTH = 0
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
 
@@ -147,51 +154,43 @@ def handle_gps(data: str) -> None:
 
 
 def handle_imu(data: str) -> None:
-    """
-    Full format (9 fields): roll,pitch,yaw,ax,ay,az,gx,gy,gz
-    Legacy format (3 fields): yaw_deg,gyrz_deg_s,imu_health
-    """
+    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz,health"""
     fields = data.split(",")
     ts = time.time()
     try:
-        if len(fields) >= 9:
-            v = [float(f) for f in fields[:9]]
-            with _UPDATE_LOCK:
-                IMU.yaw = v[2]
-                IMU.gyrz = v[8]
-                IMU.imu_health = 1
-                _INPUT_RESOLVER.update_imu(
-                    roll=v[0], pitch=v[1], yaw=v[2],
-                    ax=v[3],   ay=v[4],   az=v[5],
-                    gx=v[6],   gy=v[7],   gz=v[8],
-                    ts=ts,
-                )
-        elif len(fields) >= 3:
-            # Legacy: yaw_deg, gyrz_deg_s, imu_health
-            yaw_deg   = float(fields[0])
-            gyrz_degs = float(fields[1])
-            imu_health = int(float(fields[2]))
-            with _UPDATE_LOCK:
-                IMU.yaw = yaw_deg
-                IMU.gyrz = gyrz_degs
-                IMU.imu_health = imu_health
-                _INPUT_RESOLVER.update_imu(yaw=yaw_deg, gz=gyrz_degs, ts=ts)
-        else:
-            LOGGER.warning("IMU parse: too few fields | raw=%r", data)
+        if len(fields) < 13:
+            LOGGER.warning("IMU parse: expected 13 fields, got %d | raw=%r", len(fields), data)
+            return
+        v = [float(f) for f in fields[:13]]
+        with _UPDATE_LOCK:
+            IMU.roll, IMU.pitch, IMU.yaw         = v[0],  v[1],  v[2]
+            IMU.accx, IMU.accy, IMU.accz         = v[3],  v[4],  v[5]
+            IMU.magx, IMU.magy, IMU.magz         = v[6],  v[7],  v[8]
+            IMU.gyrx, IMU.gyry, IMU.gyrz         = v[9],  v[10], v[11]
+            IMU.imu_health                        = int(v[12])
+            _INPUT_RESOLVER.update_imu(
+                roll=v[0], pitch=v[1], yaw=v[2],
+                ax=v[3],   ay=v[4],   az=v[5],
+                gx=v[9],   gy=v[10],  gz=v[11],
+                ts=ts,
+            )
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
 
 
 def handle_barometer(data: str) -> None:
-    """altitude_m[,...]"""
-    global ALT
+    """altitude_m,health"""
+    global ALT, BARO_HEALTH
+    fields = data.split(",")
     try:
-        alt = float(data.split(",")[0].strip())
+        alt    = float(fields[0].strip())
+        health = int(float(fields[1])) if len(fields) >= 2 else 0
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
     with _UPDATE_LOCK:
         ALT = alt
+        BARO_HEALTH = health
         _INPUT_RESOLVER.update_baro(alt, time.time())
 
 

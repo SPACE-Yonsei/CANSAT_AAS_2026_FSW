@@ -188,7 +188,7 @@ def send_imu_data(main_queue) -> None:
             appargs.ImuAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.ImuAppArg.MID_motor_imu,
-            f"{yaw},{gyrz},{HEALTH}",
+            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{HEALTH}",
         )
         tick += 1
         if tick >= 10:

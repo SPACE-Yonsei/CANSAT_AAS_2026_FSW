@@ -154,7 +154,7 @@ def send_barometer_data(main_queue) -> None:
             appargs.BarometerAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.BarometerAppArg.MID_motor_alt,
-            f"{alt}",
+            f"{alt},{BAROMETER_HEALTH}",
         )
         tick += 1
         if tick >= 10:
