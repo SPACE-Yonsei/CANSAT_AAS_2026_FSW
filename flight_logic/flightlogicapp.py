@@ -10,6 +10,7 @@ from typing import Optional
 
 from lib import appargs, msgstructure, prevstate
 from Sensor_Motor.Motor_Release_Cal import (
+    ReleaseDecision,
     ReleasePredictorState,
     reset_release_predictor,
     should_trigger_release,
@@ -33,6 +34,7 @@ cnt_egg_drop = 0
 solenoid_count = 0
 solenoid_done = False
 release_predictor = ReleasePredictorState()
+release_reason = "TRIGGER"
 
 
 def _set_state(main_queue, new_state: int, force: bool = False) -> None:
@@ -82,18 +84,20 @@ def _has_release_target() -> bool:
     return not (lat == 0.0 and lon == 0.0)
 
 
-def to_release(main_queue, force: bool = False) -> None:
+def to_release(main_queue, force: bool = False, reason: str = "TRIGGER") -> None:
     if not _has_release_target():
         logger.error("Release blocked: target coordinate must be set before release")
         return
     _set_state(main_queue, 3, force=force)
+    burnwire_payload = f"TRIGGER:{reason}"
     msgstructure.send_msg(
         main_queue,
         appargs.FlightlogicAppArg.AppID,
         appargs.MotorAppArg.AppID,
         appargs.FlightlogicAppArg.MID_motor_burnwire,
-        "TRIGGER",
+        burnwire_payload,
     )
+    logger.info("Release command sent | reason=%s", reason)
     msgstructure.send_msg(
         main_queue,
         appargs.FlightlogicAppArg.AppID,
@@ -297,7 +301,7 @@ def handle_ss(data: str, main_queue) -> None:
     elif target == 2:
         to_apogee(main_queue, force=True)
     elif target == 3:
-        to_release(main_queue, force=True)
+        to_release(main_queue, force=True, reason="SS_FORCE")
     elif target == 4:
         to_egg(main_queue, force=True)
     elif target == 5:
@@ -360,9 +364,9 @@ def _reset_transition_counters() -> None:
     cnt_landed = 0
 
 
-def _release_condition(alt: float, now_s: float) -> bool:
+def _release_condition(alt: float, now_s: float) -> ReleaseDecision:
     if max_alt <= 0:
-        return False
+        return ReleaseDecision(False)
     return should_trigger_release(
         release_predictor,
         now_s=now_s,
@@ -372,7 +376,7 @@ def _release_condition(alt: float, now_s: float) -> bool:
 
 
 def barometer_logic(main_queue, alt: float) -> None:
-    global max_alt, recent_alt, cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop
+    global max_alt, recent_alt, cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop, release_reason
     now_s = time.time()
     recent_alt.append(alt)
     if len(recent_alt) > 3:
@@ -392,21 +396,27 @@ def barometer_logic(main_queue, alt: float) -> None:
             reset_release_predictor(release_predictor)
             to_ascent(main_queue)
     elif state == 1:
-        rel_cond = _release_condition(alt, now_s)
+        rel_decision = _release_condition(alt, now_s)
+        rel_cond = rel_decision.trigger
+        if rel_cond:
+            release_reason = rel_decision.reason
         apo_cond = max_alt > 0 and (max_alt * 0.8 < alt < max_alt - 0.25)
         cnt_release = cnt_release + 1 if rel_cond else 0
         cnt_apogee = cnt_apogee + 1 if apo_cond else 0
         if cnt_release >= 3:
             _reset_transition_counters()
-            to_release(main_queue)
+            to_release(main_queue, reason=release_reason)
         elif cnt_apogee >= 2:
             _reset_transition_counters()
             to_apogee(main_queue)
     elif state == 2:
-        cnt_release = cnt_release + 1 if _release_condition(alt, now_s) else 0
+        rel_decision = _release_condition(alt, now_s)
+        if rel_decision.trigger:
+            release_reason = rel_decision.reason
+        cnt_release = cnt_release + 1 if rel_decision.trigger else 0
         if cnt_release >= 3:
             _reset_transition_counters()
-            to_release(main_queue)
+            to_release(main_queue, reason=release_reason)
     elif state == 3:
         cnt_release = cnt_release + 1 if alt <= 50 else 0
         if cnt_release >= 3:

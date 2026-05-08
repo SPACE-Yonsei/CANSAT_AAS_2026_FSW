@@ -96,11 +96,61 @@ def get_release_hard_trigger_ratio() -> float:
 class ReleasePredictorState:
     history: Deque[Tuple[float, float]] = field(default_factory=lambda: deque(maxlen=40))
     trigger_latched: bool = False
+    crossed_90m_at_s: Optional[float] = None
 
 
 def reset_release_predictor(state: ReleasePredictorState) -> None:
     state.history.clear()
     state.trigger_latched = False
+    state.crossed_90m_at_s = None
+
+
+def get_release_prediction_time_min_sec() -> float:
+    value = _read_config_txt_value("RELEASE_PREDICT_TIME_MIN_SEC")
+    if value is None:
+        value = getattr(config, "RELEASE_PREDICT_TIME_MIN_SEC", 0.0)
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def get_release_prediction_time_max_sec() -> float:
+    value = _read_config_txt_value("RELEASE_PREDICT_TIME_MAX_SEC")
+    if value is None:
+        value = getattr(config, "RELEASE_PREDICT_TIME_MAX_SEC", 5.0)
+    try:
+        return max(0.1, float(value))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+def get_release_force_alt_m() -> float:
+    value = _read_config_txt_value("RELEASE_FORCE_ALT_M")
+    if value is None:
+        value = getattr(config, "RELEASE_FORCE_ALT_M", 90.0)
+    try:
+        return max(1.0, float(value))
+    except (TypeError, ValueError):
+        return 90.0
+
+
+def get_release_force_after_sec() -> float:
+    value = _read_config_txt_value("RELEASE_FORCE_AFTER_SEC")
+    if value is None:
+        value = getattr(config, "RELEASE_FORCE_AFTER_SEC", 5.0)
+    try:
+        return max(0.1, float(value))
+    except (TypeError, ValueError):
+        return 5.0
+
+
+@dataclass
+class ReleaseDecision:
+    trigger: bool
+    reason: str = "NONE"
+    predicted: bool = False
+    time_to_target_s: Optional[float] = None
 
 
 def _descent_rate_mps(history: Deque[Tuple[float, float]]) -> float:
@@ -126,7 +176,7 @@ def should_trigger_release(
     burnwire_delay_sec: Optional[float] = None,
     min_desc_rate_mps: float = 0.3,
     min_samples: int = 3,
-) -> bool:
+) -> ReleaseDecision:
     """Return True when burnwire should be fired now.
 
     Logic:
@@ -137,9 +187,9 @@ def should_trigger_release(
       - Latch trigger after first True to avoid oscillation
     """
     if predictor.trigger_latched:
-        return True
+        return ReleaseDecision(True, reason="LATCHED", predicted=True, time_to_target_s=0.0)
     if max_alt_m <= 0.0:
-        return False
+        return ReleaseDecision(False)
 
     if target_ratio is None:
         target_ratio = get_release_target_ratio()
@@ -147,6 +197,12 @@ def should_trigger_release(
         predict_start_ratio = get_release_predict_start_ratio()
     if hard_trigger_ratio is None:
         hard_trigger_ratio = get_release_hard_trigger_ratio()
+    predict_t_min = get_release_prediction_time_min_sec()
+    predict_t_max = get_release_prediction_time_max_sec()
+    force_alt_m = get_release_force_alt_m()
+    force_after_sec = get_release_force_after_sec()
+    if predict_t_max < predict_t_min:
+        predict_t_min, predict_t_max = predict_t_max, predict_t_min
 
     target_ratio = float(target_ratio)
     predict_start_ratio = float(predict_start_ratio)
@@ -159,6 +215,17 @@ def should_trigger_release(
     burn_delay = get_burnwire_delay_sec() if burnwire_delay_sec is None else burnwire_delay_sec
     burn_delay = max(0.1, float(burn_delay))
 
+    # Absolute fallback: if altitude falls below threshold (default 90m),
+    # force release after timeout (default 5s).
+    if alt_m <= force_alt_m:
+        if predictor.crossed_90m_at_s is None:
+            predictor.crossed_90m_at_s = now_s
+        elif now_s - predictor.crossed_90m_at_s >= force_after_sec:
+            predictor.trigger_latched = True
+            return ReleaseDecision(True, reason="FORCE_90M_TIMEOUT", predicted=False)
+    else:
+        predictor.crossed_90m_at_s = None
+
     # Always keep a short history around the prediction band.
     if alt_m <= max_alt_m * predict_start_ratio:
         predictor.history.append((now_s, alt_m))
@@ -169,25 +236,35 @@ def should_trigger_release(
     target_alt_m = max_alt_m * target_ratio
     if alt_m <= target_alt_m:
         predictor.trigger_latched = True
-        return True
-
-    # Hard guard: if prediction window has started and altitude passes this
-    # ratio (default 85%), force-trigger release immediately.
-    hard_alt_m = max_alt_m * hard_trigger_ratio
-    if alt_m <= hard_alt_m and alt_m <= max_alt_m * predict_start_ratio:
-        predictor.trigger_latched = True
-        return True
+        return ReleaseDecision(True, reason="TARGET_RATIO", predicted=False, time_to_target_s=0.0)
 
     if len(predictor.history) < min_samples:
-        return False
+        hard_alt_m = max_alt_m * hard_trigger_ratio
+        if alt_m <= hard_alt_m and alt_m <= max_alt_m * predict_start_ratio:
+            predictor.trigger_latched = True
+            return ReleaseDecision(True, reason="FORCE_85_NO_PREDICTION", predicted=False)
+        return ReleaseDecision(False)
 
     rate_mps = _descent_rate_mps(predictor.history)
     if rate_mps < min_desc_rate_mps:
-        return False
+        hard_alt_m = max_alt_m * hard_trigger_ratio
+        if alt_m <= hard_alt_m and alt_m <= max_alt_m * predict_start_ratio:
+            predictor.trigger_latched = True
+            return ReleaseDecision(True, reason="FORCE_85_NO_PREDICTION", predicted=False)
+        return ReleaseDecision(False)
 
     remaining_m = alt_m - target_alt_m
     time_to_target_s = remaining_m / max(rate_mps, 1e-6)
-    if time_to_target_s <= burn_delay:
+    prediction_valid = predict_t_min <= time_to_target_s <= predict_t_max
+    if prediction_valid and time_to_target_s <= burn_delay:
         predictor.trigger_latched = True
-        return True
-    return False
+        return ReleaseDecision(
+            True,
+            reason="PREDICTIVE",
+            predicted=True,
+            time_to_target_s=time_to_target_s,
+        )
+    if (not prediction_valid) and (alt_m <= max_alt_m * hard_trigger_ratio):
+        predictor.trigger_latched = True
+        return ReleaseDecision(True, reason="FORCE_85_NO_PREDICTION", predicted=False)
+    return ReleaseDecision(False, predicted=prediction_valid, time_to_target_s=time_to_target_s)
