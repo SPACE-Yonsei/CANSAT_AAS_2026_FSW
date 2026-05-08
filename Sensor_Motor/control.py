@@ -36,25 +36,26 @@ DELTA_ARM_MAX_DEG  = 200.0
 MAX_ARM_RATE_DEG_S = 60.0
 
 # ── PWM mapping ───────────────────────────────────────────────────────────────
-# LEFT  arm: 0 deg → LEFT_ZERO pulse, 180 deg → LEFT_ZERO + 2000
-# RIGHT arm: 0 deg → RIGHT_ZERO pulse, 180 deg → RIGHT_ZERO − 2000
-#   (right side is mechanically mirrored)
-LEFT_ZERO     = 600
-RIGHT_ZERO    = 2500
+# LEFT  arm: 0 deg → LEFT_ZERO pulse,  180 deg → 2400 µs  (calibrated)
+# RIGHT arm: 0 deg → RIGHT_ZERO pulse, 180 deg →  600 µs  (calibrated, mirrored)
+# Derived: LEFT_ZERO = 2400 - 2000 = 400
+#          RIGHT_ZERO = 600 + 2000 = 2600
+LEFT_ZERO     = 400
+RIGHT_ZERO    = 2600
 PULSE_PER_DEG = 2000.0 / 180.0
 
-# Operational neutral (STATE 3-4, guidance delta=0)
-LEFT_NEUTRAL  = int(LEFT_ZERO  + NEUTRAL_ARM_DEG * PULSE_PER_DEG)   # ~1711
-RIGHT_NEUTRAL = int(RIGHT_ZERO - NEUTRAL_ARM_DEG * PULSE_PER_DEG)   # ~1389
+# Operational neutral (STATE 3-4, guidance delta=0)  @ 100 deg
+LEFT_NEUTRAL  = int(LEFT_ZERO  + NEUTRAL_ARM_DEG * PULSE_PER_DEG)   # ~1511
+RIGHT_NEUTRAL = int(RIGHT_ZERO - NEUTRAL_ARM_DEG * PULSE_PER_DEG)   # ~1489
 
-# Parked position (STATE < 3, set_neutral)
-LEFT_PARKED   = int(LEFT_ZERO  + PARKED_ARM_DEG  * PULSE_PER_DEG)   # 2600
-RIGHT_PARKED  = int(RIGHT_ZERO - PARKED_ARM_DEG  * PULSE_PER_DEG)   # 500
+# Parked position (STATE < 3, set_neutral)  @ 180 deg
+LEFT_PARKED   = int(LEFT_ZERO  + PARKED_ARM_DEG  * PULSE_PER_DEG)   # 2400
+RIGHT_PARKED  = int(RIGHT_ZERO - PARKED_ARM_DEG  * PULSE_PER_DEG)   # 600
 
-PULSE_MIN       = 500
-LEFT_MAX_PULSE  = int(LEFT_ZERO  + ARM_MAX_DEG * PULSE_PER_DEG)     # 1933
-RIGHT_MIN_PULSE = int(RIGHT_ZERO - ARM_MAX_DEG * PULSE_PER_DEG)     # 1167
-PULSE_MAX       = 2600
+PULSE_MIN       = LEFT_ZERO                                          # 400  (LEFT  @ 0 deg)
+LEFT_MAX_PULSE  = int(LEFT_ZERO  + ARM_MAX_DEG * PULSE_PER_DEG)     # 1733 (LEFT  @ 120 deg)
+RIGHT_MIN_PULSE = int(RIGHT_ZERO - ARM_MAX_DEG * PULSE_PER_DEG)     # 1267 (RIGHT @ 120 deg)
+PULSE_MAX       = RIGHT_ZERO                                         # 2600 (RIGHT @ 0 deg)
 
 # ── Controller constants ──────────────────────────────────────────────────────
 GUIDANCE_TIMEOUT_S = 0.5   # s — stale GuidanceCommand → neutral
