@@ -9,6 +9,11 @@ import time
 from typing import Optional
 
 from lib import appargs, msgstructure, prevstate
+from Sensor_Motor.Motor_Release_Cal import (
+    ReleasePredictorState,
+    reset_release_predictor,
+    should_trigger_release,
+)
 
 
 FLIGHTLOGIC_RUNSTATUS = True
@@ -27,6 +32,7 @@ cnt_landed = 0
 cnt_egg_drop = 0
 solenoid_count = 0
 solenoid_done = False
+release_predictor = ReleasePredictorState()
 
 
 def _set_state(main_queue, new_state: int, force: bool = False) -> None:
@@ -47,6 +53,7 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 def to_launch_pad(main_queue, force: bool = False) -> None:
     global max_alt
     max_alt = 0.0
+    reset_release_predictor(release_predictor)
     _set_state(main_queue, 0, force=force)
 
 
@@ -325,6 +332,7 @@ def handle_reset_alt(_data: str, _main_queue) -> None:
     global max_alt, recent_alt
     max_alt = 0.0
     recent_alt = []
+    reset_release_predictor(release_predictor)
 
 
 def solenoid_logic(main_queue, distance: float) -> None:
@@ -352,8 +360,20 @@ def _reset_transition_counters() -> None:
     cnt_landed = 0
 
 
+def _release_condition(alt: float, now_s: float) -> bool:
+    if max_alt <= 0:
+        return False
+    return should_trigger_release(
+        release_predictor,
+        now_s=now_s,
+        alt_m=alt,
+        max_alt_m=max_alt,
+    )
+
+
 def barometer_logic(main_queue, alt: float) -> None:
     global max_alt, recent_alt, cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop
+    now_s = time.time()
     recent_alt.append(alt)
     if len(recent_alt) > 3:
         recent_alt = recent_alt[-3:]
@@ -369,9 +389,10 @@ def barometer_logic(main_queue, alt: float) -> None:
         cnt_ascent = cnt_ascent + 1 if alt > 200 else 0
         if cnt_ascent >= 3:
             _reset_transition_counters()
+            reset_release_predictor(release_predictor)
             to_ascent(main_queue)
     elif state == 1:
-        rel_cond = max_alt > 0 and alt <= max_alt * 0.8
+        rel_cond = _release_condition(alt, now_s)
         apo_cond = max_alt > 0 and (max_alt * 0.8 < alt < max_alt - 0.25)
         cnt_release = cnt_release + 1 if rel_cond else 0
         cnt_apogee = cnt_apogee + 1 if apo_cond else 0
@@ -382,7 +403,7 @@ def barometer_logic(main_queue, alt: float) -> None:
             _reset_transition_counters()
             to_apogee(main_queue)
     elif state == 2:
-        cnt_release = cnt_release + 1 if (max_alt > 0 and alt <= max_alt * 0.8) else 0
+        cnt_release = cnt_release + 1 if _release_condition(alt, now_s) else 0
         if cnt_release >= 3:
             _reset_transition_counters()
             to_release(main_queue)

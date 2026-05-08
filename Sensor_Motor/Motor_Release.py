@@ -17,6 +17,7 @@ import os
 import time
 
 from lib import config
+from Sensor_Motor.Motor_Release_Cal import get_burnwire_delay_sec
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,9 @@ class _DummyGPIO:
 GPIO = None
 BURNWIRE_READY: bool = False
 BURNWIRE_GPIO:  int  = config.BURNWIRE_GPIO
-BURNWIRE_DURATION_SEC: float = float(os.environ.get("BURNWIRE_DURATION_SEC", "5.0"))
+BURNWIRE_DURATION_SEC: float = float(
+    os.environ.get("BURNWIRE_DURATION_SEC", str(get_burnwire_delay_sec()))
+)
 
 
 # ---------------------------------------------------------------------------

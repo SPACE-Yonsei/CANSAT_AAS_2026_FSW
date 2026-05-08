@@ -45,6 +45,23 @@ def _env_float(name: str, default: float, lo: float, hi: float) -> float:
     return max(lo, min(value, hi))
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# After first good samples, set yaw so the initial heading reads as ``_boot_yaw_desired``
+# (from ``YAW_OFFSET`` env at IMU process start, typically 0 = North).
+_boot_yaw_desired: float = 0.0
+_boot_zero_yaw: bool = True
+_boot_yaw_sample_target: int = 10
+_yaw_north_zero_done: bool = False
+_yaw_boot_raw_sum: float = 0.0
+_yaw_boot_raw_n: int = 0
+
+
 # Stale-sample watchdog: if no fresh sample for ``IMU_STALE_REINIT_SEC`` seconds,
 # force a reinit (which pulses the BNO085 RST pin when ``IMU_BNO085_RST_ENABLE=1``).
 # Cooldown prevents reinit storms when reinit itself is also failing.
@@ -119,7 +136,15 @@ def _read_sensor_sample():
 
 def imuapp_init() -> None:
     global _i2c_instance, _imu_instance
+    global _boot_yaw_desired, _boot_zero_yaw, _boot_yaw_sample_target
+    global _yaw_north_zero_done, _yaw_boot_raw_sum, _yaw_boot_raw_n
     prevstate.refresh_runtime_overrides()
+    _boot_yaw_desired = float(prevstate.YAW_OFFSET)
+    _boot_zero_yaw = _env_bool("IMU_ZERO_YAW_ON_BOOT", True)
+    _boot_yaw_sample_target = int(_env_float("IMU_BOOT_YAW_SAMPLE_COUNT", 10.0, 3.0, 60.0))
+    _yaw_north_zero_done = not _boot_zero_yaw
+    _yaw_boot_raw_sum = 0.0
+    _yaw_boot_raw_n = 0
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -189,6 +214,23 @@ def read_imu_data() -> None:
 
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
+
+        global _yaw_north_zero_done, _yaw_boot_raw_sum, _yaw_boot_raw_n
+        if _boot_zero_yaw and not _yaw_north_zero_done and _imu_instance is not None:
+            _yaw_boot_raw_sum += float(yaw)
+            _yaw_boot_raw_n += 1
+            if _yaw_boot_raw_n >= _boot_yaw_sample_target:
+                avg_yaw = _yaw_boot_raw_sum / float(_yaw_boot_raw_n)
+                prevstate.YAW_OFFSET = _wrap_deg(_boot_yaw_desired - avg_yaw)
+                _yaw_north_zero_done = True
+                _yaw_ema = None
+                logger.info(
+                    "IMU: boot yaw reference set (desired=%.1f°, raw_avg=%.2f°, YAW_OFFSET=%.2f°)",
+                    _boot_yaw_desired,
+                    avg_yaw,
+                    prevstate.YAW_OFFSET,
+                )
+
         _yaw_ema = _ema(_yaw_ema, _apply_yaw_offset(float(yaw)))
         _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
 

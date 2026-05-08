@@ -1,4 +1,5 @@
 import queue
+import unittest.mock as mock
 import unittest
 
 from flight_logic import flightlogicapp
@@ -20,6 +21,7 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.solenoid_done = False
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
+        flightlogicapp.reset_release_predictor(flightlogicapp.release_predictor)
         prevstate.Target_lat = 37.56
         prevstate.Target_lon = 126.93
 
@@ -90,6 +92,18 @@ class TestFlightLogicApp(unittest.TestCase):
                 found = True
                 break
         self.assertTrue(found)
+
+    def test_predictive_release_fires_above_80_percent(self):
+        q = queue.Queue()
+        flightlogicapp.state = 2
+        flightlogicapp.max_alt = 1000.0
+        with mock.patch("flight_logic.flightlogicapp.time.time", side_effect=[1.0, 2.0, 3.0, 4.0, 5.0]):
+            flightlogicapp.barometer_logic(q, 860.0)
+            flightlogicapp.barometer_logic(q, 850.0)
+            flightlogicapp.barometer_logic(q, 830.0)
+            flightlogicapp.barometer_logic(q, 820.0)
+            flightlogicapp.barometer_logic(q, 810.0)
+        self.assertEqual(flightlogicapp.state, 3)
 
 
 if __name__ == "__main__":

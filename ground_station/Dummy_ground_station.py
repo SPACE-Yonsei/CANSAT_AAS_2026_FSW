@@ -237,6 +237,7 @@ COMMAND_PRESETS = [
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
     ("TC,37.57,126.94", "Target lat,lon (release)"),
     ("CAL,",         "Calibrate barometer (zero-set)"),
+    ("IMUOFFSET,0",  "Calibrate IMU yaw offset (deg)"),
     ("MEC,ON",  "Mechanism ON"),
     ("MEC,OFF", "Mechanism OFF"),
     ("CAM,ON",  "Camera ON"),

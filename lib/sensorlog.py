@@ -1,17 +1,48 @@
-"""CSV logger for IPC sensor/telemetry messages observed by main router."""
+"""CSV logger for IPC messages (main router) and raw sensor samples (sensor apps)."""
 
 from __future__ import annotations
 
 import csv
+import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from lib import appargs
 
 _writers: Dict[int, Tuple[Any, csv.writer]] = {}
 _session_dir: Optional[Path] = None
+
+# Subprocess raw-sample writers (Barometer/IMU/GPS/Distance/Electro apps)
+ENV_SENSORLOG_SESSION = "FSW_SENSORLOG_SESSION"
+_raw_writers: Dict[str, Tuple[Any, csv.writer]] = {}
+_raw_lock = threading.Lock()
+
+_GPS_RAW_FIELDS = [
+    "gps_time",
+    "alt_m",
+    "lat",
+    "lon",
+    "sats",
+    "fix_quality",
+    "rmc_status",
+    "speed_ms",
+    "course_deg",
+    "motion_valid",
+    "pos_age_s",
+    "motion_age_s",
+    "source",
+    "fix_type",
+    "h_acc_m",
+    "v_acc_m",
+    "s_acc_mps",
+    "head_acc_deg",
+    "vel_n",
+    "vel_e",
+    "valid_flags",
+]
 
 _APP_NAMES = {
     appargs.MainAppArg.AppID: appargs.MainAppArg.AppName,
@@ -77,6 +108,152 @@ def init_sensorlog_main_process() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     _session_dir = root / f"run_{ts}"
     _session_dir.mkdir(parents=True, exist_ok=True)
+    os.environ[ENV_SENSORLOG_SESSION] = str(_session_dir.resolve())
+
+
+def _raw_session_dir() -> Optional[Path]:
+    text = os.environ.get(ENV_SENSORLOG_SESSION)
+    if not text:
+        return None
+    path = Path(text)
+    return path if path.is_dir() else None
+
+
+def _get_raw_writer(name: str, header: list[str]) -> Optional[csv.writer]:
+    """Lazy CSV writer into ``<session>/raw_<name>.csv`` (sensor subprocess only)."""
+    global _raw_writers
+    with _raw_lock:
+        if name in _raw_writers:
+            return _raw_writers[name][1]
+        root = _raw_session_dir()
+        if root is None:
+            return None
+        path = root / f"raw_{name}.csv"
+        new_file = not path.exists()
+        fp = path.open("a", encoding="utf-8", newline="")
+        writer = csv.writer(fp)
+        if new_file:
+            writer.writerow(header)
+            fp.flush()
+        _raw_writers[name] = (fp, writer)
+        return writer
+
+
+def _flush_raw(name: str) -> None:
+    with _raw_lock:
+        pair = _raw_writers.get(name)
+        if pair:
+            try:
+                pair[0].flush()
+            except Exception:
+                pass
+
+
+def log_barometer_raw(pressure_pa: float, temperature_c: float, altitude_raw_m: float) -> None:
+    """One BMP sample as returned by the driver (before median filter / altitude offset)."""
+    try:
+        w = _get_raw_writer(
+            "barometer",
+            ["timestamp", "pressure_pa", "temperature_c", "altitude_raw_m"],
+        )
+        if w is None:
+            return
+        w.writerow(
+            [
+                datetime.now().isoformat(timespec="milliseconds"),
+                pressure_pa,
+                temperature_c,
+                altitude_raw_m,
+            ]
+        )
+        _flush_raw("barometer")
+    except Exception:
+        pass
+
+
+def log_imu_raw(sample: Iterable[float]) -> None:
+    """One IMU frame: roll, pitch, yaw, acc(3), mag(3), gyro(3) from the driver (before EMA)."""
+    try:
+        vals = tuple(float(x) for x in sample)
+        if len(vals) < 12:
+            return
+        w = _get_raw_writer(
+            "imu",
+            [
+                "timestamp",
+                "roll_deg",
+                "pitch_deg",
+                "yaw_deg",
+                "acc_x",
+                "acc_y",
+                "acc_z",
+                "mag_x",
+                "mag_y",
+                "mag_z",
+                "gyr_x",
+                "gyr_y",
+                "gyr_z",
+            ],
+        )
+        if w is None:
+            return
+        w.writerow([datetime.now().isoformat(timespec="milliseconds"), *vals[:12]])
+        _flush_raw("imu")
+    except Exception:
+        pass
+
+
+def log_gps_raw(row: Optional[list]) -> None:
+    """GNSS row as returned by ``gps_readdata`` / SIM inject (before median / health logic)."""
+    try:
+        w = _get_raw_writer("gps", ["timestamp", *_GPS_RAW_FIELDS])
+        if w is None:
+            return
+        ts = datetime.now().isoformat(timespec="milliseconds")
+        if row is None:
+            w.writerow([ts] + [""] * len(_GPS_RAW_FIELDS))
+        else:
+            cells = []
+            for i in range(len(_GPS_RAW_FIELDS)):
+                cells.append(row[i] if i < len(row) else "")
+            w.writerow([ts, *cells])
+        _flush_raw("gps")
+    except Exception:
+        pass
+
+
+def log_distance_raw(range_mm: float) -> None:
+    """TF-Luna range read before validity gate / median window."""
+    try:
+        w = _get_raw_writer("distance", ["timestamp", "range_mm_raw"])
+        if w is None:
+            return
+        w.writerow([datetime.now().isoformat(timespec="milliseconds"), range_mm])
+        _flush_raw("distance")
+    except Exception:
+        pass
+
+
+def log_electro_raw(voltage_v: float, current_a: float, power_w: float) -> None:
+    """INA228 sample before median smoothing."""
+    try:
+        w = _get_raw_writer(
+            "electro",
+            ["timestamp", "voltage_v", "current_a", "power_w"],
+        )
+        if w is None:
+            return
+        w.writerow(
+            [
+                datetime.now().isoformat(timespec="milliseconds"),
+                voltage_v,
+                current_a,
+                power_w,
+            ]
+        )
+        _flush_raw("electro")
+    except Exception:
+        pass
 
 
 def log_bus_message(msg) -> None:
@@ -100,7 +277,7 @@ def log_bus_message(msg) -> None:
 
 
 def shutdown_sensorlog() -> None:
-    global _writers, _session_dir
+    global _writers, _session_dir, _raw_writers
     for fp, _ in list(_writers.values()):
         try:
             fp.flush()
@@ -108,4 +285,12 @@ def shutdown_sensorlog() -> None:
         except Exception:
             pass
     _writers.clear()
+    with _raw_lock:
+        for fp, _ in list(_raw_writers.values()):
+            try:
+                fp.flush()
+                fp.close()
+            except Exception:
+                pass
+        _raw_writers.clear()
     _session_dir = None
