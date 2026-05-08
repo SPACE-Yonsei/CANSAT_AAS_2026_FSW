@@ -97,19 +97,12 @@ def command_handler(recv_msg: str) -> None:
 
 
 def _synthetic_sample() -> Tuple[float, float, float, float, float, float, float, float, float, float, float, float]:
-    # Fallback when physical IMU is unavailable.
-    now = time.time()
-    yaw = _wrap_deg((now * 10.0) % 360.0)
-    roll = 5.0
-    pitch = -2.0
-    accx, accy, accz = 0.0, 0.0, 9.81
-    magx, magy, magz = 20.0, 1.0, -35.0
-    gyrx, gyry, gyrz = 0.1, 0.2, 0.5
-    return roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz
+    """Exception path in driver read: all zeros (no fake attitude)."""
+    return (0.0,) * 12
 
 
 def _read_sensor_sample():
-    """Read from real imu module if available, else synthetic fallback."""
+    """Read from real IMU if available; on driver exception return zeros."""
     global _imu_instance
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore

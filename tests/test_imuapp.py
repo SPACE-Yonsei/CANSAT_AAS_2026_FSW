@@ -37,7 +37,7 @@ class TestImuApp(unittest.TestCase):
     def test_synthetic_sample_shape(self):
         sample = imuapp._synthetic_sample()
         self.assertEqual(len(sample), 12)
-        self.assertIsInstance(sample[2], float)  # yaw
+        self.assertEqual(sample, (0.0,) * 12)
 
     def test_read_sensor_sample_fallback(self):
         imuapp._imu_instance = None

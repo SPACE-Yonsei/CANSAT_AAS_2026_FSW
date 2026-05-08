@@ -15,9 +15,9 @@ logger = logging.getLogger(__name__)
 
 
 ELECTROAPP_RUNSTATUS = True
-VOLT = 7.4
-CURR = 0.8
-PWR = 5.92
+VOLT = 0.0
+CURR = 0.0
+PWR = 0.0
 ELECTRO_HEALTH = 0
 ELECTRO_STALE_TIMEOUT_SEC = 2.5
 _last_update_ts = 0.0
@@ -39,12 +39,8 @@ def command_handler(recv_msg: str) -> None:
 
 
 def _synthetic_read() -> tuple[float, float, float]:
-    # Deterministic low-frequency drift for non-hardware environments.
-    phase = int(time.time()) % 4
-    volt = 7.35 + (phase * 0.01)
-    curr = 0.75 + (phase * 0.02)
-    pwr = volt * curr
-    return volt, curr, pwr
+    """INA unavailable or read failure: zeros (no fake power telemetry)."""
+    return 0.0, 0.0, 0.0
 
 
 def _median(values) -> float:
@@ -76,7 +72,7 @@ def _read_sensor() -> Optional[tuple[float, float, float]]:
                 if isinstance(exc, ImportError) and "ina228" in str(exc).lower():
                     hint = " Install: pip install adafruit-circuitpython-ina228"
                 logger.warning(
-                    "Electro: power monitor init failed (%s); using synthetic V/I/P.%s",
+                    "Electro: power monitor init failed (%s); V/I/P forced to 0.%s",
                     exc,
                     hint,
                 )
@@ -88,7 +84,7 @@ def _read_sensor() -> Optional[tuple[float, float, float]]:
     except Exception as exc:
         now = time.time()
         if _reader is not False and now - _last_electro_read_warn_ts >= 3.0:
-            logger.warning("Electro: INA228 read failed (%s); using synthetic V/I/P this cycle", exc)
+            logger.warning("Electro: INA228 read failed (%s); V/I/P forced to 0 this cycle", exc)
             _last_electro_read_warn_ts = now
         return _synthetic_read()
 

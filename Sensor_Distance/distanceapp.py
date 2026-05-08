@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 DISTANCEAPP_RUNSTATUS = True
-DISTANCE_MM = 5000.0
+DISTANCE_MM = 0.0
 DISTANCE_HEALTH = 1
 DISTANCE_STALE_TIMEOUT_SEC = 1.0
 DISTANCE_MIN_MM = 200
@@ -50,8 +50,8 @@ def _is_valid_distance(mm: float) -> bool:
 
 
 def _synthetic_read_distance() -> float:
-    # Monotonic approach for deterministic local testing.
-    return max(300.0, DISTANCE_MM - 7.0)
+    """No rangefinder / read failure: zero mm (invalid vs operational band)."""
+    return 0.0
 
 
 def read_distance_data() -> None:
@@ -67,7 +67,7 @@ def read_distance_data() -> None:
                         _dist_hw = dist_driver.init_tfluna()
                     except Exception as exc:
                         logger.warning(
-                            "Distance: TF-Luna I2C init failed (%s); using synthetic rangefinder",
+                            "Distance: TF-Luna I2C init failed (%s); distance forced to 0 mm",
                             exc,
                         )
                         _dist_hw = False
@@ -89,6 +89,8 @@ def read_distance_data() -> None:
                     DISTANCE_HEALTH = 1
                     _last_update_ts = time.time()
             else:
+                with _distance_lock:
+                    DISTANCE_MM = 0.0
                 DISTANCE_HEALTH = 0
         except Exception:
             DISTANCE_HEALTH = 0

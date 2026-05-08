@@ -8,16 +8,14 @@ from lib import appargs, msgstructure
 class TestElectroApp(unittest.TestCase):
     def setUp(self):
         electroapp.ELECTRO_HEALTH = 0
-        electroapp.VOLT = 7.4
-        electroapp.CURR = 0.8
-        electroapp.PWR = 5.92
+        electroapp.VOLT = 0.0
+        electroapp.CURR = 0.0
+        electroapp.PWR = 0.0
         electroapp._reader = None
 
     def test_synthetic_read_shape(self):
         v, c, p = electroapp._synthetic_read()
-        self.assertIsInstance(v, float)
-        self.assertIsInstance(c, float)
-        self.assertIsInstance(p, float)
+        self.assertEqual((v, c, p), (0.0, 0.0, 0.0))
 
     def test_read_sensor_fallback(self):
         sample = electroapp._read_sensor()

@@ -30,9 +30,7 @@ class TestBarometerApp(unittest.TestCase):
 
     def test_synthetic_raw_shape(self):
         p, t, a = barometerapp._synthetic_raw()
-        self.assertIsInstance(p, float)
-        self.assertIsInstance(t, float)
-        self.assertIsInstance(a, float)
+        self.assertEqual((p, t, a), (0.0, 0.0, 0.0))
 
 
 if __name__ == "__main__":

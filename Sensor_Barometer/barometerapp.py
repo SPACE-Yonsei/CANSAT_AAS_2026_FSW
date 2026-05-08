@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 BAROMETERAPP_RUNSTATUS = True
 ALTITUDE = 0.0
-TEMPERATURE = 20.0
-PRESSURE = 1013.25
+TEMPERATURE = 0.0
+PRESSURE = 0.0
 BAROMETER_OFFSET = 0.0
 BAROMETER_HEALTH = 1
 BAROMETER_STALE_TIMEOUT_SEC = 1.0
@@ -67,12 +67,8 @@ def _median(values):
 
 
 def _synthetic_raw():
-    # Baseline synthetic data (to be replaced by real sensor driver path)
-    now = time.time()
-    alt_raw = (now % 600.0) * 0.05
-    temp_raw = 20.0 + (0.2 if int(now) % 2 == 0 else -0.2)
-    prs_raw = 1013.25 - alt_raw * 0.12
-    return prs_raw, temp_raw, alt_raw
+    """No-hardware / read-failure path: zeros (no fake physics)."""
+    return 0.0, 0.0, 0.0
 
 
 def read_barometer_data() -> None:
@@ -88,7 +84,7 @@ def read_barometer_data() -> None:
                         _baro_hw = baro_driver.init_bmp()
                     except Exception as exc:
                         logger.warning(
-                            "Barometer: hardware init failed (%s); using synthetic. "
+                            "Barometer: hardware init failed (%s); pressure/temp/alt forced to 0. "
                             "If i2cdetect shows 0x77 on bus 1 but this fails, try: "
                             "pip install adafruit-extended-bus && export FSW_I2C_BUS=1. "
                             "BARO_I2C_ADDR=0x76 if BMP SDO=GND. (i2c 0x42 is often GNSS Click, not INA.)",
@@ -102,7 +98,7 @@ def read_barometer_data() -> None:
                         now = time.time()
                         if now - _last_baro_read_warn_ts >= 3.0:
                             logger.warning(
-                                "Barometer: BMP read failed (%s); synthetic frame (check I2C/addr %s)",
+                                "Barometer: BMP read failed (%s); zero frame (check I2C/addr %s)",
                                 exc,
                                 os.environ.get("BARO_I2C_ADDR", "0x77"),
                             )

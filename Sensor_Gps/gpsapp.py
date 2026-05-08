@@ -18,9 +18,9 @@ _GPS_SYNTH_WARNED = False
 
 
 GPSAPP_RUNSTATUS = True
-LAT = 37.5600
-LON = 126.9300
-ALT = 80.0
+LAT = 0.0
+LON = 0.0
+ALT = 0.0
 VELOCITY = 0.0
 DIRECTION = 0.0  # deg, GPS ground-track direction; not IMU yaw.
 SATS = 0
@@ -391,10 +391,8 @@ def _motion_health(
 
 
 def _synthetic_read():
-    now_time = time.strftime("%H%M%S", time.gmtime())
-    lat = LAT + 0.000001
-    lon = LON + 0.000001
-    return [now_time, ALT, lat, lon, 8, 1, "A", 8.0, 90.0, 1, 0.0, 0.0]
+    """Driver unavailable: zeros / invalid fix (no fake track)."""
+    return ["000000", 0.0, 0.0, 0.0, 0, 0, "V", 0.0, 0.0, 0, 0.0, 0.0]
 
 
 def _read_gps():
@@ -410,7 +408,7 @@ def _read_gps():
         if _read_gps._inst is None:  # type: ignore[attr-defined]
             if not _GPS_SYNTH_WARNED:
                 logger.warning(
-                    "GPS: I2C u-blox init failed; TLM lat/lon are SYNTHETIC. "
+                    "GPS: I2C u-blox init failed; lat/lon/speed forced to 0 (invalid fix). "
                     "Check FSW_I2C_BUS, GPS_I2C_ADDR (default 0x42), antenna."
                 )
                 _GPS_SYNTH_WARNED = True
@@ -421,7 +419,7 @@ def _read_gps():
         return data
     except Exception:
         if not _GPS_SYNTH_WARNED:
-            logger.warning("GPS: driver error; falling back to synthetic track")
+            logger.warning("GPS: driver error; lat/lon/speed forced to 0")
             _GPS_SYNTH_WARNED = True
         return _synthetic_read()
 
