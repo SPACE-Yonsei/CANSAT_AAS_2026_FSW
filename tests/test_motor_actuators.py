@@ -34,7 +34,7 @@ class TestBurnwire(unittest.TestCase):
         Motor_Release.init_burnwire()
         Motor_Release.activate_burnwire()
         gpio = Motor_Release.GPIO
-        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], Motor_Release._RELEASE_DEACTIVATE_LEVEL)
 
     def test_terminate_clears_ready(self):
         Motor_Release.init_burnwire()
@@ -45,7 +45,7 @@ class TestBurnwire(unittest.TestCase):
         self.assertFalse(Motor_Release.BURNWIRE_READY)
         Motor_Release.activate_burnwire()   # must not raise
         gpio = Motor_Release.GPIO
-        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], Motor_Release._RELEASE_DEACTIVATE_LEVEL)
 
     def test_deactivate_guaranteed_on_exception(self):
         """Simulate an exception during sleep: relay must still be deactivated."""
@@ -72,7 +72,7 @@ class TestBurnwire(unittest.TestCase):
             except RuntimeError:
                 pass
         # Relay must be deactivated despite the exception
-        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Release.BURNWIRE_GPIO], Motor_Release._RELEASE_DEACTIVATE_LEVEL)
 
 
 class TestSolenoid(unittest.TestCase):
@@ -88,14 +88,14 @@ class TestSolenoid(unittest.TestCase):
         Motor_Egg.init_solenoid()
         Motor_Egg.activate_solenoid()
         gpio = Motor_Egg.GPIO
-        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], Motor_Egg._EGG_DEACTIVATE_LEVEL)
 
     def test_activate_multiple_repeats(self):
         Motor_Egg.SOLENOID_REPEAT = 3
         Motor_Egg.init_solenoid()
         Motor_Egg.activate_solenoid()
         gpio = Motor_Egg.GPIO
-        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], Motor_Egg._EGG_DEACTIVATE_LEVEL)
 
     def test_terminate_clears_ready(self):
         Motor_Egg.init_solenoid()
@@ -106,7 +106,7 @@ class TestSolenoid(unittest.TestCase):
         self.assertFalse(Motor_Egg.SOLENOID_READY)
         Motor_Egg.activate_solenoid()
         gpio = Motor_Egg.GPIO
-        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], Motor_Egg._EGG_DEACTIVATE_LEVEL)
 
     def test_deactivate_guaranteed_on_exception(self):
         """Relay must be deactivated even if sleep raises during a pulse."""
@@ -127,7 +127,7 @@ class TestSolenoid(unittest.TestCase):
                 Motor_Egg.activate_solenoid()
             except RuntimeError:
                 pass
-        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], config.RELAY_DEACTIVATE_LEVEL)
+        self.assertEqual(gpio.state[Motor_Egg.SOLENOID_GPIO], Motor_Egg._EGG_DEACTIVATE_LEVEL)
 
 
 if __name__ == "__main__":

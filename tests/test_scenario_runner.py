@@ -43,10 +43,11 @@ def _make_recorder():
     return sent, send
 
 
-def _const_tlm(left: int = 1267, right: int = 1833):
+def _const_tlm(left: int = 1511, right: int = 1489):
     """Fake telemetry callback that always returns the same pulse pair.
 
-    Defaults are LEFT_NEUTRAL / RIGHT_NEUTRAL: zero delta_arm -> zero yaw rate.
+    Defaults are LEFT_NEUTRAL / RIGHT_NEUTRAL from control.py:
+    zero delta_arm -> zero yaw rate.
     """
     def cb():
         return {"left_pulse_us": str(left), "right_pulse_us": str(right)}
@@ -141,6 +142,7 @@ class TestPhysics(unittest.TestCase):
             descent_rate_ms=5.0,
             wind_speed_ms=0.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=300.0,
         )
         for k, v in overrides.items():
@@ -150,7 +152,7 @@ class TestPhysics(unittest.TestCase):
     def test_neutral_pulses_no_yaw_rate(self):
         cfg = self._basic_cfg()
         sent, send = _make_recorder()
-        runner = ScenarioRunner(send, _const_tlm(1267, 1833), lambda _m: None, cfg)
+        runner = ScenarioRunner(send, _const_tlm(1511, 1489), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         for _ in range(5):
             runner.tick()
@@ -160,9 +162,9 @@ class TestPhysics(unittest.TestCase):
     def test_asymmetric_pulses_produce_yaw(self):
         cfg = self._basic_cfg()
         sent, send = _make_recorder()
-        # +20 deg of delta_arm (left + right pulse sum > 3100) -> right turn.
-        # Use 1500 / 2000 = sum 3500 -> delta = (3500-3100)/(2000/180) = +36 deg
-        runner = ScenarioRunner(send, _const_tlm(1500, 2000), lambda _m: None, cfg)
+        # Positive delta_arm (left + right pulse sum > 3000) -> right turn.
+        # Use 1700 / 1700 = sum 3400 -> delta ~= (3400-3000)/(2000/180) = +36 deg
+        runner = ScenarioRunner(send, _const_tlm(1700, 1700), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         runner.tick()
         self.assertGreater(runner.state.yaw_rate_deg_s, 0.0,
@@ -228,6 +230,7 @@ class TestEndConditions(unittest.TestCase):
             init_heading_deg=0.0,
             descent_rate_ms=5.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=120.0,
         )
         sent, send = _make_recorder()
@@ -249,6 +252,7 @@ class TestEndConditions(unittest.TestCase):
             init_heading_deg=180.0,               # heads opposite of target
             descent_rate_ms=0.001,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=5.0,
         )
         sent, send = _make_recorder()
@@ -273,6 +277,7 @@ class TestEndConditions(unittest.TestCase):
             descent_rate_ms=1.0,
             wind_speed_ms=0.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             target_radius_m=5.0,
         )
         sent, send = _make_recorder()
@@ -286,6 +291,7 @@ class TestEndConditions(unittest.TestCase):
 class TestSimgPayloadShape(unittest.TestCase):
     def test_simg_payload_format(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
@@ -307,6 +313,7 @@ class TestSimgPayloadShape(unittest.TestCase):
 class TestRunnerLifecycle(unittest.TestCase):
     def test_double_start_is_noop(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         self.assertTrue(runner.start(sleep_fn=_no_sleep))
@@ -314,6 +321,7 @@ class TestRunnerLifecycle(unittest.TestCase):
 
     def test_tick_after_stop_is_noop(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
@@ -322,6 +330,7 @@ class TestRunnerLifecycle(unittest.TestCase):
 
     def test_stop_idempotent(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
