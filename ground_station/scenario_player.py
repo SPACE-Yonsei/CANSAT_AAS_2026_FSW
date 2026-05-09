@@ -7,7 +7,7 @@ GCS GUI is not running, or for batch / scripted comparisons. The GCS GUI must
 Usage::
 
     python ground_station/scenario_player.py --port COM5 --scenario calm
-    python ground_station/scenario_player.py --port COM5 --scenario gust12 --baud 38400
+    python ground_station/scenario_player.py --port COM5 --scenario gust12 --baud 9600
 
     # List built-in presets:
     python ground_station/scenario_player.py --list
@@ -198,8 +198,8 @@ def _build_argparser() -> argparse.ArgumentParser:
         description="Closed-loop SIM scenario player for CANSAT GCS.",
     )
     p.add_argument("--port", help="Serial port (e.g. COM5 or /dev/ttyUSB0).")
-    p.add_argument("--baud", type=int, default=38400,
-                   help="Baud rate (default 38400, matches XBee XCTU BD=5).")
+    p.add_argument("--baud", type=int, default=9600,
+                   help="Baud rate (default 9600 = FSW UART_BAUD default; match XCTU Interface Data Rate).")
     p.add_argument("--scenario", choices=list_preset_names(),
                    help="Preset name; required unless --list.")
     p.add_argument("--list", action="store_true",
