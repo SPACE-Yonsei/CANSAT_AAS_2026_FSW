@@ -246,14 +246,17 @@ def controller_update(
     out.valid           = True
     out.fallback_mode   = "NONE"
 
-    # State update
-    if sensor_valid and not saturated:
-        ctl.pid.integral_deg   = integral
+    # State update — always refresh prev_error_deg / prev_time when the gyro
+    # sample is valid so that the next derivative term sees the true Δerror
+    # over the last dt. Previously prev_error_deg was frozen during saturation,
+    # which produced a derivative kick on the first un-saturated frame.
+    if sensor_valid:
+        if not saturated:
+            ctl.pid.integral_deg = integral
+        else:
+            ctl.pid.integral_deg = 0.0   # anti-windup: reset on saturation
         ctl.pid.prev_error_deg = error
         ctl.pid.prev_time      = now
-    elif sensor_valid and saturated:
-        ctl.pid.integral_deg = 0.0   # anti-windup: reset on saturation
-        ctl.pid.prev_time    = now
 
     ctl.prev_left_angle_deg  = left_angle
     ctl.prev_right_angle_deg = right_angle

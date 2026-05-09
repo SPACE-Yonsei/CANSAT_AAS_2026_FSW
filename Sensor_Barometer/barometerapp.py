@@ -182,12 +182,14 @@ def send_barometer_data(main_queue) -> None:
         tick += 1
         if tick >= comm_tick_interval:
             tick = 0
+            # Append health so commapp can mark altitude as stale instead of
+            # advertising a hardware-down 0.0 m frame to the GS as a real fix.
             msgstructure.send_msg(
                 main_queue,
                 appargs.BarometerAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.BarometerAppArg.MID_comm_alt,
-                f"{prs},{tmp},{alt}",
+                f"{prs},{tmp},{alt},{health}",
             )
         time.sleep(period)
 

@@ -69,6 +69,8 @@ def cameraapp_main(main_pipe) -> None:
     cam, enc = picam.init_cam()
     global CAMERA_HEALTH
     CAMERA_HEALTH = 1 if getattr(cam, "available", False) else 0
+    # Start recording immediately on FSW boot; CAM OFF can disable later.
+    picam_start_recording()
     logger.info("Camera app started")
     t = threading.Thread(target=picam_record_thread, args=(cam, enc), daemon=True)
     t.start()

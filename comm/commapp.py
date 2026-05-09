@@ -367,12 +367,24 @@ def command_handler(recv_msg: str) -> None:
         if mid == appargs.MainAppArg.MID_TerminateProcess:
             COMMAPP_RUNSTATUS = False
         elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
+            # Health field (index 3) is optional for backward compatibility
+            # with older barometer payloads that emitted only "p,t,alt".
+            baro_health = 1
+            if len(fields) >= 4:
+                try:
+                    baro_health = int(float(fields[3]))
+                except ValueError:
+                    baro_health = 1
             tlm_data.pressure = float(fields[0])
             tlm_data.temperature = float(fields[1])
             if tlm_data.mode in {"A", "S"} and _simp_tlm_alt_hold is not None:
+                # SIMP-injected altitude wins over a hardware sample (healthy or not).
                 pass
-            else:
+            elif baro_health:
                 tlm_data.altitude = float(fields[2])
+            # baro_health == 0: hold last known altitude on the TLM line; do not
+            # overwrite with the synthetic 0.0 frame the driver emits when the
+            # BMP read fails.
         elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])
