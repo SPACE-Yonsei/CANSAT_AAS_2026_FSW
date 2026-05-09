@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Optional
 
-from lib import appargs, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate
 from Sensor_Motor.Motor_Release_Cal import (
     ReleaseDecision,
     ReleasePredictorState,
@@ -27,12 +27,17 @@ distance_health = 0
 sim_enable = False
 sim_active = False
 
-# Solenoid trigger band: only act on plausible TF-Luna readings.
-# DISTANCE_MIN_MM lower bound mirrors Sensor_Distance/distanceapp.py validity gate
-# (200 mm). Using 100 mm here gives a small slack while still rejecting the
-# "0.0 mm = sensor dead" sentinel that previously caused spurious egg drops.
+# Solenoid lower bound: reject "sensor dead" 0 mm; slight slack under TF-Luna min valid (200 mm).
 SOLENOID_MIN_MM = 100.0
-SOLENOID_MAX_MM = 2500.0
+
+
+def _egg_distance_trigger_max_mm() -> float:
+    """Upper range bound (mm) for egg-drop distance gate; see ``config.EGG_STATE_DISTANCE_TRIGGER_MM``."""
+    try:
+        mm = float(getattr(config, "EGG_STATE_DISTANCE_TRIGGER_MM", 2500))
+    except (TypeError, ValueError):
+        mm = 2500.0
+    return max(SOLENOID_MIN_MM, mm)
 
 cnt_ascent = 0
 cnt_apogee = 0
@@ -373,9 +378,10 @@ def solenoid_logic(main_queue, distance: float) -> None:
     if solenoid_done:
         return
     # Reject "sensor dead" sentinel (0 mm) and out-of-band readings; only
-    # plausible-altitude reports inside [SOLENOID_MIN_MM, SOLENOID_MAX_MM]
+    # plausible reports inside [SOLENOID_MIN_MM, EGG_STATE_DISTANCE_TRIGGER_MM]
     # are allowed to trigger the egg drop.
-    if not (SOLENOID_MIN_MM <= float(distance) <= SOLENOID_MAX_MM):
+    trigger_max = _egg_distance_trigger_max_mm()
+    if not (SOLENOID_MIN_MM <= float(distance) <= trigger_max):
         return
     if solenoid_count < 3:
         msgstructure.send_msg(
