@@ -75,7 +75,7 @@ TLM_FIELDS = [
     "acc_roll", "acc_pitch", "acc_yaw",
     "mag_roll", "mag_pitch", "mag_yaw",
     "gps_time", "gps_alt", "gps_lat", "gps_lon", "gps_sats",
-    "distance_cm", "cmd_echo",
+    "distance_mm", "cmd_echo",
     "filtered_roll", "filtered_pitch", "filtered_yaw",
     "start_lat", "start_lon",
     "target_lat", "target_lon",
@@ -104,7 +104,7 @@ _TLM_VALUE_WIDTH: dict[str, int] = {
     "voltage_v": 8,
     "current_a": 8,
     "power_w": 8,
-    "distance_cm": 10,
+    "distance_mm": 10,
     "gps_alt": 8,
     "gps_sats": 4,
     "filtered_roll": 9,
@@ -237,7 +237,6 @@ COMMAND_PRESETS = [
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
     ("TC,37.57,126.94", "Target lat,lon (release)"),
     ("CAL,",         "Calibrate barometer (zero-set)"),
-    ("IMUOFFSET,0",  "Calibrate IMU yaw offset (deg)"),
     ("MEC,ON",  "Mechanism ON"),
     ("MEC,OFF", "Mechanism OFF"),
     ("CAM,ON",  "Camera ON"),
@@ -297,7 +296,7 @@ class GroundStation(tk.Tk):
         self._worker: SerialWorker | None = None
         self._rx_queue: "queue.Queue[str]" = queue.Queue()
         self._csv_file = None
-        self._csv_writer: csv.writer | None = None
+        self._csv_writer = None
         self._packet_count = 0
         self._bad_packet_count = 0
         self._last_packet_ts: float | None = None
@@ -325,6 +324,10 @@ class GroundStation(tk.Tk):
         self._scenario_after_id: str | None = None
         self._scenario_setup_cmds: list[str] | None = None
         self._scenario_setup_ix: int = 0
+        # Async teardown pump (avoids blocking the Tk loop while spacing
+        # SS,5 / SIM,DISABLE on slow XBee links).
+        self._scenario_teardown_cmds: list[str] | None = None
+        self._scenario_teardown_ix: int = 0
         self._scenario_status_var = tk.StringVar(value="idle")
 
         self._build_ui()
@@ -383,7 +386,7 @@ class GroundStation(tk.Tk):
         # FSW sets UART_BAUD=38400 and XCTU Interface Data Rate matches (BD=5).
         # 9600 can saturate the XBee RX buffer at ~430B telemetry frames
         # and cause bursty / merged-line arrival (see comm/uartserial.py).
-        self._baud_var = tk.StringVar(value="9600")
+        self._baud_var = tk.StringVar(value="38400")
         baud = ttk.Combobox(
             bar, textvariable=self._baud_var, width=8, state="readonly",
             values=("9600", "19200", "38400", "57600", "115200"),
@@ -448,7 +451,7 @@ class GroundStation(tk.Tk):
                 ("gps_sats", "Sats"),
             ]),
             ("Distance / Echo", [
-                ("distance_cm", "Distance (cm)"),
+                ("distance_mm", "Distance (mm)"),
                 ("cmd_echo", "Cmd echo"),
             ]),
             ("Filtered (deg)", [
@@ -832,19 +835,62 @@ class GroundStation(tk.Tk):
                 pass
             self._scenario_after_id = None
         self._scenario_setup_cmds = None
+        self._scenario_setup_ix = 0
+        # Mark the runner stopped without sending teardown synchronously —
+        # SS,5 / SIM,DISABLE pacing happens in _pump_scenario_teardown so the
+        # Tk loop stays responsive on slow UART links.
         try:
-            runner.stop(send_teardown=send_teardown, sleep_fn=time.sleep,
-                        reason=reason)
+            runner.stop(send_teardown=False, reason=reason)
         except Exception as exc:
             self._append_console(f"[scenario] stop error: {exc}", "err")
-        s = runner.state
-        self._scenario_status_var.set(
-            f"done: {runner.config.name}  reason={s.finish_reason}  "
-            f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
+
+        teardown_cmds = (
+            runner.teardown_command_sequence(reason) if send_teardown else []
         )
-        self._scenario_runner = None
-        self._scenario_play_btn.configure(state="normal")
-        self._scenario_stop_btn.configure(state="disabled")
+        self._scenario_teardown_cmds = teardown_cmds
+        self._scenario_teardown_ix = 0
+        s = runner.state
+        if teardown_cmds:
+            self._scenario_status_var.set(
+                f"stopping: {runner.config.name}  reason={s.finish_reason}"
+            )
+            self._scenario_play_btn.configure(state="disabled")
+            self._scenario_stop_btn.configure(state="disabled")
+            self._pump_scenario_teardown()
+        else:
+            self._scenario_status_var.set(
+                f"done: {runner.config.name}  reason={s.finish_reason}  "
+                f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
+            )
+            self._scenario_runner = None
+            self._scenario_teardown_cmds = None
+            self._scenario_play_btn.configure(state="normal")
+            self._scenario_stop_btn.configure(state="disabled")
+
+    def _pump_scenario_teardown(self) -> None:
+        """Send one teardown command, wait ``teardown_inter_cmd_delay_s``, repeat."""
+        self._scenario_after_id = None
+        runner = self._scenario_runner
+        cmds = self._scenario_teardown_cmds
+        if runner is None or cmds is None:
+            return
+        ix = self._scenario_teardown_ix
+        if ix >= len(cmds):
+            s = runner.state
+            self._scenario_status_var.set(
+                f"done: {runner.config.name}  reason={s.finish_reason}  "
+                f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
+            )
+            self._scenario_runner = None
+            self._scenario_teardown_cmds = None
+            self._scenario_teardown_ix = 0
+            self._scenario_play_btn.configure(state="normal")
+            self._scenario_stop_btn.configure(state="disabled")
+            return
+        self._send_body(cmds[ix])
+        self._scenario_teardown_ix = ix + 1
+        delay_ms = max(0, int(runner.config.teardown_inter_cmd_delay_s * 1000))
+        self._scenario_after_id = self.after(delay_ms, self._pump_scenario_teardown)
 
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
@@ -988,7 +1034,18 @@ class GroundStation(tk.Tk):
 
         Does NOT reset the GPS trail; the caller decides (the manual UI does).
         """
-        if self._ser is None or not body:
+        if self._ser is None:
+            return False
+        body = (body or "").strip()
+        if not body:
+            return False
+        # Reject pre-prefixed commands the operator likely pasted in by accident.
+        upper = body.upper()
+        if upper.startswith("CMD,") or body.startswith("$"):
+            self._append_console(
+                f"[TX-error] body must not start with 'CMD,' or '$' — got {body!r}",
+                "err",
+            )
             return False
         line = f"CMD,{TEAM_ID},{body}\n"
         try:
@@ -1045,7 +1102,9 @@ class GroundStation(tk.Tk):
         cur_lon = self._parse_optional_float(parsed.get("gps_lon", ""))
         if cur_lat is None or cur_lon is None:
             return
-        if not _valid_gps_latlon(cur_lat, cur_lon):
+        # Drop (0,0) placeholder so the trail does not pin a phantom point on null island
+        # while waiting for the first real GPS fix.
+        if not _is_meaningful_target_latlon(cur_lat, cur_lon):
             return
         if self._track_points:
             la, lo = self._track_points[-1]

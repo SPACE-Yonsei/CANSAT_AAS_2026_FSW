@@ -71,7 +71,7 @@ _TLM_FIELDS = [
     "acc_roll", "acc_pitch", "acc_yaw",
     "mag_roll", "mag_pitch", "mag_yaw",
     "gps_time", "gps_alt", "gps_lat", "gps_lon", "gps_sats",
-    "distance_cm", "cmd_echo",
+    "distance_mm", "cmd_echo",
     "filtered_roll", "filtered_pitch", "filtered_yaw",
     "start_lat", "start_lon",
     "target_lat", "target_lon",
