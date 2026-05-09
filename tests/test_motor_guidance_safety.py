@@ -1,47 +1,106 @@
+"""Safety gate tests: guidance inactive when target/origin missing or path degenerate."""
+
+import math
 import time
 import unittest
-from types import SimpleNamespace
 
-from Sensor_Motor import motor_guidance
+from Sensor_Motor import guidance
+from Sensor_Motor.guidance import SensorQuality, ControlMode
+
+ORIGIN_LAT = 37.55
+ORIGIN_LON = 126.95
+TARGET_LAT = 37.56
+TARGET_LON = 126.96
 
 
-class TestMotorGuidanceSafety(unittest.TestCase):
-    def setUp(self):
-        motor_guidance.init_guidance()
-        self.imu = SimpleNamespace(yaw=10.0, gyrz=0.1)
-        self.gps = SimpleNamespace(lat=37.55, lon=126.95, direction=90.0, velocity=8.0)
-        self.fid = SimpleNamespace(pos_health=1, motion_health=1)
+def _active_input(pos_n=100.0, pos_e=0.0):
+    inp = guidance.L1Input()
+    inp.pos_N = pos_n
+    inp.pos_E = pos_e
+    inp.pos_quality = SensorQuality.FRESH
+    inp.course = math.radians(45.0)
+    inp.motion_quality = SensorQuality.FRESH
+    inp.ground_speed_mps = 8.0
+    inp.gyrz = 0.1
+    inp.gyrz_quality = SensorQuality.FRESH
+    inp.control_mode = ControlMode.ACTIVE_CLOSED_LOOP
+    inp.origin_lat = ORIGIN_LAT
+    inp.origin_lon = ORIGIN_LON
+    return inp
 
-        # Bypass initial GPS jump warm-up for deterministic unit tests.
-        motor_guidance._PREV_GPS.initialized = True
-        motor_guidance._PREV_GPS.lat = self.gps.lat
-        motor_guidance._PREV_GPS.lon = self.gps.lon
-        motor_guidance._PREV_GPS.time = time.time() - 1.0
-        motor_guidance._GPS_STABLE_COUNT = motor_guidance.GPS_STABLE_COUNT_REQUIRED
 
-    def test_target_required(self):
-        motor_guidance.set_start_coordinates(self.gps.lat, self.gps.lon)
-        out = motor_guidance.guidance(
-            self.imu,
-            self.gps,
-            self.fid,
-            None,
-            120.0,
+class TestGuidanceSafetyGates(unittest.TestCase):
+    def test_no_target_returns_inactive(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
-        self.assertEqual(out.state, "TARGET_UNSET")
-        self.assertEqual(out.commanded_yaw_rate, 0.0)
+        self.assertFalse(out.active)
+        self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
-    def test_start_point_checked_before_distance_logic(self):
-        target = SimpleNamespace(lat=37.56, lon=126.96)
-        out = motor_guidance.guidance(
-            self.imu,
-            self.gps,
-            self.fid,
-            target,
-            120.0,
+    def test_partial_target_lon_missing_returns_inactive(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, None, time.monotonic(),
         )
-        self.assertEqual(out.state, "START_UNSET")
-        self.assertEqual(out.commanded_yaw_rate, 0.0)
+        self.assertFalse(out.active)
+        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+
+    def test_no_origin_returns_inactive(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            None, None, TARGET_LAT, TARGET_LON, time.monotonic(),
+        )
+        self.assertFalse(out.active)
+        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+
+    def test_fail_mode_returns_inactive(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.FAIL,
+            ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, TARGET_LON, time.monotonic(),
+        )
+        self.assertFalse(out.active)
+        self.assertEqual(out.reason, "FAIL")
+
+    def test_origin_equals_target_returns_invalid_path(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
+        )
+        self.assertFalse(out.active)
+        self.assertEqual(out.reason, "INVALID_PATH")
+
+    def test_inactive_output_has_zero_yaw_rate(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
+        )
+        self.assertAlmostEqual(out.yaw_rate_cmd_rad_s, 0.0)
+
+    def test_inactive_output_has_zero_lat_acc(self):
+        out = guidance.ProduceL1Output(
+            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
+        )
+        self.assertAlmostEqual(out.lat_acc_cmd_mps2, 0.0)
+
+    def test_no_origin_in_produce_l1_input_causes_fail(self):
+        """Without origin, position cannot be computed → FAIL mode."""
+        from types import SimpleNamespace
+        now = time.monotonic()
+        gps = SimpleNamespace(
+            lat=ORIGIN_LAT + 0.001, lon=ORIGIN_LON + 0.001,
+            course_rad=0.0, speed_mps=8.0,
+            pos_health=True, motion_health=True,
+            pos_ts=now, motion_ts=now,
+        )
+        imu = SimpleNamespace(gyrz_rad_s=0.1, ts=now, health=True)
+        baro = SimpleNamespace(alt_m=100.0, ts=now, health=True)
+        _, mode = guidance.ProduceL1Input(
+            gps, imu, baro, None, None, None,
+            None, None, TARGET_LAT, TARGET_LON, now,
+        )
+        self.assertEqual(mode, ControlMode.FAIL)
 
 
 if __name__ == "__main__":

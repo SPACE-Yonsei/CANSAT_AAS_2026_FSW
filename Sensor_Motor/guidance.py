@@ -53,32 +53,6 @@ class ControlMode(enum.Enum):
 CONTORL_MODE = ControlMode
 
 @dataclass
-class GpsSns:
-    lat: Optional[float] = None
-    lon: Optional[float] = None
-    course: Optional[float] = None
-    speed: Optional[float] = None
-    pos_ts: Optional[float] = None
-    motion_ts: Optional[float] = None
-    pos_health: bool = False
-    motion_health: bool = False
-GPS_SNS = GpsSns
-
-@dataclass
-class ImuSns:
-    gyrz: Optional[float] = None
-    ts: Optional[float] = None
-    health: bool = False
-IMU_SNS = ImuSns
-
-@dataclass
-class BaroSns:
-    alt: Optional[float] = None
-    ts: Optional[float] = None
-    health: bool = False
-BARO_SNS = BaroSns
-
-@dataclass
 class L1Input:
     pos_N: Optional[float] = None
     pos_E: Optional[float] = None
@@ -129,14 +103,19 @@ class L1Output:
 
 def FillFresh(
     l1_input: L1Input,
-    gps: GpsSns,
-    imu: ImuSns,
-    baro: BaroSns,
+    gps,
+    imu,
+    baro,
     start_lat: float,
     start_lon: float,
     now: float,
 ) -> L1Input:
     """Fill L1Input with fresh sensor values only."""
+    gps_course = getattr(gps, "course", getattr(gps, "course_rad", None)) if gps is not None else None
+    gps_speed = getattr(gps, "speed", getattr(gps, "speed_mps", None)) if gps is not None else None
+    imu_gyrz = getattr(imu, "gyrz", getattr(imu, "gyrz_rad_s", None)) if imu is not None else None
+    baro_alt = getattr(baro, "alt", getattr(baro, "alt_m", None)) if baro is not None else None
+
     if (
         gps is not None
         and gps.lat is not None
@@ -156,46 +135,51 @@ def FillFresh(
 
     if (
         gps is not None
-        and gps.course is not None
-        and gps.speed is not None
+        and gps_course is not None
+        and gps_speed is not None
         and gps.motion_ts is not None
         and gps.motion_health
         and now - gps.motion_ts <= MOTION_FRESH_AGE
     ):
-        l1_input.course = gps.course
-        l1_input.ground_speed_mps = gps.speed
+        l1_input.course = gps_course
+        l1_input.ground_speed_mps = gps_speed
         l1_input.motion_quality = SensorQuality.FRESH
 
     if (
         imu is not None
-        and imu.gyrz is not None
+        and imu_gyrz is not None
         and imu.ts is not None
         and imu.health
         and now - imu.ts <= GYRZ_FRESH_AGE
     ):
-        l1_input.gyrz = imu.gyrz
+        l1_input.gyrz = imu_gyrz
         l1_input.gyrz_quality = SensorQuality.FRESH
 
     if (
         baro is not None
-        and baro.alt is not None
+        and baro_alt is not None
         and baro.ts is not None
         and baro.health
         and now - baro.ts <= ALT_FRESH_AGE
     ):
-        l1_input.alt = baro.alt
+        l1_input.alt = baro_alt
         l1_input.alt_quality = SensorQuality.FRESH
 
     return l1_input
 
 def FillOld(
     l1_input: L1Input,
-    old_gps: GpsSns,
-    old_imu: ImuSns,
-    old_baro: BaroSns,
+    old_gps,
+    old_imu,
+    old_baro,
     now: float,
 ) -> L1Input:
     """Fill non-fresh fields with recent last-known-good sensor values."""
+    old_gps_course = getattr(old_gps, "course", getattr(old_gps, "course_rad", None)) if old_gps is not None else None
+    old_gps_speed = getattr(old_gps, "speed", getattr(old_gps, "speed_mps", None)) if old_gps is not None else None
+    old_imu_gyrz = getattr(old_imu, "gyrz", getattr(old_imu, "gyrz_rad_s", None)) if old_imu is not None else None
+    old_baro_alt = getattr(old_baro, "alt", getattr(old_baro, "alt_m", None)) if old_baro is not None else None
+
     if l1_input.pos_quality != SensorQuality.FRESH:
         if (
             old_gps is not None
@@ -227,15 +211,15 @@ def FillOld(
     if l1_input.motion_quality != SensorQuality.FRESH:
         if (
             old_gps is not None
-            and old_gps.course is not None
-            and old_gps.speed is not None
+            and old_gps_course is not None
+            and old_gps_speed is not None
             and old_gps.motion_ts is not None
             and old_gps.motion_health
         ):
             age = now - old_gps.motion_ts
             if 0.0 <= age <= MOTION_STALE_MAX:
-                l1_input.course = old_gps.course
-                l1_input.ground_speed_mps = old_gps.speed
+                l1_input.course = old_gps_course
+                l1_input.ground_speed_mps = old_gps_speed
                 l1_input.motion_quality = SensorQuality.OLD
             elif age > MOTION_STALE_MAX:
                 l1_input.motion_quality = SensorQuality.STALE
@@ -247,13 +231,13 @@ def FillOld(
     if l1_input.gyrz_quality != SensorQuality.FRESH:
         if (
             old_imu is not None
-            and old_imu.gyrz is not None
+            and old_imu_gyrz is not None
             and old_imu.ts is not None
             and old_imu.health
         ):
             age = now - old_imu.ts
             if 0.0 <= age <= GYRZ_STALE_MAX:
-                l1_input.gyrz = old_imu.gyrz
+                l1_input.gyrz = old_imu_gyrz
                 l1_input.gyrz_quality = SensorQuality.OLD
             elif age > GYRZ_STALE_MAX:
                 l1_input.gyrz_quality = SensorQuality.STALE
@@ -265,13 +249,13 @@ def FillOld(
     if l1_input.alt_quality != SensorQuality.FRESH:
         if (
             old_baro is not None
-            and old_baro.alt is not None
+            and old_baro_alt is not None
             and old_baro.ts is not None
             and old_baro.health
         ):
             age = now - old_baro.ts
             if 0.0 <= age <= ALT_STALE_MAX:
-                l1_input.alt = old_baro.alt
+                l1_input.alt = old_baro_alt
                 l1_input.alt_quality = SensorQuality.OLD
             elif age > ALT_STALE_MAX:
                 l1_input.alt_quality = SensorQuality.STALE
@@ -309,12 +293,12 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
 #prepocessing: fill fresh -> fill unfresh -> decide control mode -> produce L1 input
 #receives data directly from apps 
 def ProduceL1Input(
-    gps: GpsSns,
-    imu: ImuSns,
-    baro: BaroSns,
-    old_gps: GpsSns,
-    old_imu: ImuSns,
-    old_baro: BaroSns,
+    gps,
+    imu,
+    baro,
+    old_gps,
+    old_imu,
+    old_baro,
     origin_lat: float,
     origin_lon: float,
     target_lat: float,
