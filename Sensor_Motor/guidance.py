@@ -55,6 +55,8 @@ _PREV_GPS = SimpleNamespace(
 _GPS_STABLE_COUNT: int = 0
 _START_LAT: Optional[float] = None
 _START_LON: Optional[float] = None
+START_POINT = SimpleNamespace(lat=0.0, lon=0.0)
+CASCADE_PI = SimpleNamespace(MAX_CMD=YR_MAX)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -769,7 +771,7 @@ def compute_motor_output(l1, controller, inp: GuidanceInput, now: float):
 
 def init_guidance() -> None:
     """Reset legacy module-level state."""
-    global _PREV_GPS, _GPS_STABLE_COUNT, _START_LAT, _START_LON
+    global _PREV_GPS, _GPS_STABLE_COUNT, _START_LAT, _START_LON, START_POINT
     _PREV_GPS = SimpleNamespace(
         initialized=False,
         lat=0.0,
@@ -779,12 +781,19 @@ def init_guidance() -> None:
     _GPS_STABLE_COUNT = 0
     _START_LAT = None
     _START_LON = None
+    START_POINT = SimpleNamespace(lat=0.0, lon=0.0)
 
 
 def set_start_coordinates(lat: float, lon: float) -> None:
-    global _START_LAT, _START_LON
-    _START_LAT = lat
-    _START_LON = lon
+    global _START_LAT, _START_LON, START_POINT
+    _START_LAT = float(lat)
+    _START_LON = float(lon)
+    START_POINT = SimpleNamespace(lat=float(lat), lon=float(lon))
+
+
+def is_gps_jump(lat: float, lon: float) -> bool:
+    """Legacy API: returns True only when GPS is considered stable."""
+    return _check_gps_jump(float(lat), float(lon), time.time())
 
 
 def _check_gps_jump(lat: float, lon: float, ts: float) -> bool:
@@ -856,6 +865,12 @@ def guidance(imu, gps, fid, tgt, alt: float):
     # Target check
     if tgt is None:
         out.state = "TARGET_UNSET"
+        out.distance = float("nan")
+        return out
+
+    # Start point check (legacy safety contract)
+    if _START_LAT is None or _START_LON is None:
+        out.state = "START_UNSET"
         out.distance = float("nan")
         return out
 

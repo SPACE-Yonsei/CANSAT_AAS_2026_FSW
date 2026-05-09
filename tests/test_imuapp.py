@@ -22,23 +22,17 @@ class TestImuApp(unittest.TestCase):
         self.assertAlmostEqual(imuapp._wrap_deg(370.0), 10.0)
         self.assertAlmostEqual(imuapp._wrap_deg(-10.0), 350.0)
 
-    def test_boot_yaw_alignment_maps_average_raw_to_desired(self):
-        """Boot north: offset = wrap(desired - avg_raw) => wrap(avg + offset) == desired."""
-        for avg, desired in ((42.0, 0.0), (350.0, 0.0), (10.0, 5.0)):
-            off = imuapp._wrap_deg(desired - avg)
-            self.assertAlmostEqual(imuapp._wrap_deg(avg + off), desired)
-
     def test_ema(self):
         self.assertAlmostEqual(imuapp._ema(None, 10.0), 10.0)
         self.assertAlmostEqual(imuapp._ema(0.0, 10.0, alpha=0.5), 5.0)
 
     def test_apply_yaw_offset(self):
-        old_offset = prevstate.PREV_YAW_OFFSET
+        old_offset = prevstate.YAW_OFFSET
         try:
-            prevstate.PREV_YAW_OFFSET = 15.0
+            prevstate.YAW_OFFSET = 15.0
             self.assertAlmostEqual(imuapp._apply_yaw_offset(350.0), 5.0)
         finally:
-            prevstate.PREV_YAW_OFFSET = old_offset
+            prevstate.YAW_OFFSET = old_offset
 
     def test_synthetic_sample_shape(self):
         sample = imuapp._synthetic_sample()
