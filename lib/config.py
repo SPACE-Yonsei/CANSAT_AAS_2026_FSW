@@ -21,6 +21,14 @@ EGG_STATE_DISTANCE_TRIGGER_MM = 2500
 RELAY_ACTIVATE_LEVEL = 0
 RELAY_DEACTIVATE_LEVEL = 1
 
+# Per-actuator relay polarity overrides
+# - Release keeps its own polarity so it can differ from egg solenoid.
+# - Egg defaults to global relay polarity.
+RELEASE_RELAY_ACTIVATE_LEVEL = 1
+RELEASE_RELAY_DEACTIVATE_LEVEL = 0
+EGG_RELAY_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
+EGG_RELAY_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
+
 
 # Sensor/IO rates (Hz)
 BAROMETER_RATE_HZ = 10

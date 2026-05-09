@@ -58,10 +58,12 @@ class _DummyGPIO:
 GPIO = None
 BURNWIRE_READY: bool = False
 BURNWIRE_GPIO:  int  = config.BURNWIRE_GPIO
-# Release relay polarity override:
-# user requested release 1/0 swap without changing other actuators.
-_RELEASE_ACTIVATE_LEVEL = config.RELAY_DEACTIVATE_LEVEL
-_RELEASE_DEACTIVATE_LEVEL = config.RELAY_ACTIVATE_LEVEL
+_RELEASE_ACTIVATE_LEVEL = int(
+    getattr(config, "RELEASE_RELAY_ACTIVATE_LEVEL", config.RELAY_ACTIVATE_LEVEL)
+)
+_RELEASE_DEACTIVATE_LEVEL = int(
+    getattr(config, "RELEASE_RELAY_DEACTIVATE_LEVEL", config.RELAY_DEACTIVATE_LEVEL)
+)
 BURNWIRE_DURATION_SEC: float = float(
     os.environ.get("BURNWIRE_DURATION_SEC", str(get_burnwire_delay_sec()))
 )
