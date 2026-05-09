@@ -50,17 +50,17 @@ class _BaroFromApp:
 
 
 @dataclass
-class _MotorSensorCache:
+class _Cache:
     raw_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
     last_good_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
-    raw_gyrz: _ImuFromApp = field(default_factory=_ImuFromApp)
-    last_good_gyrz: _ImuFromApp = field(default_factory=_ImuFromApp)
-    raw_alt: _BaroFromApp = field(default_factory=_BaroFromApp)
-    last_good_alt: _BaroFromApp = field(default_factory=_BaroFromApp)
+    raw_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
+    last_good_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
+    raw_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
+    last_good_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
-    origin_lat: Optional[float] = None
-    origin_lon: Optional[float] = None
+    start_lat: Optional[float] = None
+    start_lon: Optional[float] = None
 
 
 MOTORAPP_RUNSTATUS: bool = True
@@ -69,7 +69,7 @@ STATE: int = 0
 PI = None
 
 _UPDATE_LOCK = threading.Lock()
-_CACHE = _MotorSensorCache()
+_CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
 _CONTROLLER = None
@@ -195,17 +195,17 @@ def _latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float) 
     return north, east
 
 
-def _cache_snapshot() -> _MotorSensorCache:
-    snap = _MotorSensorCache()
+def _cache_snapshot() -> _Cache:
+    snap = _Cache()
     snap.raw_gps = _GpsFromApp(**vars(_CACHE.raw_gps))
     snap.last_good_gps = _GpsFromApp(**vars(_CACHE.last_good_gps))
-    snap.raw_gyrz = _ImuFromApp(**vars(_CACHE.raw_gyrz))
+    snap.raw_imu = _ImuFromApp(**vars(_CACHE.raw_imu))
     snap.last_good_gyrz = _ImuFromApp(**vars(_CACHE.last_good_gyrz))
-    snap.raw_alt = _BaroFromApp(**vars(_CACHE.raw_alt))
+    snap.raw_baro = _BaroFromApp(**vars(_CACHE.raw_baro))
     snap.last_good_alt = _BaroFromApp(**vars(_CACHE.last_good_alt))
     snap.target_lat = _CACHE.target_lat
     snap.target_lon = _CACHE.target_lon
-    snap.origin_lat = _CACHE.origin_lat
+    snap.start_lat = _CACHE.start_lat
     snap.origin_lon = _CACHE.origin_lon
     return snap
 
@@ -268,7 +268,7 @@ def handle_imu(data: str) -> None:
     now = time.time()
     gyrz_rad_s = math.radians(gyrz_deg_s)
     with _UPDATE_LOCK:
-        _CACHE.raw_gyrz = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
+        _CACHE.raw_imu = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
         if health:
             _CACHE.last_good_gyrz = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=True)
 
@@ -285,7 +285,7 @@ def handle_barometer(data: str) -> None:
 
     now = time.time()
     with _UPDATE_LOCK:
-        _CACHE.raw_alt = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
+        _CACHE.raw_baro = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
         if health:
             _CACHE.last_good_alt = _BaroFromApp(alt_m=alt_m, ts=now, health=True)
 
@@ -326,7 +326,7 @@ def handle_flight_state(data: str) -> None:
         _PREV_STATE = STATE
         STATE = new_state
         if new_state < 3:
-            _CACHE.origin_lat = None
+            _CACHE.start_lat = None
             _CACHE.origin_lon = None
             _START_POINT_LOCKED = False
             prevstate.clear_start_point()
@@ -406,7 +406,7 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
     with _UPDATE_LOCK:
         target_lat = _CACHE.target_lat
         target_lon = _CACHE.target_lon
-        origin_lat = _CACHE.origin_lat
+        origin_lat = _CACHE.start_lat
         origin_lon = _CACHE.origin_lon
 
     head = [
@@ -543,7 +543,7 @@ def init() -> None:
     if start_point is not None:
         lat, lon = start_point
         if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
-            _CACHE.origin_lat = float(lat)
+            _CACHE.start_lat = float(lat)
             _CACHE.origin_lon = float(lon)
             _START_POINT_LOCKED = True
 
