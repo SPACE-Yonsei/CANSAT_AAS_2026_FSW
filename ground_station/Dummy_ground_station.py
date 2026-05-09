@@ -600,6 +600,20 @@ class GroundStation(tk.Tk):
             row=1, column=2, padx=6, pady=4
         )
 
+        force_box = ttk.Frame(cmd_box)
+        force_box.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6))
+        ttk.Label(force_box, text="Force action:").pack(side=tk.LEFT)
+        ttk.Button(
+            force_box,
+            text="Force RELEASE motor",
+            command=self._send_force_release,
+        ).pack(side=tk.LEFT, padx=(8, 6))
+        ttk.Button(
+            force_box,
+            text="Force EGG motor",
+            command=self._send_force_egg,
+        ).pack(side=tk.LEFT, padx=6)
+
     def _build_scenario_panel(self, parent: ttk.Frame, row: int) -> None:
         """Closed-loop scenario player panel — preset + overrides + controls.
 
@@ -1028,6 +1042,36 @@ class GroundStation(tk.Tk):
         # SIMGs go through _send_body without this reset and accumulate.
         if ubody.startswith("SIMG,"):
             self._clear_gps_trail()
+
+    def _send_force_release(self) -> None:
+        """Force release actuator path via state jump command."""
+        if self._ser is None:
+            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
+            return
+        ok = messagebox.askyesno(
+            "Force RELEASE",
+            "강제 RELEASE(SS,3)를 전송합니다.\n"
+            "주의: target(TC) 미설정 시 FlightLogic에서 차단됩니다.\n"
+            "계속할까요?",
+        )
+        if not ok:
+            return
+        self._send_body("SS,3")
+
+    def _send_force_egg(self) -> None:
+        """Force egg-drop actuator path via state jump command."""
+        if self._ser is None:
+            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
+            return
+        ok = messagebox.askyesno(
+            "Force EGG",
+            "강제 EGG(SS,4)를 전송합니다.\n"
+            "주의: 즉시 에그 솔레노이드 트리거 조건으로 진입할 수 있습니다.\n"
+            "계속할까요?",
+        )
+        if not ok:
+            return
+        self._send_body("SS,4")
 
     def _send_body(self, body: str) -> bool:
         """Low-level CMD send used by both manual entry and scenario player.
