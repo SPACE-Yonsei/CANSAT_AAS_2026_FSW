@@ -321,6 +321,8 @@ class GroundStation(tk.Tk):
         # Scenario player state (None when no scenario active).
         self._scenario_runner: "_ScenarioRunner | None" = None
         self._scenario_after_id: str | None = None
+        self._scenario_setup_cmds: list[str] | None = None
+        self._scenario_setup_ix: int = 0
         self._scenario_status_var = tk.StringVar(value="idle")
 
         self._build_ui()
@@ -748,11 +750,37 @@ class GroundStation(tk.Tk):
         self._scenario_play_btn.configure(state="disabled")
         self._scenario_stop_btn.configure(state="normal")
         self._scenario_status_var.set(f"starting: {cfg.name}")
-        runner.start(sleep_fn=lambda _s: None)
-        # FlightLogic needs a beat to switch into SIM,ACTIVATE before the first
-        # SIMG; without this delay the first frame can be dropped.
-        first_tick_ms = max(400, int(cfg.setup_inter_cmd_delay_s * 4 * 1000))
-        self._scenario_after_id = self.after(first_tick_ms, self._scenario_tick)
+        try:
+            self._scenario_setup_cmds = runner.begin_async_setup()
+        except RuntimeError as exc:
+            self._append_console(f"[scenario] setup error: {exc}", "err")
+            self._scenario_runner = None
+            self._scenario_play_btn.configure(state="normal")
+            self._scenario_stop_btn.configure(state="disabled")
+            return
+        self._scenario_setup_ix = 0
+        self._pump_scenario_setup()
+
+    def _pump_scenario_setup(self) -> None:
+        runner = self._scenario_runner
+        cmds = self._scenario_setup_cmds
+        if runner is None or cmds is None:
+            return
+        ix = self._scenario_setup_ix
+        if ix >= len(cmds):
+            runner.complete_async_setup()
+            self._scenario_setup_cmds = None
+            self._scenario_setup_ix = 0
+            cfg = runner.config
+            first_tick_ms = max(
+                800, min(5000, int(cfg.setup_inter_cmd_delay_s * 600))
+            )
+            self._scenario_after_id = self.after(first_tick_ms, self._scenario_tick)
+            return
+        self._send_body(cmds[ix])
+        self._scenario_setup_ix = ix + 1
+        delay_ms = max(0, int(runner.config.setup_inter_cmd_delay_s * 1000))
+        self._scenario_after_id = self.after(delay_ms, self._pump_scenario_setup)
 
     def _scenario_tick(self) -> None:
         self._scenario_after_id = None
@@ -792,8 +820,9 @@ class GroundStation(tk.Tk):
             except tk.TclError:
                 pass
             self._scenario_after_id = None
+        self._scenario_setup_cmds = None
         try:
-            runner.stop(send_teardown=send_teardown, sleep_fn=lambda _s: None,
+            runner.stop(send_teardown=send_teardown, sleep_fn=time.sleep,
                         reason=reason)
         except Exception as exc:
             self._append_console(f"[scenario] stop error: {exc}", "err")

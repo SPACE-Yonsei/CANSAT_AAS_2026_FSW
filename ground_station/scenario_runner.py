@@ -112,7 +112,9 @@ class ScenarioConfig:
     use_release_state: bool = True    # send SS,3 in the setup phase
     landing_state: int = 5            # SS,5 on completion
     auto_disable_sim: bool = True     # SIM,DISABLE on completion
-    setup_inter_cmd_delay_s: float = 0.06  # spacing for setup commands
+    # UART/XBee round-trip can be seconds; spacing avoids FlightLogic dropping cmds.
+    setup_inter_cmd_delay_s: float = 5.0  # spacing between setup commands (see begin_async_setup)
+    teardown_inter_cmd_delay_s: float = 2.0  # SS/SIM,DISABLE spacing (often shorter than setup)
 
 
 # ----------------------------------------------------------------- presets
@@ -287,6 +289,7 @@ class ScenarioRunner:
         # across CLI / GCS runs at the same seed.
         import random
         self._rng = random.Random(rng_seed if rng_seed is not None else 0)
+        self._async_phase: bool = False
 
     # ----------------------------------------------------------- setup
     def setup_command_sequence(self) -> list[str]:
@@ -318,11 +321,7 @@ class ScenarioRunner:
             cmds.append("SIM,DISABLE")
         return cmds
 
-    # ----------------------------------------------------------- API
-    def start(self, sleep_fn: Callable[[float], None] = time.sleep) -> bool:
-        """Send setup commands and initialise simulation state."""
-        if self._started:
-            return False
+    def _init_run_state(self) -> None:
         cfg = self.config
         self._t0_mono = time.monotonic()
         self.state.lat = cfg.start_lat
@@ -340,6 +339,33 @@ class ScenarioRunner:
                   f"wind={cfg.wind_speed_ms:.1f}m/s @{cfg.wind_dir_met_deg:.0f}deg  "
                   f"descent={cfg.descent_rate_ms:.1f}m/s")
 
+    # ----------------------------------------------------------- API
+    def begin_async_setup(self) -> list[str]:
+        """Initialise state and return UART bodies for paced sending (e.g. Tk ``after``).
+
+        Call :meth:`complete_async_setup` after the last command is transmitted.
+        """
+        if self._started:
+            return []
+        if self._async_phase:
+            raise RuntimeError("begin_async_setup() already in progress")
+        self._async_phase = True
+        self._init_run_state()
+        return self.setup_command_sequence()
+
+    def complete_async_setup(self) -> None:
+        """Mark UART setup finished after :meth:`begin_async_setup` commands are sent."""
+        if self._started:
+            return
+        self._started = True
+        self._async_phase = False
+
+    def start(self, sleep_fn: Callable[[float], None] = time.sleep) -> bool:
+        """Send setup commands and initialise simulation state."""
+        if self._started:
+            return False
+        self._init_run_state()
+        cfg = self.config
         sent_any = False
         for cmd in self.setup_command_sequence():
             if self._send(cmd):
@@ -441,9 +467,11 @@ class ScenarioRunner:
         if not self.state.finished:
             self._finish(reason, log=False)
         if send_teardown:
+            td = self.config.teardown_inter_cmd_delay_s
             for cmd in self.teardown_command_sequence(reason):
                 self._send(cmd)
-                sleep_fn(self.config.setup_inter_cmd_delay_s)
+                sleep_fn(td)
+        self._async_phase = False
         self._log(f"[scenario:{self.config.name}] stop reason={self.state.finish_reason}  "
                   f"ticks={self.state.tick_count}  elapsed={self.state.elapsed_s:.1f}s  "
                   f"final_d={self.state.distance_to_target_m:.1f}m")

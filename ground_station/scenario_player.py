@@ -274,10 +274,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         runner.start()
-        # Give FSW a beat to switch into SIM,ACTIVATE before the first tick;
-        # without this the first SIMG occasionally lands before the FlightLogic
-        # sim_active flag is set and is silently dropped.
-        time.sleep(max(0.4, cfg.setup_inter_cmd_delay_s * 4))
+        # Setup already waits ``setup_inter_cmd_delay_s`` between UART cmds; add a
+        # short extra beat before SIMG ticks (avoid stacking multipliers on slow links).
+        time.sleep(max(0.5, min(3.0, cfg.setup_inter_cmd_delay_s * 0.4)))
 
         next_tick = time.monotonic()
         while not runner.state.finished:
