@@ -915,9 +915,21 @@ class GroundStation(tk.Tk):
             row=3, column=3, sticky="w", padx=6
         )
 
+        ttk.Label(box, text="Turn 90deg distance (m):").grid(row=4, column=0, sticky="w", padx=6, pady=2)
+        self._scenario_turn90_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self._scenario_turn90_var, width=8).grid(
+            row=4, column=1, sticky="w", padx=6
+        )
+        self._scenario_mission_flow_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            box,
+            text="Mission flow mode (release/egg 확인용: target 도달해도 계속 하강)",
+            variable=self._scenario_mission_flow_var,
+        ).grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=2)
+
         ttk.Label(box, textvariable=self._scenario_status_var,
                   font=("Consolas", 9), foreground="#bae6fd").grid(
-            row=4, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6)
+            row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6)
         )
 
     def _on_scenario_preset_change(self, _event=None) -> None:
@@ -929,7 +941,7 @@ class GroundStation(tk.Tk):
             return
         self._scenario_desc_var.set(cfg.description)
 
-    def _scenario_override_config(self, cfg) -> None:
+    def _scenario_override_config(self, cfg) -> tuple[bool, str]:
         """Apply non-empty Entry overrides onto a preset config (in-place)."""
         def _maybe_float(var: tk.StringVar) -> float | None:
             s = var.get().strip()
@@ -943,18 +955,44 @@ class GroundStation(tk.Tk):
                 return None
             return v
 
+        errors: list[str] = []
         v = _maybe_float(self._scenario_wind_speed_var)
-        if v is not None and v >= 0.0:
-            cfg.wind_speed_ms = v
+        if v is not None:
+            if v >= 0.0:
+                cfg.wind_speed_ms = v
+            else:
+                errors.append("wind speed는 0 이상이어야 합니다.")
         v = _maybe_float(self._scenario_wind_dir_var)
         if v is not None:
             cfg.wind_dir_met_deg = v % 360.0
         v = _maybe_float(self._scenario_descent_var)
-        if v is not None and v > 0.0:
-            cfg.descent_rate_ms = v
+        if v is not None:
+            if v > 0.0:
+                cfg.descent_rate_ms = v
+            else:
+                errors.append("descent는 0보다 커야 합니다.")
         v = _maybe_float(self._scenario_airspeed_var)
-        if v is not None and v > 0.0:
-            cfg.airspeed_ms = v
+        if v is not None:
+            if v > 0.0:
+                cfg.airspeed_ms = v
+                cfg.reference_speed_ms = v
+            else:
+                errors.append("airspeed는 0보다 커야 합니다.")
+        v = _maybe_float(self._scenario_turn90_var)
+        if v is not None:
+            if v > 1.0:
+                cfg.turn_distance_90deg_m = v
+                cfg.pulse_to_yaw_gain = None
+            else:
+                errors.append("turn 90deg distance는 1m보다 커야 합니다.")
+
+        if self._scenario_mission_flow_var.get():
+            cfg.stop_on_target_reach = False
+            cfg.use_release_state = True
+
+        if errors:
+            return False, "\n".join(errors)
+        return True, ""
 
     def _on_scenario_play(self) -> None:
         if not _SCENARIO_AVAILABLE:
@@ -974,7 +1012,10 @@ class GroundStation(tk.Tk):
         # global preset table across runs.
         from copy import deepcopy
         cfg = deepcopy(cfg)
-        self._scenario_override_config(cfg)
+        ok, err_msg = self._scenario_override_config(cfg)
+        if not ok:
+            messagebox.showerror("Scenario override invalid", err_msg)
+            return
 
         # Map view: clear leftover trail so the new run starts clean.
         self._clear_gps_trail()
@@ -1047,10 +1088,13 @@ class GroundStation(tk.Tk):
             still_running = False
             delay_ms = None
         s = runner.state
+        tlm = self._get_latest_tlm() or {}
+        fsw_state = str(tlm.get("state", "--")).strip() or "--"
         self._scenario_status_var.set(
             f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
             f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
-            f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s"
+            f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s  "
+            f"fsw_state={fsw_state}"
         )
         if still_running and delay_ms is not None:
             self._scenario_after_id = self.after(delay_ms, self._scenario_tick)

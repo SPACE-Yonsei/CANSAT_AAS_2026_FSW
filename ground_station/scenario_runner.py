@@ -16,7 +16,7 @@ Two consumers share the same core:
 
 Physics (intentionally simple, not a flight model):
   * Heading is integrated from a yaw rate proportional to the differential of
-    the FSW servo pulse widths (``(left_pw + right_pw - 3100) / PULSE_PER_DEG``
+    the FSW servo pulse widths (``(left_pw + right_pw - 3000) / PULSE_PER_DEG``
     matches the mixer in ``Sensor_Motor/motor_control.py``).
   * Ground velocity = airspeed vector (heading) + wind vector (meteorological
     convention: ``wind_dir_met`` is the direction the wind blows *from*).
@@ -38,13 +38,17 @@ from typing import Callable, Iterable, Optional
 
 # ----------------------------------------------------------------- constants
 # Mixer constants mirror Sensor_Motor/motor_control.py — keep in sync if those
-# are ever retuned. ``LEFT_ZERO + RIGHT_ZERO`` (= 600 + 2500 = 3100) is the
-# pulse-width sum at ``delta_arm_deg = 0``; ``PULSE_PER_DEG = 2000/180`` is the
-# servo calibration.
+# are ever retuned. ``LEFT_NEUTRAL + RIGHT_NEUTRAL`` (= 1511 + 1489 = 3000) is
+# the pulse-width sum at ``delta_arm_deg = 0``; ``PULSE_PER_DEG = 2000/180`` is
+# the servo calibration.
 _PULSE_PER_DEG: float = 2000.0 / 180.0
-_PULSE_SUM_NEUTRAL: int = 3100
-_NEUTRAL_LEFT_PW: int = 1267
-_NEUTRAL_RIGHT_PW: int = 1833
+_PULSE_SUM_NEUTRAL: int = 3000
+_NEUTRAL_LEFT_PW: int = 1511
+_NEUTRAL_RIGHT_PW: int = 1489
+
+# Sensor_Motor.control.DELTA_ARM_MAX_DEG = 160. Keep mirrored here so the
+# closed-loop simulator can derive a physical yaw gain from a 90-deg turn arc.
+DELTA_ARM_MAX_DEG: float = 160.0
 
 # Earth model — flat-earth approximation good enough for sub-km scenarios.
 _M_PER_DEG_LAT: float = 111320.0
@@ -96,7 +100,7 @@ class ScenarioConfig:
     init_heading_deg: Optional[float] = None
 
     airspeed_ms: float = 8.0       # parafoil forward speed through air
-    descent_rate_ms: float = 5.0   # constant vertical sink rate
+    descent_rate_ms: float = 3.0   # constant vertical sink rate
     descent_jitter_ms: float = 0.0 # +/- random variation each tick (uniform)
 
     wind_speed_ms: float = 0.0
@@ -107,11 +111,18 @@ class ScenarioConfig:
     # Wall-clock spacing between SIMG+SIMP pairs (GCS ``after`` / CLI loop) and
     # simulated dt per tick. Default matches ``setup_inter_cmd_delay_s`` for slow UART.
     tick_period_s: float = 7.0
-    pulse_to_yaw_gain: float = 0.3    # deg/s yaw per deg of delta_arm
-    yaw_rate_max_deg_s: float = 60.0  # safety clamp on simulated yaw
+    # Real-world calibration: travel about ``turn_distance_90deg_m`` meters to
+    # rotate 90 deg at full differential.
+    turn_distance_90deg_m: float = 30.0
+    reference_speed_ms: float = 8.0
+    # If None, derived from the turn-distance model above.
+    pulse_to_yaw_gain: Optional[float] = None
+    yaw_rate_max_deg_s: float = 35.0  # safety clamp on simulated yaw
 
     target_radius_m: float = 8.0      # stop scenario when within this radius
+    stop_on_target_reach: bool = True
     timeout_s: float = 240.0          # hard cap so runaway runs eventually end
+    integration_substeps: int = 5      # internal physics substeps per tick
 
     use_release_state: bool = True    # send SS,3 in the setup phase
     landing_state: int = 5            # SS,5 on completion
@@ -153,11 +164,11 @@ def _build_presets() -> dict[str, ScenarioConfig]:
     return {
         "calm": ScenarioConfig(
             name="calm",
-            description="No wind, nominal 5 m/s descent, 350 m target NE.",
+            description="No wind, nominal 3 m/s descent, 350 m target NE.",
             **common,
             target_lat=tgt_calm[0], target_lon=tgt_calm[1],
             start_alt_m=200.0,
-            airspeed_ms=8.0, descent_rate_ms=5.0,
+            airspeed_ms=8.0, descent_rate_ms=3.0,
             wind_speed_ms=0.0, wind_dir_met_deg=270.0,
         ),
         "west8": ScenarioConfig(
@@ -166,7 +177,7 @@ def _build_presets() -> dict[str, ScenarioConfig]:
             **common,
             target_lat=tgt_calm[0], target_lon=tgt_calm[1],
             start_alt_m=200.0,
-            airspeed_ms=8.0, descent_rate_ms=5.0,
+            airspeed_ms=8.0, descent_rate_ms=3.0,
             wind_speed_ms=8.0, wind_dir_met_deg=270.0,
         ),
         "gust12": ScenarioConfig(
@@ -175,7 +186,7 @@ def _build_presets() -> dict[str, ScenarioConfig]:
             **common,
             target_lat=tgt_calm[0], target_lon=tgt_calm[1],
             start_alt_m=250.0,
-            airspeed_ms=8.0, descent_rate_ms=5.0, descent_jitter_ms=0.6,
+            airspeed_ms=8.0, descent_rate_ms=3.0, descent_jitter_ms=0.6,
             wind_speed_ms=12.0, wind_dir_met_deg=270.0,
             gust_amp_ms=3.0, gust_period_s=4.0,
         ),
@@ -204,7 +215,7 @@ def _build_presets() -> dict[str, ScenarioConfig]:
             target_lat=tgt_calm[0], target_lon=tgt_calm[1],
             start_alt_m=300.0,
             init_heading_deg=225.0,   # target bearing 45 + 180 = 225
-            airspeed_ms=8.0, descent_rate_ms=4.0,
+            airspeed_ms=8.0, descent_rate_ms=3.0,
             wind_speed_ms=2.0, wind_dir_met_deg=270.0,
         ),
         "long_range": ScenarioConfig(
@@ -213,7 +224,7 @@ def _build_presets() -> dict[str, ScenarioConfig]:
             **common,
             target_lat=tgt_long[0], target_lon=tgt_long[1],
             start_alt_m=600.0,
-            airspeed_ms=8.0, descent_rate_ms=5.0,
+            airspeed_ms=8.0, descent_rate_ms=3.0,
             wind_speed_ms=2.0, wind_dir_met_deg=270.0,
         ),
     }
@@ -347,6 +358,15 @@ class ScenarioRunner:
                   f"descent={cfg.descent_rate_ms:.1f}m/s")
         self._await_simp = False
 
+    def _pulse_to_yaw_gain(self) -> float:
+        cfg = self.config
+        if cfg.pulse_to_yaw_gain is not None and cfg.pulse_to_yaw_gain > 0.0:
+            return float(cfg.pulse_to_yaw_gain)
+        dist90 = max(1.0, float(cfg.turn_distance_90deg_m))
+        v_ref = max(0.1, float(cfg.reference_speed_ms))
+        yaw_max_deg_s = 90.0 * v_ref / dist90
+        return yaw_max_deg_s / DELTA_ARM_MAX_DEG
+
     # ----------------------------------------------------------- API
     def begin_async_setup(self) -> list[str]:
         """Initialise state and return UART bodies for paced sending (e.g. Tk ``after``).
@@ -385,59 +405,68 @@ class ScenarioRunner:
     def _physics_step(self) -> None:
         """Integrate one simulated period from TLM feedback (no UART)."""
         cfg = self.config
-        dt = cfg.tick_period_s
+        dt_total = cfg.tick_period_s
 
         # 1. Read FSW pulse output, derive simulated yaw rate.
         tlm = self._get_tlm() or {}
         left_pw = _coerce_int(tlm.get("left_pulse_us"), _NEUTRAL_LEFT_PW)
         right_pw = _coerce_int(tlm.get("right_pulse_us"), _NEUTRAL_RIGHT_PW)
         delta_arm_deg = (left_pw + right_pw - _PULSE_SUM_NEUTRAL) / _PULSE_PER_DEG
+        gain = self._pulse_to_yaw_gain()
         yaw_rate = _clamp(
-            cfg.pulse_to_yaw_gain * delta_arm_deg,
+            gain * delta_arm_deg,
             -cfg.yaw_rate_max_deg_s,
             cfg.yaw_rate_max_deg_s,
         )
 
-        # 2. Integrate heading.
-        self.state.heading_deg = (self.state.heading_deg + yaw_rate * dt) % 360.0
+        substeps = max(1, int(cfg.integration_substeps))
+        dt = dt_total / float(substeps)
+
+        # 2~6. Integrate heading/kinematics in substeps to reduce coarse jumps.
+        for _ in range(substeps):
+            self.state.heading_deg = (self.state.heading_deg + yaw_rate * dt) % 360.0
+
+            # 3. Compute wind components (meteorological convention: wind FROM
+            #    that bearing, so the actual airmass moves opposite).
+            wind_to_bearing = (cfg.wind_dir_met_deg + 180.0) % 360.0
+            wind_mag = cfg.wind_speed_ms
+            if cfg.gust_amp_ms != 0.0 and cfg.gust_period_s > 0.0:
+                phase = 2.0 * math.pi * self.state.elapsed_s / cfg.gust_period_s
+                wind_mag = max(0.0, wind_mag + cfg.gust_amp_ms * math.sin(phase))
+            wind_E = wind_mag * math.sin(math.radians(wind_to_bearing))
+            wind_N = wind_mag * math.cos(math.radians(wind_to_bearing))
+
+            # 4. Ground velocity = airmass-relative + wind.
+            hdg_rad = math.radians(self.state.heading_deg)
+            v_air_E = cfg.airspeed_ms * math.sin(hdg_rad)
+            v_air_N = cfg.airspeed_ms * math.cos(hdg_rad)
+            V_E = v_air_E + wind_E
+            V_N = v_air_N + wind_N
+            self.state.ground_speed_ms = math.hypot(V_E, V_N)
+            self.state.course_deg = (math.degrees(math.atan2(V_E, V_N))) % 360.0
+
+            # 5. Update geodetic position.
+            m_per_deg_lon = _m_per_deg_lon(self.state.lat)
+            if m_per_deg_lon == 0.0:
+                m_per_deg_lon = 1.0
+            self.state.lat += V_N * dt / _M_PER_DEG_LAT
+            self.state.lon += V_E * dt / m_per_deg_lon
+
+            # 6. Update altitude with optional jitter; never negative.
+            descent = cfg.descent_rate_ms
+            if cfg.descent_jitter_ms > 0.0:
+                descent += self._rng.uniform(-cfg.descent_jitter_ms, cfg.descent_jitter_ms)
+            self.state.alt_m = max(0.0, self.state.alt_m - descent * dt)
+            self.state.elapsed_s += dt
+
         self.state.yaw_rate_deg_s = yaw_rate
-
-        # 3. Compute wind components (meteorological convention: wind FROM
-        #    that bearing, so the actual airmass moves opposite).
-        wind_to_bearing = (cfg.wind_dir_met_deg + 180.0) % 360.0
-        wind_mag = cfg.wind_speed_ms
-        if cfg.gust_amp_ms != 0.0 and cfg.gust_period_s > 0.0:
-            phase = 2.0 * math.pi * self.state.elapsed_s / cfg.gust_period_s
-            wind_mag = max(0.0, wind_mag + cfg.gust_amp_ms * math.sin(phase))
-        wind_E = wind_mag * math.sin(math.radians(wind_to_bearing))
-        wind_N = wind_mag * math.cos(math.radians(wind_to_bearing))
-
-        # 4. Ground velocity = airmass-relative + wind.
-        hdg_rad = math.radians(self.state.heading_deg)
-        v_air_E = cfg.airspeed_ms * math.sin(hdg_rad)
-        v_air_N = cfg.airspeed_ms * math.cos(hdg_rad)
-        V_E = v_air_E + wind_E
-        V_N = v_air_N + wind_N
-        self.state.ground_speed_ms = math.hypot(V_E, V_N)
-        self.state.course_deg = (math.degrees(math.atan2(V_E, V_N))) % 360.0
-
-        # 5. Update geodetic position.
-        m_per_deg_lon = _m_per_deg_lon(self.state.lat)
-        if m_per_deg_lon == 0.0:
-            m_per_deg_lon = 1.0
-        self.state.lat += V_N * dt / _M_PER_DEG_LAT
-        self.state.lon += V_E * dt / m_per_deg_lon
-
-        # 6. Update altitude with optional jitter; never negative.
-        descent = cfg.descent_rate_ms
-        if cfg.descent_jitter_ms > 0.0:
-            descent += self._rng.uniform(-cfg.descent_jitter_ms, cfg.descent_jitter_ms)
-        self.state.alt_m = max(0.0, self.state.alt_m - descent * dt)
 
         # 7. Distance to target.
         self.state.distance_to_target_m = _haversine_m(
             self.state.lat, self.state.lon, cfg.target_lat, cfg.target_lon
         )
+        self.state.extras["delta_arm_deg"] = float(delta_arm_deg)
+        self.state.extras["yaw_gain_deg_s_per_deg"] = float(gain)
 
     def tick_integrate_and_simg(self) -> bool:
         """Run physics, send SIMG. Call :meth:`tick_send_simp` after UART spacing."""
@@ -465,19 +494,17 @@ class ScenarioRunner:
             return False
 
         cfg = self.config
-        dt = cfg.tick_period_s
 
         self._send(f"SIMP,{self.state.alt_m:.1f}")
         self._await_simp = False
 
         self.state.tick_count += 1
-        self.state.elapsed_s += dt
 
         # End conditions.
         if self.state.alt_m <= 0.0:
             self._finish("landed (alt=0)")
             return False
-        if self.state.distance_to_target_m <= cfg.target_radius_m:
+        if cfg.stop_on_target_reach and self.state.distance_to_target_m <= cfg.target_radius_m:
             self._finish(f"within {cfg.target_radius_m:.0f} m of target")
             return False
         if cfg.timeout_s > 0.0 and self.state.elapsed_s >= cfg.timeout_s:

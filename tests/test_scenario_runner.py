@@ -43,10 +43,11 @@ def _make_recorder():
     return sent, send
 
 
-def _const_tlm(left: int = 1267, right: int = 1833):
+def _const_tlm(left: int = 1511, right: int = 1489):
     """Fake telemetry callback that always returns the same pulse pair.
 
-    Defaults are LEFT_NEUTRAL / RIGHT_NEUTRAL: zero delta_arm -> zero yaw rate.
+    Defaults are LEFT_NEUTRAL / RIGHT_NEUTRAL from control.py:
+    zero delta_arm -> zero yaw rate.
     """
     def cb():
         return {"left_pulse_us": str(left), "right_pulse_us": str(right)}
@@ -151,7 +152,7 @@ class TestPhysics(unittest.TestCase):
     def test_neutral_pulses_no_yaw_rate(self):
         cfg = self._basic_cfg()
         sent, send = _make_recorder()
-        runner = ScenarioRunner(send, _const_tlm(1267, 1833), lambda _m: None, cfg)
+        runner = ScenarioRunner(send, _const_tlm(1511, 1489), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         for _ in range(5):
             runner.tick()
@@ -161,9 +162,9 @@ class TestPhysics(unittest.TestCase):
     def test_asymmetric_pulses_produce_yaw(self):
         cfg = self._basic_cfg()
         sent, send = _make_recorder()
-        # +20 deg of delta_arm (left + right pulse sum > 3100) -> right turn.
-        # Use 1500 / 2000 = sum 3500 -> delta = (3500-3100)/(2000/180) = +36 deg
-        runner = ScenarioRunner(send, _const_tlm(1500, 2000), lambda _m: None, cfg)
+        # Positive delta_arm (left + right pulse sum > 3000) -> right turn.
+        # Use 1700 / 1700 = sum 3400 -> delta ~= (3400-3000)/(2000/180) = +36 deg
+        runner = ScenarioRunner(send, _const_tlm(1700, 1700), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         runner.tick()
         self.assertGreater(runner.state.yaw_rate_deg_s, 0.0,
