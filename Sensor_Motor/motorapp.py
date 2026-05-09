@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+import inspect
 import importlib
 import logging
 import math
@@ -247,6 +248,88 @@ def _cache_snapshot() -> _Cache:
         target_lon=_CACHE.target_lon,
         start_lat=_CACHE.start_lat,
         start_lon=_CACHE.start_lon,
+    )
+
+
+def _call_supported_kwargs(func, **kwargs):
+    sig = inspect.signature(func)
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+        return func(**kwargs)
+    supported = {name: value for name, value in kwargs.items() if name in sig.parameters}
+    return func(**supported)
+
+
+def _guidance_sensor_objects(gmod, snap: _Cache):
+    gps_cls = getattr(gmod, "GpsSns", SimpleNamespace)
+    imu_cls = getattr(gmod, "ImuSns", SimpleNamespace)
+    baro_cls = getattr(gmod, "BaroSns", SimpleNamespace)
+
+    gps = gps_cls(
+        lat=snap.latest_gps.lat,
+        lon=snap.latest_gps.lon,
+        course=snap.latest_gps.course_rad,
+        speed=snap.latest_gps.speed_mps,
+        pos_ts=snap.latest_gps.pos_ts,
+        motion_ts=snap.latest_gps.motion_ts,
+        pos_health=snap.latest_gps.pos_health,
+        motion_health=snap.latest_gps.motion_health,
+    )
+    old_gps = gps_cls(
+        lat=snap.last_gps.lat,
+        lon=snap.last_gps.lon,
+        course=snap.last_gps.course_rad,
+        speed=snap.last_gps.speed_mps,
+        pos_ts=snap.last_gps.pos_ts,
+        motion_ts=snap.last_gps.motion_ts,
+        pos_health=snap.last_gps.pos_health,
+        motion_health=snap.last_gps.motion_health,
+    )
+    imu = imu_cls(
+        gyrz=snap.latest_imu.gyrz_rad_s,
+        ts=snap.latest_imu.ts,
+        health=snap.latest_imu.health,
+    )
+    old_imu = imu_cls(
+        gyrz=snap.last_imu.gyrz_rad_s,
+        ts=snap.last_imu.ts,
+        health=snap.last_imu.health,
+    )
+    baro = baro_cls(
+        alt=snap.latest_baro.alt_m,
+        ts=snap.latest_baro.ts,
+        health=snap.latest_baro.health,
+    )
+    old_baro = baro_cls(
+        alt=snap.last_baro.alt_m,
+        ts=snap.last_baro.ts,
+        health=snap.last_baro.health,
+    )
+    return gps, imu, baro, old_gps, old_imu, old_baro
+
+
+def _guidance_command_from_output(ctl, g_out, l1_input, now: float):
+    if ctl is None or not hasattr(ctl, "GuidanceCommand"):
+        return None
+
+    yaw_rate_deg_s = getattr(g_out, "yaw_rate_cmd_deg_s", None)
+    if yaw_rate_deg_s is None:
+        yaw_rate_rad_s = getattr(g_out, "yaw_rate_cmd_rad_s", None)
+        if yaw_rate_rad_s is None and isinstance(g_out, (int, float)):
+            yaw_rate_rad_s = float(g_out)
+        yaw_rate_deg_s = math.degrees(float(yaw_rate_rad_s or 0.0))
+
+    return ctl.GuidanceCommand(
+        yaw_rate_cmd_deg_s=float(yaw_rate_deg_s),
+        lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
+        ground_speed_mps=float(
+            getattr(
+                g_out,
+                "ground_speed_mps",
+                getattr(l1_input, "ground_speed_mps", getattr(l1_input, "speed", 0.0)),
+            ) or 0.0
+        ),
+        valid=bool(getattr(g_out, "active", True)),
+        timestamp=float(getattr(g_out, "timestamp", now) or now),
     )
 
 
@@ -531,9 +614,10 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
 
 def ctrl_paragldr(main_queue=None) -> None:
     """Parafoil control loop."""
+    global _CONTROLLER
     period = _motor_period_sec()
     while MOTORAPP_RUNSTATUS:
-        now = time.time()
+        now = time.monotonic()
         try:
             if not MOTOR_ENABLED or STATE < 3:
                 _set_neutral()
@@ -551,20 +635,100 @@ def ctrl_paragldr(main_queue=None) -> None:
                 snap = _cache_snapshot()
 
             gmod = _guidance()
-            if gmod is None:
+            ctl = _control()
+            if (
+                gmod is None
+                or not hasattr(gmod, "ProduceL1Input")
+                or not hasattr(gmod, "ProduceL1Output")
+            ):
                 cmd = _null_brake_command(now, "GUIDANCE_UNAVAILABLE")
                 g_out = _null_guidance_output(now, "GUIDANCE_UNAVAILABLE")
+            elif ctl is None or not hasattr(ctl, "controller_update"):
+                cmd = _null_brake_command(now, "CONTROL_UNAVAILABLE")
+                g_out = _null_guidance_output(now, "CONTROL_UNAVAILABLE")
             else:
-                l1_input, _mode, reason = _produce_l1_input(gmod, snap, now)
+                gps, imu, baro, old_gps, old_imu, old_baro = _guidance_sensor_objects(gmod, snap)
+                l1_result = _call_supported_kwargs(
+                    gmod.ProduceL1Input,
+                    gps=gps,
+                    imu=imu,
+                    baro=baro,
+                    old_gps=old_gps,
+                    old_imu=old_imu,
+                    old_baro=old_baro,
+                    last_gps=old_gps,
+                    last_imu=old_imu,
+                    last_baro=old_baro,
+                    origin_lat=snap.start_lat,
+                    origin_lon=snap.start_lon,
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                    now=now,
+                    l1_state=_L1_STATE,
+                )
+                if isinstance(l1_result, tuple):
+                    l1_input = l1_result[0] if len(l1_result) >= 1 else None
+                    mode = l1_result[1] if len(l1_result) >= 2 else None
+                    reason = l1_result[2] if len(l1_result) >= 3 else ""
+                else:
+                    l1_input = l1_result
+                    mode = getattr(l1_input, "control_mode", None)
+                    reason = getattr(l1_input, "reason", "")
+
                 if l1_input is None:
                     cmd = _null_brake_command(now, reason or "INPUT_UNAVAILABLE")
                     g_out = _null_guidance_output(now, reason or "INPUT_UNAVAILABLE")
                 else:
-                    g_out = _produce_l1_output(gmod, l1_input, snap, now)
-                    if bool(getattr(g_out, "active", False)):
-                        cmd = _controller_update(g_out, l1_input, now)
+                    l1_output = _call_supported_kwargs(
+                        gmod.ProduceL1Output,
+                        l1_input=l1_input,
+                        mode=mode,
+                        control_mode=mode,
+                        origin_lat=snap.start_lat,
+                        origin_lon=snap.start_lon,
+                        target_lat=snap.target_lat,
+                        target_lon=snap.target_lon,
+                        now=now,
+                        l1_state=_L1_STATE,
+                    )
+                    if l1_output is None:
+                        cmd = _null_brake_command(now, "OUTPUT_UNAVAILABLE")
+                        g_out = _null_guidance_output(now, "OUTPUT_UNAVAILABLE")
                     else:
-                        cmd = _null_brake_command(now, getattr(g_out, "reason", "SAFE_GLIDE") or "SAFE_GLIDE")
+                        if isinstance(l1_output, (int, float)):
+                            g_out = SimpleNamespace(
+                                timestamp=now,
+                                yaw_rate_cmd_rad_s=float(l1_output),
+                                active=True,
+                                degraded=False,
+                                reason="ACTIVE",
+                            )
+                        else:
+                            g_out = l1_output
+                            if not hasattr(g_out, "timestamp"):
+                                setattr(g_out, "timestamp", now)
+                            if not hasattr(g_out, "active"):
+                                setattr(g_out, "active", True)
+                            if not hasattr(g_out, "degraded"):
+                                setattr(g_out, "degraded", False)
+                            if not hasattr(g_out, "reason"):
+                                setattr(g_out, "reason", "ACTIVE")
+
+                        mode_name = getattr(mode, "value", str(mode or ""))
+                        active = bool(getattr(g_out, "active", False)) and mode_name != "SAFE_GLIDE"
+                        if active:
+                            if _CONTROLLER is None and hasattr(ctl, "make_controller_state"):
+                                _CONTROLLER = ctl.make_controller_state()
+                            guidance_cmd = _guidance_command_from_output(ctl, g_out, l1_input, now)
+                            if _CONTROLLER is None or guidance_cmd is None:
+                                cmd = _null_brake_command(now, "CONTROL_UNAVAILABLE")
+                            else:
+                                yaw_rate_meas_deg_s = float("nan")
+                                if snap.latest_imu.health and snap.latest_imu.gyrz_rad_s is not None:
+                                    yaw_rate_meas_deg_s = math.degrees(snap.latest_imu.gyrz_rad_s)
+                                cmd = ctl.controller_update(_CONTROLLER, guidance_cmd, yaw_rate_meas_deg_s, now)
+                        else:
+                            cmd = _null_brake_command(now, getattr(g_out, "reason", "SAFE_GLIDE") or "SAFE_GLIDE")
 
             _set_brake_command(cmd)
             diag_state = (
