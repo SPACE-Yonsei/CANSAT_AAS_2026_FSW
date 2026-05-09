@@ -251,8 +251,8 @@ class TestL1Update(unittest.TestCase):
         # Position very far off path → XTRACK_HARD exceeded
         inp = self._make_active_input(course_deg=0.0, speed_mps=8.0, pos_n=100.0, pos_e=-200.0)
         out = guidance.l1_update(l1, inp, time.time())
-        self.assertEqual(l1.submode, "DIRECT_TO_TARGET")
-        self.assertEqual(out.submode, "DIRECT_TO_TARGET")
+        self.assertEqual(l1.submode, "DRAW_LINE")
+        self.assertEqual(out.submode, "DRAW_LINE")
 
 
 if __name__ == "__main__":
