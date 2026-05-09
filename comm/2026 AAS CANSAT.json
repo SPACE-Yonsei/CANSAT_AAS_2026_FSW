@@ -21,7 +21,7 @@
                     "max": 0,
                     "min": 0,
                     "title": "Accelerometer X",
-                    "units": "m/s²",
+                    "units": "m/s^2",
                     "value": "--.--",
                     "widget": "x"
                 },
@@ -38,7 +38,7 @@
                     "max": 0,
                     "min": 0,
                     "title": "Accelerometer Y",
-                    "units": "m/s²",
+                    "units": "m/s^2",
                     "value": "--.--",
                     "widget": "y"
                 },
@@ -55,7 +55,7 @@
                     "max": 0,
                     "min": 0,
                     "title": "Accelerometer Z",
-                    "units": "m/s²",
+                    "units": "m/s^2",
                     "value": "--.--",
                     "widget": "z"
                 }
