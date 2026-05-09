@@ -1,7 +1,9 @@
 import time
 import unittest
+from unittest import mock
 
 from Sensor_Gps import gpsapp
+from lib import appargs
 
 
 class TestGpsApp(unittest.TestCase):
@@ -18,6 +20,7 @@ class TestGpsApp(unittest.TestCase):
         gpsapp.MOTION_HEALTH = 0
         gpsapp.LAT = 37.56
         gpsapp.LON = 126.93
+        gpsapp.GPS_TIME = "000000"
 
     def test_valid_fix(self):
         self.assertTrue(gpsapp._is_valid_fix(37.56, 126.93, 1, 8, "A"))
@@ -123,6 +126,32 @@ class TestGpsApp(unittest.TestCase):
             ),
             0,
         )
+
+    def test_comm_gga_payload_uses_sample_gps_time(self):
+        sample = ["123456", 10.5, 37.56, 126.93, 8, 1, "A", 6.0, 90.0]
+        send_calls = []
+
+        def _capture_send(*args, **kwargs):
+            send_calls.append((args, kwargs))
+
+        def _stop_after_one_tick(_period):
+            gpsapp.GPSAPP_RUNSTATUS = False
+
+        gpsapp.GPSAPP_RUNSTATUS = True
+        with mock.patch("Sensor_Gps.gpsapp._read_gps", return_value=sample), mock.patch(
+            "Sensor_Gps.gpsapp._comm_tick_interval", return_value=1
+        ), mock.patch("Sensor_Gps.gpsapp.msgstructure.send_msg", side_effect=_capture_send), mock.patch(
+            "Sensor_Gps.gpsapp.time.sleep", side_effect=_stop_after_one_tick
+        ):
+            gpsapp.read_and_send_gps_data(main_queue=object())
+
+        comm_payloads = [
+            args[4]
+            for args, _ in send_calls
+            if len(args) >= 5 and args[3] == appargs.GpsAppArg.MID_comm_gga
+        ]
+        self.assertTrue(comm_payloads)
+        self.assertTrue(comm_payloads[0].startswith("123456,"))
         self.assertEqual(
             gpsapp._motion_health(
                 8.0,

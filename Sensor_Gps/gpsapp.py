@@ -24,6 +24,7 @@ ALT = 0.0
 VELOCITY = 0.0
 DIRECTION = 0.0  # deg, GPS ground-track direction; not IMU yaw.
 SATS = 0
+GPS_TIME = "000000"
 FIX_QUALITY = 0
 RMC_STATUS = "V"
 POS_HEALTH = 0
@@ -228,6 +229,13 @@ def _gps_time_seconds(gps_time: str) -> Optional[int]:
         return None
     text = str(gps_time)
     return int(text[0:2]) * 3600 + int(text[2:4]) * 60 + int(text[4:6])
+
+
+def _normalize_gps_time(gps_time: str) -> str:
+    text = str(gps_time or "")
+    if _gps_time_ok(text):
+        return text
+    return "000000"
 
 
 def _duplicate_time_ok(gps_time: str) -> bool:
@@ -506,7 +514,7 @@ def _hold_or_update_motion(speed: float, course: float, motion_health: int) -> t
 
 
 def read_and_send_gps_data(main_queue) -> None:
-    global LAT, LON, ALT, VELOCITY, DIRECTION, SATS, FIX_QUALITY, RMC_STATUS
+    global LAT, LON, ALT, VELOCITY, DIRECTION, SATS, GPS_TIME, FIX_QUALITY, RMC_STATUS
     global POS_HEALTH, MOTION_HEALTH, GPS_HEALTH, _last_update_ts
     tick = 0
     period = _gps_period_sec()
@@ -562,6 +570,7 @@ def read_and_send_gps_data(main_queue) -> None:
                 LON = lon
                 ALT = sample["alt"]
                 SATS = sample["sats"]
+                GPS_TIME = _normalize_gps_time(sample["gps_time"])
                 FIX_QUALITY = sample["fix_quality"]
                 RMC_STATUS = sample["rmc_status"]
                 VELOCITY = velocity
@@ -597,7 +606,7 @@ def read_and_send_gps_data(main_queue) -> None:
                 appargs.GpsAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.GpsAppArg.MID_comm_gga,
-                f"000000,{ALT},{LAT},{LON},{SATS}",
+                f"{GPS_TIME},{ALT},{LAT},{LON},{SATS}",
             )
         time.sleep(period)
 
