@@ -159,4 +159,6 @@ def electroapp_main(main_queue, main_pipe) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        t1.join(timeout=2.0)
+        t2.join(timeout=2.0)
         electroapp_terminate()

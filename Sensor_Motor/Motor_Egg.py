@@ -57,6 +57,12 @@ class _DummyGPIO:
 GPIO = None
 SOLENOID_READY: bool = False
 SOLENOID_GPIO:  int  = config.EGG_SOLENOID_GPIO
+_EGG_ACTIVATE_LEVEL = int(
+    getattr(config, "EGG_RELAY_ACTIVATE_LEVEL", config.RELAY_ACTIVATE_LEVEL)
+)
+_EGG_DEACTIVATE_LEVEL = int(
+    getattr(config, "EGG_RELAY_DEACTIVATE_LEVEL", config.RELAY_DEACTIVATE_LEVEL)
+)
 SOLENOID_REPEAT:  int   = int(os.environ.get("SOLENOID_REPEAT",  "3"))
 SOLENOID_ON_SEC:  float = float(os.environ.get("SOLENOID_ON_SEC",  "0.5"))
 SOLENOID_OFF_SEC: float = float(os.environ.get("SOLENOID_OFF_SEC", "0.5"))
@@ -89,10 +95,10 @@ def init_solenoid() -> None:
     global SOLENOID_READY
     gpio = _load_gpio()
     gpio.setmode(gpio.BCM)
-    gpio.setup(SOLENOID_GPIO, gpio.OUT, initial=config.RELAY_DEACTIVATE_LEVEL)
+    gpio.setup(SOLENOID_GPIO, gpio.OUT, initial=_EGG_DEACTIVATE_LEVEL)
     SOLENOID_READY = True
     atexit.register(terminate_solenoid)
-    logger.debug("Solenoid init: GPIO %d, deactivate_level=%d", SOLENOID_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+    logger.debug("Solenoid init: GPIO %d, deactivate_level=%d", SOLENOID_GPIO, _EGG_DEACTIVATE_LEVEL)
 
 
 def activate_solenoid() -> None:
@@ -109,10 +115,10 @@ def activate_solenoid() -> None:
     logger.info("Solenoid ACTIVATE: %d pulses (on=%.2fs off=%.2fs)", repeat, SOLENOID_ON_SEC, SOLENOID_OFF_SEC)
     for i in range(repeat):
         try:
-            gpio.output(SOLENOID_GPIO, config.RELAY_ACTIVATE_LEVEL)
+            gpio.output(SOLENOID_GPIO, _EGG_ACTIVATE_LEVEL)
             time.sleep(SOLENOID_ON_SEC)
         finally:
-            gpio.output(SOLENOID_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+            gpio.output(SOLENOID_GPIO, _EGG_DEACTIVATE_LEVEL)
         if i < repeat - 1:
             time.sleep(SOLENOID_OFF_SEC)
     logger.info("Solenoid DEACTIVATE (relay safe)")
@@ -124,7 +130,7 @@ def terminate_solenoid() -> None:
     if GPIO is None:
         return
     try:
-        GPIO.output(SOLENOID_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+        GPIO.output(SOLENOID_GPIO, _EGG_DEACTIVATE_LEVEL)
         GPIO.cleanup(SOLENOID_GPIO)
     except Exception as exc:
         logger.debug("Solenoid terminate error (safe to ignore): %s", exc)

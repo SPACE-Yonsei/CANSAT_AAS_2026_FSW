@@ -71,7 +71,7 @@ _TLM_FIELDS = [
     "acc_roll", "acc_pitch", "acc_yaw",
     "mag_roll", "mag_pitch", "mag_yaw",
     "gps_time", "gps_alt", "gps_lat", "gps_lon", "gps_sats",
-    "distance_cm", "cmd_echo",
+    "distance_mm", "cmd_echo",
     "filtered_roll", "filtered_pitch", "filtered_yaw",
     "start_lat", "start_lon",
     "target_lat", "target_lon",
@@ -208,8 +208,6 @@ def _build_argparser() -> argparse.ArgumentParser:
                    help="List visible COM ports and exit.")
     p.add_argument("--seed", type=int, default=0,
                    help="RNG seed for descent jitter / gust phase.")
-    p.add_argument("--tick", type=float,
-                   help="Override scenario tick period (s).")
     p.add_argument("--no-release", action="store_true",
                    help="Skip SS,3 in setup (e.g. when state is already RELEASE).")
     p.add_argument("--keep-sim-on", action="store_true",
@@ -220,8 +218,6 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 
 def _override_config(cfg: ScenarioConfig, args: argparse.Namespace) -> ScenarioConfig:
-    if args.tick is not None and args.tick > 0:
-        cfg.tick_period_s = float(args.tick)
     if args.no_release:
         cfg.use_release_state = False
     if args.keep_sim_on:
@@ -274,10 +270,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         runner.start()
-        # Give FSW a beat to switch into SIM,ACTIVATE before the first tick;
-        # without this the first SIMG occasionally lands before the FlightLogic
-        # sim_active flag is set and is silently dropped.
-        time.sleep(max(0.4, cfg.setup_inter_cmd_delay_s * 4))
+        # Setup already waits ``setup_inter_cmd_delay_s`` between UART cmds; add a
+        # short extra beat before SIMG ticks (avoid stacking multipliers on slow links).
+        time.sleep(max(0.5, min(4.0, cfg.setup_inter_cmd_delay_s * 0.35)))
 
         next_tick = time.monotonic()
         while not runner.state.finished:

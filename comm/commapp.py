@@ -80,7 +80,11 @@ class TelemetryData:
 tlm_data = TelemetryData()
 TEAM_ID = "1070"
 
-# Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX;OFF).
+# Last start/target lat/lon actually printed on the wire — repeats omit coords to shorten CSV.
+_TLM_DL_START: Optional[tuple[float, float]] = None
+_TLM_DL_TARGET: Optional[tuple[float, float]] = None
+
+# Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX).
 _comm_serial: Optional[object] = None
 
 # Set by SIMP command; cleared on SIM,DISABLE (mode F). While mode A/S and this is set,
@@ -89,8 +93,30 @@ _simp_tlm_alt_hold: Optional[float] = None
 
 
 def set_cmdecho(cmd_str: str) -> None:
-    # Single TLM CSV field: keep body readable (commas -> ';' avoids mangled SIMG/TC).
-    tlm_data.cmd_echo = cmd_str.replace(",", ";")
+    """Record last uplink command keyword only (no payload) in cmd_echo."""
+    tlm_data.cmd_echo = cmd_str.strip()
+
+
+def _reset_tlm_geo_dedupe() -> None:
+    global _TLM_DL_START, _TLM_DL_TARGET
+    _TLM_DL_START = None
+    _TLM_DL_TARGET = None
+
+
+def _fmt_latlon_pair_deduped(
+    lat: float,
+    lon: float,
+    last_sent: Optional[tuple[float, float]],
+    fmt: str,
+    eps: float = 1e-6,
+) -> tuple[str, str, Optional[tuple[float, float]]]:
+    """Emit lat/lon strings once per distinct pair; repeats -> empty fields."""
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return "", "", last_sent
+    if last_sent is not None:
+        if abs(lat - last_sent[0]) <= eps and abs(lon - last_sent[1]) <= eps:
+            return "", "", last_sent
+    return format(lat, fmt), format(lon, fmt), (lat, lon)
 
 
 def get_current_time() -> str:
@@ -341,12 +367,24 @@ def command_handler(recv_msg: str) -> None:
         if mid == appargs.MainAppArg.MID_TerminateProcess:
             COMMAPP_RUNSTATUS = False
         elif mid == appargs.BarometerAppArg.MID_comm_alt and len(fields) >= 3:
+            # Health field (index 3) is optional for backward compatibility
+            # with older barometer payloads that emitted only "p,t,alt".
+            baro_health = 1
+            if len(fields) >= 4:
+                try:
+                    baro_health = int(float(fields[3]))
+                except ValueError:
+                    baro_health = 1
             tlm_data.pressure = float(fields[0])
             tlm_data.temperature = float(fields[1])
             if tlm_data.mode in {"A", "S"} and _simp_tlm_alt_hold is not None:
+                # SIMP-injected altitude wins over a hardware sample (healthy or not).
                 pass
-            else:
+            elif baro_health:
                 tlm_data.altitude = float(fields[2])
+            # baro_health == 0: hold last known altitude on the TLM line; do not
+            # overwrite with the synthetic 0.0 frame the driver emits when the
+            # BMP read fails.
         elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])
@@ -378,6 +416,7 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.mode = fields[0]
             if fields[0].strip().upper() == "F":
                 _simp_tlm_alt_hold = None
+                _reset_tlm_geo_dedupe()
         elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 11:
             tlm_data.left_pulse = int(float(fields[0]))
             tlm_data.right_pulse = int(float(fields[1]))
@@ -440,9 +479,15 @@ def _fmt_opt_float(value: float, fmt: str) -> str:
 
 
 def _send_one_tlm_frame(serial_instance) -> None:
-    global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS
+    global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS, _TLM_DL_START, _TLM_DL_TARGET
     tlm_data.packet_count += 1
     prevstate.update_packet_count(tlm_data.packet_count)
+    s_lat_s, s_lon_s, _TLM_DL_START = _fmt_latlon_pair_deduped(
+        tlm_data.start_lat, tlm_data.start_lon, _TLM_DL_START, ".6f"
+    )
+    t_lat_s, t_lon_s, _TLM_DL_TARGET = _fmt_latlon_pair_deduped(
+        tlm_data.target_lat, tlm_data.target_lon, _TLM_DL_TARGET, ".6f"
+    )
     line = (
         f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
         f"{tlm_data.mode},{tlm_data.state},"
@@ -454,8 +499,8 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
         f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
         f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f},"
-        f"{_fmt_opt_float(tlm_data.start_lat, '.6f')},{_fmt_opt_float(tlm_data.start_lon, '.6f')},"
-        f"{_fmt_opt_float(tlm_data.target_lat, '.6f')},{_fmt_opt_float(tlm_data.target_lon, '.6f')},"
+        f"{s_lat_s},{s_lon_s},"
+        f"{t_lat_s},{t_lon_s},"
         f"{_fmt_opt_float(tlm_data.carrot_lat, '.6f')},{_fmt_opt_float(tlm_data.carrot_lon, '.6f')},"
         f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},{_fmt_opt_float(tlm_data.desired_heading, '.2f')},"
         f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state}\n"
@@ -493,7 +538,7 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return False
     cmd = m.group(1).upper()
     option = m.group(2).strip()
-    set_cmdecho(f"{cmd},{option}")
+    set_cmdecho(cmd)
 
     if cmd == "CX":
         return cmd_cx(option, main_queue)

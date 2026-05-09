@@ -40,6 +40,7 @@ class BarometerAppArg:
 
     MID_motor_alt = 1301901
     MID_flight_alt = 1301101
+    MID_flight_alt_reset = 1301102
     MID_comm_alt = 1301201
 
 

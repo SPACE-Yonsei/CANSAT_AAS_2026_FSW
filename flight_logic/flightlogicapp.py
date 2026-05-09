@@ -50,6 +50,20 @@ release_predictor = ReleasePredictorState()
 release_reason = "TRIGGER"
 
 
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters."""
+    r = 6_371_000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2.0) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2
+    )
+    return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
 def _set_state(main_queue, new_state: int, force: bool = False) -> None:
     global state
     if not force and state == new_state:
@@ -272,6 +286,20 @@ def handle_simg(data: str, main_queue) -> None:
         payload,
     )
 
+    # In SIM mode there is no real TF-Luna stream. Populate Comm distance field
+    # with target distance (mm) so GCS "Distance" no longer stays fixed at 0.
+    if _has_release_target():
+        target_lat = float(prevstate.PREV_TARGET_LAT)
+        target_lon = float(prevstate.PREV_TARGET_LON)
+        dist_mm = _haversine_m(lat, lon, target_lat, target_lon) * 1000.0
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.DistanceAppArg.MID_comm_dis,
+            f"{dist_mm:.1f}",
+        )
+
 
 def handle_simp(data: str, main_queue) -> None:
     if not sim_active:
@@ -399,11 +427,12 @@ def solenoid_logic(main_queue, distance: float) -> None:
 
 
 def _reset_transition_counters() -> None:
-    global cnt_ascent, cnt_apogee, cnt_release, cnt_landed
+    global cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop
     cnt_ascent = 0
     cnt_apogee = 0
     cnt_release = 0
     cnt_landed = 0
+    cnt_egg_drop = 0
 
 
 def _release_condition(alt: float, now_s: float) -> ReleaseDecision:
@@ -419,6 +448,7 @@ def _release_condition(alt: float, now_s: float) -> ReleaseDecision:
 
 def barometer_logic(main_queue, alt: float) -> None:
     global max_alt, recent_alt, cnt_ascent, cnt_apogee, cnt_release, cnt_landed, cnt_egg_drop, release_reason
+    global solenoid_count, solenoid_done
     now_s = time.time()
     filtered_alt = alt
     recent_alt.append(alt)
@@ -467,15 +497,27 @@ def barometer_logic(main_queue, alt: float) -> None:
             _reset_transition_counters()
             to_egg(main_queue)
     elif state == 4:
-        cnt_egg_drop = cnt_egg_drop + 1 if alt <= 4 else 0
-        if cnt_egg_drop >= 2:
-            msgstructure.send_msg(
-                main_queue,
-                appargs.FlightlogicAppArg.AppID,
-                appargs.MotorAppArg.AppID,
-                appargs.FlightlogicAppArg.MID_motor_EggDrop,
-                "TRIGGER",
-            )
+        # Altitude-based egg-drop fallback: only fires while solenoid_logic
+        # has not yet exhausted its 3-trigger budget. Without this guard the
+        # 200ms baro tick would re-trigger activate_solenoid (3 pulses each)
+        # indefinitely whenever alt stays <= 4 m near touchdown.
+        if not solenoid_done and solenoid_count < 3:
+            cnt_egg_drop = cnt_egg_drop + 1 if alt <= 4 else 0
+            if cnt_egg_drop >= 2:
+                msgstructure.send_msg(
+                    main_queue,
+                    appargs.FlightlogicAppArg.AppID,
+                    appargs.MotorAppArg.AppID,
+                    appargs.FlightlogicAppArg.MID_motor_EggDrop,
+                    "TRIGGER",
+                )
+                solenoid_count += 1
+                prevstate.update_solenoid_state(solenoid_count, solenoid_done)
+                if solenoid_count >= 3:
+                    solenoid_done = True
+                    prevstate.update_solenoid_state(solenoid_count, solenoid_done)
+                cnt_egg_drop = 0
+        else:
             cnt_egg_drop = 0
         cnt_landed = cnt_landed + 1 if alt <= 10 else 0
         if cnt_landed >= 100:
@@ -507,7 +549,7 @@ def dispatch(msg: str, main_queue) -> None:
         handle_ss(unpacked.data, main_queue)
     elif mid == appargs.CommAppArg.MID_RouteCmd_TC:
         handle_target_coord(unpacked.data, main_queue)
-    elif mid == appargs.CommAppArg.MID_RouteCmd_CAL:
+    elif mid == appargs.BarometerAppArg.MID_flight_alt_reset:
         handle_reset_alt(unpacked.data, main_queue)
 
 

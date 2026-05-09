@@ -58,6 +58,12 @@ class _DummyGPIO:
 GPIO = None
 BURNWIRE_READY: bool = False
 BURNWIRE_GPIO:  int  = config.BURNWIRE_GPIO
+_RELEASE_ACTIVATE_LEVEL = int(
+    getattr(config, "RELEASE_RELAY_ACTIVATE_LEVEL", config.RELAY_ACTIVATE_LEVEL)
+)
+_RELEASE_DEACTIVATE_LEVEL = int(
+    getattr(config, "RELEASE_RELAY_DEACTIVATE_LEVEL", config.RELAY_DEACTIVATE_LEVEL)
+)
 BURNWIRE_DURATION_SEC: float = float(
     os.environ.get("BURNWIRE_DURATION_SEC", str(get_burnwire_delay_sec()))
 )
@@ -90,10 +96,14 @@ def init_burnwire() -> None:
     global BURNWIRE_READY
     gpio = _load_gpio()
     gpio.setmode(gpio.BCM)
-    gpio.setup(BURNWIRE_GPIO, gpio.OUT, initial=config.RELAY_DEACTIVATE_LEVEL)
+    gpio.setup(BURNWIRE_GPIO, gpio.OUT, initial=_RELEASE_DEACTIVATE_LEVEL)
     BURNWIRE_READY = True
     atexit.register(terminate_burnwire)
-    logger.debug("Burnwire init: GPIO %d, deactivate_level=%d", BURNWIRE_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+    logger.debug(
+        "Burnwire init: GPIO %d, deactivate_level=%d (release polarity swapped)",
+        BURNWIRE_GPIO,
+        _RELEASE_DEACTIVATE_LEVEL,
+    )
 
 
 def activate_burnwire() -> None:
@@ -107,10 +117,10 @@ def activate_burnwire() -> None:
     gpio = _load_gpio()
     logger.info("Burnwire ACTIVATE for %.2f s", BURNWIRE_DURATION_SEC)
     try:
-        gpio.output(BURNWIRE_GPIO, config.RELAY_ACTIVATE_LEVEL)
+        gpio.output(BURNWIRE_GPIO, _RELEASE_ACTIVATE_LEVEL)
         time.sleep(BURNWIRE_DURATION_SEC)
     finally:
-        gpio.output(BURNWIRE_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+        gpio.output(BURNWIRE_GPIO, _RELEASE_DEACTIVATE_LEVEL)
         logger.info("Burnwire DEACTIVATE (relay safe)")
 
 
@@ -120,7 +130,7 @@ def terminate_burnwire() -> None:
     if GPIO is None:
         return
     try:
-        GPIO.output(BURNWIRE_GPIO, config.RELAY_DEACTIVATE_LEVEL)
+        GPIO.output(BURNWIRE_GPIO, _RELEASE_DEACTIVATE_LEVEL)
         GPIO.cleanup(BURNWIRE_GPIO)
     except Exception as exc:
         logger.debug("Burnwire terminate error (safe to ignore): %s", exc)

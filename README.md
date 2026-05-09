@@ -49,7 +49,7 @@ The current implementation uses `Sensor_Camera/picam.py` and `Sensor_Camera/came
 
 ### Hardware config example (Pi Cam v3 / IMX708)
 
-Edit ``:
+Edit `/boot/firmware/config.txt` (path may differ by OS image):
 
 ```ini
 camera_auto_detect=0
@@ -58,25 +58,27 @@ dtoverlay=imx708
 ```
 
 Then reboot.
-/boot/firmware/config.txt
+
 ### Runtime camera behavior
 
 - Camera init tries `picamera2` first.
+- **Recording starts automatically** when the Camera app starts (i.e. when you run `python3 main.py`). No uplink command is required for the first segments.
 - Recording config (current code):
   - video format: `RGB888`
   - resolution: `640x480`
-  - segmented recording via `cameraapp` (`SEGMENT_SEC=1.0`)
-- Output directory: `PICAM_Video/`
-- Output filename format: `P_MMDD_HHMMSS_microsec.*`
+  - segmented recording via `cameraapp` (`SEGMENT_SEC=7.0`)
+  - each segment is raw **H.264** elementary stream (`.h264`) via `FileOutput` (no MP4 mux per segment)
+- Output directory: `PICAM_Video/` (under the FSW working directory)
+- Output filename format: `P_MMDD_HHMMSS_microsec.h264` (or placeholder `.txt` if the backend fails). Remux locally if needed: `ffmpeg -i seg.h264 -c copy seg.mp4`
 - If camera backend is unavailable:
   - system falls back gracefully
   - placeholder segment files are created so pipeline/test does not break
 
 ### Camera command path
 
-- `CMD,1070,CAM,ON` -> start recording
-- `CMD,1070,CAM,OFF` -> stop recording
-- FlightLogic release flow can trigger `MID_cam_activate` to force start
+- `CMD,1070,CAM,OFF` -> stop recording (after boot auto-start)
+- `CMD,1070,CAM,ON` -> start or resume recording (if you stopped with `CAM,OFF`)
+- FlightLogic entering ASCENT (state 1) sends `MID_cam_activate` to the Camera app as an additional start trigger (harmless if already recording)
 
 ## Security Notes (Comm)
 
@@ -253,4 +255,4 @@ ssh root@192.168.1.100 "ls -t /root/CANSAT_AAS_2026_FSW/logs/*.csv | head -1"
 scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/<위에서_나온_파일>.csv" .
 
 # 영상
-scp "root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.mp4" .
+scp "root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.h264" .

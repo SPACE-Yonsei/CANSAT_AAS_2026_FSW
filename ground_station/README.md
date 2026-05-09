@@ -43,21 +43,23 @@ python ground_station/ground_station.py
 
 ## Scenario player (closed-loop SIM 자동 시연)
 
-`SIMG`/`SIMP`를 1Hz로 자동 송신하여 캔위성 비행을 GCS 지도에 애니메이션으로 띄울 수 있습니다. closed-loop이기 때문에 FSW가 텔레메트리로 보내는 `left_pulse_us`/`right_pulse_us`를 다시 읽어 가상 캔위성의 heading을 업데이트하므로, 강풍/낙하속도 시나리오에서 **유도 응답이 실제로 경로에 반영**됩니다.
+`SIMG`/`SIMP`를 자동 송신하여 캔위성 비행을 GCS 지도에 애니메이션으로 띄울 수 있습니다. closed-loop이기 때문에 FSW가 텔레메트리로 보내는 `left_pulse_us`/`right_pulse_us`를 다시 읽어 가상 캔위성의 heading을 업데이트하므로, 강풍/낙하속도 시나리오에서 **유도 응답이 실제로 경로에 반영**됩니다.
 
 ### GCS GUI 에서
 
 1. 평소처럼 Connect 후 우측 하단의 **Scenario player** 패널에서 preset 선택 (`calm`, `west8`, `gust12`, `fast_descent`, `slow_descent`, `anti_parallel`, `long_range`)
-2. 필요하면 wind speed / wind dir / descent / airspeed 입력란을 채워 preset 값 일부만 override (빈칸이면 preset 값 사용)
+2. 필요하면 wind speed / wind dir / descent / airspeed / turn 90deg distance 입력란을 채워 preset 값 일부만 override (빈칸이면 preset 값 사용)
 3. **Play** 클릭 — 자동으로 `CX,ON → SIM,ENABLE → SIM,ACTIVATE → TC → SIMG → SIMP → SS,3`을 보낸 뒤 1Hz로 SIMG/SIMP를 갱신
 4. 끝나면 자동으로 `SS,5 → SIM,DISABLE`. 중간에 멈추려면 **Stop**
+
+`Mission flow mode`를 켜면 target 반경에 먼저 들어가도 즉시 종료하지 않고 계속 하강하므로, SIM 모드에서 `RELEASE -> EGG -> LANDED` 흐름 확인이 쉬워집니다.
 
 ### CLI 로 (GCS 끄고)
 
 ```powershell
 python ground_station/scenario_player.py --list                 # 사용 가능한 preset 보기
 python ground_station/scenario_player.py --port COM5 --scenario west8
-python ground_station/scenario_player.py --port COM5 --scenario gust12 --tick 0.5
+python ground_station/scenario_player.py --port COM5 --scenario gust12
 ```
 
 빌트인 preset 요약:
@@ -75,9 +77,12 @@ python ground_station/scenario_player.py --port COM5 --scenario gust12 --tick 0.
 ### 물리 모델 (단순화)
 
 - 헤딩 적분: `yaw_rate ≈ pulse_to_yaw_gain × delta_arm_deg`, 여기서 `delta_arm_deg = (left_pw + right_pw − 3100) / (2000/180)` — `Sensor_Motor/motor_control.py` 의 mixer 와 동일 식
+- 헤딩 적분: `yaw_rate ≈ gain × delta_arm_deg`, 여기서 `delta_arm_deg = (left_pw + right_pw − 3000) / (2000/180)` — `Sensor_Motor/motor_control.py` 중립값(1511/1489) 기준
+- 기본 `gain`은 실측값(최대 조향에서 약 30m 진행 시 90도 회전)과 기준 속도로 자동 환산
 - 지면속도: airspeed 벡터(heading 방향) + 풍속 벡터 (`wind_dir_met` = 풍원 방향, 기상학적 관습)
 - gust: `wind_speed + gust_amp × sin(2π t / period)`
 - 고도: 선택적 jitter 포함 일정 sink rate
+- 수치 적분: tick 내부 substep 적분으로 통신 주기가 커도 경로 점프를 완화
 - 종료 조건: `alt ≤ 0` (착륙) / 목표 반경 도달 / `timeout_s` 초과
 
 ### 안전

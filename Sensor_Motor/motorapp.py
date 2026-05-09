@@ -105,6 +105,30 @@ _UPDATE_LOCK = threading.Lock()
 _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
+
+# Align with ground_station map: (0,0) means “no fix”, not a real position.
+_START_NULL_LAT_TOL = 1.0e-4
+_START_NULL_LON_TOL = 1.0e-4
+
+
+def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
+    if lat is None or lon is None:
+        return False
+    try:
+        la = float(lat)
+        lo = float(lon)
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(la)
+        and math.isfinite(lo)
+        and -90.0 <= la <= 90.0
+        and -180.0 <= lo <= 180.0
+    )
+
+
+def _is_placeholder_latlon(lat: float, lon: float) -> bool:
+    return abs(lat) <= _START_NULL_LAT_TOL and abs(lon) <= _START_NULL_LON_TOL
 _CONTROLLER = None
 _L1_STATE = None
 
@@ -128,7 +152,6 @@ def _cache_snapshot() -> _Cache:
         start_lat=_CACHE.start_lat,
         start_lon=_CACHE.start_lon,
     )
-
 
 #handler
 def handle_gps(data: str) -> None:
