@@ -82,7 +82,7 @@ class ControlMode:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class InputResolverState:
+class InputResolver:
     # GPS raw cache
     raw_lat: Optional[float]           = None
     raw_lon: Optional[float]           = None
@@ -123,7 +123,7 @@ class InputResolverState:
 
 
 @dataclass
-class GuidanceInput:
+class L1Input:
     timestamp: float
     # Position (L)
     pos_N: Optional[float]           = None   # m north of origin
@@ -158,19 +158,17 @@ class L1Config:
 
 
 @dataclass
-class L1State:
+class L1Prevstate:
     config: L1Config          = field(default_factory=L1Config)
     start_N: float            = 0.0
     start_E: float            = 0.0
     target_N: Optional[float] = None
     target_E: Optional[float] = None
-    origin_lat: Optional[float] = None
-    origin_lon: Optional[float] = None
     submode: str              = "LINE_FOLLOW"
 
 
 @dataclass
-class GuidanceOutput:
+class L1Output:
     timestamp: float
     active: bool               = False
     degraded: bool             = False
@@ -246,12 +244,12 @@ def _wrap_180(angle_deg: float) -> float:
 # InputResolverState factory and update functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def make_resolver_state() -> InputResolverState:
-    return InputResolverState()
+def make_resolver_state() -> InputResolver:
+    return InputResolver()
 
 
 def resolver_update_gnss(
-    resolver: InputResolverState,
+    resolver: InputResolver,
     lat: float,
     lon: float,
     course_rad: float,
@@ -283,7 +281,7 @@ def resolver_update_gnss(
 
 
 def resolver_update_imu(
-    resolver: InputResolverState,
+    resolver: InputResolver,
     roll: float  = 0.0,
     pitch: float = 0.0,
     yaw: float   = 0.0,
@@ -309,7 +307,7 @@ def resolver_update_imu(
 
 
 def resolver_update_baro(
-    resolver: InputResolverState,
+    resolver: InputResolver,
     alt: float,
     ts: float,
     baro_health: bool = False,
@@ -324,12 +322,12 @@ def resolver_update_baro(
         resolver.lg_baro_ts = ts
 
 
-def resolver_set_origin(resolver: InputResolverState, lat: float, lon: float) -> None:
+def resolver_set_origin(resolver: InputResolver, lat: float, lon: float) -> None:
     resolver.origin_lat = lat
     resolver.origin_lon = lon
 
 
-def resolver_reset_origin(resolver: InputResolverState) -> None:
+def resolver_reset_origin(resolver: InputResolver) -> None:
     resolver.origin_lat = None
     resolver.origin_lon = None
 
@@ -339,8 +337,8 @@ def resolver_reset_origin(resolver: InputResolverState) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def fill_current_data(
-    resolver: InputResolverState,
-    state: GuidanceInput,
+    resolver: InputResolver,
+    state: L1Input,
     now: float,
 ) -> None:
     """Classify each field as FRESH/STALE based on health flag and age.
@@ -403,8 +401,8 @@ def fill_current_data(
 
 
 def fill_stale_data(
-    resolver: InputResolverState,
-    state: GuidanceInput,
+    resolver: InputResolver,
+    state: L1Input,
     now: float,
 ) -> None:
     """For STALE fields, supply values from last_good (within stale window)
@@ -489,7 +487,7 @@ def fill_stale_data(
             state.alt_health = SensorQuality.MISSING
 
 
-def decide_control_mode(state: GuidanceInput) -> None:
+def decide_control_mode(state: L1Input) -> None:
     """Classify LCSG and set control_mode + reason on the GuidanceInput.
 
     LCSG flags:
@@ -547,9 +545,9 @@ def decide_control_mode(state: GuidanceInput) -> None:
         state.reason       = "insufficient sensor data → safe_glide"
 
 
-def resolver_resolve(resolver: InputResolverState, now: float) -> GuidanceInput:
+def resolver_resolve(resolver: InputResolver, now: float) -> L1Input:
     """Full resolve pipeline: fill_current → fill_stale → decide_mode."""
-    state = GuidanceInput(timestamp=now)
+    state = L1Input(timestamp=now)
     fill_current_data(resolver, state, now)
     fill_stale_data(resolver, state, now)
     decide_control_mode(state)
@@ -569,11 +567,11 @@ def resolver_resolve(resolver: InputResolverState, now: float) -> GuidanceInput:
 # L1State factory and control functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def make_l1_state(cfg: Optional[L1Config] = None) -> L1State:
-    return L1State(config=cfg or L1Config())
+def make_l1_state(cfg: Optional[L1Config] = None) -> L1Prevstate:
+    return L1Prevstate(config=cfg or L1Config())
 
 
-def l1_reset(l1: L1State) -> None:
+def l1_reset(l1: L1Prevstate) -> None:
     l1.start_N   = 0.0
     l1.start_E   = 0.0
     l1.target_N  = None
@@ -581,25 +579,25 @@ def l1_reset(l1: L1State) -> None:
     l1.submode   = "LINE_FOLLOW"
 
 
-def l1_set_start(l1: L1State, N: float, E: float) -> None:
+def l1_set_start(l1: L1Prevstate, N: float, E: float) -> None:
     l1.start_N = N
     l1.start_E = E
 
 
-def l1_set_target(l1: L1State, N: float, E: float) -> None:
+def l1_set_target(l1: L1Prevstate, N: float, E: float) -> None:
     l1.target_N = N
     l1.target_E = E
     l1.submode  = "LINE_FOLLOW"  # reset submode on new target
 
 
-def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
+def l1_update(l1: L1Prevstate, inp: L1Input, now: float) -> L1Output:
     """ArduPilot L1 update_waypoint port.
 
     Reference: AP_L1_Control::update_waypoint()
     sine_Nu1 clamped to ±0.7071 (AP L1 line ~260)
     Nu clamped to ±π/2 (prevent_indecision equivalent)
     """
-    out = GuidanceOutput(timestamp=now)
+    out = L1Output(timestamp=now)
 
     # SAFE_GLIDE: no target or insufficient input
     if l1.target_N is None or inp.control_mode == ControlMode.SAFE_GLIDE:
@@ -621,7 +619,7 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
     xtrack_hard = max(XTRACK_HARD_FACTOR * L1_dist, XTRACK_HARD_MIN_M)
 
     # Path vector AB and vehicle offset AP
-    if l1.submode == "DIRECT_TO_TARGET":
+    if l1.submode == "DRAW_LINE":
         AB_N = l1.target_N - pos_N
         AB_E = l1.target_E - pos_E
         AP_N = 0.0
@@ -647,9 +645,9 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
     out.alongTrack  = alongTrack
     out.L1_dist     = L1_dist
 
-    # DIRECT_TO_TARGET latch on hard xtrack violation
-    if l1.submode != "DIRECT_TO_TARGET" and abs(crossTrack) > xtrack_hard:
-        l1.submode = "DIRECT_TO_TARGET"
+    # DRAW_LINE latch on hard xtrack violation
+    if l1.submode != "DRAW_LINE" and abs(crossTrack) > xtrack_hard:
+        l1.submode = "DRAW_LINE"
 
     # Velocity vector components along/across path
     vel_N = speed * math.cos(course)
@@ -659,7 +657,7 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
     if (
         alongTrack < 0.0
         and abs(alongTrack) > L1_dist
-        and l1.submode != "DIRECT_TO_TARGET"
+        and l1.submode != "DRAW_LINE"
     ):
         # Vehicle is behind start waypoint A — steer toward AB direction
         xtrackVel = vel_N * unit_AB_E - vel_E * unit_AB_N
@@ -684,7 +682,7 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
         Nu2 = math.atan2(xtrackVel, ltrackVel)
 
     else:
-        # Normal tracking — vehicle between A and B (or DIRECT_TO_TARGET)
+        # Normal tracking — vehicle between A and B (or DRAW_LINE)
         xtrackVel = vel_N * unit_AB_E - vel_E * unit_AB_N
         ltrackVel = vel_N * unit_AB_N + vel_E * unit_AB_E
         # sine_Nu1 clamped ±0.7071
@@ -714,8 +712,8 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
     )
 
     # Submode label for telemetry
-    if l1.submode == "DIRECT_TO_TARGET":
-        out.submode = "DIRECT_TO_TARGET"
+    if l1.submode == "DRAW_LINE":
+        out.submode = "DRAW_LINE"
     elif abs(crossTrack) > xtrack_soft:
         out.submode = "REJOIN"
     else:
@@ -728,7 +726,7 @@ def l1_update(l1: L1State, inp: GuidanceInput, now: float) -> GuidanceOutput:
 # compute_motor_output
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_motor_output(l1, controller, inp: GuidanceInput, now: float):
+def compute_motor_output(l1, controller, inp: L1Input, now: float):
     """Run L1 guidance then brake controller.
 
     Returns (BrakeCommand, GuidanceOutput).

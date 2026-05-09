@@ -58,7 +58,7 @@ class TestFillCurrentData(unittest.TestCase):
         guidance.resolver_update_imu(s, gz=5.0, imu_health=True, ts=now)
         guidance.resolver_update_baro(s, 100.0, now, baro_health=True)
 
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
 
         self.assertEqual(state.pos_status,   SensorQuality.FRESH)
@@ -79,7 +79,7 @@ class TestFillCurrentData(unittest.TestCase):
         guidance.resolver_update_imu(s, gz=5.0, imu_health=False, ts=now)
         guidance.resolver_update_baro(s, 100.0, now, baro_health=False)
 
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
 
         self.assertEqual(state.pos_status,   SensorQuality.STALE)
@@ -101,7 +101,7 @@ class TestFillStaleData(unittest.TestCase):
         guidance.resolver_update_imu(s, gz=5.0, imu_health=False, ts=now)
         guidance.resolver_update_baro(s, 100.0, now, baro_health=False)
 
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
         guidance.fill_stale_data(s, state, now)
 
@@ -121,7 +121,7 @@ class TestFillStaleData(unittest.TestCase):
             s, 37.56, 126.96, math.radians(90.0), 20.0, False, False, now,
         )
 
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)  # → STALE (health=False now)
         guidance.fill_stale_data(s, state, now)
 
@@ -136,7 +136,7 @@ class TestDecideControlMode(unittest.TestCase):
         guidance.resolver_update_gnss(
             s, 37.55, 126.95, math.radians(90.0), 12.0, True, True, now,
         )
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
         guidance.fill_stale_data(s, state, now)
         guidance.decide_control_mode(state)
@@ -150,7 +150,7 @@ class TestDecideControlMode(unittest.TestCase):
             s, 37.55, 126.95, math.radians(90.0), 12.0, False, False, now,
         )
         guidance.resolver_set_origin(s, 37.55, 126.95)
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
         guidance.fill_stale_data(s, state, now)
         guidance.decide_control_mode(state)
@@ -159,7 +159,7 @@ class TestDecideControlMode(unittest.TestCase):
         self.assertIn("stale", state.reason)
 
     def test_missing_position_gives_safe_glide(self):
-        state = guidance.GuidanceInput(timestamp=time.time())
+        state = guidance.L1Input(timestamp=time.time())
         # No resolver updates → all MISSING
         guidance.decide_control_mode(state)
 
@@ -172,7 +172,7 @@ class TestDecideControlMode(unittest.TestCase):
             s, 37.55, 126.95, math.radians(90.0), 12.0, True, True, now,
         )
         guidance.resolver_update_imu(s, gz=0.1, imu_health=True, ts=now)
-        state = guidance.GuidanceInput(timestamp=now)
+        state = guidance.L1Input(timestamp=now)
         guidance.fill_current_data(s, state, now)
         guidance.fill_stale_data(s, state, now)
         guidance.decide_control_mode(state)
@@ -182,7 +182,7 @@ class TestDecideControlMode(unittest.TestCase):
 
 class TestL1Update(unittest.TestCase):
     def _make_active_input(self, course_deg=45.0, speed_mps=8.0, pos_n=100.0, pos_e=0.0):
-        inp = guidance.GuidanceInput(timestamp=time.time())
+        inp = guidance.L1Input(timestamp=time.time())
         inp.pos_N = pos_n
         inp.pos_E = pos_e
         inp.pos_status = SensorQuality.FRESH

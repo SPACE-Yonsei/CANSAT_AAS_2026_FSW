@@ -26,8 +26,8 @@ from lib import appargs, config, msgstructure, prevstate
 from Sensor_Motor import guidance as motor_guidance
 from Sensor_Motor import Motor_Egg, Motor_Release
 from Sensor_Motor.guidance import (
-    InputResolverState,
-    GuidanceInput,
+    InputResolver,
+    L1Input,
     make_resolver_state,
     resolver_update_gnss,
     resolver_update_imu,
@@ -39,7 +39,7 @@ from Sensor_Motor.guidance import (
     fill_stale_data,
     decide_control_mode,
     compute_motor_output,
-    L1State,
+    L1Prevstate,
     L1Config,
     make_l1_state,
     l1_reset,
@@ -47,7 +47,7 @@ from Sensor_Motor.guidance import (
     l1_set_target,
     l1_update,
     ControlMode,
-    GuidanceOutput,
+    L1Output,
     _ll_to_ne,
 )
 from Sensor_Motor.control import (
@@ -77,8 +77,8 @@ PI                       = None
 
 _UPDATE_LOCK = threading.Lock()
 
-_INPUT_RESOLVER: InputResolverState    = make_resolver_state()
-_GUIDANCE:       L1State               = make_l1_state(L1Config())
+_INPUT_RESOLVER: InputResolver    = make_resolver_state()
+_GUIDANCE:       L1Prevstate               = make_l1_state(L1Config())
 _CONTROLLER:     BrakeControllerState  = make_controller_state()
 
 _TARGET_LAT: Optional[float] = None
@@ -364,7 +364,7 @@ def _check_fdir(snap) -> Optional[str]:
     return None
 
 
-def _apply_comm_tlm_fallback(g_out: GuidanceOutput) -> None:
+def _apply_comm_tlm_fallback(g_out: L1Output) -> None:
     """Fill comm CSV geo fields when L1 left them unset (no target in NE yet, etc.)."""
     if _TARGET_LAT is not None and _TARGET_LON is not None:
         if not math.isfinite(g_out.target_lat):
@@ -392,9 +392,9 @@ def _apply_comm_tlm_fallback(g_out: GuidanceOutput) -> None:
             g_out.desired_heading_deg = math.degrees(math.atan2(tE, tN))
 
 
-def _resolve_diag_state(now: float) -> GuidanceOutput:
+def _resolve_diag_state(now: float) -> L1Output:
     """Build a GuidanceOutput for telemetry without touching controller state."""
-    state = GuidanceInput(timestamp=now)
+    state = L1Input(timestamp=now)
     fill_current_data(_INPUT_RESOLVER, state, now)
     fill_stale_data(_INPUT_RESOLVER, state, now)
     decide_control_mode(state)
@@ -403,7 +403,7 @@ def _resolve_diag_state(now: float) -> GuidanceOutput:
 
 # ── Diagnostics ────────────────────────────────────────────────────────────────
 
-def _send_diag(main_queue, cmd: BrakeCommand, g_out: GuidanceOutput,
+def _send_diag(main_queue, cmd: BrakeCommand, g_out: L1Output,
                diag_state: str) -> None:
     if main_queue is None:
         return
@@ -484,7 +484,7 @@ def ctrl_paragldr(main_queue=None) -> None:
     STATE == 5                   → servo off
     STATE 3 / 4, MOTOR_ENABLED   → resolve input → guidance → controller → servo
     """
-    _null_g = GuidanceOutput(timestamp=0.0)
+    _null_g = L1Output(timestamp=0.0)
 
     period = _motor_period_sec()
     while MOTORAPP_RUNSTATUS:
@@ -510,7 +510,7 @@ def ctrl_paragldr(main_queue=None) -> None:
                 continue
 
             with _UPDATE_LOCK:
-                state = GuidanceInput(timestamp=now)
+                state = L1Input(timestamp=now)
                 fill_current_data(_INPUT_RESOLVER, state, now)
                 fill_stale_data(_INPUT_RESOLVER, state, now)
                 decide_control_mode(state)
