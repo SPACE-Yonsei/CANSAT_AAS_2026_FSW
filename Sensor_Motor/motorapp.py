@@ -9,6 +9,7 @@ into guidance instead of reading guidance/control globals.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 import importlib
 import logging
@@ -21,6 +22,14 @@ from typing import Any, Optional
 from lib import appargs, config, msgstructure, prevstate
 
 LOGGER = logging.getLogger(__name__)
+
+GPS_HISTORY_SEC = 10.0
+IMU_HISTORY_SEC = 5.0
+BARO_HISTORY_SEC = 10.0
+
+
+def _history_len(rate_hz: float, seconds: float) -> int:
+    return max(1, int(math.ceil(max(0.1, rate_hz) * seconds)))
 
 
 @dataclass
@@ -51,12 +60,30 @@ class _BaroFromApp:
 
 @dataclass
 class _Cache:
-    raw_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
-    last_good_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
-    raw_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
-    last_good_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
-    raw_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
-    last_good_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
+    latest_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
+    last_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
+    gps_history: deque[_GpsFromApp] = field(
+        default_factory=lambda: deque(
+            maxlen=_history_len(float(config.GPS_RATE_HZ), GPS_HISTORY_SEC)
+        )
+    )
+
+    latest_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
+    last_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
+    imu_history: deque[_ImuFromApp] = field(
+        default_factory=lambda: deque(
+            maxlen=_history_len(float(config.IMU_RATE_HZ), IMU_HISTORY_SEC)
+        )
+    )
+
+    latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
+    last_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
+    baro_history: deque[_BaroFromApp] = field(
+        default_factory=lambda: deque(
+            maxlen=_history_len(float(config.BAROMETER_RATE_HZ), BARO_HISTORY_SEC)
+        )
+    )
+
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
     start_lat: Optional[float] = None
@@ -197,17 +224,32 @@ def _latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float) 
 
 def _cache_snapshot() -> _Cache:
     snap = _Cache()
-    snap.raw_gps = _GpsFromApp(**vars(_CACHE.raw_gps))
-    snap.last_good_gps = _GpsFromApp(**vars(_CACHE.last_good_gps))
-    snap.raw_imu = _ImuFromApp(**vars(_CACHE.raw_imu))
-    snap.last_good_gyrz = _ImuFromApp(**vars(_CACHE.last_good_gyrz))
-    snap.raw_baro = _BaroFromApp(**vars(_CACHE.raw_baro))
-    snap.last_good_alt = _BaroFromApp(**vars(_CACHE.last_good_alt))
+    snap.latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
+    snap.last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
+    snap.latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
+    snap.last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
+    snap.latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
+    snap.last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
     snap.target_lat = _CACHE.target_lat
     snap.target_lon = _CACHE.target_lon
     snap.start_lat = _CACHE.start_lat
-    snap.origin_lon = _CACHE.origin_lon
+    snap.start_lon = _CACHE.start_lon
     return snap
+
+
+def _lock_start_if_ready() -> None:
+    global _START_POINT_LOCKED
+    if _START_POINT_LOCKED or STATE < 3:
+        return
+    gps = _CACHE.latest_gps
+    if not gps.pos_health or gps.lat is None or gps.lon is None:
+        return
+    if not (-90.0 <= float(gps.lat) <= 90.0 and -180.0 <= float(gps.lon) <= 180.0):
+        return
+    _CACHE.start_lat = float(gps.lat)
+    _CACHE.start_lon = float(gps.lon)
+    _START_POINT_LOCKED = True
+    prevstate.update_start_point(float(gps.lat), float(gps.lon), True)
 
 def handle_gps(data: str) -> None:
     """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth"""
@@ -228,27 +270,29 @@ def handle_gps(data: str) -> None:
 
     now = time.time()
     course_rad = math.radians(course_deg)
+    sample = _GpsFromApp(
+        lat=lat,
+        lon=lon,
+        course_rad=course_rad,
+        speed_mps=ground_speed,
+        pos_ts=now,
+        motion_ts=now,
+        pos_health=pos_health,
+        motion_health=motion_health,
+    )
     with _UPDATE_LOCK:
-        _CACHE.raw_gps = _GpsFromApp(
-            lat=lat,
-            lon=lon,
-            course_rad=course_rad,
-            speed_mps=ground_speed,
-            pos_ts=now,
-            motion_ts=now,
-            pos_health=pos_health,
-            motion_health=motion_health,
-        )
+        _CACHE.latest_gps = sample
+        _CACHE.gps_history.append(sample)
         if pos_health:
-            _CACHE.last_good_gps.lat = lat
-            _CACHE.last_good_gps.lon = lon
-            _CACHE.last_good_gps.pos_ts = now
-            _CACHE.last_good_gps.pos_health = True
+            _CACHE.last_gps.lat = lat
+            _CACHE.last_gps.lon = lon
+            _CACHE.last_gps.pos_ts = now
+            _CACHE.last_gps.pos_health = True
         if motion_health:
-            _CACHE.last_good_gps.course_rad = course_rad
-            _CACHE.last_good_gps.speed_mps = ground_speed
-            _CACHE.last_good_gps.motion_ts = now
-            _CACHE.last_good_gps.motion_health = True
+            _CACHE.last_gps.course_rad = course_rad
+            _CACHE.last_gps.speed_mps = ground_speed
+            _CACHE.last_gps.motion_ts = now
+            _CACHE.last_gps.motion_health = True
         _lock_start_if_ready()
 
 
@@ -267,10 +311,12 @@ def handle_imu(data: str) -> None:
 
     now = time.time()
     gyrz_rad_s = math.radians(gyrz_deg_s)
+    sample = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
     with _UPDATE_LOCK:
-        _CACHE.raw_imu = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
+        _CACHE.latest_imu = sample
+        _CACHE.imu_history.append(sample)
         if health:
-            _CACHE.last_good_gyrz = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=True)
+            _CACHE.last_imu = sample
 
 
 def handle_barometer(data: str) -> None:
@@ -284,10 +330,12 @@ def handle_barometer(data: str) -> None:
         return
 
     now = time.time()
+    sample = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
     with _UPDATE_LOCK:
-        _CACHE.raw_baro = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
+        _CACHE.latest_baro = sample
+        _CACHE.baro_history.append(sample)
         if health:
-            _CACHE.last_good_alt = _BaroFromApp(alt_m=alt_m, ts=now, health=True)
+            _CACHE.last_baro = sample
 
 
 def handle_target_coord(data: str) -> None:
@@ -327,7 +375,7 @@ def handle_flight_state(data: str) -> None:
         STATE = new_state
         if new_state < 3:
             _CACHE.start_lat = None
-            _CACHE.origin_lon = None
+            _CACHE.start_lon = None
             _START_POINT_LOCKED = False
             prevstate.clear_start_point()
             gmod = _guidance()
@@ -407,7 +455,7 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
         target_lat = _CACHE.target_lat
         target_lon = _CACHE.target_lon
         origin_lat = _CACHE.start_lat
-        origin_lon = _CACHE.origin_lon
+        origin_lon = _CACHE.start_lon
 
     head = [
         str(getattr(cmd, "left_pw", 0)),
@@ -544,7 +592,7 @@ def init() -> None:
         lat, lon = start_point
         if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
             _CACHE.start_lat = float(lat)
-            _CACHE.origin_lon = float(lon)
+            _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
 
     gmod = _guidance()
