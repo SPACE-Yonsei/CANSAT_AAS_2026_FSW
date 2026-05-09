@@ -10,8 +10,7 @@ Units: _deg / _rad / _m / _ms / _mps suffixes throughout.
 from __future__ import annotations
 import enum
 from types import SimpleNamespace
-
-from pyparsing import Optional
+from typing import Optional
 
 # ── Sensor age constants ──────────────────────────────────────────────────────
 POS_FRESH_AGE    = 1.0    # s
