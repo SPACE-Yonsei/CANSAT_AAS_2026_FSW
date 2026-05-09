@@ -1,7 +1,8 @@
 """Closed-loop scenario player for the CANSAT GCS.
 
 Drives the FSW through a SIM-mode trajectory by sending SIMG/SIMP commands at
-a fixed cadence while reading back ``left_pulse_us`` / ``right_pulse_us`` from
+a configurable cadence (default 7 s to match UART spacing; each tick also advances
+that many simulated seconds) while reading back ``left_pulse_us`` / ``right_pulse_us`` from
 telemetry to update the simulated cansat heading. The map in
 ``ground_station.py`` then animates the trail naturally because every SIMG
 causes the FSW to publish a new GPS frame in its next TLM packet.
@@ -102,7 +103,9 @@ class ScenarioConfig:
     gust_amp_ms: float = 0.0          # additional sinusoidal wind component
     gust_period_s: float = 4.0
 
-    tick_period_s: float = 1.0        # SIMG / SIMP send rate (matches TLM 1Hz)
+    # Wall-clock spacing between SIMG+SIMP pairs (GCS ``after`` / CLI loop) and
+    # simulated dt per tick. Default matches ``setup_inter_cmd_delay_s`` for slow UART.
+    tick_period_s: float = 7.0
     pulse_to_yaw_gain: float = 0.3    # deg/s yaw per deg of delta_arm
     yaw_rate_max_deg_s: float = 60.0  # safety clamp on simulated yaw
 
