@@ -113,8 +113,8 @@ class ScenarioConfig:
     landing_state: int = 5            # SS,5 on completion
     auto_disable_sim: bool = True     # SIM,DISABLE on completion
     # UART/XBee round-trip can be seconds; spacing avoids FlightLogic dropping cmds.
-    setup_inter_cmd_delay_s: float = 5.0  # spacing between setup commands (see begin_async_setup)
-    teardown_inter_cmd_delay_s: float = 2.0  # SS/SIM,DISABLE spacing (often shorter than setup)
+    setup_inter_cmd_delay_s: float = 7.0  # UART spacing between setup commands (GCS / CLI)
+    teardown_inter_cmd_delay_s: float = 7.0  # SS / SIM,DISABLE spacing (match setup on slow links)
 
 
 # ----------------------------------------------------------------- presets

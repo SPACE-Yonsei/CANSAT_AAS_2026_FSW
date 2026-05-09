@@ -84,4 +84,5 @@ def cameraapp_main(main_pipe) -> None:
         pass
     finally:
         logger.info("Camera app terminating")
+        t.join(timeout=2.0)
         picam.terminate(cam)

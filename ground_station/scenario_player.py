@@ -276,7 +276,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         runner.start()
         # Setup already waits ``setup_inter_cmd_delay_s`` between UART cmds; add a
         # short extra beat before SIMG ticks (avoid stacking multipliers on slow links).
-        time.sleep(max(0.5, min(3.0, cfg.setup_inter_cmd_delay_s * 0.4)))
+        time.sleep(max(0.5, min(4.0, cfg.setup_inter_cmd_delay_s * 0.35)))
 
         next_tick = time.monotonic()
         while not runner.state.finished:
