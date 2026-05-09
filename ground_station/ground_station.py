@@ -1030,22 +1030,31 @@ class GroundStation(tk.Tk):
         runner = self._scenario_runner
         if runner is None:
             return
+        cfg = runner.config
+        spacing_ms = max(0, int(cfg.simg_simp_spacing_s * 1000))
+        gap_after_simp_ms = max(
+            0, int((cfg.tick_period_s - cfg.simg_simp_spacing_s) * 1000)
+        )
         try:
-            still_running = runner.tick()
+            if runner.awaiting_simp():
+                still_running = runner.tick_send_simp()
+                delay_ms = gap_after_simp_ms if still_running else None
+            else:
+                still_running = runner.tick_integrate_and_simg()
+                delay_ms = spacing_ms if still_running else None
         except Exception as exc:
             self._append_console(f"[scenario] tick error: {exc}", "err")
             still_running = False
+            delay_ms = None
         s = runner.state
         self._scenario_status_var.set(
             f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
             f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
             f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s"
         )
-        if still_running:
-            period_ms = max(50, int(runner.config.tick_period_s * 1000))
-            self._scenario_after_id = self.after(period_ms, self._scenario_tick)
-        else:
-            # tick() already called _finish; finalise teardown.
+        if still_running and delay_ms is not None:
+            self._scenario_after_id = self.after(delay_ms, self._scenario_tick)
+        elif not still_running:
             self._finalise_scenario(send_teardown=True, reason=s.finish_reason or "complete")
 
     def _on_scenario_stop(self) -> None:

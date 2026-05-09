@@ -1,8 +1,9 @@
 """Closed-loop scenario player for the CANSAT GCS.
 
 Drives the FSW through a SIM-mode trajectory by sending SIMG/SIMP commands at
-a configurable cadence (default 7 s to match UART spacing; each tick also advances
-that many simulated seconds) while reading back ``left_pulse_us`` / ``right_pulse_us`` from
+a configurable cadence (default 7 s wall between SIMG bursts; ``simg_simp_spacing_s``
+pauses between SIMG and SIMP on the UART). Each tick advances ``tick_period_s``
+simulated seconds while reading back ``left_pulse_us`` / ``right_pulse_us`` from
 telemetry to update the simulated cansat heading. The map in
 ``ground_station.py`` then animates the trail naturally because every SIMG
 causes the FSW to publish a new GPS frame in its next TLM packet.
@@ -116,7 +117,9 @@ class ScenarioConfig:
     landing_state: int = 5            # SS,5 on completion
     auto_disable_sim: bool = True     # SIM,DISABLE on completion
     # UART/XBee round-trip can be seconds; spacing avoids FlightLogic dropping cmds.
-    setup_inter_cmd_delay_s: float = 7.0  # UART spacing between setup commands (GCS / CLI)
+    setup_inter_cmd_delay_s: float = 7.0  # UART spacing during setup / teardown only
+    # Wall time between SIMG and SIMP on each glide tick (CLI ``time.sleep`` / Tk ``after``).
+    simg_simp_spacing_s: float = 7.0
     teardown_inter_cmd_delay_s: float = 7.0  # SS / SIM,DISABLE spacing (match setup on slow links)
 
 
@@ -266,9 +269,9 @@ class ScenarioRunner:
     Usage:
         runner = ScenarioRunner(send_cb, get_tlm_cb, log_cb, config)
         runner.start()                    # sends setup
-        while not runner.state.finished:  # or tk.after(period_ms, tick)
-            time.sleep(period)
-            runner.tick()
+        while not runner.state.finished:  # or Tk: alternate integrate+simg /
+            runner.tick()                 # simp after ``simg_simp_spacing_s``
+            ...
         runner.stop()                     # idempotent; safe to call twice
     """
 
@@ -293,6 +296,7 @@ class ScenarioRunner:
         import random
         self._rng = random.Random(rng_seed if rng_seed is not None else 0)
         self._async_phase: bool = False
+        self._await_simp: bool = False
 
     # ----------------------------------------------------------- setup
     def setup_command_sequence(self) -> list[str]:
@@ -341,6 +345,7 @@ class ScenarioRunner:
                   f"target_d={self.state.distance_to_target_m:.0f}m  "
                   f"wind={cfg.wind_speed_ms:.1f}m/s @{cfg.wind_dir_met_deg:.0f}deg  "
                   f"descent={cfg.descent_rate_ms:.1f}m/s")
+        self._await_simp = False
 
     # ----------------------------------------------------------- API
     def begin_async_setup(self) -> list[str]:
@@ -377,11 +382,8 @@ class ScenarioRunner:
         self._started = True
         return sent_any
 
-    def tick(self) -> bool:
-        """Advance one period. Returns True while still running."""
-        if not self._started or self._stopped or self.state.finished:
-            return False
-
+    def _physics_step(self) -> None:
+        """Integrate one simulated period from TLM feedback (no UART)."""
         cfg = self.config
         dt = cfg.tick_period_s
 
@@ -437,19 +439,41 @@ class ScenarioRunner:
             self.state.lat, self.state.lon, cfg.target_lat, cfg.target_lon
         )
 
-        # 8. Send SIMG + SIMP. (0,0) is rejected by cmd_simg; the flat-earth
-        #    integration above can't reach (0,0) from any sensible start.
+    def tick_integrate_and_simg(self) -> bool:
+        """Run physics, send SIMG. Call :meth:`tick_send_simp` after UART spacing."""
+        if not self._started or self._stopped or self.state.finished:
+            return False
+        if self._await_simp:
+            return False
+
+        self._physics_step()
+
+        # (0,0) is rejected by cmd_simg; flat-earth integration won't reach it.
         self._send(self._format_simg(
             self.state.lat, self.state.lon,
             self.state.course_deg, self.state.ground_speed_ms,
             self.state.alt_m,
         ))
+        self._await_simp = True
+        return True
+
+    def tick_send_simp(self) -> bool:
+        """Send SIMP after SIMG; completes the tick (counters + end checks)."""
+        if not self._started or self._stopped or self.state.finished:
+            return False
+        if not self._await_simp:
+            return False
+
+        cfg = self.config
+        dt = cfg.tick_period_s
+
         self._send(f"SIMP,{self.state.alt_m:.1f}")
+        self._await_simp = False
 
         self.state.tick_count += 1
         self.state.elapsed_s += dt
 
-        # 9. End conditions.
+        # End conditions.
         if self.state.alt_m <= 0.0:
             self._finish("landed (alt=0)")
             return False
@@ -461,12 +485,26 @@ class ScenarioRunner:
             return False
         return True
 
+    def awaiting_simp(self) -> bool:
+        """True after SIMG until SIMP is sent (for async Tk scheduling)."""
+        return self._await_simp
+
+    def tick(self) -> bool:
+        """Advance one period (integrate, SIMG, UART pause, SIMP). Blocking CLI/tests."""
+        if not self.tick_integrate_and_simg():
+            return False
+        spacing = self.config.simg_simp_spacing_s
+        if spacing > 0.0:
+            time.sleep(spacing)
+        return self.tick_send_simp()
+
     def stop(self, send_teardown: bool = True,
              sleep_fn: Callable[[float], None] = time.sleep,
              reason: str = "user-stop") -> None:
         if self._stopped:
             return
         self._stopped = True
+        self._await_simp = False
         if not self.state.finished:
             self._finish(reason, log=False)
         if send_teardown:
@@ -544,7 +582,8 @@ def iterate_scenario(
     try:
         while runner.tick():
             yield runner.state
-            sleep_fn(config.tick_period_s)
+            # tick() already sleeps ``simg_simp_spacing_s`` between SIMG and SIMP.
+            sleep_fn(max(0.0, config.tick_period_s - config.simg_simp_spacing_s))
         yield runner.state
     finally:
         runner.stop(sleep_fn=sleep_fn, reason="generator-exit")

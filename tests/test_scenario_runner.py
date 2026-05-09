@@ -141,6 +141,7 @@ class TestPhysics(unittest.TestCase):
             descent_rate_ms=5.0,
             wind_speed_ms=0.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=300.0,
         )
         for k, v in overrides.items():
@@ -228,6 +229,7 @@ class TestEndConditions(unittest.TestCase):
             init_heading_deg=0.0,
             descent_rate_ms=5.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=120.0,
         )
         sent, send = _make_recorder()
@@ -249,6 +251,7 @@ class TestEndConditions(unittest.TestCase):
             init_heading_deg=180.0,               # heads opposite of target
             descent_rate_ms=0.001,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             timeout_s=5.0,
         )
         sent, send = _make_recorder()
@@ -273,6 +276,7 @@ class TestEndConditions(unittest.TestCase):
             descent_rate_ms=1.0,
             wind_speed_ms=0.0,
             tick_period_s=1.0,
+            simg_simp_spacing_s=0.0,
             target_radius_m=5.0,
         )
         sent, send = _make_recorder()
@@ -286,6 +290,7 @@ class TestEndConditions(unittest.TestCase):
 class TestSimgPayloadShape(unittest.TestCase):
     def test_simg_payload_format(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
@@ -307,6 +312,7 @@ class TestSimgPayloadShape(unittest.TestCase):
 class TestRunnerLifecycle(unittest.TestCase):
     def test_double_start_is_noop(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         self.assertTrue(runner.start(sleep_fn=_no_sleep))
@@ -314,6 +320,7 @@ class TestRunnerLifecycle(unittest.TestCase):
 
     def test_tick_after_stop_is_noop(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
@@ -322,6 +329,7 @@ class TestRunnerLifecycle(unittest.TestCase):
 
     def test_stop_idempotent(self):
         cfg = get_preset("calm")
+        cfg.simg_simp_spacing_s = 0.0
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
