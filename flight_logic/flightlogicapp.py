@@ -50,6 +50,20 @@ release_predictor = ReleasePredictorState()
 release_reason = "TRIGGER"
 
 
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters."""
+    r = 6_371_000.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlmb = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dphi / 2.0) ** 2
+        + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2.0) ** 2
+    )
+    return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
+
+
 def _set_state(main_queue, new_state: int, force: bool = False) -> None:
     global state
     if not force and state == new_state:
@@ -271,6 +285,20 @@ def handle_simg(data: str, main_queue) -> None:
         appargs.GpsAppArg.MID_flight_gps_sim,
         payload,
     )
+
+    # In SIM mode there is no real TF-Luna stream. Populate Comm distance field
+    # with target distance (mm) so GCS "Distance" no longer stays fixed at 0.
+    if _has_release_target():
+        target_lat = float(prevstate.PREV_TARGET_LAT)
+        target_lon = float(prevstate.PREV_TARGET_LON)
+        dist_mm = _haversine_m(lat, lon, target_lat, target_lon) * 1000.0
+        msgstructure.send_msg(
+            main_queue,
+            appargs.FlightlogicAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.DistanceAppArg.MID_comm_dis,
+            f"{dist_mm:.1f}",
+        )
 
 
 def handle_simp(data: str, main_queue) -> None:
