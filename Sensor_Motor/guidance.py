@@ -37,10 +37,10 @@ XTRACK_SOFT_MIN_M  = 20.0
 XTRACK_HARD_MIN_M  = 50.0
 
 class SensorQuality(enum.Enum):
-    FRESH   = "fresh"
-    OLD     = "old"
-    STALE   = "stale"
-    MISSING = "missing"
+    FRESH   = "FRESH"
+    OLD     = "OLD"
+    STALE   = "STALE"
+    MISSING = "MISSING"
 SENSOR_QUALITY = SensorQuality
 
 class ControlMode(enum.Enum):
@@ -67,26 +67,26 @@ class GpsSns:
 GPS_SNS = GpsSns
 
 @dataclass
-class GyrZ:
+class ImuSns:
     gyrz: Optional[float] = None
     ts: Optional[float] = None
     health: bool = False
-GYRZ = GyrZ
+IMU_SNS = ImuSns
 
 @dataclass
-class AltSns:
+class BaroSns:
     alt: Optional[float] = None
     ts: Optional[float] = None
     health: bool = False
-ALT_SNS = AltSns
+BARO_SNS = BaroSns
 
 @dataclass
 class L1Input:
-    l: Optional[tuple[float, float]] = None  # (lat, lon)
-    c: Optional[float] = None  # course (deg)
-    v: Optional[float] = None  # speed (m/s)
-    g: Optional[GyrZ] = None  # gyro
-L1_INPUT = L1Input
+    pos: Optional[tuple[float, float]] = None  # (lat, lon)
+    course: Optional[float] = None  # course (deg)
+    speed: Optional[float] = None  # speed (m/s)
+    gyrz: Optional[float] = None  # gyro
+L1_INPUT = L1Input()
 
 #have to add member
 @dataclass
@@ -98,18 +98,76 @@ class L1Output:
 
 
 #have to add parameters
-def FillFresh()->L1Input:
+def FillFresh(GpsSns, GyrZ, Alt) -> L1Input:
+    now = time.time() if now is None else now
+    lcsg = L1Input() if lcsg is None else lcsg
+
+    if (
+        gps.lat is not None
+        and gps.lon is not None
+        and gps.pos_ts is not None
+        and gps.pos_health
+        and now - gps.pos_ts <= POS_FRESH_AGE
+    ):
+        lcsg.l = (gps.lat, gps.lon)
+        earth_r = 6_371_000.0
+        dlat = math.radians(gps.lat - origin_lat)
+        dlon = math.radians(gps.lon - origin_lon)
+        lcsg.pos_N = dlat * earth_r
+        lcsg.pos_E = dlon * earth_r * math.cos(math.radians(origin_lat))
+        lcsg.pos_status = SensorQuality.FRESH
+    elif gps.pos_ts is not None:
+        lcsg.pos_status = SensorQuality.STALE
+
+    if (
+        gps.course is not None
+        and gps.speed is not None
+        and gps.motion_ts is not None
+        and gps.motion_health
+        and now - gps.motion_ts <= MOTION_FRESH_AGE
+    ):
+        lcsg.course = gps.course
+        lcsg.ground_speed_mps = gps.speed
+    
+    if (
+        gyrz is not None
+        and gyrz.gyrz is not None
+        and gyrz.ts is not None
+        and gyrz.health
+        and now - gyrz.ts <= GYRZ_FRESH_AGE
+    ):
+        lcsg.g = gyrz
+        lcsg.gyrz = gyrz.gyrz
+        lcsg.gyrz_health = SensorQuality.FRESH
+    elif gyrz is not None and gyrz.ts is not None:
+        lcsg.gyrz_health = SensorQuality.STALE
+
+    if (
+        alt is not None
+        and alt.alt is not None
+        and alt.ts is not None
+        and alt.health
+        and now - alt.ts <= ALT_FRESH_AGE
+    ):
+        lcsg.altitude = alt.alt
+        lcsg.alt_health = SensorQuality.FRESH
+    elif alt is not None and alt.ts is not None:
+        lcsg.alt_health = SensorQuality.STALE
+
+    return lcsg
 
 def FillOld()->L1Input:
+    pass
 
 def DecideControlMode()->ControlMode:
+    return ControlMode.SAFE_GLIDE
 
 #prepocessing: fill fresh -> fill unfresh -> decide control mode -> produce L1 input
 #receives data directly from apps 
-def ProduceL1Input() -> (L1Input, ControlMode):
+def ProduceL1Input(gps: GpsSns, imu: ImuSns, ) -> (L1Input, ControlMode):
     FillFresh()
     FillOld()
     DecideControlMode()
 
 def ProduceL1Output() -> float:
-
+    pass

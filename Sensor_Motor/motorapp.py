@@ -1,102 +1,81 @@
-"""Motor app: sensor ingestion, L1 guidance, and brake control.
+"""Motor app: sensor ingestion, guidance orchestration, and actuator output.
 
-Architecture:
-  sensor apps → InputResolverState → L1State → BrakeControllerState → servo
+Current boundary:
+  sensor apps -> MotorSensorCache -> ProduceL1Input/ProduceL1Output -> controller -> servo
 
-Responsibilities:
-  - Receive sensor messages, update GuidanceInputResolver
-  - ~10 Hz control loop: resolve input → guidance → controller → servo PWM
-  - STATE gate: active guidance only in STATE 3 / 4
-  - Burnwire and egg-drop activation (pass-through to hardware threads)
-  - Send diagnostics to Comm
-
-motorapp does NOT perform sensor reliability checks.
-posHealth / motionHealth from GNSS are the only availability signals honoured.
+This module keeps runtime data in an explicit sensor cache and passes snapshots
+into guidance instead of reading guidance/control globals.
 """
+
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+import importlib
 import logging
 import math
 import threading
 import time
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from lib import appargs, config, msgstructure, prevstate
-from Sensor_Motor import guidance as motor_guidance
-from Sensor_Motor import Motor_Egg, Motor_Release
-from Sensor_Motor.guidance import (
-    L1Input,
-    make_resolver_state,
-    resolver_update_gnss,
-    resolver_update_imu,
-    resolver_update_baro,
-    resolver_set_origin,
-    resolver_reset_origin,
-    resolver_resolve,
-    fill_current_data,
-    fill_stale_data,
-    decide_control_mode,
-    compute_motor_output,
-    L1Config,
-    make_l1_state,
-    l1_reset,
-    l1_set_start,
-    l1_set_target,
-    l1_update,
-    ControlMode,
-    L1Output,
-    _ll_to_ne,
-)
-from Sensor_Motor.control import (
-    BrakeControllerState,
-    ControlConfig,
-    make_controller_state,
-    controller_reset,
-    controller_update,
-    GuidanceCommand,
-    BrakeCommand,
-    init_control,
-    set_neutral,
-    set_motors_off,
-    set_brake_command,
-    terminate_control,
-    LEFT_NEUTRAL,
-    RIGHT_NEUTRAL,
-)
 
 LOGGER = logging.getLogger(__name__)
 
-# ── Runtime state ──────────────────────────────────────────────────────────────
+
+@dataclass
+class _GpsFromApp:
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    course_rad: Optional[float] = None
+    speed_mps: Optional[float] = None
+    pos_ts: Optional[float] = None
+    motion_ts: Optional[float] = None
+    pos_health: bool = False
+    motion_health: bool = False
+
+
+@dataclass
+class _ImuFromApp:
+    gyrz_rad_s: Optional[float] = None
+    ts: Optional[float] = None
+    health: bool = False
+
+
+@dataclass
+class _BaroFromApp:
+    alt_m: Optional[float] = None
+    ts: Optional[float] = None
+    health: bool = False
+
+
+@dataclass
+class _MotorSensorCache:
+    raw_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
+    last_good_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
+    raw_gyrz: _ImuFromApp = field(default_factory=_ImuFromApp)
+    last_good_gyrz: _ImuFromApp = field(default_factory=_ImuFromApp)
+    raw_alt: _BaroFromApp = field(default_factory=_BaroFromApp)
+    last_good_alt: _BaroFromApp = field(default_factory=_BaroFromApp)
+    target_lat: Optional[float] = None
+    target_lon: Optional[float] = None
+    origin_lat: Optional[float] = None
+    origin_lon: Optional[float] = None
+
+
 MOTORAPP_RUNSTATUS: bool = True
-MOTOR_ENABLED: bool      = True
-STATE: int               = 0
-PI                       = None
+MOTOR_ENABLED: bool = True
+STATE: int = 0
+PI = None
 
 _UPDATE_LOCK = threading.Lock()
-
-_INPUT_RESOLVER = make_resolver_state()
-_GUIDANCE       = make_l1_state(L1Config())
-_CONTROLLER: BrakeControllerState = make_controller_state()
-
-_TARGET_LAT: Optional[float] = None
-_TARGET_LON: Optional[float] = None
-
-# Legacy observable state kept for tests/replay scripts during migration.
-IMU = SimpleNamespace(
-    roll=0.0, pitch=0.0, yaw=0.0,
-    accx=0.0, accy=0.0, accz=0.0,
-    magx=0.0, magy=0.0, magz=0.0,
-    gyrx=0.0, gyry=0.0, gyrz=0.0,
-    imu_health=0,
-)
-GPS_VECTOR = SimpleNamespace(lat=0.0, lon=0.0, direction=0.0, velocity=0.0)
-GPS_HEALTH = SimpleNamespace(pos_health=0, motion_health=0)
-TARGET = None
-ALT = 0.0
-BARO_HEALTH = 0
+_CACHE = _MotorSensorCache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
+_CONTROLLER = None
+_L1_STATE = None
+_CONTROL_MOD = None
+_GUIDANCE_MOD = None
 
 
 def _motor_rate_hz() -> float:
@@ -110,114 +89,209 @@ def _motor_period_sec() -> float:
     return 1.0 / _motor_rate_hz()
 
 
-# ── Message handlers ───────────────────────────────────────────────────────────
+def _load_module(name: str):
+    try:
+        return importlib.import_module(name)
+    except Exception as exc:
+        LOGGER.error("Failed to import %s: %s", name, exc)
+        return None
 
-def handle_gnss(data: str) -> None:
-    """lat,lon,course_deg,groundSpeed_ms,posHealth,motionHealth"""
+
+def _guidance():
+    global _GUIDANCE_MOD
+    if _GUIDANCE_MOD is None:
+        _GUIDANCE_MOD = _load_module("Sensor_Motor.guidance")
+    return _GUIDANCE_MOD
+
+
+def _control():
+    global _CONTROL_MOD
+    if _CONTROL_MOD is None:
+        _CONTROL_MOD = _load_module("Sensor_Motor.control")
+    return _CONTROL_MOD
+
+
+def _null_brake_command(now: float, mode: str = "NEUTRAL"):
+    ctl = _control()
+    if ctl is not None and hasattr(ctl, "BrakeCommand"):
+        cmd = ctl.BrakeCommand(timestamp=now)
+        cmd.mode = mode
+        cmd.fallback_mode = mode
+        return cmd
+    return SimpleNamespace(
+        timestamp=now,
+        left_pw=0,
+        right_pw=0,
+        yaw_rate_cmd_deg_s=0.0,
+        yaw_rate_meas_deg_s=float("nan"),
+        yaw_rate_error_deg_s=0.0,
+        delta_ff_deg=0.0,
+        delta_pid_deg=0.0,
+        delta_arm_deg=0.0,
+        left_angle_deg=0.0,
+        right_angle_deg=0.0,
+        saturated=False,
+        sensor_valid=False,
+        guidance_command_age_s=0.0,
+        fallback_mode=mode,
+        mode=mode,
+        valid=False,
+    )
+
+
+def _null_guidance_output(now: float, reason: str = "DISABLED"):
+    g = _guidance()
+    if g is not None and hasattr(g, "L1Output"):
+        try:
+            out = g.L1Output(timestamp=now)
+        except Exception:
+            out = SimpleNamespace(timestamp=now)
+    else:
+        out = SimpleNamespace(timestamp=now)
+    for name, value in {
+        "active": False,
+        "degraded": False,
+        "reason": reason,
+        "crossTrack": float("nan"),
+        "alongTrack": float("nan"),
+        "start_lat": float("nan"),
+        "start_lon": float("nan"),
+        "target_lat": float("nan"),
+        "target_lon": float("nan"),
+        "carrot_lat": float("nan"),
+        "carrot_lon": float("nan"),
+        "current_heading_deg": float("nan"),
+        "desired_heading_deg": float("nan"),
+    }.items():
+        if not hasattr(out, name):
+            setattr(out, name, value)
+    return out
+
+
+def _set_neutral() -> None:
+    ctl = _control()
+    if PI is not None and ctl is not None and hasattr(ctl, "set_neutral"):
+        ctl.set_neutral(PI)
+
+
+def _set_motors_off() -> None:
+    ctl = _control()
+    if PI is not None and ctl is not None and hasattr(ctl, "set_motors_off"):
+        ctl.set_motors_off(PI)
+
+
+def _set_brake_command(cmd) -> None:
+    ctl = _control()
+    if PI is not None and ctl is not None and hasattr(ctl, "set_brake_command"):
+        ctl.set_brake_command(PI, cmd)
+
+
+def _latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float) -> tuple[float, float]:
+    earth_r = 6_371_000.0
+    dlat = math.radians(lat - origin_lat)
+    dlon = math.radians(lon - origin_lon)
+    north = dlat * earth_r
+    east = dlon * earth_r * math.cos(math.radians(origin_lat))
+    return north, east
+
+
+def _cache_snapshot() -> _MotorSensorCache:
+    snap = _MotorSensorCache()
+    snap.raw_gps = _GpsFromApp(**vars(_CACHE.raw_gps))
+    snap.last_good_gps = _GpsFromApp(**vars(_CACHE.last_good_gps))
+    snap.raw_gyrz = _ImuFromApp(**vars(_CACHE.raw_gyrz))
+    snap.last_good_gyrz = _ImuFromApp(**vars(_CACHE.last_good_gyrz))
+    snap.raw_alt = _BaroFromApp(**vars(_CACHE.raw_alt))
+    snap.last_good_alt = _BaroFromApp(**vars(_CACHE.last_good_alt))
+    snap.target_lat = _CACHE.target_lat
+    snap.target_lon = _CACHE.target_lon
+    snap.origin_lat = _CACHE.origin_lat
+    snap.origin_lon = _CACHE.origin_lon
+    return snap
+
+def handle_gps(data: str) -> None:
+    """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth"""
     fields = data.split(",")
     if len(fields) != 6:
         LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
         return
     try:
-        lat          = float(fields[0])
-        lon          = float(fields[1])
-        course_deg   = float(fields[2])
-        groundSpeed  = float(fields[3])
-        posHealth    = bool(int(float(fields[4])))
-        motionHealth = bool(int(float(fields[5])))
+        lat = float(fields[0])
+        lon = float(fields[1])
+        course_deg = float(fields[2])
+        ground_speed = float(fields[3])
+        pos_health = bool(int(float(fields[4])))
+        motion_health = bool(int(float(fields[5])))
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
+    now = time.time()
+    course_rad = math.radians(course_deg)
     with _UPDATE_LOCK:
-        GPS_VECTOR.lat = lat
-        GPS_VECTOR.lon = lon
-        GPS_VECTOR.direction = course_deg
-        GPS_VECTOR.velocity = groundSpeed
-        GPS_HEALTH.pos_health = int(posHealth)
-        GPS_HEALTH.motion_health = int(motionHealth)
-        resolver_update_gnss(
-            _INPUT_RESOLVER,
-            lat, lon,
-            math.radians(course_deg), groundSpeed,
-            posHealth, motionHealth,
-            time.time(),
+        _CACHE.raw_gps = _GpsFromApp(
+            lat=lat,
+            lon=lon,
+            course_rad=course_rad,
+            speed_mps=ground_speed,
+            pos_ts=now,
+            motion_ts=now,
+            pos_health=pos_health,
+            motion_health=motion_health,
         )
-        _lock_start_for_legacy_if_ready()
-        _maybe_push_target()
-
-
-def handle_gps(data: str) -> None:
-    """Compatibility handler for legacy GPS payloads."""
-    fields = data.split(",")
-    if len(fields) == 6:
-        handle_gnss(data)
-        return
-    if len(fields) >= 8:
-        try:
-            lat = float(fields[0])
-            lon = float(fields[1])
-            speed = float(fields[2])
-            course = float(fields[3])
-            fix_quality = int(float(fields[4]))
-            sats = int(float(fields[5]))
-            rmc_status = fields[6].strip().upper()
-            gps_health = int(float(fields[7]))
-        except (ValueError, IndexError) as exc:
-            LOGGER.warning("GPS parse error: %s | raw=%r", exc, data)
-            return
-        ok = fix_quality >= 1 and sats >= 4 and rmc_status == "A" and gps_health >= 1
-        handle_gnss(f"{lat},{lon},{course},{speed},{int(ok)},{int(ok)}")
-        return
-    LOGGER.warning("GPS parse: expected 6 or 8 fields | raw=%r", data)
+        if pos_health:
+            _CACHE.last_good_gps.lat = lat
+            _CACHE.last_good_gps.lon = lon
+            _CACHE.last_good_gps.pos_ts = now
+            _CACHE.last_good_gps.pos_health = True
+        if motion_health:
+            _CACHE.last_good_gps.course_rad = course_rad
+            _CACHE.last_good_gps.speed_mps = ground_speed
+            _CACHE.last_good_gps.motion_ts = now
+            _CACHE.last_good_gps.motion_health = True
+        _lock_start_if_ready()
 
 
 def handle_imu(data: str) -> None:
-    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz,health"""
+    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health"""
     fields = data.split(",")
-    ts = time.time()
     try:
         if len(fields) < 13:
             LOGGER.warning("IMU parse: expected 13 fields, got %d | raw=%r", len(fields), data)
             return
-        v = [float(f) for f in fields[:13]]
-        with _UPDATE_LOCK:
-            IMU.roll, IMU.pitch, IMU.yaw         = v[0],  v[1],  v[2]
-            IMU.accx, IMU.accy, IMU.accz         = v[3],  v[4],  v[5]
-            IMU.magx, IMU.magy, IMU.magz         = v[6],  v[7],  v[8]
-            IMU.gyrx, IMU.gyry, IMU.gyrz         = v[9],  v[10], v[11]
-            IMU.imu_health                        = int(v[12])
-            resolver_update_imu(
-                _INPUT_RESOLVER,
-                roll=v[0], pitch=v[1], yaw=v[2],
-                ax=v[3],   ay=v[4],   az=v[5],
-                gx=v[9],   gy=v[10],  gz=v[11],
-                imu_health=bool(int(v[12])),
-                ts=ts,
-            )
+        gyrz_deg_s = float(fields[11])
+        health = bool(int(float(fields[12])))
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
+        return
+
+    now = time.time()
+    gyrz_rad_s = math.radians(gyrz_deg_s)
+    with _UPDATE_LOCK:
+        _CACHE.raw_gyrz = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
+        if health:
+            _CACHE.last_good_gyrz = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=True)
 
 
 def handle_barometer(data: str) -> None:
-    """altitude_m,health"""
-    global ALT, BARO_HEALTH
+    """altitude_m[,health]"""
     fields = data.split(",")
     try:
-        alt    = float(fields[0].strip())
-        health = int(float(fields[1])) if len(fields) >= 2 else 0
+        alt_m = float(fields[0].strip())
+        health = bool(int(float(fields[1]))) if len(fields) >= 2 else True
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
+
+    now = time.time()
     with _UPDATE_LOCK:
-        ALT = alt
-        BARO_HEALTH = health
-        resolver_update_baro(_INPUT_RESOLVER, alt, time.time(), baro_health=bool(health))
+        _CACHE.raw_alt = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
+        if health:
+            _CACHE.last_good_alt = _BaroFromApp(alt_m=alt_m, ts=now, health=True)
 
 
 def handle_target_coord(data: str) -> None:
     """lat,lon"""
-    global _TARGET_LAT, _TARGET_LON, TARGET
     fields = data.split(",")
     if len(fields) != 2:
         LOGGER.warning("Target parse: expected 2 fields | raw=%r", data)
@@ -232,15 +306,13 @@ def handle_target_coord(data: str) -> None:
         LOGGER.warning("Target coord out of range: %.6f, %.6f", lat, lon)
         return
     with _UPDATE_LOCK:
-        _TARGET_LAT = lat
-        _TARGET_LON = lon
-        TARGET = SimpleNamespace(lat=lat, lon=lon)
-        _maybe_push_target()
+        _CACHE.target_lat = lat
+        _CACHE.target_lon = lon
     LOGGER.info("Target updated: %.6f, %.6f", lat, lon)
 
 
 def handle_flight_state(data: str) -> None:
-    global STATE, _PREV_STATE, _START_POINT_LOCKED
+    global STATE, _PREV_STATE, _START_POINT_LOCKED, _L1_STATE, _CONTROLLER
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError) as exc:
@@ -248,36 +320,45 @@ def handle_flight_state(data: str) -> None:
         return
     if new_state == STATE:
         return
-    LOGGER.info("State %d → %d", STATE, new_state)
+
+    LOGGER.info("State %d -> %d", STATE, new_state)
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE = new_state
         if new_state < 3:
-            l1_reset(_GUIDANCE)
-            controller_reset(_CONTROLLER)
-            resolver_reset_origin(_INPUT_RESOLVER)
+            _CACHE.origin_lat = None
+            _CACHE.origin_lon = None
             _START_POINT_LOCKED = False
             prevstate.clear_start_point()
+            gmod = _guidance()
+            if gmod is not None and _L1_STATE is not None and hasattr(gmod, "l1_reset"):
+                try:
+                    gmod.l1_reset(_L1_STATE)
+                except Exception:
+                    LOGGER.debug("Failed to reset L1 state", exc_info=True)
+            ctl = _control()
+            if ctl is not None and _CONTROLLER is not None and hasattr(ctl, "controller_reset"):
+                ctl.controller_reset(_CONTROLLER)
         elif new_state in (3, 4):
-            _lock_start_for_legacy_if_ready()
+            _lock_start_if_ready()
 
 
 def handle_release(data: str = "TRIGGER") -> None:
-    reason = "UNKNOWN"
-    if isinstance(data, str) and ":" in data:
-        _, reason = data.split(":", 1)
-    elif isinstance(data, str) and data.strip():
-        reason = data.strip()
+    mod = _load_module("Sensor_Motor.Motor_Release")
+    if mod is None or not hasattr(mod, "activate_burnwire"):
+        LOGGER.error("Burnwire module unavailable")
+        return
+    reason = data.split(":", 1)[1] if isinstance(data, str) and ":" in data else str(data or "UNKNOWN")
     LOGGER.warning("Burnwire trigger received | reason=%s", reason)
-    threading.Thread(
-        target=Motor_Release.activate_burnwire, daemon=True, name="Burnwire"
-    ).start()
+    threading.Thread(target=mod.activate_burnwire, daemon=True, name="Burnwire").start()
 
 
 def handle_egg_drop() -> None:
-    threading.Thread(
-        target=Motor_Egg.activate_solenoid, daemon=True, name="Solenoid"
-    ).start()
+    mod = _load_module("Sensor_Motor.Motor_Egg")
+    if mod is None or not hasattr(mod, "activate_solenoid"):
+        LOGGER.error("Egg module unavailable")
+        return
+    threading.Thread(target=mod.activate_solenoid, daemon=True, name="Solenoid").start()
 
 
 def handle_mec(data: str) -> None:
@@ -291,252 +372,132 @@ def handle_mec(data: str) -> None:
         MOTOR_ENABLED = False
         prevstate.update_motor_enabled(False)
         with _UPDATE_LOCK:
-            if PI is not None:
-                set_neutral(PI)
-        LOGGER.info("MOTOR_ENABLED = False → neutral")
+            _set_neutral()
+        LOGGER.info("MOTOR_ENABLED = False -> neutral")
     else:
         LOGGER.warning("Unknown MEC command: %r", data)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def _maybe_push_target() -> None:
-    """Convert target lat/lon to N/E and push to guidance. Call under _UPDATE_LOCK."""
-    if _TARGET_LAT is None or _TARGET_LON is None:
-        return
-    if _INPUT_RESOLVER.origin_lat is None:
-        return
-    tgt_N, tgt_E = _ll_to_ne(
-        _TARGET_LAT, _TARGET_LON,
-        _INPUT_RESOLVER.origin_lat, _INPUT_RESOLVER.origin_lon,
-    )
-    l1_set_target(_GUIDANCE, tgt_N, tgt_E)
-
-
-def _lock_start_for_legacy_if_ready() -> None:
-    """Mirror the active start point into legacy guidance state."""
-    global _START_POINT_LOCKED
-    if _START_POINT_LOCKED or STATE < 3:
-        return
-    if not GPS_HEALTH.pos_health:
-        return
-    lat = float(GPS_VECTOR.lat)
-    lon = float(GPS_VECTOR.lon)
-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        return
-    resolver_set_origin(_INPUT_RESOLVER, lat, lon)
-    motor_guidance.set_start_coordinates(lat, lon)
-    l1_set_start(_GUIDANCE, 0.0, 0.0)
-    _START_POINT_LOCKED = True
-    prevstate.update_start_point(lat, lon, True)
-    _maybe_push_target()
-
-
-def _snapshot_sensors():
-    return SimpleNamespace(
-        yaw=IMU.yaw,
-        gyrz=IMU.gyrz,
-        imu_health=IMU.imu_health,
-        lat=GPS_VECTOR.lat,
-        lon=GPS_VECTOR.lon,
-        course=GPS_VECTOR.direction,
-        speed=GPS_VECTOR.velocity,
-        gps_health=1 if (GPS_HEALTH.pos_health and GPS_HEALTH.motion_health) else 0,
-        fix_quality=1 if GPS_HEALTH.pos_health else 0,
-        sats=4 if GPS_HEALTH.pos_health else 0,
-        rmc_status="A" if GPS_HEALTH.pos_health else "V",
-        alt=ALT,
-        target=TARGET,
-    )
-
-
-def _check_fdir(snap) -> Optional[str]:
-    if snap.target is None:
-        return "target missing"
-    if not snap.gps_health:
-        return "GPS invalid"
-    if not (-90.0 <= float(snap.lat) <= 90.0 and -180.0 <= float(snap.lon) <= 180.0):
-        return "GPS out of range"
-    if not snap.imu_health:
-        return "IMU unhealthy"
-    return None
-
-
-def _apply_comm_tlm_fallback(g_out: L1Output) -> None:
-    """Fill comm CSV geo fields when L1 left them unset (no target in NE yet, etc.)."""
-    if _TARGET_LAT is not None and _TARGET_LON is not None:
-        if not math.isfinite(g_out.target_lat):
-            g_out.target_lat = float(_TARGET_LAT)
-            g_out.target_lon = float(_TARGET_LON)
-    if not GPS_HEALTH.pos_health:
-        return
-    lat, lon = float(GPS_VECTOR.lat), float(GPS_VECTOR.lon)
-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        return
-    if not math.isfinite(g_out.current_heading_deg):
-        if GPS_HEALTH.motion_health:
-            g_out.current_heading_deg = float(GPS_VECTOR.direction)
-        elif IMU.imu_health:
-            g_out.current_heading_deg = float(IMU.yaw)
-    if (
-        _TARGET_LAT is not None
-        and _TARGET_LON is not None
-        and not math.isfinite(g_out.desired_heading_deg)
-    ):
-        tN, tE = _ll_to_ne(
-            float(_TARGET_LAT), float(_TARGET_LON), lat, lon
-        )
-        if tN * tN + tE * tE > 1e-6:
-            g_out.desired_heading_deg = math.degrees(math.atan2(tE, tN))
-
-
-def _resolve_diag_state(now: float) -> L1Output:
-    """Build a GuidanceOutput for telemetry without touching controller state."""
-    state = L1Input(timestamp=now)
-    fill_current_data(_INPUT_RESOLVER, state, now)
-    fill_stale_data(_INPUT_RESOLVER, state, now)
-    decide_control_mode(state)
-    return l1_update(_GUIDANCE, state, now)
-
-
-# ── Diagnostics ────────────────────────────────────────────────────────────────
-
-def _send_diag(main_queue, cmd: BrakeCommand, g_out: L1Output,
-               diag_state: str) -> None:
+def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
     if main_queue is None:
         return
-
-    now = time.time()
-    with _UPDATE_LOCK:
-        if diag_state in ("IDLE", "LANDED"):
-            g_out = _resolve_diag_state(now)
-        _apply_comm_tlm_fallback(g_out)
 
     def _fmt(v) -> str:
         try:
             f = float(v)
-            return "nan" if (f != f) else f"{f:.4f}"
+            return "nan" if f != f else f"{f:.4f}"
         except (TypeError, ValueError):
             return "nan"
 
-    def _fmt_ll(v: float) -> str:
+    def _fmt_ll(v) -> str:
         try:
             f = float(v)
-            return "nan" if (f != f) else f"{f:.6f}"
+            return "nan" if f != f else f"{f:.6f}"
         except (TypeError, ValueError):
             return "nan"
 
-    def _fmt_hdg(v: float) -> str:
+    def _fmt_hdg(v) -> str:
         try:
             f = float(v)
-            return "nan" if (f != f) else f"{f:.2f}"
+            return "nan" if f != f else f"{f:.2f}"
         except (TypeError, ValueError):
             return "nan"
+
+    with _UPDATE_LOCK:
+        target_lat = _CACHE.target_lat
+        target_lon = _CACHE.target_lon
+        origin_lat = _CACHE.origin_lat
+        origin_lon = _CACHE.origin_lon
 
     head = [
-        str(cmd.left_pw),
-        str(cmd.right_pw),
-        _fmt_ll(g_out.start_lat),
-        _fmt_ll(g_out.start_lon),
-        _fmt_ll(g_out.target_lat),
-        _fmt_ll(g_out.target_lon),
-        _fmt_ll(g_out.carrot_lat),
-        _fmt_ll(g_out.carrot_lon),
-        _fmt_hdg(g_out.current_heading_deg),
-        _fmt_hdg(g_out.desired_heading_deg),
+        str(getattr(cmd, "left_pw", 0)),
+        str(getattr(cmd, "right_pw", 0)),
+        _fmt_ll(origin_lat),
+        _fmt_ll(origin_lon),
+        _fmt_ll(getattr(g_out, "target_lat", target_lat)),
+        _fmt_ll(getattr(g_out, "target_lon", target_lon)),
+        _fmt_ll(getattr(g_out, "carrot_lat", float("nan"))),
+        _fmt_ll(getattr(g_out, "carrot_lon", float("nan"))),
+        _fmt_hdg(getattr(g_out, "current_heading_deg", float("nan"))),
+        _fmt_hdg(getattr(g_out, "desired_heading_deg", float("nan"))),
         diag_state,
     ]
     tail = [
-        _fmt(g_out.crossTrack),
-        _fmt(g_out.alongTrack),
-        _fmt(cmd.yaw_rate_cmd_deg_s),
-        _fmt(cmd.yaw_rate_meas_deg_s),
-        _fmt(cmd.yaw_rate_error_deg_s),
-        _fmt(cmd.delta_ff_deg),
-        _fmt(cmd.delta_pid_deg),
-        _fmt(cmd.delta_arm_deg),
-        _fmt(cmd.left_angle_deg),
-        _fmt(cmd.right_angle_deg),
-        str(int(cmd.saturated)),
-        str(int(cmd.sensor_valid)),
-        _fmt(cmd.guidance_command_age_s),
-        cmd.fallback_mode,
-        cmd.mode,
+        _fmt(getattr(g_out, "crossTrack", float("nan"))),
+        _fmt(getattr(g_out, "alongTrack", float("nan"))),
+        _fmt(getattr(cmd, "yaw_rate_cmd_deg_s", 0.0)),
+        _fmt(getattr(cmd, "yaw_rate_meas_deg_s", float("nan"))),
+        _fmt(getattr(cmd, "yaw_rate_error_deg_s", 0.0)),
+        _fmt(getattr(cmd, "delta_ff_deg", 0.0)),
+        _fmt(getattr(cmd, "delta_pid_deg", 0.0)),
+        _fmt(getattr(cmd, "delta_arm_deg", 0.0)),
+        _fmt(getattr(cmd, "left_angle_deg", 0.0)),
+        _fmt(getattr(cmd, "right_angle_deg", 0.0)),
+        str(int(bool(getattr(cmd, "saturated", False)))),
+        str(int(bool(getattr(cmd, "sensor_valid", False)))),
+        _fmt(getattr(cmd, "guidance_command_age_s", 0.0)),
+        str(getattr(cmd, "fallback_mode", "")),
+        str(getattr(cmd, "mode", "")),
     ]
-    payload = ",".join(head + tail)
     msgstructure.send_msg(
         main_queue,
         appargs.MotorAppArg.AppID,
         appargs.CommAppArg.AppID,
         appargs.MotorAppArg.MID_comm_motor_diag,
-        payload,
+        ",".join(head + tail),
     )
 
 
-# ── Control loop ───────────────────────────────────────────────────────────────
-
 def ctrl_paragldr(main_queue=None) -> None:
-    """Parafoil control loop (~10 Hz, daemon thread).
-
-    STATE < 3 or !MOTOR_ENABLED  → servo neutral
-    STATE == 5                   → servo off
-    STATE 3 / 4, MOTOR_ENABLED   → resolve input → guidance → controller → servo
-    """
-    _null_g = L1Output(timestamp=0.0)
-
+    """Parafoil control loop."""
     period = _motor_period_sec()
     while MOTORAPP_RUNSTATUS:
+        now = time.time()
         try:
-            now = time.time()
-
             if not MOTOR_ENABLED or STATE < 3:
-                if PI is not None:
-                    set_neutral(PI)
-                _send_diag(main_queue, BrakeCommand(now), _null_g, "IDLE")
+                _set_neutral()
+                _send_diag(main_queue, _null_brake_command(now, "IDLE"), _null_guidance_output(now, "IDLE"), "IDLE")
                 time.sleep(period)
                 continue
 
             if STATE == 5:
-                if PI is not None:
-                    set_motors_off(PI)
-                _send_diag(
-                    main_queue,
-                    BrakeCommand(now, left_pw=0, right_pw=0),
-                    _null_g, "LANDED",
-                )
+                _set_motors_off()
+                _send_diag(main_queue, _null_brake_command(now, "LANDED"), _null_guidance_output(now, "LANDED"), "LANDED")
                 time.sleep(period)
                 continue
 
             with _UPDATE_LOCK:
-                state = L1Input(timestamp=now)
-                fill_current_data(_INPUT_RESOLVER, state, now)
-                fill_stale_data(_INPUT_RESOLVER, state, now)
-                decide_control_mode(state)
+                snap = _cache_snapshot()
 
-            cmd, g_out = compute_motor_output(_GUIDANCE, _CONTROLLER, state, now)
+            gmod = _guidance()
+            if gmod is None:
+                cmd = _null_brake_command(now, "GUIDANCE_UNAVAILABLE")
+                g_out = _null_guidance_output(now, "GUIDANCE_UNAVAILABLE")
+            else:
+                l1_input, _mode, reason = _produce_l1_input(gmod, snap, now)
+                if l1_input is None:
+                    cmd = _null_brake_command(now, reason or "INPUT_UNAVAILABLE")
+                    g_out = _null_guidance_output(now, reason or "INPUT_UNAVAILABLE")
+                else:
+                    g_out = _produce_l1_output(gmod, l1_input, snap, now)
+                    if bool(getattr(g_out, "active", False)):
+                        cmd = _controller_update(g_out, l1_input, now)
+                    else:
+                        cmd = _null_brake_command(now, getattr(g_out, "reason", "SAFE_GLIDE") or "SAFE_GLIDE")
 
-            if PI is not None:
-                set_brake_command(PI, cmd)
-
+            _set_brake_command(cmd)
             diag_state = (
-                "DEGRADED" if (g_out.active and g_out.degraded)
-                else "ACTIVE"  if g_out.active
-                else g_out.reason or "DISABLED"
+                "DEGRADED" if bool(getattr(g_out, "active", False)) and bool(getattr(g_out, "degraded", False))
+                else "ACTIVE" if bool(getattr(g_out, "active", False))
+                else str(getattr(g_out, "reason", "DISABLED") or "DISABLED")
             )
             _send_diag(main_queue, cmd, g_out, diag_state)
 
         except Exception as exc:
             LOGGER.error("ctrl_paragldr exception: %s", exc, exc_info=True)
-            try:
-                if PI is not None:
-                    set_neutral(PI)
-            except Exception:
-                pass
-
+            _set_neutral()
         time.sleep(period)
 
-
-# ── Message dispatcher ─────────────────────────────────────────────────────────
 
 def dispatch(msg: str) -> None:
     global MOTORAPP_RUNSTATUS
@@ -544,10 +505,10 @@ def dispatch(msg: str) -> None:
     if unpacked is False:
         return
     mid = unpacked.msg_id
-    if   mid == appargs.MainAppArg.MID_TerminateProcess:
+    if mid == appargs.MainAppArg.MID_TerminateProcess:
         MOTORAPP_RUNSTATUS = False
     elif mid == appargs.GpsAppArg.MID_motor_gps:
-        handle_gnss(unpacked.data)
+        handle_gㅔㄴ(unpacked.data)
     elif mid == appargs.ImuAppArg.MID_motor_imu:
         handle_imu(unpacked.data)
     elif mid == appargs.BarometerAppArg.MID_motor_alt:
@@ -564,32 +525,52 @@ def dispatch(msg: str) -> None:
         handle_mec(unpacked.data)
 
 
-# ── Lifecycle ──────────────────────────────────────────────────────────────────
-
 def init() -> None:
-    global PI, MOTOR_ENABLED, _START_POINT_LOCKED, _TARGET_LAT, _TARGET_LON, TARGET
-    Motor_Release.init_burnwire()
-    Motor_Egg.init_solenoid()
+    global PI, MOTOR_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
-    _TARGET_LAT, _TARGET_LON = prevstate.get_target_gps()
+
+    target_lat, target_lon = prevstate.get_target_gps()
     if (
-        -90.0 <= float(_TARGET_LAT) <= 90.0
-        and -180.0 <= float(_TARGET_LON) <= 180.0
-        and not (_TARGET_LAT == 0.0 and _TARGET_LON == 0.0)
+        -90.0 <= float(target_lat) <= 90.0
+        and -180.0 <= float(target_lon) <= 180.0
+        and not (target_lat == 0.0 and target_lon == 0.0)
     ):
-        TARGET = SimpleNamespace(lat=_TARGET_LAT, lon=_TARGET_LON)
+        _CACHE.target_lat = float(target_lat)
+        _CACHE.target_lon = float(target_lon)
+
     start_point = prevstate.get_start_point()
     if start_point is not None:
         lat, lon = start_point
         if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
-            resolver_set_origin(_INPUT_RESOLVER, float(lat), float(lon))
-            motor_guidance.set_start_coordinates(float(lat), float(lon))
-            l1_set_start(_GUIDANCE, 0.0, 0.0)
+            _CACHE.origin_lat = float(lat)
+            _CACHE.origin_lon = float(lon)
             _START_POINT_LOCKED = True
-    PI = init_control()
+
+    gmod = _guidance()
+    if gmod is not None and hasattr(gmod, "make_l1_state"):
+        try:
+            _L1_STATE = gmod.make_l1_state()
+        except Exception:
+            LOGGER.debug("Failed to create L1 state", exc_info=True)
+
+    ctl = _control()
+    if ctl is not None:
+        if hasattr(ctl, "make_controller_state"):
+            _CONTROLLER = ctl.make_controller_state()
+        if hasattr(ctl, "init_control"):
+            PI = ctl.init_control()
+
+    for module_name, init_name in (
+        ("Sensor_Motor.Motor_Release", "init_burnwire"),
+        ("Sensor_Motor.Motor_Egg", "init_solenoid"),
+    ):
+        mod = _load_module(module_name)
+        if mod is not None and hasattr(mod, init_name):
+            getattr(mod, init_name)()
+
     LOGGER.info(
-        "MotorApp init | pigpio: %s | motor_enabled=%s | start_locked=%s",
+        "MotorApp init | pigpio=%s | motor_enabled=%s | start_locked=%s",
         getattr(PI, "connected", "N/A"),
         MOTOR_ENABLED,
         _START_POINT_LOCKED,
@@ -598,13 +579,15 @@ def init() -> None:
 
 def motorapp_main(main_queue, main_pipe=None) -> None:
     if main_pipe is None:
-        main_pipe  = main_queue
+        main_pipe = main_queue
         main_queue = None
     init()
 
     ctrl_thread = threading.Thread(
-        target=ctrl_paragldr, args=(main_queue,),
-        daemon=True, name="MotorControlLoop",
+        target=ctrl_paragldr,
+        args=(main_queue,),
+        daemon=True,
+        name="MotorControlLoop",
     )
     ctrl_thread.start()
     LOGGER.info("MotorControlLoop started")
