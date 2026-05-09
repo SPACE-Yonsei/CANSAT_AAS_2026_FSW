@@ -23,6 +23,7 @@ class TestCommApp(unittest.TestCase):
         commapp._simp_tlm_alt_hold = None
         commapp.tlm_data = commapp.TelemetryData()
         commapp.tlm_data.state = "0"
+        commapp._reset_tlm_geo_dedupe()
         commapp._RBT_AUTH_TOKEN = "SECRET"
         commapp._RBT_REQUIRE_SEQ = True
         commapp._RBT_SAFE_STATES = {"0", "5"}
@@ -52,7 +53,7 @@ class TestCommApp(unittest.TestCase):
         self.assertIn(f"|{appargs.FlightlogicAppArg.AppID}|", msg)
         self.assertIn(f"|{appargs.CommAppArg.MID_RouteCmd_SS}|", msg)
         self.assertTrue(msg.endswith("|3"))
-        self.assertEqual(commapp.tlm_data.cmd_echo, "SS;3")
+        self.assertEqual(commapp.tlm_data.cmd_echo, "SS")
 
     def test_dispatch_rejects_invalid(self):
         q = queue.Queue()
@@ -104,7 +105,7 @@ class TestCommApp(unittest.TestCase):
         self.assertFalse(commapp.TELEMETRY_ENABLE)
         self.assertEqual(len(ser.writes), 1)
         line = ser.writes[0].decode("utf-8")
-        self.assertIn("CX;OFF", line)
+        self.assertIn(",CX,", line)
         commapp.send_tlm(ser)
         self.assertEqual(len(ser.writes), 1)
 
@@ -116,6 +117,31 @@ class TestCommApp(unittest.TestCase):
         self.assertTrue(ser.writes)
         line = ser.writes[-1].decode("utf-8")
         self.assertIn(",4321.0,", line)
+
+    def test_tlm_omits_repeated_start_target_on_wire(self):
+        """Same start/target as previous downlink frame -> empty CSV fields (GCS holds last)."""
+        commapp.TELEMETRY_ENABLE = True
+        ser = DummySerial()
+        diag = (
+            "1500,1500,12.111000,34.222000,56.333000,78.444000,"
+            "37.500000,126.600000,10.0,20.0,ACTIVE"
+        )
+        msg = msgstructure.fill_msg(
+            appargs.MotorAppArg.AppID,
+            appargs.CommAppArg.AppID,
+            appargs.MotorAppArg.MID_comm_motor_diag,
+            diag,
+        )
+        commapp.command_handler(msgstructure.pack_msg(msg))
+        commapp.send_tlm(ser)
+        line1 = ser.writes[-1].decode("utf-8")
+        self.assertIn("12.111000", line1)
+        self.assertIn("56.333000", line1)
+        commapp.command_handler(msgstructure.pack_msg(msg))
+        commapp.send_tlm(ser)
+        line2 = ser.writes[-1].decode("utf-8")
+        self.assertNotIn("12.111000", line2)
+        self.assertNotIn("56.333000", line2)
 
     def test_simp_baro_does_not_overwrite_tlm_alt_in_sim_mode(self):
         commapp.tlm_data.mode = "S"

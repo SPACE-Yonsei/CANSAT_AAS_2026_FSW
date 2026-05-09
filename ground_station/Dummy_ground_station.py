@@ -304,6 +304,8 @@ class GroundStation(tk.Tk):
         self._tlm_vars: dict[str, tk.StringVar] = {}
         self._track_points: list[tuple[float, float]] = []
         self._map_points: dict[str, tuple[float, float]] = {}
+        self._held_start_latlon: tuple[float, float] | None = None
+        self._held_target_latlon: tuple[float, float] | None = None
         # 1.0 = auto fit; scale < 1 → zoom in, > 1 → zoom out (applied to map half-extents).
         self._map_user_scale: float = 1.0
         self._current_heading_deg = math.nan
@@ -1061,12 +1063,22 @@ class GroundStation(tk.Tk):
         cur_hdg = self._parse_optional_float(parsed.get("current_heading_deg", ""))
         des_hdg = self._parse_optional_float(parsed.get("desired_heading_deg", ""))
 
-        self._map_points = {}
         if start_lat is not None and start_lon is not None:
-            self._map_points["start"] = (start_lat, start_lon)
-        if target_lat is not None and target_lon is not None:
-            if _is_meaningful_target_latlon(target_lat, target_lon):
-                self._map_points["target"] = (target_lat, target_lon)
+            self._held_start_latlon = (start_lat, start_lon)
+        if (
+            target_lat is not None
+            and target_lon is not None
+            and _is_meaningful_target_latlon(target_lat, target_lon)
+        ):
+            self._held_target_latlon = (target_lat, target_lon)
+
+        self._map_points = {}
+        if self._held_start_latlon is not None:
+            self._map_points["start"] = self._held_start_latlon
+        if self._held_target_latlon is not None:
+            tg = self._held_target_latlon
+            if _is_meaningful_target_latlon(tg[0], tg[1]):
+                self._map_points["target"] = tg
         if carrot_lat is not None and carrot_lon is not None:
             self._map_points["carrot"] = (carrot_lat, carrot_lon)
         if (
