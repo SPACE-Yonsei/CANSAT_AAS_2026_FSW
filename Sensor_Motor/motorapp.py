@@ -229,18 +229,25 @@ def _latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float) 
 
 
 def _cache_snapshot() -> _Cache:
-    snap = _Cache()
-    snap.latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
-    snap.last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
-    snap.latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
-    snap.last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
-    snap.latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
-    snap.last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
-    snap.target_lat = _CACHE.target_lat
-    snap.target_lon = _CACHE.target_lon
-    snap.start_lat = _CACHE.start_lat
-    snap.start_lon = _CACHE.start_lon
-    return snap
+    latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
+    last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
+    latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
+    last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
+    latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
+    last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
+
+    return _Cache(
+        latest_gps=latest_gps,
+        last_gps=last_gps,
+        latest_imu=latest_imu,
+        last_imu=last_imu,
+        latest_baro=latest_baro,
+        last_baro=last_baro,
+        target_lat=_CACHE.target_lat,
+        target_lon=_CACHE.target_lon,
+        start_lat=_CACHE.start_lat,
+        start_lon=_CACHE.start_lon,
+    )
 
 
 def _lock_start_if_ready() -> None:
@@ -308,12 +315,6 @@ def handle_gps(data: str) -> None:
             _CACHE.last_gps.motion_health = True
         _lock_start_if_ready()
 
-
-handle_gつい = handle_gps
-handle_g勾中 = handle_gps
-globals()["handle_g\u1166\u1102"] = handle_gps
-
-
 def handle_imu(data: str) -> None:
     """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health[,sample_ts]"""
     fields = data.split(",")
@@ -330,7 +331,7 @@ def handle_imu(data: str) -> None:
         return
 
     gyrz_rad_s = math.radians(gyrz_deg_s)
-    sample = _ImuFromApp(
+    imu = _ImuFromApp(
         gyrz_rad_s=gyrz_rad_s,
         sample_ts=sample_ts,
         rx_ts=rx_ts,
@@ -338,10 +339,10 @@ def handle_imu(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_imu = sample
-        _CACHE.imu_history.append(sample)
+        _CACHE.latest_imu = imu
+        _CACHE.imu_history.append(imu)
         if health:
-            _CACHE.last_imu = sample
+            _CACHE.last_imu = imu
 
 
 def handle_barometer(data: str) -> None:
@@ -356,7 +357,7 @@ def handle_barometer(data: str) -> None:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
 
-    sample = _BaroFromApp(
+    baro = _BaroFromApp(
         alt_m=alt_m,
         sample_ts=sample_ts,
         rx_ts=rx_ts,
@@ -364,10 +365,10 @@ def handle_barometer(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_baro = sample
-        _CACHE.baro_history.append(sample)
+        _CACHE.latest_baro = baro
+        _CACHE.baro_history.append(baro)
         if health:
-            _CACHE.last_baro = sample
+            _CACHE.last_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -577,32 +578,6 @@ def ctrl_paragldr(main_queue=None) -> None:
             LOGGER.error("ctrl_paragldr exception: %s", exc, exc_info=True)
             _set_neutral()
         time.sleep(period)
-
-
-def dispatch(msg: str) -> None:
-    global MOTORAPP_RUNSTATUS
-    unpacked = msgstructure.unpack_msg(msg)
-    if unpacked is False:
-        return
-    mid = unpacked.msg_id
-    if mid == appargs.MainAppArg.MID_TerminateProcess:
-        MOTORAPP_RUNSTATUS = False
-    elif mid == appargs.GpsAppArg.MID_motor_gps:
-        handle_gㅔㄴ(unpacked.data)
-    elif mid == appargs.ImuAppArg.MID_motor_imu:
-        handle_imu(unpacked.data)
-    elif mid == appargs.BarometerAppArg.MID_motor_alt:
-        handle_barometer(unpacked.data)
-    elif mid == appargs.FlightlogicAppArg.MID_motor_TargetCor:
-        handle_target_coord(unpacked.data)
-    elif mid == appargs.FlightlogicAppArg.MID_motor_state:
-        handle_flight_state(unpacked.data)
-    elif mid == appargs.FlightlogicAppArg.MID_motor_burnwire:
-        handle_release(unpacked.data)
-    elif mid == appargs.FlightlogicAppArg.MID_motor_EggDrop:
-        handle_egg_drop()
-    elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:
-        handle_mec(unpacked.data)
 
 
 def dispatch(msg: str) -> None:
