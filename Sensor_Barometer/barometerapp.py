@@ -177,7 +177,7 @@ def send_barometer_data(main_queue) -> None:
             appargs.BarometerAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.BarometerAppArg.MID_motor_alt,
-            f"{alt},{health}",
+            f"{alt},{health},{time.monotonic()}",
         )
         tick += 1
         if tick >= comm_tick_interval:

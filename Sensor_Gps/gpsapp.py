@@ -626,7 +626,11 @@ def read_and_send_gps_data(main_queue) -> None:
             MOTION_HEALTH = 0
             GPS_HEALTH = 0
 
-        payload_motor = f"{LAT},{LON},{DIRECTION},{VELOCITY},{POS_HEALTH},{MOTION_HEALTH}"
+        sample_ts = time.monotonic()
+        payload_motor = (
+            f"{LAT},{LON},{DIRECTION},{VELOCITY},"
+            f"{POS_HEALTH},{MOTION_HEALTH},{sample_ts}"
+        )
         msgstructure.send_msg(
             main_queue,
             appargs.GpsAppArg.AppID,
