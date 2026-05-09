@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 class _DummyGPIO:
     BCM = "BCM"
     OUT = "OUT"
-    HIGH = 1
-    LOW  = 0
+    HIGH = 0
+    LOW  = 1
 
     def __init__(self) -> None:
         self.state: dict[int, int] = {}
