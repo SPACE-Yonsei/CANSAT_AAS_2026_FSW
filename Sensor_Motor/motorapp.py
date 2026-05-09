@@ -194,8 +194,8 @@ def _null_guidance_output(now: float, reason: str = "DISABLED"):
         "target_lon": float("nan"),
         "carrot_lat": float("nan"),
         "carrot_lon": float("nan"),
-        "current_heading_deg": float("nan"),
-        "desired_heading_deg": float("nan"),
+        "current_heading_rad": float("nan"),
+        "desired_heading_rad": float("nan"),
     }.items():
         if not hasattr(out, name):
             setattr(out, name, value)
@@ -567,6 +567,19 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
         except (TypeError, ValueError):
             return "nan"
 
+    def _heading_deg(out, deg_name: str, rad_name: str) -> float:
+        deg_value = getattr(out, deg_name, None)
+        if deg_value is not None:
+            try:
+                return float(deg_value)
+            except (TypeError, ValueError):
+                pass
+        rad_value = getattr(out, rad_name, float("nan"))
+        try:
+            return math.degrees(float(rad_value))
+        except (TypeError, ValueError):
+            return float("nan")
+
     with _UPDATE_LOCK:
         target_lat = _CACHE.target_lat
         target_lon = _CACHE.target_lon
@@ -582,8 +595,8 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
         _fmt_ll(getattr(g_out, "target_lon", target_lon)),
         _fmt_ll(getattr(g_out, "carrot_lat", float("nan"))),
         _fmt_ll(getattr(g_out, "carrot_lon", float("nan"))),
-        _fmt_hdg(getattr(g_out, "current_heading_deg", float("nan"))),
-        _fmt_hdg(getattr(g_out, "desired_heading_deg", float("nan"))),
+        _fmt_hdg(_heading_deg(g_out, "current_heading_deg", "current_heading_rad")),
+        _fmt_hdg(_heading_deg(g_out, "desired_heading_deg", "desired_heading_rad")),
         diag_state,
     ]
     tail = [
