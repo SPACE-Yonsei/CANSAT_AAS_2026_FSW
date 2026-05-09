@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -17,8 +18,25 @@ DISTANCEAPP_RUNSTATUS = True
 DISTANCE_MM = 0.0
 DISTANCE_HEALTH = 1
 DISTANCE_STALE_TIMEOUT_SEC = 1.0
-DISTANCE_MIN_MM = 200
-DISTANCE_MAX_MM = 8000
+
+
+def _valid_mm_bounds() -> tuple[float, float]:
+    """Operational band for rangefinder samples (mm).
+
+    Defaults match TF-Luna useful range (~0.2–8 m). For bench tests closer than
+    20 cm, set ``DISTANCE_MIN_MM`` lower (e.g. ``50``) or readings clamp to 0.
+    """
+    try:
+        lo = float(os.environ.get("DISTANCE_MIN_MM", "200"))
+    except ValueError:
+        lo = 200.0
+    try:
+        hi = float(os.environ.get("DISTANCE_MAX_MM", "8000"))
+    except ValueError:
+        hi = 8000.0
+    if lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
 
 _last_update_ts = 0.0
 _distance_window = deque(maxlen=5)
@@ -57,7 +75,8 @@ def _median_mm(values) -> int:
 
 
 def _is_valid_distance(mm: float) -> bool:
-    return DISTANCE_MIN_MM <= float(mm) <= DISTANCE_MAX_MM
+    lo, hi = _valid_mm_bounds()
+    return lo <= float(mm) <= hi
 
 
 def _synthetic_read_distance() -> float:

@@ -674,7 +674,7 @@ class GroundStation(tk.Tk):
                 ("gps_sats", "Sats"),
             ]),
             ("Distance / Echo", [
-                ("distance_cm", "Distance (cm)"),
+                ("distance_cm", "Distance (mm)"),
                 ("cmd_echo", "Cmd echo"),
             ]),
             ("Filtered (deg)", [
