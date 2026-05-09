@@ -23,8 +23,16 @@ state = 0
 max_alt = 0.0
 recent_alt: list[float] = []
 distance_mm = 99999.0
+distance_health = 0
 sim_enable = False
 sim_active = False
+
+# Solenoid trigger band: only act on plausible TF-Luna readings.
+# DISTANCE_MIN_MM lower bound mirrors Sensor_Distance/distanceapp.py validity gate
+# (200 mm). Using 100 mm here gives a small slack while still rejecting the
+# "0.0 mm = sensor dead" sentinel that previously caused spurious egg drops.
+SOLENOID_MIN_MM = 100.0
+SOLENOID_MAX_MM = 2500.0
 
 cnt_ascent = 0
 cnt_apogee = 0
@@ -273,20 +281,38 @@ def handle_simp(data: str, main_queue) -> None:
 def handle_barometer(data: str, main_queue) -> None:
     if sim_active:
         return
+    fields = data.split(",")
     try:
-        alt = float(data.split(",")[0])
-    except ValueError:
+        alt = float(fields[0])
+    except (ValueError, IndexError):
+        return
+    health = 1
+    if len(fields) >= 2:
+        try:
+            health = int(float(fields[1]))
+        except ValueError:
+            health = 1
+    if not health:
+        # Stale/invalid altitude: do not advance state machine on garbage.
         return
     barometer_logic(main_queue, alt)
 
 
 def handle_distance(data: str, main_queue) -> None:
-    global distance_mm
+    global distance_mm, distance_health
+    fields = data.split(",")
     try:
-        distance_mm = float(data.split(",")[0])
-    except ValueError:
+        distance_mm = float(fields[0])
+    except (ValueError, IndexError):
         return
-    if state == 4:
+    if len(fields) >= 2:
+        try:
+            distance_health = int(float(fields[1]))
+        except ValueError:
+            distance_health = 0
+    else:
+        distance_health = 1
+    if state == 4 and distance_health:
         solenoid_logic(main_queue, distance_mm)
 
 
@@ -346,7 +372,12 @@ def solenoid_logic(main_queue, distance: float) -> None:
     global solenoid_count, solenoid_done
     if solenoid_done:
         return
-    if distance <= 2500 and solenoid_count < 3:
+    # Reject "sensor dead" sentinel (0 mm) and out-of-band readings; only
+    # plausible-altitude reports inside [SOLENOID_MIN_MM, SOLENOID_MAX_MM]
+    # are allowed to trigger the egg drop.
+    if not (SOLENOID_MIN_MM <= float(distance) <= SOLENOID_MAX_MM):
+        return
+    if solenoid_count < 3:
         msgstructure.send_msg(
             main_queue,
             appargs.FlightlogicAppArg.AppID,

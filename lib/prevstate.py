@@ -1,11 +1,21 @@
-"""Persistent mission state storage for reboot recovery."""
+"""Persistent mission state storage for reboot recovery.
+
+Designed for concurrent access from multiple FSW subprocesses. Every persisted
+update goes through a *read-merge-write* path under a cross-process advisory
+file lock so that concurrent writers (CommApp packet count, FlightLogic state,
+MotorApp start-point lock, etc.) cannot clobber each other's fields.
+
+Lock primitives:
+    POSIX: ``fcntl.flock`` on a sidecar ``<prevstate>.lock`` file.
+    Windows: ``msvcrt.locking`` on the same sidecar file.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 
 _STATE_FILE = Path(__file__).with_name("prevstate.json")
@@ -68,7 +78,81 @@ def refresh_runtime_overrides() -> None:
 refresh_runtime_overrides()
 
 
-def _serialize() -> dict:
+# ── Cross-process file lock ───────────────────────────────────────────────────
+
+if os.name == "nt":
+    import msvcrt  # type: ignore[import-not-found]
+
+    def _platform_lock(fp) -> None:
+        # LK_LOCK blocks (with retry) until the byte range is available.
+        msvcrt.locking(fp.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _platform_unlock(fp) -> None:
+        try:
+            fp.seek(0)
+            msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+else:
+    import fcntl  # type: ignore[import-not-found]
+
+    def _platform_lock(fp) -> None:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_EX)
+
+    def _platform_unlock(fp) -> None:
+        try:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+
+
+def _lock_path() -> Path:
+    # Tied to current ``_STATE_FILE`` so tests that override the path keep working.
+    return _STATE_FILE.with_suffix(_STATE_FILE.suffix + ".lock")
+
+
+class _FileLock:
+    """Best-effort cross-process exclusive lock on a sidecar file."""
+
+    def __enter__(self) -> "_FileLock":
+        path = _lock_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # 'a+' creates the lock file if absent; we never read its contents.
+        self._fp = path.open("a+", encoding="utf-8")
+        try:
+            self._fp.seek(0)
+            if os.name == "nt":
+                # On Windows the byte at offset 0 must exist for LK_LOCK; ensure
+                # the file is at least 1 byte long.
+                self._fp.write("\0")
+                self._fp.flush()
+                self._fp.seek(0)
+            _platform_lock(self._fp)
+        except Exception:
+            try:
+                self._fp.close()
+            except Exception:
+                pass
+            self._fp = None  # type: ignore[assignment]
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if getattr(self, "_fp", None) is None:
+            return
+        try:
+            _platform_unlock(self._fp)
+        finally:
+            try:
+                self._fp.close()
+            except Exception:
+                pass
+
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+
+
+def _serialize() -> Dict[str, Any]:
     return {
         "PREV_STATE": PREV_STATE,
         "PREV_ALT_CAL": PREV_ALT_CAL,
@@ -87,7 +171,7 @@ def _serialize() -> dict:
     }
 
 
-def _apply(payload: dict) -> None:
+def _apply(payload: Dict[str, Any]) -> None:
     global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT
     global PREV_TARGET_LAT, PREV_TARGET_LON, PREV_PACKET_COUNT, PREV_ST_TIMEDELTA
     global PREV_YAW_OFFSET, PREV_MOTOR_ENABLED, PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
@@ -110,82 +194,111 @@ def _apply(payload: dict) -> None:
     _sync_legacy_aliases()
 
 
+def _atomic_write(payload: Dict[str, Any]) -> None:
+    tmp = _STATE_FILE.with_suffix(_STATE_FILE.suffix + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    os.replace(str(tmp), str(_STATE_FILE))
+
+
+def _read_disk_payload() -> Optional[Dict[str, Any]]:
+    if not _STATE_FILE.exists():
+        return None
+    try:
+        return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+
+
 def _save() -> None:
-    _STATE_FILE.write_text(json.dumps(_serialize(), ensure_ascii=True, indent=2), encoding="utf-8")
+    """Write the *current* in-memory snapshot. Held under file lock by callers."""
+    _atomic_write(_serialize())
+
+
+def _atomic_update(field_updates: Dict[str, Any]) -> None:
+    """Read disk, merge ``field_updates``, write back atomically.
+
+    All three steps happen under the cross-process file lock so concurrent
+    writers from sibling processes cannot lose updates. Runtime env-only
+    overrides (``YAW_OFFSET``/``STATE_OVERRIDE``) are re-applied after the
+    in-memory snapshot is refreshed so the disk read does not clobber them.
+    """
+    with _FileLock():
+        current = _read_disk_payload() or _serialize()
+        current.update(field_updates)
+        _atomic_write(current)
+        _apply(current)
+    refresh_runtime_overrides()
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 
 def init_prevstate() -> None:
     refresh_runtime_overrides()
 
-    if _STATE_FILE.exists():
-        try:
-            _apply(json.loads(_STATE_FILE.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, ValueError):
-            reset_prevstate()
-            return
-    else:
-        _save()
+    with _FileLock():
+        payload = _read_disk_payload()
+        if payload is None:
+            # File missing or corrupt: write a fresh default snapshot.
+            _apply({})
+            _atomic_write(_serialize())
+        else:
+            _apply(payload)
 
     # Environment override must win over persisted value when provided.
     refresh_runtime_overrides()
 
-    # Runtime override for test/safety operation
     if STATE_OVERRIDE is not None:
         update_prevstate(STATE_OVERRIDE)
 
 
 def update_prevstate(state: int) -> None:
-    global PREV_STATE
-    PREV_STATE = int(state)
-    _save()
+    _atomic_update({"PREV_STATE": int(state)})
 
 
 def update_altcal(alt: float) -> None:
-    global PREV_ALT_CAL
-    PREV_ALT_CAL = float(alt)
-    _save()
+    _atomic_update({"PREV_ALT_CAL": float(alt)})
 
 
 def update_maxalt(alt: float) -> None:
-    global PREV_MAX_ALT
-    PREV_MAX_ALT = float(alt)
-    _save()
+    _atomic_update({"PREV_MAX_ALT": float(alt)})
 
 
 def update_target_gps(lat: float, lon: float) -> None:
-    global PREV_TARGET_LAT, PREV_TARGET_LON
-    PREV_TARGET_LAT = float(lat)
-    PREV_TARGET_LON = float(lon)
-    _sync_legacy_aliases()
-    _save()
+    _atomic_update(
+        {
+            "PREV_TARGET_LAT": float(lat),
+            "PREV_TARGET_LON": float(lon),
+        }
+    )
 
 
 def update_yaw_offset(offset_deg: float) -> None:
-    global PREV_YAW_OFFSET
-    PREV_YAW_OFFSET = float(offset_deg)
-    _sync_legacy_aliases()
-    _save()
+    _atomic_update({"PREV_YAW_OFFSET": float(offset_deg)})
 
 
 def update_motor_enabled(enabled: bool) -> None:
-    global PREV_MOTOR_ENABLED
-    PREV_MOTOR_ENABLED = 1 if bool(enabled) else 0
-    _save()
+    _atomic_update({"PREV_MOTOR_ENABLED": 1 if bool(enabled) else 0})
 
 
 def update_solenoid_state(count: int, done: bool) -> None:
-    global PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
-    PREV_SOLENOID_COUNT = max(0, int(count))
-    PREV_SOLENOID_DONE = 1 if bool(done) else 0
-    _save()
+    _atomic_update(
+        {
+            "PREV_SOLENOID_COUNT": max(0, int(count)),
+            "PREV_SOLENOID_DONE": 1 if bool(done) else 0,
+        }
+    )
 
 
 def update_start_point(lat: float, lon: float, locked: bool) -> None:
-    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED
-    PREV_START_LAT = float(lat)
-    PREV_START_LON = float(lon)
-    PREV_START_LOCKED = 1 if bool(locked) else 0
-    _save()
+    _atomic_update(
+        {
+            "PREV_START_LAT": float(lat),
+            "PREV_START_LON": float(lon),
+            "PREV_START_LOCKED": 1 if bool(locked) else 0,
+        }
+    )
 
 
 def clear_start_point() -> None:
@@ -215,18 +328,15 @@ def get_yaw_offset() -> float:
 
 
 def update_packet_count(count: int) -> None:
-    global PREV_PACKET_COUNT
-    PREV_PACKET_COUNT = int(count)
-    _save()
+    _atomic_update({"PREV_PACKET_COUNT": int(count)})
 
 
 def update_st_timedelta(seconds: float) -> None:
-    global PREV_ST_TIMEDELTA
-    PREV_ST_TIMEDELTA = float(seconds)
-    _save()
+    _atomic_update({"PREV_ST_TIMEDELTA": float(seconds)})
 
 
 def reset_prevstate() -> None:
+    """Force every persisted field back to its default snapshot."""
     global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT
     global PREV_TARGET_LAT, PREV_TARGET_LON, PREV_PACKET_COUNT, PREV_ST_TIMEDELTA
     global PREV_YAW_OFFSET, PREV_MOTOR_ENABLED, PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
@@ -247,7 +357,8 @@ def reset_prevstate() -> None:
     PREV_START_LON = 0.0
     PREV_START_LOCKED = 0
     _sync_legacy_aliases()
-    _save()
+    with _FileLock():
+        _atomic_write(_serialize())
 
 
 def reset_control() -> None:
@@ -255,18 +366,17 @@ def reset_control() -> None:
 
     Keeps telemetry packet/timebase counters intact for communication tests.
     """
-    global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT, PREV_TARGET_LAT, PREV_TARGET_LON
-    global PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
-    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED
-    PREV_STATE = 0
-    PREV_ALT_CAL = 0.0
-    PREV_MAX_ALT = 0.0
-    PREV_TARGET_LAT = 0.0
-    PREV_TARGET_LON = 0.0
-    PREV_SOLENOID_COUNT = 0
-    PREV_SOLENOID_DONE = 0
-    PREV_START_LAT = 0.0
-    PREV_START_LON = 0.0
-    PREV_START_LOCKED = 0
-    _sync_legacy_aliases()
-    _save()
+    _atomic_update(
+        {
+            "PREV_STATE": 0,
+            "PREV_ALT_CAL": 0.0,
+            "PREV_MAX_ALT": 0.0,
+            "PREV_TARGET_LAT": 0.0,
+            "PREV_TARGET_LON": 0.0,
+            "PREV_SOLENOID_COUNT": 0,
+            "PREV_SOLENOID_DONE": 0,
+            "PREV_START_LAT": 0.0,
+            "PREV_START_LON": 0.0,
+            "PREV_START_LOCKED": 0,
+        }
+    )

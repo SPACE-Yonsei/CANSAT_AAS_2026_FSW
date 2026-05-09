@@ -237,8 +237,15 @@ def controller_update(
         if sensor_valid:
             integral = 0.0
 
-    # Slew-rate limit (10 Hz assumed → dt = 0.1 s)
-    max_delta_change = ctl.config.MAX_ARM_RATE_DEG_S * 0.1
+    # Slew-rate limit. Use the configured motor loop period so the limiter scales
+    # automatically when ``config.MOTOR_RATE_HZ`` changes. Falls back to 10 Hz
+    # if the rate is misconfigured.
+    try:
+        motor_rate = max(0.1, float(config.MOTOR_RATE_HZ))
+    except (TypeError, ValueError):
+        motor_rate = 10.0
+    loop_dt = 1.0 / motor_rate
+    max_delta_change = ctl.config.MAX_ARM_RATE_DEG_S * loop_dt
     prev_delta = (ctl.prev_left_angle_deg - NEUTRAL_ARM_DEG) * 2   # reconstruct from geometry
     delta_change = delta_arm - prev_delta
     if abs(delta_change) > max_delta_change:

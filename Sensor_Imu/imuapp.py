@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from lib import appargs, config, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -186,6 +186,8 @@ def read_imu_data() -> None:
             HEALTH = 0
             time.sleep(period)
             continue
+
+        sensorlog.log_imu_raw(sample)
 
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample

@@ -10,7 +10,7 @@ from collections import deque
 from math import atan2, cos, degrees, radians, sqrt
 from typing import Optional
 
-from lib import appargs, config, msgstructure
+from lib import appargs, config, msgstructure, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -48,12 +48,18 @@ GPS_MAX_H_ACC_M = 25.0
 GPS_MAX_S_ACC_MPS = 3.0
 GPS_MAX_HEAD_ACC_DEG = 60.0
 GPS_MIN_POSITION_DELTA_SEC = 0.02
+# Anchor self-heal: if a basic-valid fix has been rejected by the local-radius
+# gate this many times in a row, treat the rejection as a relocation event and
+# re-anchor on the new position. Prevents the FSW from being stuck refusing
+# all fixes after the cansat is moved between testing sites.
+GPS_ANCHOR_REJECT_RESET = 50
 
 _last_update_ts = 0.0
 _last_fix: Optional[dict] = None
 _last_good_position: Optional[dict] = None
 _last_good_motion: Optional[dict] = None
 _anchor_position: Optional[dict] = None
+_anchor_reject_streak = 0
 _last_gps_time: Optional[str] = None
 _duplicate_gps_time_count = 0
 _gps_lock = threading.Lock()
@@ -133,11 +139,19 @@ def _sim_gps_row() -> Optional[list]:
 
 def _apply_flight_gps_sim(data: str) -> None:
     """Parse `lat,lon,course_deg,speed_m_s[,alt_m]` or CLEAR."""
-    global _sim_fix
+    global _sim_fix, _anchor_position, _anchor_reject_streak
+    global _last_good_position, _last_good_motion
     text = data.strip()
     if text.upper() == "CLEAR":
         _set_sim_fix(None)
-        logger.info("GPS SIM inject cleared (hardware path resumes)")
+        # Clearing SIM also clears anchor/last-good caches so the hardware
+        # path can re-anchor at whatever real location the receiver locks on.
+        with _gps_lock:
+            _anchor_position = None
+            _anchor_reject_streak = 0
+            _last_good_position = None
+            _last_good_motion = None
+        logger.info("GPS SIM inject cleared (hardware path resumes, anchor reset)")
         return
     parts = [x.strip() for x in text.split(",")]
     if len(parts) not in (4, 5):
@@ -332,10 +346,28 @@ def _position_health(
         return 0, None
     if pos_age > GPS_POS_STALE_TIMEOUT_SEC:
         return 0, None
+    global _anchor_position, _anchor_reject_streak
     if _anchor_position is not None:
         anchor_dist = _distance_m(float(_anchor_position["lat"]), float(_anchor_position["lon"]), lat, lon)
         if anchor_dist > GPS_LOCAL_RADIUS_M:
-            return 0, None
+            _anchor_reject_streak += 1
+            if _anchor_reject_streak >= GPS_ANCHOR_REJECT_RESET:
+                # Persistent out-of-radius fix → assume the cansat has been
+                # relocated; re-anchor on the new location instead of locking
+                # the user out forever.
+                logger.warning(
+                    "GPS anchor reset: %d consecutive fixes outside %.0f m radius "
+                    "(new anchor lat=%.6f lon=%.6f)",
+                    _anchor_reject_streak,
+                    GPS_LOCAL_RADIUS_M,
+                    lat,
+                    lon,
+                )
+                _anchor_position = {"lat": lat, "lon": lon}
+                _anchor_reject_streak = 0
+            else:
+                return 0, None
+    _anchor_reject_streak = 0
 
     delta = _position_delta(lat, lon, now, gps_time_s)
     if delta is not None and float(delta["speed"]) > GPS_JUMP_MAX_SPEED:
@@ -520,7 +552,9 @@ def read_and_send_gps_data(main_queue) -> None:
     period = _gps_period_sec()
     comm_tick_interval = _comm_tick_interval()
     while GPSAPP_RUNSTATUS:
-        sample = _parse_sample(_read_gps())
+        raw_row = _read_gps()
+        sensorlog.log_gps_raw(list(raw_row) if raw_row is not None else None)
+        sample = _parse_sample(raw_row)
         now = time.time()
 
         if sample is not None:

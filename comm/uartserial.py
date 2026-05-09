@@ -95,9 +95,9 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
 
     if baudrate is None:
         try:
-            baudrate = int(os.environ.get("UART_BAUD", "9600"))
+            baudrate = int(os.environ.get("UART_BAUD", "38400"))
         except ValueError:
-            baudrate = 9600
+            baudrate = 38400
 
     default_port = "COM3" if sys.platform.startswith("win") else "/dev/serial0"
     candidates = _port_candidates(port or default_port)

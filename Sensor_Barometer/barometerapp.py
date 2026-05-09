@@ -7,8 +7,9 @@ import os
 import time
 import threading
 from collections import deque
+from typing import Optional
 
-from lib import appargs, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,17 @@ _baro_hw = None
 _last_baro_read_warn_ts = 0.0
 
 
+def _barometer_rate_hz() -> float:
+    try:
+        return max(0.1, float(config.BAROMETER_RATE_HZ))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _barometer_period_sec() -> float:
+    return 1.0 / _barometer_rate_hz()
+
+
 def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None:
     global BAROMETERAPP_RUNSTATUS, BAROMETER_OFFSET, ALTITUDE
     unpacked = msgstructure.unpack_msg(recv_msg)
@@ -38,12 +50,19 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
     if unpacked.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         BAROMETERAPP_RUNSTATUS = False
     elif unpacked.msg_id == appargs.CommAppArg.MID_RouteCmd_CAL:
-        parts = [x.strip() for x in unpacked.data.split(",")]
-        if len(parts) >= 2:
+        # Comm forwards either "<value>" (single token) or "CAL,<value>" (legacy).
+        # Accept both: first numeric token is treated as additive offset delta.
+        # If no numeric token is present, snap altitude origin to current ALTITUDE.
+        parts = [x.strip() for x in (unpacked.data or "").split(",") if x.strip()]
+        delta: Optional[float] = None
+        for token in parts:
             try:
-                BAROMETER_OFFSET += float(parts[1])
+                delta = float(token)
+                break
             except ValueError:
-                pass
+                continue
+        if delta is not None:
+            BAROMETER_OFFSET += delta
         else:
             BAROMETER_OFFSET = ALTITUDE
         prevstate.update_altcal(BAROMETER_OFFSET)
@@ -74,8 +93,10 @@ def _synthetic_raw():
 def read_barometer_data() -> None:
     global ALTITUDE, TEMPERATURE, PRESSURE, BAROMETER_HEALTH, _last_sample_ts, _baro_hw
     global _last_baro_read_warn_ts
+    period = _barometer_period_sec()
     while BAROMETERAPP_RUNSTATUS:
         try:
+            hardware_ok = False
             try:
                 from Sensor_Barometer import barometer as baro_driver  # type: ignore
 
@@ -94,6 +115,7 @@ def read_barometer_data() -> None:
                 if _baro_hw is not False:
                     try:
                         prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
+                        hardware_ok = True
                     except Exception as exc:
                         now = time.time()
                         if now - _last_baro_read_warn_ts >= 3.0:
@@ -109,6 +131,8 @@ def read_barometer_data() -> None:
             except Exception:
                 prs_raw, tmp_raw, alt_raw = _synthetic_raw()
 
+            sensorlog.log_barometer_raw(float(prs_raw), float(tmp_raw), float(alt_raw))
+
             _prs_window.append(float(prs_raw))
             _tmp_window.append(float(tmp_raw))
             _alt_window.append(float(alt_raw))
@@ -122,14 +146,16 @@ def read_barometer_data() -> None:
                 TEMPERATURE = tmp
                 ALTITUDE = alt
                 _last_sample_ts = time.time()
-                BAROMETER_HEALTH = 1
+                BAROMETER_HEALTH = 1 if hardware_ok else 0
         except Exception:
             BAROMETER_HEALTH = 0
-        time.sleep(0.1)
+        time.sleep(period)
 
 
 def send_barometer_data(main_queue) -> None:
     global BAROMETER_HEALTH
+    period = _barometer_period_sec()
+    comm_tick_interval = max(1, int(round(_barometer_rate_hz())))
     tick = 0
     while BAROMETERAPP_RUNSTATUS:
         if time.time() - _last_sample_ts > BAROMETER_STALE_TIMEOUT_SEC:
@@ -138,22 +164,23 @@ def send_barometer_data(main_queue) -> None:
             alt = ALTITUDE
             prs = PRESSURE
             tmp = TEMPERATURE
+            health = int(BAROMETER_HEALTH)
         msgstructure.send_msg(
             main_queue,
             appargs.BarometerAppArg.AppID,
             appargs.FlightlogicAppArg.AppID,
             appargs.BarometerAppArg.MID_flight_alt,
-            f"{alt}",
+            f"{alt},{health}",
         )
         msgstructure.send_msg(
             main_queue,
             appargs.BarometerAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.BarometerAppArg.MID_motor_alt,
-            f"{alt},{BAROMETER_HEALTH}",
+            f"{alt},{health}",
         )
         tick += 1
-        if tick >= 10:
+        if tick >= comm_tick_interval:
             tick = 0
             msgstructure.send_msg(
                 main_queue,
@@ -162,7 +189,7 @@ def send_barometer_data(main_queue) -> None:
                 appargs.BarometerAppArg.MID_comm_alt,
                 f"{prs},{tmp},{alt}",
             )
-        time.sleep(0.1)
+        time.sleep(period)
 
 
 def barometerapp_main(main_queue, main_pipe) -> None:
