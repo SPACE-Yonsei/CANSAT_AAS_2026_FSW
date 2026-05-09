@@ -38,6 +38,8 @@ class _GpsFromApp:
     lon: Optional[float] = None
     course_rad: Optional[float] = None
     speed_mps: Optional[float] = None
+    sample_ts: Optional[float] = None
+    rx_ts: Optional[float] = None
     pos_ts: Optional[float] = None
     motion_ts: Optional[float] = None
     pos_health: bool = False
@@ -47,6 +49,8 @@ class _GpsFromApp:
 @dataclass
 class _ImuFromApp:
     gyrz_rad_s: Optional[float] = None
+    sample_ts: Optional[float] = None
+    rx_ts: Optional[float] = None
     ts: Optional[float] = None
     health: bool = False
 
@@ -54,6 +58,8 @@ class _ImuFromApp:
 @dataclass
 class _BaroFromApp:
     alt_m: Optional[float] = None
+    sample_ts: Optional[float] = None
+    rx_ts: Optional[float] = None
     ts: Optional[float] = None
     health: bool = False
 
@@ -223,18 +229,25 @@ def _latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float) 
 
 
 def _cache_snapshot() -> _Cache:
-    snap = _Cache()
-    snap.latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
-    snap.last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
-    snap.latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
-    snap.last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
-    snap.latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
-    snap.last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
-    snap.target_lat = _CACHE.target_lat
-    snap.target_lon = _CACHE.target_lon
-    snap.start_lat = _CACHE.start_lat
-    snap.start_lon = _CACHE.start_lon
-    return snap
+    latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
+    last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
+    latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
+    last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
+    latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
+    last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
+
+    return _Cache(
+        latest_gps=latest_gps,
+        last_gps=last_gps,
+        latest_imu=latest_imu,
+        last_imu=last_imu,
+        latest_baro=latest_baro,
+        last_baro=last_baro,
+        target_lat=_CACHE.target_lat,
+        target_lon=_CACHE.target_lon,
+        start_lat=_CACHE.start_lat,
+        start_lon=_CACHE.start_lon,
+    )
 
 
 def _lock_start_if_ready() -> None:
@@ -252,10 +265,10 @@ def _lock_start_if_ready() -> None:
     prevstate.update_start_point(float(gps.lat), float(gps.lon), True)
 
 def handle_gps(data: str) -> None:
-    """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth"""
+    """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth[,sample_ts]"""
     fields = data.split(",")
-    if len(fields) != 6:
-        LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
+    if len(fields) not in (6, 7):
+        LOGGER.warning("GNSS parse: expected 6 or 7 fields | raw=%r", data)
         return
     try:
         lat = float(fields[0])
@@ -264,19 +277,22 @@ def handle_gps(data: str) -> None:
         ground_speed = float(fields[3])
         pos_health = bool(int(float(fields[4])))
         motion_health = bool(int(float(fields[5])))
+        rx_ts = time.monotonic()
+        sample_ts = float(fields[6]) if len(fields) == 7 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
-    now = time.time()
     course_rad = math.radians(course_deg)
     sample = _GpsFromApp(
         lat=lat,
         lon=lon,
         course_rad=course_rad,
         speed_mps=ground_speed,
-        pos_ts=now,
-        motion_ts=now,
+        sample_ts=sample_ts,
+        rx_ts=rx_ts,
+        pos_ts=sample_ts,
+        motion_ts=sample_ts,
         pos_health=pos_health,
         motion_health=motion_health,
     )
@@ -286,56 +302,73 @@ def handle_gps(data: str) -> None:
         if pos_health:
             _CACHE.last_gps.lat = lat
             _CACHE.last_gps.lon = lon
-            _CACHE.last_gps.pos_ts = now
+            _CACHE.last_gps.sample_ts = sample_ts
+            _CACHE.last_gps.rx_ts = rx_ts
+            _CACHE.last_gps.pos_ts = sample_ts
             _CACHE.last_gps.pos_health = True
         if motion_health:
             _CACHE.last_gps.course_rad = course_rad
             _CACHE.last_gps.speed_mps = ground_speed
-            _CACHE.last_gps.motion_ts = now
+            _CACHE.last_gps.sample_ts = sample_ts
+            _CACHE.last_gps.rx_ts = rx_ts
+            _CACHE.last_gps.motion_ts = sample_ts
             _CACHE.last_gps.motion_health = True
         _lock_start_if_ready()
 
-
 def handle_imu(data: str) -> None:
-    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health"""
+    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health[,sample_ts]"""
     fields = data.split(",")
     try:
-        if len(fields) < 13:
-            LOGGER.warning("IMU parse: expected 13 fields, got %d | raw=%r", len(fields), data)
+        if len(fields) not in (13, 14):
+            LOGGER.warning("IMU parse: expected 13 or 14 fields, got %d | raw=%r", len(fields), data)
             return
         gyrz_deg_s = float(fields[11])
         health = bool(int(float(fields[12])))
+        rx_ts = time.monotonic()
+        sample_ts = float(fields[13]) if len(fields) == 14 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
         return
 
-    now = time.time()
     gyrz_rad_s = math.radians(gyrz_deg_s)
-    sample = _ImuFromApp(gyrz_rad_s=gyrz_rad_s, ts=now, health=health)
+    imu = _ImuFromApp(
+        gyrz_rad_s=gyrz_rad_s,
+        sample_ts=sample_ts,
+        rx_ts=rx_ts,
+        ts=sample_ts,
+        health=health,
+    )
     with _UPDATE_LOCK:
-        _CACHE.latest_imu = sample
-        _CACHE.imu_history.append(sample)
+        _CACHE.latest_imu = imu
+        _CACHE.imu_history.append(imu)
         if health:
-            _CACHE.last_imu = sample
+            _CACHE.last_imu = imu
 
 
 def handle_barometer(data: str) -> None:
-    """altitude_m[,health]"""
+    """altitude_m[,health[,sample_ts]]"""
     fields = data.split(",")
     try:
         alt_m = float(fields[0].strip())
         health = bool(int(float(fields[1]))) if len(fields) >= 2 else True
+        rx_ts = time.monotonic()
+        sample_ts = float(fields[2]) if len(fields) >= 3 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
 
-    now = time.time()
-    sample = _BaroFromApp(alt_m=alt_m, ts=now, health=health)
+    baro = _BaroFromApp(
+        alt_m=alt_m,
+        sample_ts=sample_ts,
+        rx_ts=rx_ts,
+        ts=sample_ts,
+        health=health,
+    )
     with _UPDATE_LOCK:
-        _CACHE.latest_baro = sample
-        _CACHE.baro_history.append(sample)
+        _CACHE.latest_baro = baro
+        _CACHE.baro_history.append(baro)
         if health:
-            _CACHE.last_baro = sample
+            _CACHE.last_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -556,7 +589,7 @@ def dispatch(msg: str) -> None:
     if mid == appargs.MainAppArg.MID_TerminateProcess:
         MOTORAPP_RUNSTATUS = False
     elif mid == appargs.GpsAppArg.MID_motor_gps:
-        handle_gㅔㄴ(unpacked.data)
+        handle_gps(unpacked.data)
     elif mid == appargs.ImuAppArg.MID_motor_imu:
         handle_imu(unpacked.data)
     elif mid == appargs.BarometerAppArg.MID_motor_alt:
