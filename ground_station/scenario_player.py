@@ -208,8 +208,6 @@ def _build_argparser() -> argparse.ArgumentParser:
                    help="List visible COM ports and exit.")
     p.add_argument("--seed", type=int, default=0,
                    help="RNG seed for descent jitter / gust phase.")
-    p.add_argument("--tick", type=float,
-                   help="Override scenario tick period (s).")
     p.add_argument("--no-release", action="store_true",
                    help="Skip SS,3 in setup (e.g. when state is already RELEASE).")
     p.add_argument("--keep-sim-on", action="store_true",
@@ -220,8 +218,6 @@ def _build_argparser() -> argparse.ArgumentParser:
 
 
 def _override_config(cfg: ScenarioConfig, args: argparse.Namespace) -> ScenarioConfig:
-    if args.tick is not None and args.tick > 0:
-        cfg.tick_period_s = float(args.tick)
     if args.no_release:
         cfg.use_release_state = False
     if args.keep_sim_on:

@@ -57,7 +57,7 @@ python ground_station/ground_station.py
 ```powershell
 python ground_station/scenario_player.py --list                 # 사용 가능한 preset 보기
 python ground_station/scenario_player.py --port COM5 --scenario west8
-python ground_station/scenario_player.py --port COM5 --scenario gust12 --tick 0.5
+python ground_station/scenario_player.py --port COM5 --scenario gust12
 ```
 
 빌트인 preset 요약:
