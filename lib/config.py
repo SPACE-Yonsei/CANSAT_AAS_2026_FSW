@@ -8,6 +8,8 @@ BURNWIRE_GPIO = 5
 EGG_SOLENOID_GPIO = 6
 PARAFOIL_RIGHT_GPIO = 12
 PARAFOIL_LEFT_GPIO = 13
+# GNSS 7 Click RST (active low; pulse at GPS app startup unless GNSS_RESET_ENABLE=0)
+GNSS_RESET_GPIO = 26
 
 # Egg drop (flight state 4): rangefinder reading must be in
 # [rough validity floor .. EGG_STATE_DISTANCE_TRIGGER_MM] to arm solenoid pulses.

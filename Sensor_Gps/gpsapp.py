@@ -11,6 +11,7 @@ from math import atan2, cos, degrees, radians, sqrt
 from typing import Optional
 
 from lib import appargs, config, msgstructure, sensorlog
+from Sensor_Gps import gnssreset
 
 
 logger = logging.getLogger(__name__)
@@ -548,6 +549,7 @@ def _hold_or_update_motion(speed: float, course: float, motion_health: int) -> t
 def read_and_send_gps_data(main_queue) -> None:
     global LAT, LON, ALT, VELOCITY, DIRECTION, SATS, GPS_TIME, FIX_QUALITY, RMC_STATUS
     global POS_HEALTH, MOTION_HEALTH, GPS_HEALTH, _last_update_ts
+    gnssreset.send_reset_pulse()
     tick = 0
     period = _gps_period_sec()
     comm_tick_interval = _comm_tick_interval()
