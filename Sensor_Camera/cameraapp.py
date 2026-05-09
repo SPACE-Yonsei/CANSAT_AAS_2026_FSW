@@ -56,7 +56,7 @@ def picam_record_thread(cam, enc) -> None:
     while CAMERAAPP_RUNSTATUS:
         if PICAM_RECORDING:
             out = picam.record(cam, enc, SEGMENT_SEC)
-            CAMERA_HEALTH = 1 if out is not None else 0
+            CAMERA_HEALTH = 1 if getattr(cam, "available", False) else 0
             if out is not None:
                 logger.debug("Camera segment saved: %s", out)
             else:
@@ -67,9 +67,8 @@ def picam_record_thread(cam, enc) -> None:
 
 def cameraapp_main(main_pipe) -> None:
     cam, enc = picam.init_cam()
-    if cam is not None:
-        global CAMERA_HEALTH
-        CAMERA_HEALTH = 1
+    global CAMERA_HEALTH
+    CAMERA_HEALTH = 1 if getattr(cam, "available", False) else 0
     logger.info("Camera app started")
     t = threading.Thread(target=picam_record_thread, args=(cam, enc), daemon=True)
     t.start()

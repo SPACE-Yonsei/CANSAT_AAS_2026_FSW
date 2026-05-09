@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from Sensor_Camera import cameraapp, picam
 from lib import appargs, msgstructure
@@ -10,6 +12,7 @@ class TestCameraApp(unittest.TestCase):
     def setUp(self):
         cameraapp.CAMERAAPP_RUNSTATUS = True
         cameraapp.PICAM_RECORDING = False
+        cameraapp.CAMERA_HEALTH = 0
 
     def test_command_handler_on_off(self):
         on_msg = msgstructure.pack_msg(
@@ -44,6 +47,32 @@ class TestCameraApp(unittest.TestCase):
         )
         cameraapp.command_handler(term)
         self.assertFalse(cameraapp.CAMERAAPP_RUNSTATUS)
+
+    def test_record_thread_keeps_unavailable_camera_unhealthy(self):
+        cameraapp.PICAM_RECORDING = True
+        cam = SimpleNamespace(available=False)
+
+        def _stop_after_first_record(*_args, **_kwargs):
+            cameraapp.CAMERAAPP_RUNSTATUS = False
+            return Path("placeholder.txt")
+
+        with mock.patch("Sensor_Camera.cameraapp.picam.record", side_effect=_stop_after_first_record):
+            cameraapp.CAMERAAPP_RUNSTATUS = True
+            cameraapp.picam_record_thread(cam, None)
+        self.assertEqual(cameraapp.CAMERA_HEALTH, 0)
+
+    def test_record_thread_sets_available_camera_healthy(self):
+        cameraapp.PICAM_RECORDING = True
+        cam = SimpleNamespace(available=True)
+
+        def _stop_after_first_record(*_args, **_kwargs):
+            cameraapp.CAMERAAPP_RUNSTATUS = False
+            return Path("segment.mp4")
+
+        with mock.patch("Sensor_Camera.cameraapp.picam.record", side_effect=_stop_after_first_record):
+            cameraapp.CAMERAAPP_RUNSTATUS = True
+            cameraapp.picam_record_thread(cam, None)
+        self.assertEqual(cameraapp.CAMERA_HEALTH, 1)
 
 
 class TestPicam(unittest.TestCase):
