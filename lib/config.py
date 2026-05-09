@@ -18,8 +18,8 @@ EGG_STATE_DISTANCE_TRIGGER_MM = 2500
 
 
 # Relay active level (keep numeric for platform-agnostic compatibility)
-RELAY_ACTIVATE_LEVEL = 1
-RELAY_DEACTIVATE_LEVEL = 0
+RELAY_ACTIVATE_LEVEL = 0
+RELAY_DEACTIVATE_LEVEL = 1
 
 
 # Sensor/IO rates (Hz)
