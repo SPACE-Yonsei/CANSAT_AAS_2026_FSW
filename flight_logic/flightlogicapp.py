@@ -507,7 +507,7 @@ def dispatch(msg: str, main_queue) -> None:
         handle_ss(unpacked.data, main_queue)
     elif mid == appargs.CommAppArg.MID_RouteCmd_TC:
         handle_target_coord(unpacked.data, main_queue)
-    elif mid == appargs.CommAppArg.MID_RouteCmd_CAL:
+    elif mid == appargs.BarometerAppArg.MID_flight_alt_reset:
         handle_reset_alt(unpacked.data, main_queue)
 
 

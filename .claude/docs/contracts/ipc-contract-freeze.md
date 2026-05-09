@@ -55,6 +55,7 @@
 
 ### 3.4 Flight/Motor Control Plane
 - `MID_flight_alt`: Barometer -> FlightLogic (`alt`)
+- `MID_flight_alt_reset`: Barometer -> FlightLogic (altitude origin reset 통지, payload `"RESET"` 또는 빈 문자열)
 - `MID_flight_dis`: Distance -> FlightLogic (`distance_mm`)
 - `MID_motor_alt`: Barometer -> Motor (`alt`)
 - `MID_motor_imu`: IMU -> Motor (`yaw,gyrz,health`)

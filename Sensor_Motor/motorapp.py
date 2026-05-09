@@ -106,6 +106,30 @@ _UPDATE_LOCK = threading.Lock()
 _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
+
+# Align with ground_station map: (0,0) means “no fix”, not a real position.
+_START_NULL_LAT_TOL = 1.0e-4
+_START_NULL_LON_TOL = 1.0e-4
+
+
+def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
+    if lat is None or lon is None:
+        return False
+    try:
+        la = float(lat)
+        lo = float(lon)
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(la)
+        and math.isfinite(lo)
+        and -90.0 <= la <= 90.0
+        and -180.0 <= lo <= 180.0
+    )
+
+
+def _is_placeholder_latlon(lat: float, lon: float) -> bool:
+    return abs(lat) <= _START_NULL_LAT_TOL and abs(lon) <= _START_NULL_LON_TOL
 _CONTROLLER = None
 _L1_STATE = None
 _CONTROL_MOD = None
@@ -334,18 +358,27 @@ def _guidance_command_from_output(ctl, g_out, l1_input, now: float):
 
 
 def _lock_start_if_ready() -> None:
+    """Snap the guidance/map origin to the first plausible lat/lon after release.
+
+    Previously required ``pos_health``; during SIM / gpsapp transitions that bit
+    can be 0 while ``latest_gps`` already carries the injected coordinates, so
+    ``start_*`` never reached telemetry and the GCS map had no green marker.
+    We still reject the (0,0) no-fix placeholder used on the bench.
+    """
     global _START_POINT_LOCKED
     if _START_POINT_LOCKED or STATE < 3:
         return
     gps = _CACHE.latest_gps
-    if not gps.pos_health or gps.lat is None or gps.lon is None:
+    if not _finite_latlon(gps.lat, gps.lon):
         return
-    if not (-90.0 <= float(gps.lat) <= 90.0 and -180.0 <= float(gps.lon) <= 180.0):
+    la = float(gps.lat)
+    lo = float(gps.lon)
+    if _is_placeholder_latlon(la, lo):
         return
-    _CACHE.start_lat = float(gps.lat)
-    _CACHE.start_lon = float(gps.lon)
+    _CACHE.start_lat = la
+    _CACHE.start_lon = lo
     _START_POINT_LOCKED = True
-    prevstate.update_start_point(float(gps.lat), float(gps.lon), True)
+    prevstate.update_start_point(la, lo, True)
 
 def handle_gps(data: str) -> None:
     """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth[,sample_ts]"""

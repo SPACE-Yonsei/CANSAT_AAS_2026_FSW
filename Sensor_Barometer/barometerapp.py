@@ -70,7 +70,7 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
             main_queue,
             appargs.BarometerAppArg.AppID,
             appargs.FlightlogicAppArg.AppID,
-            appargs.CommAppArg.MID_RouteCmd_CAL,
+            appargs.BarometerAppArg.MID_flight_alt_reset,
             "RESET",
         )
 
