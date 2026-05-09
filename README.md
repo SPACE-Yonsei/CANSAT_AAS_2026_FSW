@@ -66,9 +66,10 @@ Then reboot.
 - Recording config (current code):
   - video format: `RGB888`
   - resolution: `640x480`
-  - segmented recording via `cameraapp` (`SEGMENT_SEC=1.0`)
+  - segmented recording via `cameraapp` (`SEGMENT_SEC=7.0`)
+  - each segment is raw **H.264** elementary stream (`.h264`) via `FileOutput` (no MP4 mux per segment)
 - Output directory: `PICAM_Video/` (under the FSW working directory)
-- Output filename format: `P_MMDD_HHMMSS_microsec.*` (`.mp4`, `.h264`, or placeholder `.txt` if the backend fails)
+- Output filename format: `P_MMDD_HHMMSS_microsec.h264` (or placeholder `.txt` if the backend fails). Remux locally if needed: `ffmpeg -i seg.h264 -c copy seg.mp4`
 - If camera backend is unavailable:
   - system falls back gracefully
   - placeholder segment files are created so pipeline/test does not break
@@ -254,4 +255,4 @@ ssh root@192.168.1.100 "ls -t /root/CANSAT_AAS_2026_FSW/logs/*.csv | head -1"
 scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/<위에서_나온_파일>.csv" .
 
 # 영상
-scp "root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.mp4" .
+scp "root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.h264" .

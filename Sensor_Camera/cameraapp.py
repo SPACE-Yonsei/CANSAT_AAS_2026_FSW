@@ -13,7 +13,7 @@ from Sensor_Camera import picam
 CAMERAAPP_RUNSTATUS = True
 PICAM_RECORDING = False
 CAMERA_HEALTH = 0
-SEGMENT_SEC = 1.0
+SEGMENT_SEC = 7.0
 logger = logging.getLogger(__name__)
 
 

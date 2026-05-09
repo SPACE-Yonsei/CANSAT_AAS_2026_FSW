@@ -73,7 +73,9 @@ def _timestamped_name(ext: str) -> str:
 def record(cam_handle: CameraHandle, enc, sec: float) -> Path | None:
     """Record one segment.
 
-    - Real camera backend: attempts mp4/h264 output.
+    - Real camera backend: raw H.264 elementary stream (.h264) via FileOutput.
+      (MP4 muxing was fragile on abrupt segment boundaries; players can open
+      .h264 with VLC/ffplay or remux: ffmpeg -i seg.h264 -c copy seg.mp4)
     - Fallback backend: creates placeholder file for pipeline continuity.
     """
     if cam_handle is None:
@@ -81,20 +83,14 @@ def record(cam_handle: CameraHandle, enc, sec: float) -> Path | None:
 
     if cam_handle.available:
         try:
-            from picamera2.outputs import FfmpegOutput, FileOutput  # type: ignore
+            from picamera2.outputs import FileOutput  # type: ignore
 
-            mp4_path = cam_handle.output_dir / _timestamped_name("mp4")
-            out_path: Path = mp4_path
-            try:
-                output = FfmpegOutput(str(mp4_path))
-            except Exception:
-                h264_path = cam_handle.output_dir / _timestamped_name("h264")
-                out_path = h264_path
-                output = FileOutput(str(h264_path))
+            h264_path = cam_handle.output_dir / _timestamped_name("h264")
+            output = FileOutput(str(h264_path))
             cam_handle.cam.start_recording(enc, output)
             time.sleep(max(0.0, float(sec)))
             cam_handle.cam.stop_recording()
-            return out_path
+            return h264_path
         except Exception:
             # fall through to placeholder when backend errors at runtime
             pass
