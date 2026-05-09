@@ -7,7 +7,7 @@ import threading
 import time
 from collections import deque
 
-from lib import appargs, msgstructure
+from lib import appargs, config, msgstructure, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,17 @@ _last_update_ts = 0.0
 _distance_window = deque(maxlen=5)
 _distance_lock = threading.Lock()
 _dist_hw = None
+
+
+def _distance_rate_hz() -> float:
+    try:
+        return max(0.1, float(config.DISTANCE_RATE_HZ))
+    except (TypeError, ValueError):
+        return 10.0
+
+
+def _distance_period_sec() -> float:
+    return 1.0 / _distance_rate_hz()
 
 
 def command_handler(recv_msg: str) -> None:
@@ -56,6 +67,7 @@ def _synthetic_read_distance() -> float:
 
 def read_distance_data() -> None:
     global DISTANCE_MM, DISTANCE_HEALTH, _last_update_ts, _dist_hw
+    period = _distance_period_sec()
     while DISTANCEAPP_RUNSTATUS:
         try:
             raw: float
@@ -81,6 +93,8 @@ def read_distance_data() -> None:
             except Exception:
                 raw = _synthetic_read_distance()
 
+            sensorlog.log_distance_raw(raw)
+
             if _is_valid_distance(raw):
                 _distance_window.append(float(raw))
                 filtered = _median_mm(_distance_window)
@@ -94,23 +108,25 @@ def read_distance_data() -> None:
                 DISTANCE_HEALTH = 0
         except Exception:
             DISTANCE_HEALTH = 0
-        time.sleep(0.1)
+        time.sleep(period)
 
 
 def send_distance_data(main_queue) -> None:
     global DISTANCE_HEALTH
+    period = _distance_period_sec()
     while DISTANCEAPP_RUNSTATUS:
         if time.time() - _last_update_ts > DISTANCE_STALE_TIMEOUT_SEC:
             DISTANCE_HEALTH = 0
         with _distance_lock:
             distance = DISTANCE_MM
+            health = int(DISTANCE_HEALTH)
 
         msgstructure.send_msg(
             main_queue,
             appargs.DistanceAppArg.AppID,
             appargs.FlightlogicAppArg.AppID,
             appargs.DistanceAppArg.MID_flight_dis,
-            f"{distance}",
+            f"{distance},{health}",
         )
         msgstructure.send_msg(
             main_queue,
@@ -119,7 +135,7 @@ def send_distance_data(main_queue) -> None:
             appargs.DistanceAppArg.MID_comm_dis,
             f"{distance}",
         )
-        time.sleep(0.2)
+        time.sleep(period)
 
 
 def distanceapp_main(main_queue, main_pipe) -> None:

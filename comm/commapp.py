@@ -48,9 +48,9 @@ class TelemetryData:
     gyro_roll: float = 0.0
     gyro_pitch: float = 0.0
     gyro_yaw: float = 0.0
-    acc_roll: float = 0.0
-    acc_pitch: float = 0.0
-    acc_yaw: float = 0.0
+    acc_x: float = 0.0
+    acc_y: float = 0.0
+    acc_z: float = 0.0
     mag_roll: float = 0.0
     mag_pitch: float = 0.0
     mag_yaw: float = 0.0
@@ -351,9 +351,9 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])
             tlm_data.filtered_yaw = float(fields[2])
-            tlm_data.acc_roll = float(fields[3])
-            tlm_data.acc_pitch = float(fields[4])
-            tlm_data.acc_yaw = float(fields[5])
+            tlm_data.acc_x = float(fields[3])
+            tlm_data.acc_y = float(fields[4])
+            tlm_data.acc_z = float(fields[5])
             tlm_data.mag_roll = float(fields[6])
             tlm_data.mag_pitch = float(fields[7])
             tlm_data.mag_yaw = float(fields[8])
@@ -449,7 +449,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure:.2f},"
         f"{tlm_data.voltage:.3f},{tlm_data.current:.3f},{tlm_data.power:.3f},"
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
-        f"{tlm_data.acc_roll:.3f},{tlm_data.acc_pitch:.3f},{tlm_data.acc_yaw:.3f},"
+        f"{tlm_data.acc_x:.3f},{tlm_data.acc_y:.3f},{tlm_data.acc_z:.3f},"
         f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
         f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
         f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"

@@ -26,7 +26,6 @@ from lib import appargs, config, msgstructure, prevstate
 from Sensor_Motor import guidance as motor_guidance
 from Sensor_Motor import Motor_Egg, Motor_Release
 from Sensor_Motor.guidance import (
-    InputResolver,
     L1Input,
     make_resolver_state,
     resolver_update_gnss,
@@ -39,7 +38,6 @@ from Sensor_Motor.guidance import (
     fill_stale_data,
     decide_control_mode,
     compute_motor_output,
-    L1Prevstate,
     L1Config,
     make_l1_state,
     l1_reset,
@@ -77,9 +75,9 @@ PI                       = None
 
 _UPDATE_LOCK = threading.Lock()
 
-_INPUT_RESOLVER: InputResolver    = make_resolver_state()
-_GUIDANCE:       L1Prevstate               = make_l1_state(L1Config())
-_CONTROLLER:     BrakeControllerState  = make_controller_state()
+_INPUT_RESOLVER = make_resolver_state()
+_GUIDANCE       = make_l1_state(L1Config())
+_CONTROLLER: BrakeControllerState = make_controller_state()
 
 _TARGET_LAT: Optional[float] = None
 _TARGET_LON: Optional[float] = None

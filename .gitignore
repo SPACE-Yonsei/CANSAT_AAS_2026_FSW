@@ -22,4 +22,6 @@ __pycache__/
 *.pyc
 lib/prevstate.txt
 lib/prevstate.json
+lib/prevstate.json.lock
+lib/prevstate.json.tmp
 sensorlogs/

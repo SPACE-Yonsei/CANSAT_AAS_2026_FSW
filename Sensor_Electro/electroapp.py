@@ -8,7 +8,7 @@ import time
 from collections import deque
 from typing import Optional
 
-from lib import appargs, msgstructure
+from lib import appargs, msgstructure, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +99,7 @@ def read_electro_data() -> None:
             continue
         try:
             volt, curr, pwr = sample
+            sensorlog.log_electro_raw(float(volt), float(curr), float(pwr))
             volt = _median5_update(volt, _volt_window)
             curr = _median5_update(curr, _curr_window)
             pwr = _median5_update(pwr, _pwr_window)

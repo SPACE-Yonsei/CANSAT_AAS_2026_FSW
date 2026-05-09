@@ -70,7 +70,15 @@ def get_release_target_ratio() -> float:
 
 
 def get_release_predict_start_ratio() -> float:
+    """Fraction of max_alt below which prediction sampling and force-timeout arm.
+
+    ``lib/config.txt`` may set ``RELEASE_PREDICT_START_RATIO``; the legacy key
+    ``RELEASE_FORCE_START_RATIO`` is accepted as an alias when the primary key
+    is absent.
+    """
     value = _read_config_txt_value("RELEASE_PREDICT_START_RATIO")
+    if value is None:
+        value = _read_config_txt_value("RELEASE_FORCE_START_RATIO")
     if value is None:
         value = getattr(config, "RELEASE_PREDICT_START_RATIO", 0.9)
     try:
@@ -126,13 +134,8 @@ def get_release_prediction_time_max_sec() -> float:
 
 
 def get_release_force_start_ratio() -> float:
-    value = _read_config_txt_value("RELEASE_FORCE_START_RATIO")
-    if value is None:
-        value = getattr(config, "RELEASE_FORCE_START_RATIO", 0.9)
-    try:
-        return min(0.99, max(0.5, float(value)))
-    except (TypeError, ValueError):
-        return 0.9
+    """Same band as ``get_release_predict_start_ratio`` (single tunable in ``config.py``)."""
+    return get_release_predict_start_ratio()
 
 
 def get_release_force_after_sec() -> float:
@@ -220,7 +223,7 @@ def should_trigger_release(
     burn_delay = get_burnwire_delay_sec() if burnwire_delay_sec is None else burnwire_delay_sec
     burn_delay = max(0.1, float(burn_delay))
 
-    # Absolute fallback: if altitude falls below max_alt*ratio (default 90%),
+    # Absolute fallback: if altitude falls below max_alt * predict band ratio,
     # force release after timeout (default 5s).
     force_start_alt_m = max_alt_m * force_start_ratio
     if alt_m <= force_start_alt_m:
