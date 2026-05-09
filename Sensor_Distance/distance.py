@@ -27,8 +27,27 @@ logger = logging.getLogger(__name__)
 _REG_DATA = 0x00
 _REG_MODE = 0x23
 _REG_TRIGGER = 0x24
-_FLUX_MIN = 100
 _DIST_MAX_CM = 1200
+
+
+def _flux_min() -> int:
+    """Weak-signal threshold; lower for dark targets / bench (e.g. ``DISTANCE_TFL_FLUX_MIN=50``)."""
+    try:
+        return max(0, int(os.environ.get("DISTANCE_TFL_FLUX_MIN", "100")))
+    except ValueError:
+        return 100
+
+
+def _distance_raw_to_mm(dist_raw: int) -> int:
+    """Convert 16-bit register value to mm.
+
+    Default ``cm``: Benewake samples distance in centimeters; FSW uses mm.
+    Set ``DISTANCE_TFL_DISTANCE_UNIT=mm`` if your firmware reports mm in the register.
+    """
+    unit = os.environ.get("DISTANCE_TFL_DISTANCE_UNIT", "cm").strip().lower()
+    if unit == "mm":
+        return int(dist_raw)
+    return int(dist_raw) * 10
 
 
 def _tfl_use_trigger() -> bool:
@@ -48,7 +67,7 @@ def init_tfluna() -> Any:
 
 
 def read_range_mm(dev: dict) -> int:
-    """Return range in millimeters (TF-Luna reports centimeters)."""
+    """Return range in millimeters (register scaling via ``DISTANCE_TFL_DISTANCE_UNIT``)."""
     addr = int(dev["addr"])
     with i2c_bus.i2c_lock():
         i2c = i2c_bus.get_i2c()
@@ -58,17 +77,25 @@ def read_range_mm(dev: dict) -> int:
         buf = bytearray(6)
         i2c.writeto_then_readfrom(addr, bytes([_REG_DATA]), buf, out_end=1, in_end=6)
 
-    dist_cm = int(buf[0]) | (int(buf[1]) << 8)
+    dist_raw = int(buf[0]) | (int(buf[1]) << 8)
     flux = int(buf[2]) | (int(buf[3]) << 8)
+    flux_min = _flux_min()
 
-    if dist_cm == 0xFFFF or dist_cm > _DIST_MAX_CM:
-        raise RuntimeError(f"TF-Luna invalid distance cm={dist_cm}")
-    if flux < _FLUX_MIN:
+    if dist_raw == 0xFFFF:
+        raise RuntimeError(f"TF-Luna invalid distance raw={dist_raw}")
+    mm = _distance_raw_to_mm(dist_raw)
+    if os.environ.get("DISTANCE_TFL_DISTANCE_UNIT", "cm").strip().lower() != "mm":
+        if dist_raw > _DIST_MAX_CM:
+            raise RuntimeError(f"TF-Luna invalid distance cm={dist_raw}")
+    elif mm > 80000:
+        raise RuntimeError(f"TF-Luna invalid distance mm={mm}")
+
+    if flux_min and flux < flux_min:
         raise RuntimeError(f"TF-Luna weak signal flux={flux}")
     if flux > 0x8000 or flux == 0xFFFF:
         raise RuntimeError(f"TF-Luna flux out of range flux={flux}")
 
-    return int(dist_cm) * 10
+    return mm
 
 
 def terminate_tfluna(_dev: dict) -> None:
