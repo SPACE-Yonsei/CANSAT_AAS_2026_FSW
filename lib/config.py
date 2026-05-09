@@ -16,16 +16,16 @@ GNSS_RESET_GPIO = 26
 # Typical: trigger when distance to ground <= 2500 mm with TF-Luna.
 EGG_STATE_DISTANCE_TRIGGER_MM = 2500
 
-# 이거 아래 이상하게 보일텐데 일단 수정 노(0510 드론 테스트전)
-# Relay active level (keep numeric for platform-agnostic compatibility)
+# Relay logic levels (numeric for platform-agnostic GPIO compatibility)
+# Base polarity is active-low relay modules: ON=0, OFF=1.
 RELAY_ACTIVATE_LEVEL = 0
 RELAY_DEACTIVATE_LEVEL = 1
 
-# Per-actuator relay polarity overrides
-# - Release keeps its own polarity so it can differ from egg solenoid.
-# - Egg defaults to global relay polarity.
-RELEASE_RELAY_ACTIVATE_LEVEL = 1
-RELEASE_RELAY_DEACTIVATE_LEVEL = 0
+# Per-actuator relay polarity
+# - Release relay is wired opposite to the base polarity.
+# - Egg relay follows the base polarity.
+RELEASE_RELAY_ACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
+RELEASE_RELAY_DEACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
 EGG_RELAY_ACTIVATE_LEVEL = RELAY_ACTIVATE_LEVEL
 EGG_RELAY_DEACTIVATE_LEVEL = RELAY_DEACTIVATE_LEVEL
 
