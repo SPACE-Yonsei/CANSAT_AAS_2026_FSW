@@ -53,8 +53,11 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
-    global max_alt
+    global max_alt, solenoid_count, solenoid_done
     max_alt = 0.0
+    solenoid_count = 0
+    solenoid_done = False
+    prevstate.update_solenoid_state(solenoid_count, solenoid_done)
     reset_release_predictor(release_predictor)
     _set_state(main_queue, 0, force=force)
 
@@ -75,8 +78,8 @@ def to_apogee(main_queue, force: bool = False) -> None:
 
 
 def _has_release_target() -> bool:
-    lat = prevstate.Target_lat
-    lon = prevstate.Target_lon
+    lat = prevstate.PREV_TARGET_LAT
+    lon = prevstate.PREV_TARGET_LON
     if not (math.isfinite(lat) and math.isfinite(lon)):
         return False
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
@@ -103,7 +106,7 @@ def to_release(main_queue, force: bool = False, reason: str = "TRIGGER") -> None
         appargs.FlightlogicAppArg.AppID,
         appargs.MotorAppArg.AppID,
         appargs.FlightlogicAppArg.MID_motor_TargetCor,
-        f"{prevstate.Target_lat},{prevstate.Target_lon}",
+        f"{prevstate.PREV_TARGET_LAT},{prevstate.PREV_TARGET_LON}",
     )
 
 
@@ -116,7 +119,7 @@ def to_egg(main_queue, force: bool = False) -> None:
             appargs.FlightlogicAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.FlightlogicAppArg.MID_motor_TargetCor,
-            f"{prevstate.Target_lat},{prevstate.Target_lon}",
+            f"{prevstate.PREV_TARGET_LAT},{prevstate.PREV_TARGET_LON}",
         )
 
 
@@ -159,7 +162,7 @@ def _verify_inter_app_links(main_queue) -> None:
         appargs.FlightlogicAppArg.AppID,
         appargs.MotorAppArg.AppID,
         appargs.FlightlogicAppArg.MID_motor_TargetCor,
-        f"{prevstate.Target_lat},{prevstate.Target_lon}",
+        f"{prevstate.PREV_TARGET_LAT},{prevstate.PREV_TARGET_LON}",
     )
 
     # Camera OFF is a safe no-op for routing/path check.
@@ -352,8 +355,10 @@ def solenoid_logic(main_queue, distance: float) -> None:
             "TRIGGER",
         )
         solenoid_count += 1
+        prevstate.update_solenoid_state(solenoid_count, solenoid_done)
     if solenoid_count >= 3:
         solenoid_done = True
+        prevstate.update_solenoid_state(solenoid_count, solenoid_done)
 
 
 def _reset_transition_counters() -> None:
@@ -482,10 +487,11 @@ def send_current_state_thread(main_queue) -> None:
 
 
 def init() -> None:
-    global state, max_alt
+    global state, max_alt, solenoid_count, solenoid_done
     prevstate.init_prevstate()
     state = prevstate.PREV_STATE
     max_alt = prevstate.PREV_MAX_ALT
+    solenoid_count, solenoid_done = prevstate.get_solenoid_state()
 
 
 def flightlogicapp_main(main_queue, main_pipe) -> None:

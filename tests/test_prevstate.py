@@ -24,30 +24,48 @@ class TestPrevState(unittest.TestCase):
         prevstate.update_target_gps(37.55, 126.94)
         prevstate.update_packet_count(99)
         prevstate.update_st_timedelta(123.4)
+        prevstate.update_yaw_offset(12.5)
+        prevstate.update_motor_enabled(False)
+        prevstate.update_solenoid_state(2, True)
+        prevstate.update_start_point(37.551, 126.941, True)
 
         prevstate.PREV_STATE = 0
         prevstate.PREV_ALT_CAL = 0.0
         prevstate.PREV_MAX_ALT = 0.0
-        prevstate.Target_lat = 0.0
-        prevstate.Target_lon = 0.0
+        prevstate.PREV_TARGET_LAT = 0.0
+        prevstate.PREV_TARGET_LON = 0.0
         prevstate.PREV_PACKET_COUNT = 0
         prevstate.PREV_ST_TIMEDELTA = 0.0
+        prevstate.PREV_YAW_OFFSET = 0.0
+        prevstate.PREV_MOTOR_ENABLED = 1
+        prevstate.PREV_SOLENOID_COUNT = 0
+        prevstate.PREV_SOLENOID_DONE = 0
+        prevstate.PREV_START_LAT = 0.0
+        prevstate.PREV_START_LON = 0.0
+        prevstate.PREV_START_LOCKED = 0
 
         prevstate.init_prevstate()
         self.assertEqual(prevstate.PREV_STATE, 3)
         self.assertAlmostEqual(prevstate.PREV_ALT_CAL, 12.5)
         self.assertAlmostEqual(prevstate.PREV_MAX_ALT, 321.0)
-        self.assertAlmostEqual(prevstate.Target_lat, 37.55)
-        self.assertAlmostEqual(prevstate.Target_lon, 126.94)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, 37.55)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, 126.94)
         self.assertEqual(prevstate.PREV_PACKET_COUNT, 99)
         self.assertAlmostEqual(prevstate.PREV_ST_TIMEDELTA, 123.4)
+        self.assertAlmostEqual(prevstate.PREV_YAW_OFFSET, 12.5)
+        self.assertEqual(prevstate.PREV_MOTOR_ENABLED, 0)
+        self.assertEqual(prevstate.PREV_SOLENOID_COUNT, 2)
+        self.assertEqual(prevstate.PREV_SOLENOID_DONE, 1)
+        self.assertAlmostEqual(prevstate.PREV_START_LAT, 37.551)
+        self.assertAlmostEqual(prevstate.PREV_START_LON, 126.941)
+        self.assertEqual(prevstate.PREV_START_LOCKED, 1)
 
     def test_reset_prevstate(self):
         prevstate.update_prevstate(5)
         prevstate.reset_prevstate()
         self.assertEqual(prevstate.PREV_STATE, 0)
         self.assertEqual(prevstate.PREV_PACKET_COUNT, 0)
-        self.assertEqual(prevstate.Target_lat, 0.0)
+        self.assertEqual(prevstate.PREV_TARGET_LAT, 0.0)
 
     def test_runtime_overrides_from_environment(self):
         os.environ["STATE_OVERRIDE"] = "4"
@@ -57,7 +75,7 @@ class TestPrevState(unittest.TestCase):
             prevstate.init_prevstate()
             self.assertEqual(prevstate.STATE_OVERRIDE, 4)
             self.assertEqual(prevstate.PREV_STATE, 4)
-            self.assertAlmostEqual(prevstate.YAW_OFFSET, 12.5)
+            self.assertAlmostEqual(prevstate.PREV_YAW_OFFSET, 12.5)
         finally:
             os.environ.pop("STATE_OVERRIDE", None)
             os.environ.pop("YAW_OFFSET", None)

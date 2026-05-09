@@ -22,8 +22,8 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
         flightlogicapp.reset_release_predictor(flightlogicapp.release_predictor)
-        prevstate.Target_lat = 37.56
-        prevstate.Target_lon = 126.93
+        prevstate.PREV_TARGET_LAT = 37.56
+        prevstate.PREV_TARGET_LON = 126.93
 
     def test_launchpad_to_ascent(self):
         q = queue.Queue()
@@ -39,8 +39,8 @@ class TestFlightLogicApp(unittest.TestCase):
 
     def test_ss_to_egg_pushes_target_to_motor(self):
         q = queue.Queue()
-        prevstate.Target_lat = 37.57
-        prevstate.Target_lon = 126.94
+        prevstate.PREV_TARGET_LAT = 37.57
+        prevstate.PREV_TARGET_LON = 126.94
         flightlogicapp.handle_ss("4", q)
         found = False
         while not q.empty():
@@ -57,8 +57,8 @@ class TestFlightLogicApp(unittest.TestCase):
     def test_release_blocked_without_target(self):
         q = queue.Queue()
         flightlogicapp.state = 1
-        prevstate.Target_lat = 0.0
-        prevstate.Target_lon = 0.0
+        prevstate.PREV_TARGET_LAT = 0.0
+        prevstate.PREV_TARGET_LON = 0.0
         flightlogicapp.handle_ss("3", q)
         self.assertEqual(flightlogicapp.state, 1)
 

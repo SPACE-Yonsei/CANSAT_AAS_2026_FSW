@@ -53,7 +53,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 # After first good samples, set yaw so the initial heading reads as ``_boot_yaw_desired``
-# (from ``YAW_OFFSET`` env at IMU process start, typically 0 = North).
+# (from ``YAW_OFFSET`` env / ``PREV_YAW_OFFSET`` at IMU process start).
 _boot_yaw_desired: float = 0.0
 _boot_zero_yaw: bool = True
 _boot_yaw_sample_target: int = 10
@@ -95,7 +95,7 @@ def _wrap_deg(deg: float) -> float:
 
 
 def _apply_yaw_offset(yaw: float) -> float:
-    return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
+    return _wrap_deg(float(yaw) + prevstate.PREV_YAW_OFFSET)
 
 
 def _ema(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
@@ -139,7 +139,7 @@ def imuapp_init() -> None:
     global _boot_yaw_desired, _boot_zero_yaw, _boot_yaw_sample_target
     global _yaw_north_zero_done, _yaw_boot_raw_sum, _yaw_boot_raw_n
     prevstate.refresh_runtime_overrides()
-    _boot_yaw_desired = float(prevstate.YAW_OFFSET)
+    _boot_yaw_desired = float(prevstate.PREV_YAW_OFFSET)
     _boot_zero_yaw = _env_bool("IMU_ZERO_YAW_ON_BOOT", True)
     _boot_yaw_sample_target = int(_env_float("IMU_BOOT_YAW_SAMPLE_COUNT", 10.0, 3.0, 60.0))
     _yaw_north_zero_done = not _boot_zero_yaw
@@ -221,14 +221,14 @@ def read_imu_data() -> None:
             _yaw_boot_raw_n += 1
             if _yaw_boot_raw_n >= _boot_yaw_sample_target:
                 avg_yaw = _yaw_boot_raw_sum / float(_yaw_boot_raw_n)
-                prevstate.YAW_OFFSET = _wrap_deg(_boot_yaw_desired - avg_yaw)
+                prevstate.update_yaw_offset(_wrap_deg(_boot_yaw_desired - avg_yaw))
                 _yaw_north_zero_done = True
                 _yaw_ema = None
                 logger.info(
-                    "IMU: boot yaw reference set (desired=%.1f°, raw_avg=%.2f°, YAW_OFFSET=%.2f°)",
+                    "IMU: boot yaw reference set (desired=%.1f°, raw_avg=%.2f°, PREV_YAW_OFFSET=%.2f°)",
                     _boot_yaw_desired,
                     avg_yaw,
-                    prevstate.YAW_OFFSET,
+                    prevstate.PREV_YAW_OFFSET,
                 )
 
         _yaw_ema = _ema(_yaw_ema, _apply_yaw_offset(float(yaw)))

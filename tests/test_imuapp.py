@@ -33,12 +33,12 @@ class TestImuApp(unittest.TestCase):
         self.assertAlmostEqual(imuapp._ema(0.0, 10.0, alpha=0.5), 5.0)
 
     def test_apply_yaw_offset(self):
-        old_offset = prevstate.YAW_OFFSET
+        old_offset = prevstate.PREV_YAW_OFFSET
         try:
-            prevstate.YAW_OFFSET = 15.0
+            prevstate.PREV_YAW_OFFSET = 15.0
             self.assertAlmostEqual(imuapp._apply_yaw_offset(350.0), 5.0)
         finally:
-            prevstate.YAW_OFFSET = old_offset
+            prevstate.PREV_YAW_OFFSET = old_offset
 
     def test_synthetic_sample_shape(self):
         sample = imuapp._synthetic_sample()

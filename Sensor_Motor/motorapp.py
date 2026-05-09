@@ -22,7 +22,7 @@ import time
 from types import SimpleNamespace
 from typing import Optional
 
-from lib import appargs, config, msgstructure
+from lib import appargs, config, msgstructure, prevstate
 from Sensor_Motor import guidance as motor_guidance
 from Sensor_Motor import Motor_Egg, Motor_Release
 from Sensor_Motor.guidance import (
@@ -259,6 +259,7 @@ def handle_flight_state(data: str) -> None:
             controller_reset(_CONTROLLER)
             resolver_reset_origin(_INPUT_RESOLVER)
             _START_POINT_LOCKED = False
+            prevstate.clear_start_point()
         elif new_state in (3, 4):
             _lock_start_for_legacy_if_ready()
 
@@ -286,9 +287,11 @@ def handle_mec(data: str) -> None:
     cmd = data.strip().upper()
     if cmd == "ON":
         MOTOR_ENABLED = True
+        prevstate.update_motor_enabled(True)
         LOGGER.info("MOTOR_ENABLED = True")
     elif cmd == "OFF":
         MOTOR_ENABLED = False
+        prevstate.update_motor_enabled(False)
         with _UPDATE_LOCK:
             if PI is not None:
                 set_neutral(PI)
@@ -327,6 +330,7 @@ def _lock_start_for_legacy_if_ready() -> None:
     motor_guidance.set_start_coordinates(lat, lon)
     l1_set_start(_GUIDANCE, 0.0, 0.0)
     _START_POINT_LOCKED = True
+    prevstate.update_start_point(lat, lon, True)
     _maybe_push_target()
 
 
@@ -565,11 +569,33 @@ def dispatch(msg: str) -> None:
 # ── Lifecycle ──────────────────────────────────────────────────────────────────
 
 def init() -> None:
-    global PI
+    global PI, MOTOR_ENABLED, _START_POINT_LOCKED, _TARGET_LAT, _TARGET_LON, TARGET
     Motor_Release.init_burnwire()
     Motor_Egg.init_solenoid()
+    prevstate.init_prevstate()
+    MOTOR_ENABLED = prevstate.is_motor_enabled()
+    _TARGET_LAT, _TARGET_LON = prevstate.get_target_gps()
+    if (
+        -90.0 <= float(_TARGET_LAT) <= 90.0
+        and -180.0 <= float(_TARGET_LON) <= 180.0
+        and not (_TARGET_LAT == 0.0 and _TARGET_LON == 0.0)
+    ):
+        TARGET = SimpleNamespace(lat=_TARGET_LAT, lon=_TARGET_LON)
+    start_point = prevstate.get_start_point()
+    if start_point is not None:
+        lat, lon = start_point
+        if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
+            resolver_set_origin(_INPUT_RESOLVER, float(lat), float(lon))
+            motor_guidance.set_start_coordinates(float(lat), float(lon))
+            l1_set_start(_GUIDANCE, 0.0, 0.0)
+            _START_POINT_LOCKED = True
     PI = init_control()
-    LOGGER.info("MotorApp init | pigpio: %s", getattr(PI, "connected", "N/A"))
+    LOGGER.info(
+        "MotorApp init | pigpio: %s | motor_enabled=%s | start_locked=%s",
+        getattr(PI, "connected", "N/A"),
+        MOTOR_ENABLED,
+        _START_POINT_LOCKED,
+    )
 
 
 def motorapp_main(main_queue, main_pipe=None) -> None:
