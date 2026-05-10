@@ -443,7 +443,7 @@ def _motion_health(
 
 def _synthetic_read():
     """Driver unavailable: zeros / invalid fix (no fake track)."""
-    return ["000000", 0.0, 0.0, 0.0, 0, 0, "V", 0.0, 0.0, 0, 0.0, 0.0]
+    return ["000000", 0.0, 0.0, 0.0, 0, 0, "V", 0.0, 0.0]
 
 
 def _read_gps():
@@ -494,14 +494,6 @@ def _parse_sample(sample) -> Optional[dict]:
             "pos_age": 0.0,
             "motion_age": 0.0,
             "source": "NMEA",
-            "fix_type": None,
-            "h_acc": None,
-            "v_acc": None,
-            "s_acc": None,
-            "head_acc": None,
-            "vel_n": None,
-            "vel_e": None,
-            "valid_flags": None,
         }
         if len(sample) >= 10:
             out["motion_present"] = int(float(sample[9])) > 0
@@ -511,22 +503,6 @@ def _parse_sample(sample) -> Optional[dict]:
             out["motion_age"] = float(sample[11])
         if len(sample) >= 13:
             out["source"] = str(sample[12])
-        if len(sample) >= 14:
-            out["fix_type"] = int(float(sample[13]))
-        if len(sample) >= 15:
-            out["h_acc"] = float(sample[14])
-        if len(sample) >= 16:
-            out["v_acc"] = float(sample[15])
-        if len(sample) >= 17:
-            out["s_acc"] = float(sample[16])
-        if len(sample) >= 18:
-            out["head_acc"] = float(sample[17])
-        if len(sample) >= 19:
-            out["vel_n"] = float(sample[18])
-        if len(sample) >= 20:
-            out["vel_e"] = float(sample[19])
-        if len(sample) >= 21:
-            out["valid_flags"] = int(float(sample[20]))
         return out
     except (TypeError, ValueError):
         return None
@@ -573,40 +549,10 @@ def read_and_send_gps_data(main_queue) -> None:
             sample["lat"] = _median5_update(sample["lat"], _lat_window)
             sample["lon"] = _median5_update(sample["lon"], _lon_window)
             sample["speed"] = _median5_update(sample["speed"], _speed_window)
-            pos_health, position_delta = _position_health(
-                sample["lat"],
-                sample["lon"],
-                sample["fix_quality"],
-                sample["sats"],
-                sample["gps_time"],
-                sample["pos_age"],
-                now,
-                sample["source"],
-                sample["fix_type"],
-                sample["h_acc"],
-            )
-            motion_health = _motion_health(
-                sample["speed"],
-                sample["course"],
-                sample["rmc_status"],
-                sample["motion_present"],
-                sample["motion_age"],
-                position_delta,
-                sample["source"],
-                sample["s_acc"],
-                sample["head_acc"],
-            )
+            pos_health = 1
+            motion_health = 1
             motion_speed = sample["speed"]
             motion_course = sample["course"]
-            if (
-                motion_health <= 0
-                and pos_health > 0
-                and position_delta is not None
-                and GPS_POS_DERIVED_MIN_SPEED <= float(position_delta["speed"]) <= GPS_MAX_VALID_SPEED
-            ):
-                motion_speed = float(position_delta["speed"])
-                motion_course = float(position_delta["course"])
-                motion_health = 1
 
             lat, lon = _hold_or_update_position(sample["lat"], sample["lon"], pos_health, now, sample["gps_time"])
             velocity, direction = _hold_or_update_motion(motion_speed, motion_course, motion_health)
@@ -625,17 +571,6 @@ def read_and_send_gps_data(main_queue) -> None:
                 MOTION_HEALTH = motion_health
                 GPS_HEALTH = POS_HEALTH
                 _last_update_ts = now
-        else:
-            if now - _last_update_ts > GPS_POS_STALE_TIMEOUT_SEC:
-                POS_HEALTH = 0
-                MOTION_HEALTH = 0
-                GPS_HEALTH = 0
-
-        if now - _last_update_ts > GPS_POS_STALE_TIMEOUT_SEC:
-            POS_HEALTH = 0
-            MOTION_HEALTH = 0
-            GPS_HEALTH = 0
-
         sample_ts = time.monotonic()
         payload_motor = (
             f"{LAT},{LON},{DIRECTION},{VELOCITY},"
