@@ -33,5 +33,5 @@ sudo chmod +x "${ROOT_DIR}/startup.sh"
 
 sudo systemctl daemon-reload
 sudo systemctl enable cansat-fsw.service
-echo "installed cansat-fsw.service"
+echo "installed cansat-fsw.service ($(grep -E '^User=' /etc/systemd/system/cansat-fsw.service || echo 'User=(unset, runs as root)'))"
 echo "start with: sudo systemctl start cansat-fsw.service"

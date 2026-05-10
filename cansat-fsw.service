@@ -4,8 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-# Replaced by setup_systemd_service.sh (default: repo owner or SUDO_USER; DietPi often root/dietpi, not pi).
-User=pi
+# Default root so DietPi / minimal images without the "pi" user do not fail with status=217/USER.
+# For Raspberry Pi OS as user pi: set User=pi (or run setup_systemd_service.sh — it can rewrite User=).
+User=root
 WorkingDirectory=/opt/cansat-fsw
 ExecStart=/opt/cansat-fsw/startup.sh
 Restart=on-failure
