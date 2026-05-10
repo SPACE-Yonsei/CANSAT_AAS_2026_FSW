@@ -36,8 +36,14 @@ sudo chmod +x "${ROOT_DIR}/startup.sh"
 DROP_IN="/etc/systemd/system/cansat-fsw.service.d"
 if [[ -n "${FSW_VENV_DIR:-}" ]]; then
   sudo mkdir -p "${DROP_IN}"
-  printf '%s\n' '[Service]' "Environment=FSW_VENV_DIR=${FSW_VENV_DIR}" | sudo tee "${DROP_IN}/fsw-venv.conf" >/dev/null
-  echo "wrote ${DROP_IN}/fsw-venv.conf (FSW_VENV_DIR=${FSW_VENV_DIR})"
+  # Prepend venv bin to PATH so bare `python3` / multiprocessing `sys.executable`
+  # resolve to the venv (some boards lack bin/python3 symlink; startup.sh also picks explicitly).
+  {
+    printf '%s\n' '[Service]'
+    printf '%s\n' "Environment=FSW_VENV_DIR=${FSW_VENV_DIR}"
+    printf '%s\n' "Environment=PATH=${FSW_VENV_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+  } | sudo tee "${DROP_IN}/fsw-venv.conf" >/dev/null
+  echo "wrote ${DROP_IN}/fsw-venv.conf (FSW_VENV_DIR=${FSW_VENV_DIR} + PATH prepend)"
 fi
 
 sudo systemctl daemon-reload
