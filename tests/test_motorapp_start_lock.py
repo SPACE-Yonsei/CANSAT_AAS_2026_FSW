@@ -17,14 +17,14 @@ class TestStartPointLock(unittest.TestCase):
         _reset_motor_cache()
 
     @patch.object(motorapp.prevstate, "update_start_point")
-    def test_locks_when_health_bits_zero_but_valid_coords(self, mock_update) -> None:
-        """SIM may clear pos_health/motion_health before inject settles."""
+    def test_does_not_lock_when_pos_health_false_even_with_valid_coords(self, mock_update) -> None:
+        """Start-point locking follows the committed MotorApp pos_health gate."""
         motorapp.STATE = 3
         motorapp.handle_gps("37.560700,126.930700,90.0,5.0,0,0")
-        self.assertTrue(motorapp._START_POINT_LOCKED)
-        self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.5607, places=5)
-        self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.9307, places=5)
-        mock_update.assert_called_once()
+        self.assertFalse(motorapp._START_POINT_LOCKED)
+        self.assertIsNone(motorapp._CACHE.start_lat)
+        self.assertIsNone(motorapp._CACHE.start_lon)
+        mock_update.assert_not_called()
 
     @patch.object(motorapp.prevstate, "update_start_point")
     def test_no_lock_placeholder_zero_zero(self, mock_update) -> None:
