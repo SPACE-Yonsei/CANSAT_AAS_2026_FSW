@@ -9,10 +9,13 @@ into guidance instead of reading guidance/control globals.
 
 from __future__ import annotations
 
+import csv
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 import logging
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Optional
@@ -26,6 +29,73 @@ LOGGER = logging.getLogger(__name__)
 GPS_HISTORY_SEC = 10.0
 IMU_HISTORY_SEC = 5.0
 BARO_HISTORY_SEC = 10.0
+
+_CONTROL_LOG_LOCK = threading.Lock()
+_CONTROL_LOG_FP = None
+_CONTROL_LOG_WRITER = None
+_CONTROL_LOG_PATH = None
+_CONTROL_LOG_HEADER = [
+    "host_time",
+    "monotonic_s",
+    "state",
+    "motor_enabled",
+    "diag_state",
+    "guidance_reason",
+    "guidance_mode",
+    "control_mode",
+    "active",
+    "degraded",
+    "valid",
+    "gps_lat",
+    "gps_lon",
+    "gps_course_deg",
+    "gps_speed_mps",
+    "gps_pos_health",
+    "gps_motion_health",
+    "gps_pos_age_s",
+    "gps_motion_age_s",
+    "imu_gyrz_deg_s",
+    "imu_health",
+    "imu_age_s",
+    "baro_alt_m",
+    "baro_health",
+    "baro_age_s",
+    "start_lat",
+    "start_lon",
+    "target_lat",
+    "target_lon",
+    "pos_N_m",
+    "pos_E_m",
+    "target_N_m",
+    "target_E_m",
+    "carrot_N_m",
+    "carrot_E_m",
+    "carrot_lat",
+    "carrot_lon",
+    "crossTrack_m",
+    "alongTrack_m",
+    "L1_distance_m",
+    "nu_deg",
+    "nu1_deg",
+    "nu2_deg",
+    "current_heading_deg",
+    "desired_heading_deg",
+    "lat_acc_cmd_mps2",
+    "yaw_rate_cmd_deg_s",
+    "yaw_rate_meas_deg_s",
+    "yaw_rate_error_deg_s",
+    "delta_ff_deg",
+    "delta_pid_deg",
+    "delta_arm_deg",
+    "left_angle_deg",
+    "right_angle_deg",
+    "left_pw_us",
+    "right_pw_us",
+    "saturated",
+    "sensor_valid",
+    "guidance_command_age_s",
+    "fallback_mode",
+]
 
 
 def _history_len(rate_hz: float, seconds: float) -> int:
@@ -423,6 +493,146 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
     )
 
 
+def _fmt_log(value, digits: int = 6) -> str:
+    try:
+        f = float(value)
+        return "" if not math.isfinite(f) else f"{f:.{digits}f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _age_s(now: float, timestamp: Optional[float]) -> str:
+    if timestamp is None:
+        return ""
+    try:
+        age = now - float(timestamp)
+    except (TypeError, ValueError):
+        return ""
+    return "" if not math.isfinite(age) else f"{age:.4f}"
+
+
+def _deg_log(rad_value) -> str:
+    try:
+        return _fmt_log(math.degrees(float(rad_value)), 4)
+    except (TypeError, ValueError):
+        return ""
+
+
+def _control_log_writer():
+    global _CONTROL_LOG_FP, _CONTROL_LOG_WRITER, _CONTROL_LOG_PATH
+    if _CONTROL_LOG_WRITER is not None:
+        return _CONTROL_LOG_WRITER
+
+    log_dir = Path("motorlogs")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _CONTROL_LOG_PATH = log_dir / f"motor_control_{ts}.csv"
+    _CONTROL_LOG_FP = _CONTROL_LOG_PATH.open("a", encoding="utf-8", newline="")
+    _CONTROL_LOG_WRITER = csv.writer(_CONTROL_LOG_FP)
+    _CONTROL_LOG_WRITER.writerow(_CONTROL_LOG_HEADER)
+    _CONTROL_LOG_FP.flush()
+    LOGGER.info("Motor control debug log: %s", _CONTROL_LOG_PATH)
+    return _CONTROL_LOG_WRITER
+
+
+def _write_control_debug_log(
+    now: float,
+    snap: Optional[_Cache],
+    l1_input,
+    mode,
+    g_out,
+    cmd,
+    diag_state: str,
+) -> None:
+    try:
+        with _CONTROL_LOG_LOCK:
+            writer = _control_log_writer()
+            gps = snap.latest_gps if snap is not None else _GpsFromApp()
+            imu = snap.latest_imu if snap is not None else _ImuFromApp()
+            baro = snap.latest_baro if snap is not None else _BaroFromApp()
+            writer.writerow(
+                [
+                    datetime.now().isoformat(timespec="milliseconds"),
+                    _fmt_log(now, 6),
+                    str(STATE),
+                    str(int(bool(MOTOR_ENABLED))),
+                    diag_state,
+                    str(getattr(g_out, "reason", "")),
+                    str(getattr(mode, "value", mode) if mode is not None else ""),
+                    str(getattr(cmd, "mode", "")),
+                    str(int(bool(getattr(g_out, "active", False)))),
+                    str(int(bool(getattr(g_out, "degraded", False)))),
+                    str(int(bool(getattr(cmd, "valid", False)))),
+                    _fmt_log(gps.lat, 8),
+                    _fmt_log(gps.lon, 8),
+                    _deg_log(gps.course_rad),
+                    _fmt_log(gps.speed_mps, 4),
+                    str(int(bool(gps.pos_health))),
+                    str(int(bool(gps.motion_health))),
+                    _age_s(now, gps.pos_ts),
+                    _age_s(now, gps.motion_ts),
+                    _deg_log(imu.gyrz_rad_s),
+                    str(int(bool(imu.health))),
+                    _age_s(now, imu.ts),
+                    _fmt_log(baro.alt_m, 3),
+                    str(int(bool(baro.health))),
+                    _age_s(now, baro.ts),
+                    _fmt_log(getattr(snap, "start_lat", None), 8),
+                    _fmt_log(getattr(snap, "start_lon", None), 8),
+                    _fmt_log(getattr(g_out, "target_lat", getattr(snap, "target_lat", None)), 8),
+                    _fmt_log(getattr(g_out, "target_lon", getattr(snap, "target_lon", None)), 8),
+                    _fmt_log(getattr(g_out, "pos_N", getattr(l1_input, "pos_N", None)), 3),
+                    _fmt_log(getattr(g_out, "pos_E", getattr(l1_input, "pos_E", None)), 3),
+                    _fmt_log(getattr(g_out, "target_N", None), 3),
+                    _fmt_log(getattr(g_out, "target_E", None), 3),
+                    _fmt_log(getattr(g_out, "carrot_N", None), 3),
+                    _fmt_log(getattr(g_out, "carrot_E", None), 3),
+                    _fmt_log(getattr(g_out, "carrot_lat", None), 8),
+                    _fmt_log(getattr(g_out, "carrot_lon", None), 8),
+                    _fmt_log(getattr(g_out, "crossTrack", None), 3),
+                    _fmt_log(getattr(g_out, "alongTrack", None), 3),
+                    _fmt_log(getattr(g_out, "L1_distance", None), 3),
+                    _deg_log(getattr(g_out, "nu", None)),
+                    _deg_log(getattr(g_out, "nu1", None)),
+                    _deg_log(getattr(g_out, "nu2", None)),
+                    _deg_log(getattr(g_out, "current_heading_rad", None)),
+                    _deg_log(getattr(g_out, "desired_heading_rad", None)),
+                    _fmt_log(getattr(g_out, "lat_acc_cmd_mps2", None), 4),
+                    _fmt_log(getattr(cmd, "yaw_rate_cmd_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "yaw_rate_meas_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "yaw_rate_error_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "delta_ff_deg", None), 4),
+                    _fmt_log(getattr(cmd, "delta_pid_deg", None), 4),
+                    _fmt_log(getattr(cmd, "delta_arm_deg", None), 4),
+                    _fmt_log(getattr(cmd, "left_angle_deg", None), 4),
+                    _fmt_log(getattr(cmd, "right_angle_deg", None), 4),
+                    str(getattr(cmd, "left_pw", "")),
+                    str(getattr(cmd, "right_pw", "")),
+                    str(int(bool(getattr(cmd, "saturated", False)))),
+                    str(int(bool(getattr(cmd, "sensor_valid", False)))),
+                    _fmt_log(getattr(cmd, "guidance_command_age_s", None), 4),
+                    str(getattr(cmd, "fallback_mode", "")),
+                ]
+            )
+            if _CONTROL_LOG_FP is not None:
+                _CONTROL_LOG_FP.flush()
+    except Exception:
+        LOGGER.debug("Failed to write motor control debug log", exc_info=True)
+
+
+def _close_control_debug_log() -> None:
+    global _CONTROL_LOG_FP, _CONTROL_LOG_WRITER
+    with _CONTROL_LOG_LOCK:
+        if _CONTROL_LOG_FP is not None:
+            try:
+                _CONTROL_LOG_FP.flush()
+                _CONTROL_LOG_FP.close()
+            except Exception:
+                pass
+        _CONTROL_LOG_FP = None
+        _CONTROL_LOG_WRITER = None
+
+
 def ctrl_parafoil(main_queue=None) -> None:
     """Parafoil control loop."""
     global _CONTROLLER
@@ -435,6 +645,9 @@ def ctrl_parafoil(main_queue=None) -> None:
                     control.SetZero(PI)
                 idle_cmd = control.neutral_command(now, "IDLE")
                 idle_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="IDLE")
+                with _UPDATE_LOCK:
+                    idle_snap = _cache_snapshot()
+                _write_control_debug_log(now, idle_snap, None, None, idle_out, idle_cmd, "IDLE")
                 _send_diag(main_queue, idle_cmd, idle_out, "IDLE")
                 time.sleep(period)
                 continue
@@ -444,6 +657,9 @@ def ctrl_parafoil(main_queue=None) -> None:
                     control.set_motors_off(PI)
                 landed_cmd = control.neutral_command(now, "LANDED")
                 landed_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="LANDED")
+                with _UPDATE_LOCK:
+                    landed_snap = _cache_snapshot()
+                _write_control_debug_log(now, landed_snap, None, None, landed_out, landed_cmd, "LANDED")
                 _send_diag(main_queue, landed_cmd, landed_out, "LANDED")
                 time.sleep(period)
                 continue
@@ -498,6 +714,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 else "ACTIVE" if bool(getattr(g_out, "active", False))
                 else str(getattr(g_out, "reason", "DISABLED") or "DISABLED")
             )
+            _write_control_debug_log(now, snap, l1_input, mode, g_out, cmd, diag_state)
             _send_diag(main_queue, cmd, g_out, diag_state)
 
         except Exception as exc:
@@ -587,6 +804,7 @@ def init() -> None:
 
 
 def motorapp_main(main_queue, main_pipe=None) -> None:
+    global MOTORAPP_RUNSTATUS
     if main_pipe is None:
         main_pipe = main_queue
         main_queue = None
@@ -612,4 +830,7 @@ def motorapp_main(main_queue, main_pipe=None) -> None:
     except KeyboardInterrupt:
         pass
 
+    MOTORAPP_RUNSTATUS = False
+    ctrl_thread.join(timeout=1.0)
+    _close_control_debug_log()
     LOGGER.info("MotorApp exiting")

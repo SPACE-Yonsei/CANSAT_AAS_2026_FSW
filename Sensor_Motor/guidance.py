@@ -40,7 +40,6 @@ class SensorQuality(enum.Enum):
     FRESH   = "FRESH"
     OLD     = "OLD"
     STALE   = "STALE"
-    FAIL    = "FAIL"
 SENSOR_QUALITY = SensorQuality
 
 class ControlMode(enum.Enum):
@@ -60,10 +59,10 @@ class L1Input:
     ground_speed_mps: Optional[float] = None
     gyrz: Optional[float] = None
     alt: Optional[float] = None
-    pos_quality: SensorQuality = SensorQuality.FAIL
-    motion_quality: SensorQuality = SensorQuality.FAIL
-    gyrz_quality: SensorQuality = SensorQuality.FAIL
-    alt_quality: SensorQuality = SensorQuality.FAIL
+    pos_quality: SensorQuality = SensorQuality.STALE
+    motion_quality: SensorQuality = SensorQuality.STALE
+    gyrz_quality: SensorQuality = SensorQuality.STALE
+    alt_quality: SensorQuality = SensorQuality.STALE
     origin_lat: Optional[float] = None
     origin_lon: Optional[float] = None
     target_lat: Optional[float] = None
@@ -200,13 +199,13 @@ def FillOld(
                     l1_input.pos_E = dlon * earth_r * math.cos(math.radians(origin_lat))
                     l1_input.pos_quality = SensorQuality.OLD
                 else:
-                    l1_input.pos_quality = SensorQuality.FAIL
+                    l1_input.pos_quality = SensorQuality.STALE
             elif age > POS_STALE_MAX:
                 l1_input.pos_quality = SensorQuality.STALE
             else:
-                l1_input.pos_quality = SensorQuality.FAIL
+                l1_input.pos_quality = SensorQuality.STALE
         else:
-            l1_input.pos_quality = SensorQuality.FAIL
+            l1_input.pos_quality = SensorQuality.STALE
 
     if l1_input.motion_quality != SensorQuality.FRESH:
         if (
@@ -224,9 +223,9 @@ def FillOld(
             elif age > MOTION_STALE_MAX:
                 l1_input.motion_quality = SensorQuality.STALE
             else:
-                l1_input.motion_quality = SensorQuality.FAIL
+                l1_input.motion_quality = SensorQuality.STALE
         else:
-            l1_input.motion_quality = SensorQuality.FAIL
+            l1_input.motion_quality = SensorQuality.STALE
 
     if l1_input.gyrz_quality != SensorQuality.FRESH:
         if (
@@ -242,9 +241,9 @@ def FillOld(
             elif age > GYRZ_STALE_MAX:
                 l1_input.gyrz_quality = SensorQuality.STALE
             else:
-                l1_input.gyrz_quality = SensorQuality.FAIL
+                l1_input.gyrz_quality = SensorQuality.STALE
         else:
-            l1_input.gyrz_quality = SensorQuality.FAIL
+            l1_input.gyrz_quality = SensorQuality.STALE
 
     if l1_input.alt_quality != SensorQuality.FRESH:
         if (
@@ -260,9 +259,9 @@ def FillOld(
             elif age > ALT_STALE_MAX:
                 l1_input.alt_quality = SensorQuality.STALE
             else:
-                l1_input.alt_quality = SensorQuality.FAIL
+                l1_input.alt_quality = SensorQuality.STALE
         else:
-            l1_input.alt_quality = SensorQuality.FAIL
+            l1_input.alt_quality = SensorQuality.STALE
 
     return l1_input
 
@@ -271,9 +270,9 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     motion_quality = l1_input.motion_quality
     gyrz_quality = l1_input.gyrz_quality
 
-    if pos_quality in (SensorQuality.STALE, SensorQuality.FAIL):
+    if pos_quality == SensorQuality.STALE:
         return ControlMode.FAIL
-    if motion_quality in (SensorQuality.STALE, SensorQuality.FAIL):
+    if motion_quality == SensorQuality.STALE:
         return ControlMode.FAIL
 
     closed_loop = (

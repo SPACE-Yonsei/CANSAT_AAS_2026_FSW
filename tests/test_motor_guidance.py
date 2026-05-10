@@ -154,20 +154,20 @@ class TestFillOld(unittest.TestCase):
         self.assertEqual(inp.gyrz_quality, SensorQuality.FRESH)
         self.assertAlmostEqual(inp.gyrz, 0.1)
 
-    def test_no_origin_on_l1_input_marks_fail_for_old_pos(self):
+    def test_no_origin_on_l1_input_marks_stale_for_old_pos(self):
         inp = guidance.L1Input()  # no origin_lat/lon
         old_gps = _gps(ORIGIN_LAT + 0.01, ORIGIN_LON, age=0.5)
         guidance.FillOld(inp, old_gps, None, None, time.monotonic())
-        self.assertEqual(inp.pos_quality, SensorQuality.FAIL)
+        self.assertEqual(inp.pos_quality, SensorQuality.STALE)
 
 
 class TestDecideControlMode(unittest.TestCase):
-    def _inp(self, pos_q, motion_q, gyrz_q=SensorQuality.FAIL, gyrz_val=None):
+    def _inp(self, pos_q, motion_q, gyrz_q=SensorQuality.STALE, gyrz_val=None):
         inp = guidance.L1Input()
         inp.pos_quality = pos_q
         inp.motion_quality = motion_q
         inp.gyrz_quality = gyrz_q
-        inp.gyrz = gyrz_val if gyrz_val is not None else (0.1 if gyrz_q != SensorQuality.FAIL else None)
+        inp.gyrz = gyrz_val if gyrz_val is not None else (0.1 if gyrz_q in (SensorQuality.FRESH, SensorQuality.OLD) else None)
         return inp
 
     def test_fresh_pos_motion_no_gyrz_gives_active_feedforward(self):
@@ -190,16 +190,8 @@ class TestDecideControlMode(unittest.TestCase):
         inp = self._inp(SensorQuality.STALE, SensorQuality.FRESH)
         self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
 
-    def test_fail_position_gives_fail(self):
-        inp = self._inp(SensorQuality.FAIL, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
-
     def test_stale_motion_gives_fail(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.STALE)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
-
-    def test_fail_motion_gives_fail(self):
-        inp = self._inp(SensorQuality.FRESH, SensorQuality.FAIL)
         self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
 
 
