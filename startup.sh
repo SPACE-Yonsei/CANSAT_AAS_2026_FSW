@@ -2,7 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="${ROOT_DIR}/.venv"
+# Prefer explicit path, then .venv, then venv (many boards use `python3 -m venv venv`).
+VENV_DIR="${FSW_VENV_DIR:-}"
+if [[ -z "${VENV_DIR}" || ! -d "${VENV_DIR}" ]]; then
+  if [[ -d "${ROOT_DIR}/.venv" ]]; then
+    VENV_DIR="${ROOT_DIR}/.venv"
+  elif [[ -d "${ROOT_DIR}/venv" ]]; then
+    VENV_DIR="${ROOT_DIR}/venv"
+  else
+    VENV_DIR=""
+  fi
+fi
 
 if command -v pigpiod >/dev/null 2>&1; then
   if ! pgrep -x pigpiod >/dev/null 2>&1; then
@@ -10,7 +20,7 @@ if command -v pigpiod >/dev/null 2>&1; then
   fi
 fi
 
-if [[ -d "${VENV_DIR}" ]]; then
+if [[ -n "${VENV_DIR}" ]]; then
   # shellcheck disable=SC1091
   source "${VENV_DIR}/bin/activate"
 fi
