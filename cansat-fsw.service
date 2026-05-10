@@ -1,18 +1,18 @@
 [Unit]
-Description=CANSAT AAS 2026 Flight Software
-After=network.target
+Description=CANSAT Flight Software
+After=network.target pigpiod.service
 
 [Service]
 Type=simple
-# Default root so DietPi / minimal images without the "pi" user do not fail with status=217/USER.
-# For Raspberry Pi OS as user pi: set User=pi (or run setup_systemd_service.sh — it can rewrite User=).
 User=root
-WorkingDirectory=/opt/cansat-fsw
-ExecStart=/opt/cansat-fsw/startup.sh
-Restart=on-failure
-RestartSec=3
-KillSignal=SIGINT
-TimeoutStopSec=10
+WorkingDirectory=/root/CANSAT_AAS_2026_FSW
+Environment="PATH=/root/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/bin/bash /root/CANSAT_AAS_2026_FSW/startup.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+
