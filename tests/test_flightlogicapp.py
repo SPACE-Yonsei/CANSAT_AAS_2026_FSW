@@ -44,6 +44,13 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.barometer_logic(q, 230.0)
         self.assertEqual(flightlogicapp.state, 1)
 
+    def test_max_alt_persisted_to_prevstate(self):
+        q = queue.Queue()
+        flightlogicapp.barometer_logic(q, 120.0)
+        flightlogicapp.barometer_logic(q, 160.0)
+        flightlogicapp.barometer_logic(q, 200.0)
+        self.assertAlmostEqual(prevstate.PREV_MAX_ALT, 160.0)
+
     def test_ss_force_state(self):
         q = queue.Queue()
         flightlogicapp.handle_ss("3", q)
