@@ -111,12 +111,12 @@ class TestInitAndSetters(unittest.TestCase):
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_ZERO_PULSE)
 
     def test_set_motors_off_sends_zero_width(self):
-        control.set_motors_off(self.pi)
+        control.SetOff(self.pi)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 0)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 0)
 
     def test_set_brake_command_sends_cmd_pulses(self):
-        cmd = control.BrakeCommand(timestamp=time.monotonic(), left_pw=1700, right_pw=1300)
+        cmd = control.CtrlOutput(timestamp=time.monotonic(), left_pw=1700, right_pw=1300)
         control.set_brake_command(self.pi, cmd)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 1700)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 1300)
@@ -130,22 +130,22 @@ class TestInitAndSetters(unittest.TestCase):
         control.SetZero(None)
 
     def test_set_motors_off_none_no_crash(self):
-        control.set_motors_off(None)
+        control.SetOff(None)
 
     def test_set_brake_command_none_no_crash(self):
-        control.set_brake_command(None, control.neutral_command(time.monotonic()))
+        control.set_brake_command(None, control.SetNeutral(time.monotonic()))
 
 
 class TestNeutralCommand(unittest.TestCase):
     def test_neutral_command_pulses(self):
-        cmd = control.neutral_command(time.monotonic())
+        cmd = control.SetNeutral(time.monotonic())
         self.assertEqual(cmd.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
         self.assertAlmostEqual(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_neutral_command_mode_label(self):
-        cmd = control.neutral_command(time.monotonic(), "IDLE")
+        cmd = control.SetNeutral(time.monotonic(), "IDLE")
         self.assertEqual(cmd.mode, "IDLE")
         self.assertEqual(cmd.fallback_mode, "IDLE")
 
@@ -160,7 +160,7 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
             active=True,
             timestamp=100.0,
         )
-        gcmd = control.guidance_command_from_l1(l1, 100.0)
+        gcmd = control.ProduceCtrlInput(l1, 100.0)
         self.assertAlmostEqual(gcmd.yaw_rate_cmd_deg_s, math.degrees(0.5), places=5)
         self.assertTrue(gcmd.valid)
         self.assertAlmostEqual(gcmd.ground_speed_mps, 7.0)
@@ -175,14 +175,14 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
             active=False,
             timestamp=100.0,
         )
-        gcmd = control.guidance_command_from_l1(l1, 100.0)
+        gcmd = control.ProduceCtrlInput(l1, 100.0)
         self.assertFalse(gcmd.valid)
 
 
 class TestControllerUpdate(unittest.TestCase):
     @staticmethod
     def _cmd(yaw_rate=0.0, ts=100.0, lat_acc=0.0, speed=0.0):
-        return control.GuidanceCommand(
+        return control.CtrlInput(
             yaw_rate_cmd_deg_s=yaw_rate,
             lat_acc_cmd_mps2=lat_acc,
             ground_speed_mps=speed,
@@ -191,11 +191,11 @@ class TestControllerUpdate(unittest.TestCase):
         )
 
     def _ctl(self, **kwargs):
-        return control.make_controller_state(control.ControlConfig(**kwargs))
+        return control.MakeCtrler(control.ControlConfig(**kwargs))
 
     def test_zero_cmd_neutral_angles(self):
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(0.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(0.0), float("nan"), 100.0)
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.delta_arm_deg, 0.0)
@@ -203,7 +203,7 @@ class TestControllerUpdate(unittest.TestCase):
     def test_positive_yaw_rate_right_turn(self):
         """Positive cmd → right turn: left_angle < NEUTRAL, right_angle > NEUTRAL."""
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), float("nan"), 100.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
         self.assertLess(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertGreater(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
@@ -211,14 +211,14 @@ class TestControllerUpdate(unittest.TestCase):
     def test_negative_yaw_rate_left_turn(self):
         """Negative cmd → left turn: left_angle > NEUTRAL, right_angle < NEUTRAL."""
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(-10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(-10.0), float("nan"), 100.0)
         self.assertLess(out.delta_arm_deg, 0.0)
         self.assertGreater(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertLess(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_large_cmd_saturates_within_delta_max(self):
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(999.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(999.0), float("nan"), 100.0)
         self.assertLessEqual(abs(out.delta_arm_deg), control.DELTA_ARM_MAX_DEG)
         self.assertGreaterEqual(out.left_angle_deg, control.ARM_MIN_DEG)
         self.assertLessEqual(out.left_angle_deg, control.ARM_MAX_DEG)
@@ -227,14 +227,14 @@ class TestControllerUpdate(unittest.TestCase):
     def test_saturation_resets_integrator(self):
         ctl = self._ctl(K_I=1.0)
         for i in range(10):
-            control.controller_update(
+            control.ProduceCtrlOutput(
                 ctl, self._cmd(999.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1
             )
         self.assertAlmostEqual(ctl.pid.integral_deg, 0.0)
 
     def test_no_gyro_feedforward_only(self):
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), float("nan"), 100.0)
         self.assertEqual(out.mode, "FEEDFORWARD_ONLY")
         self.assertFalse(out.sensor_valid)
         self.assertAlmostEqual(out.delta_pid_deg, 0.0)
@@ -242,13 +242,13 @@ class TestControllerUpdate(unittest.TestCase):
 
     def test_valid_gyro_closed_loop(self):
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(10.0), 5.0, 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), 5.0, 100.0)
         self.assertEqual(out.mode, "CLOSED_LOOP")
         self.assertTrue(out.sensor_valid)
 
     def test_guidance_timeout_neutralizes(self):
         ctl = self._ctl()
-        out = control.controller_update(ctl, self._cmd(10.0, ts=99.0), 0.0, 100.0)
+        out = control.ProduceCtrlOutput(ctl, self._cmd(10.0, ts=99.0), 0.0, 100.0)
         self.assertEqual(out.mode, "GUIDANCE_TIMEOUT")
         self.assertFalse(out.valid)
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
@@ -257,14 +257,14 @@ class TestControllerUpdate(unittest.TestCase):
     def test_lat_acc_converts_to_yaw_rate_when_cmd_zero(self):
         ctl = self._ctl()
         cmd = self._cmd(yaw_rate=0.0, lat_acc=2.0, speed=4.0)
-        out = control.controller_update(ctl, cmd, float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(ctl, cmd, float("nan"), 100.0)
         expected = math.degrees(2.0 / max(4.0, control.V_MIN_MPS))
         self.assertAlmostEqual(out.yaw_rate_cmd_deg_s, expected, places=5)
 
     def test_controller_reset_clears_pid(self):
         ctl = self._ctl(K_I=1.0)
         for i in range(5):
-            control.controller_update(ctl, self._cmd(5.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
+            control.ProduceCtrlOutput(ctl, self._cmd(5.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
         control.controller_reset(ctl)
         self.assertAlmostEqual(ctl.pid.integral_deg, 0.0)
         self.assertAlmostEqual(ctl.pid.prev_error_deg, 0.0)

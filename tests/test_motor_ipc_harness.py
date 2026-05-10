@@ -128,7 +128,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
     def test_neutral_command_outputs_to_servo(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
-            cmd = control.neutral_command(time.monotonic())
+            cmd = control.SetNeutral(time.monotonic())
             control.set_brake_command(pi, cmd)
             self.assertEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], control.LEFT_NEUTRAL)
             self.assertEqual(pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_NEUTRAL)
@@ -136,18 +136,18 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
     def test_set_motors_off_clears_pulses(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
-            control.set_motors_off(pi)
+            control.SetOff(pi)
             self.assertEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 0)
             self.assertEqual(pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 0)
 
     def test_controller_update_produces_valid_pulses(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
-            ctl = control.make_controller_state()
-            gcmd = control.GuidanceCommand(
+            ctl = control.MakeCtrler()
+            gcmd = control.CtrlInput(
                 yaw_rate_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
             )
-            cmd = control.controller_update(ctl, gcmd, float("nan"), time.monotonic())
+            cmd = control.ProduceCtrlOutput(ctl, gcmd, float("nan"), time.monotonic())
             control.set_brake_command(pi, cmd)
             self.assertGreaterEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
                                     control.LEFT_MIN_PULSE)

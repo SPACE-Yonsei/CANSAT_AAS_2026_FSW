@@ -68,7 +68,7 @@ class _PIDState:
 
 
 @dataclass
-class BrakeControllerState:
+class Ctrler:
     config: ControlConfig = field(default_factory=ControlConfig)
     pid: _PIDState = field(default_factory=_PIDState)
     prev_left_angle_deg: float = NEUTRAL_ARM_DEG
@@ -76,7 +76,7 @@ class BrakeControllerState:
 
 
 @dataclass
-class GuidanceCommand:
+class CtrlInput:
     yaw_rate_cmd_deg_s: float = 0.0
     lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
@@ -85,7 +85,7 @@ class GuidanceCommand:
 
 
 @dataclass
-class BrakeCommand:
+class CtrlOutput:
     timestamp: float
     left_pw: int = LEFT_NEUTRAL
     right_pw: int = RIGHT_NEUTRAL
@@ -105,15 +105,15 @@ class BrakeCommand:
     guidance_command_age_s: float = 0.0
 
 
-def neutral_command(now: float, mode: str = "NEUTRAL") -> BrakeCommand:
-    cmd = BrakeCommand(timestamp=now)
+def SetNeutral(now: float, mode: str = "NEUTRAL") -> CtrlOutput:
+    cmd = CtrlOutput(timestamp=now)
     cmd.mode = mode
     cmd.fallback_mode = mode
     return cmd
 
 
-def guidance_command_from_l1(g_out, now: float) -> GuidanceCommand:
-    return GuidanceCommand(
+def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
+    return CtrlInput(
         yaw_rate_cmd_deg_s=math.degrees(float(getattr(g_out, "yaw_rate_cmd_rad_s", 0.0) or 0.0)),
         lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
         ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
@@ -142,24 +142,24 @@ def ConnectRoMo(yaw_rate_cmd_deg_s: float):
     return left_pw, right_pw, left_angle, right_angle, delta_arm_deg, offset
 
 
-def make_controller_state(cfg: Optional[ControlConfig] = None) -> BrakeControllerState:
-    return BrakeControllerState(config=cfg or ControlConfig())
+def MakeCtrler(cfg: Optional[ControlConfig] = None) -> Ctrler:
+    return Ctrler(config=cfg or ControlConfig())
 
 
-def controller_reset(ctl: BrakeControllerState) -> None:
+def controller_reset(ctl: Ctrler) -> None:
     ctl.pid = _PIDState()
     ctl.prev_left_angle_deg = NEUTRAL_ARM_DEG
     ctl.prev_right_angle_deg = NEUTRAL_ARM_DEG
 
 
-def controller_update(
-    ctl: BrakeControllerState,
-    cmd: GuidanceCommand,
+def ProduceCtrlOutput(
+    ctl: Ctrler,
+    cmd: CtrlInput,
     yaw_rate_meas_deg_s: float,
     now: float,
-) -> BrakeCommand:
+) -> CtrlOutput:
     """Compute brake servo command from GuidanceCommand + optional gyro feedback."""
-    out = BrakeCommand(timestamp=now)
+    out = CtrlOutput(timestamp=now)
 
     yaw_rate_cmd = cmd.yaw_rate_cmd_deg_s
     if yaw_rate_cmd == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
@@ -264,14 +264,14 @@ def SetZero(pi) -> None:
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_ZERO_PULSE)
 
 
-def set_motors_off(pi) -> None:
+def SetOff(pi) -> None:
     if pi is None:
         return
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 
-def set_brake_command(pi, cmd: BrakeCommand) -> None:
+def set_brake_command(pi, cmd: CtrlOutput) -> None:
     if pi is None:
         return
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, cmd.left_pw)

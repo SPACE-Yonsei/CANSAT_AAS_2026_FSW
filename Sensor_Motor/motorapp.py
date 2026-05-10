@@ -643,7 +643,7 @@ def ctrl_parafoil(main_queue=None) -> None:
             if not MOTOR_ENABLED or STATE < 3:
                 if PI is not None:
                     control.SetZero(PI)
-                idle_cmd = control.neutral_command(now, "IDLE")
+                idle_cmd = control.SetNeutral(now, "IDLE")
                 idle_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="IDLE")
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
@@ -654,8 +654,8 @@ def ctrl_parafoil(main_queue=None) -> None:
 
             if STATE == 5:
                 if PI is not None:
-                    control.set_motors_off(PI)
-                landed_cmd = control.neutral_command(now, "LANDED")
+                    control.SetOff(PI)
+                landed_cmd = control.SetNeutral(now, "LANDED")
                 landed_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="LANDED")
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
@@ -694,18 +694,18 @@ def ctrl_parafoil(main_queue=None) -> None:
 
             if bool(getattr(g_out, "active", False)):
                 if _CONTROLLER is None:
-                    _CONTROLLER = control.make_controller_state()
+                    _CONTROLLER = control.MakeCtrler()
                 yaw_rate_meas_deg_s = float("nan")
                 if snap.latest_imu.health and snap.latest_imu.gyrz_rad_s is not None:
                     yaw_rate_meas_deg_s = math.degrees(float(snap.latest_imu.gyrz_rad_s))
-                cmd = control.controller_update(
+                cmd = control.ProduceCtrlOutput(
                     _CONTROLLER,
-                    control.guidance_command_from_l1(g_out, now),
+                    control.ProduceCtrlInput(g_out, now),
                     yaw_rate_meas_deg_s,
                     now,
                 )
             else:
-                cmd = control.neutral_command(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
+                cmd = control.SetNeutral(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
 
             if PI is not None:
                 control.set_brake_command(PI, cmd)
@@ -778,7 +778,7 @@ def init() -> None:
         except Exception:
             LOGGER.debug("Failed to create L1 state", exc_info=True)
 
-    _CONTROLLER = control.make_controller_state()
+    _CONTROLLER = control.MakeCtrler()
     PI = control.init_control()
 
     try:
