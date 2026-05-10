@@ -464,7 +464,7 @@ def barometer_logic(main_queue, alt: float) -> None:
         max_alt = max(max_alt, alt)
 
     if state == 0:
-        cnt_ascent = cnt_ascent + 1 if alt > 200 else 0
+        cnt_ascent = cnt_ascent + 1 if alt > 100 else 0
         if cnt_ascent >= 3:
             _reset_transition_counters()
             reset_release_predictor(release_predictor)
