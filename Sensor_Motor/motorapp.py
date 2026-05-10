@@ -708,7 +708,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 cmd = control.SetNeutral(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
 
             if PI is not None:
-                control.set_brake_command(PI, cmd)
+                control.SetServoPulsewidth(PI, cmd)
             diag_state = (
                 "DEGRADED" if bool(getattr(g_out, "active", False)) and bool(getattr(g_out, "degraded", False))
                 else "ACTIVE" if bool(getattr(g_out, "active", False))

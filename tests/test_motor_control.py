@@ -117,7 +117,7 @@ class TestInitAndSetters(unittest.TestCase):
 
     def test_set_brake_command_sends_cmd_pulses(self):
         cmd = control.CtrlOutput(timestamp=time.monotonic(), left_pw=1700, right_pw=1300)
-        control.set_brake_command(self.pi, cmd)
+        control.SetServoPulsewidth(self.pi, cmd)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 1700)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 1300)
 
@@ -133,7 +133,7 @@ class TestInitAndSetters(unittest.TestCase):
         control.SetOff(None)
 
     def test_set_brake_command_none_no_crash(self):
-        control.set_brake_command(None, control.SetNeutral(time.monotonic()))
+        control.SetServoPulsewidth(None, control.SetNeutral(time.monotonic()))
 
 
 class TestNeutralCommand(unittest.TestCase):

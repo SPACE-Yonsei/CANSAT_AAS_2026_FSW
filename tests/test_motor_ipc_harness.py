@@ -129,7 +129,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
             cmd = control.SetNeutral(time.monotonic())
-            control.set_brake_command(pi, cmd)
+            control.SetServoPulsewidth(pi, cmd)
             self.assertEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], control.LEFT_NEUTRAL)
             self.assertEqual(pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_NEUTRAL)
 
@@ -148,7 +148,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
                 yaw_rate_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
             )
             cmd = control.ProduceCtrlOutput(ctl, gcmd, float("nan"), time.monotonic())
-            control.set_brake_command(pi, cmd)
+            control.SetServoPulsewidth(pi, cmd)
             self.assertGreaterEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
                                     control.LEFT_MIN_PULSE)
             self.assertLessEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],

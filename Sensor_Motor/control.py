@@ -271,7 +271,7 @@ def SetOff(pi) -> None:
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 
-def set_brake_command(pi, cmd: CtrlOutput) -> None:
+def SetServoPulsewidth(pi, cmd: CtrlOutput) -> None:
     if pi is None:
         return
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, cmd.left_pw)
