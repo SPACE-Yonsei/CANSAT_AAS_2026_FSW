@@ -38,6 +38,34 @@ def _gps_cli_period_sec() -> float:
         return 1.0
 
 
+def _gps_row_stale_max_sec() -> float:
+    try:
+        return max(0.1, float(os.environ.get("GPS_ROW_STALE_MAX_SEC", "3.0")))
+    except ValueError:
+        return 3.0
+
+
+def _nmea_tail_max_bytes() -> int:
+    try:
+        return max(32, int(os.environ.get("GPS_NMEA_TAIL_MAX_BYTES", "256"), 0))
+    except ValueError:
+        return 256
+
+
+def _gps_i2c_recovery_read_bytes() -> int:
+    try:
+        return max(0, min(256, int(os.environ.get("GPS_I2C_RECOVERY_READ_BYTES", "64"), 0)))
+    except ValueError:
+        return 64
+
+
+def _gps_i2c_max_consecutive_errors() -> int:
+    try:
+        return max(1, int(os.environ.get("GPS_I2C_MAX_CONSECUTIVE_ERRORS", "3"), 0))
+    except ValueError:
+        return 3
+
+
 def _debug_print(message: str) -> None:
     if _debug_raw_enabled():
         print(message, flush=True)
@@ -361,6 +389,23 @@ def _nmea_feed_bytes(dev: dict, chunk: bytes) -> None:
     data = tail + chunk
     lines = data.split(b"\n")
     dev["_nmea_tail"] = lines[-1]
+    tail_max = _nmea_tail_max_bytes()
+    if len(dev["_nmea_tail"]) > tail_max:
+        candidate = dev["_nmea_tail"][-tail_max:]
+        last_start = candidate.rfind(b"$")
+        if last_start >= 0:
+            dev["_nmea_tail"] = candidate[last_start:]
+            action = "kept_last_sentence_start"
+        else:
+            dev["_nmea_tail"] = b""
+            action = "cleared_no_sentence_start"
+        _debug_flow(
+            dev,
+            "nmea_tail_trimmed",
+            max_bytes=tail_max,
+            action=action,
+            new_tail_bytes=len(dev["_nmea_tail"]),
+        )
     _debug_flow(
         dev,
         "nmea_feed",
@@ -563,46 +608,55 @@ def _ubx_feed_bytes(dev: dict, chunk: bytes) -> None:
 
 
 def _gps_build_return(dev: dict) -> Optional[list]:
+    now = time.time()
+    stale_max = _gps_row_stale_max_sec()
+
     pvt = dev.get("pvt")
     if pvt:
-        now = time.time()
         pos_seen = float(pvt.get("_seen_ts", now))
         pos_age = max(0.0, now - pos_seen)
-        fix_type = int(pvt.get("fix_type", 0))
-        num_sv = int(pvt.get("num_sv", 0))
-        status = "A" if fix_type >= 2 else "V"
-        motion_valid = 1 if status == "A" else 0
-        return [
-            pvt["time"],
-            pvt["alt"],
-            pvt["lat"],
-            pvt["lon"],
-            num_sv,
-            1 if fix_type >= 2 else 0,
-            status,
-            float(pvt.get("g_speed", 0.0)),
-            float(pvt.get("head_mot", 0.0)),
-            motion_valid,
-            pos_age,
-            pos_age,
-            "UBX_NAV_PVT",
-            fix_type,
-            float(pvt.get("h_acc", 1.0e9)),
-            float(pvt.get("v_acc", 1.0e9)),
-            float(pvt.get("s_acc", 1.0e9)),
-            float(pvt.get("head_acc", 1.0e9)),
-            float(pvt.get("vel_n", 0.0)),
-            float(pvt.get("vel_e", 0.0)),
-            int(pvt.get("valid", 0)),
-        ]
+        if pos_age <= stale_max:
+            fix_type = int(pvt.get("fix_type", 0))
+            num_sv = int(pvt.get("num_sv", 0))
+            status = "A" if fix_type >= 2 else "V"
+            motion_valid = 1 if status == "A" else 0
+            _debug_flow(dev, "gps_row_select", source="UBX_NAV_PVT", age_s=f"{pos_age:.3f}")
+            return [
+                pvt["time"],
+                pvt["alt"],
+                pvt["lat"],
+                pvt["lon"],
+                num_sv,
+                1 if fix_type >= 2 else 0,
+                status,
+                float(pvt.get("g_speed", 0.0)),
+                float(pvt.get("head_mot", 0.0)),
+                motion_valid,
+                pos_age,
+                pos_age,
+                "UBX_NAV_PVT",
+                fix_type,
+                float(pvt.get("h_acc", 1.0e9)),
+                float(pvt.get("v_acc", 1.0e9)),
+                float(pvt.get("s_acc", 1.0e9)),
+                float(pvt.get("head_acc", 1.0e9)),
+                float(pvt.get("vel_n", 0.0)),
+                float(pvt.get("vel_e", 0.0)),
+                int(pvt.get("valid", 0)),
+            ]
+        _debug_flow(dev, "gps_row_drop_stale", source="UBX_NAV_PVT", age_s=f"{pos_age:.3f}", max_s=f"{stale_max:.3f}")
 
     gga = dev.get("gga")
     if not gga or int(gga.get("fix_q", 0)) < 1:
+        _debug_flow(dev, "gps_row_select", source="NONE", reason="no_fresh_pvt_or_valid_gga")
         return None
 
-    now = time.time()
     pos_seen = float(gga.get("_seen_ts", now))
     pos_age = max(0.0, now - pos_seen)
+    if pos_age > stale_max:
+        _debug_flow(dev, "gps_row_drop_stale", source="NMEA_GGA", age_s=f"{pos_age:.3f}", max_s=f"{stale_max:.3f}")
+        return None
+
     rmc = dev.get("rmc")
     if rmc:
         status = str(rmc.get("status", "V")).upper()
@@ -618,6 +672,7 @@ def _gps_build_return(dev: dict) -> Optional[list]:
         motion_age = 1.0e9
         motion_valid = 0
 
+    _debug_flow(dev, "gps_row_select", source="NMEA", age_s=f"{pos_age:.3f}")
     return [
         gga["time"],
         gga["alt"],
@@ -697,6 +752,47 @@ def _ublox_ddc_read_stream(i2c: Any, address: int, nbytes: int) -> bytes:
     return bytes(out)
 
 
+def _gps_feed_i2c_chunk(dev: dict, chunk: bytes, label: str = "I2C") -> int:
+    _debug_dump_bytes(label, chunk)
+    if chunk and all(b == 0xFF for b in chunk):
+        _debug_flow(dev, "i2c_read_idle_ff", bytes=len(chunk), action="discard_and_clear_parser_tails")
+        dev["_ubx_tail"] = b""
+        dev["_nmea_tail"] = b""
+        return 0
+
+    _debug_flow(dev, "feed_ubx", bytes=len(chunk))
+    _ubx_feed_bytes(dev, chunk)
+    _debug_flow(dev, "feed_nmea", bytes=len(chunk))
+    _nmea_feed_bytes(dev, chunk)
+    return len(chunk)
+
+
+def _gps_i2c_note_success(dev: dict) -> None:
+    dev["_i2c_error_count"] = 0
+
+
+def _gps_i2c_note_error(dev: dict, i2c_bus: Any, reason: str, exc: Exception | None = None) -> None:
+    count = int(dev.get("_i2c_error_count", 0)) + 1
+    dev["_i2c_error_count"] = count
+    fields: dict[str, Any] = {"reason": reason, "count": count}
+    if exc is not None:
+        fields["error"] = repr(exc)
+    _debug_flow(dev, "i2c_error_count", **fields)
+
+    max_errors = _gps_i2c_max_consecutive_errors()
+    if count < max_errors:
+        return
+
+    _debug_flow(dev, "i2c_reset_triggered", count=count, max_errors=max_errors)
+    try:
+        i2c_bus.reset_i2c()
+    except Exception as reset_exc:
+        _debug_flow(dev, "i2c_reset_error", error=repr(reset_exc))
+        logger.warning("GPS I2C reset failed after %d consecutive errors: %s", count, reset_exc)
+    finally:
+        dev["_i2c_error_count"] = 0
+
+
 def _ublox_enable_nav_pvt_i2c(i2c: Any, address: int) -> None:
     """Request UBX-NAV-PVT output on the DDC/I2C port; harmless if unsupported."""
     payload = bytes([0x01, 0x07, 1, 0, 0, 0, 0, 0])
@@ -731,6 +827,7 @@ def _init_gps_i2c_ublox() -> Any:
                 "pvt": None,
                 "_nmea_tail": b"",
                 "_ubx_tail": b"",
+                "_i2c_error_count": 0,
             }
         except Exception as exc:
             last_exc = exc
@@ -762,30 +859,42 @@ def _gps_readdata_i2c(dev: dict) -> Optional[list]:
         try:
             n = _ublox_ddc_bytes_available(i2c, addr)
             _debug_flow(dev, "i2c_available", bytes=n)
+            _gps_i2c_note_success(dev)
         except OSError as exc:
             _debug_flow(dev, "i2c_available_error", error=repr(exc))
             logger.debug("GPS I2C bytes_available failed: %s", exc)
-            n = 0
+            recovery_n = _gps_i2c_recovery_read_bytes()
+            if recovery_n > 0:
+                _debug_flow(dev, "i2c_recovery_read_request", bytes=recovery_n)
+                chunk = _ublox_ddc_read_stream(i2c, addr, recovery_n)
+                consumed = _gps_feed_i2c_chunk(dev, chunk, label="I2C_RECOVERY")
+                _debug_flow(dev, "i2c_recovery_read_result", bytes=len(chunk), consumed=consumed)
+                if consumed > 0:
+                    _gps_i2c_note_success(dev)
+                    n = 0
+                else:
+                    _gps_i2c_note_error(dev, i2c_bus, "available_error_empty_recovery", exc)
+                    n = 0
+            else:
+                _gps_i2c_note_error(dev, i2c_bus, "available_error", exc)
+                n = 0
         except Exception as exc:
             _debug_flow(dev, "i2c_available_error", error=repr(exc))
+            _gps_i2c_note_error(dev, i2c_bus, "available_error", exc)
             n = 0
         if n > 0:
             n = min(n, 256)
             try:
                 _debug_flow(dev, "i2c_read_request", bytes=n)
                 chunk = _ublox_ddc_read_stream(i2c, addr, n)
-                _debug_dump_bytes("I2C", chunk)
-                if chunk and all(b == 0xFF for b in chunk):
-                    _debug_flow(dev, "i2c_read_idle_ff", bytes=len(chunk), action="discard_and_clear_parser_tails")
-                    dev["_ubx_tail"] = b""
-                    dev["_nmea_tail"] = b""
-                    chunk = b""
-                _debug_flow(dev, "feed_ubx", bytes=len(chunk))
-                _ubx_feed_bytes(dev, chunk)
-                _debug_flow(dev, "feed_nmea", bytes=len(chunk))
-                _nmea_feed_bytes(dev, chunk)
+                consumed = _gps_feed_i2c_chunk(dev, chunk)
+                if consumed > 0:
+                    _gps_i2c_note_success(dev)
+                else:
+                    _gps_i2c_note_error(dev, i2c_bus, "empty_read_after_available")
             except OSError as exc:
                 _debug_flow(dev, "i2c_read_error", error=repr(exc))
+                _gps_i2c_note_error(dev, i2c_bus, "read_error", exc)
                 logger.warning("GPS I2C read_stream failed (%s); next poll will retry", exc)
         else:
             _debug_flow(dev, "i2c_read_skip", reason="empty_fifo")

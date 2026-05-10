@@ -1,6 +1,9 @@
 import os
 import struct
+import time
 import unittest
+from contextlib import contextmanager
+from unittest import mock
 
 from Sensor_Gps import gps as gps_mod
 
@@ -10,6 +13,32 @@ def _xor_nmea_payload(payload_after_dollar: str) -> int:
     for c in payload_after_dollar:
         x ^= ord(c) & 0xFF
     return x
+
+
+def _nmea_sentence(body: str) -> bytes:
+    return f"${body}*{_xor_nmea_payload(body):02X}\r\n".encode("ascii")
+
+
+@contextmanager
+def _null_lock():
+    yield
+
+
+class _FakeI2CRecovery:
+    def __init__(self, recovery: bytes):
+        self.recovery = recovery
+        self.offset = 0
+
+    def writeto_then_readfrom(self, address, reg, buf, out_end=1, in_end=1):
+        if reg in (bytes([0xFD]), bytes([0xFE])):
+            raise OSError(5, "Input/output error")
+        if reg == bytes([0xFF]):
+            for i in range(in_end):
+                idx = self.offset + i
+                buf[i] = self.recovery[idx] if idx < len(self.recovery) else 0xFF
+            self.offset += in_end
+            return
+        raise AssertionError(f"unexpected register: {reg!r}")
 
 
 class TestGpsNmeaChecksum(unittest.TestCase):
@@ -64,7 +93,7 @@ class TestGpsNmeaChecksum(unittest.TestCase):
                 "lon": 126.9452833,
                 "sats": 8,
                 "fix_q": 1,
-                "_seen_ts": 0.0,
+                "_seen_ts": time.time(),
             },
             "rmc": None,
         }
@@ -117,6 +146,92 @@ class TestGpsNmeaChecksum(unittest.TestCase):
         self.assertEqual(row[13], 3)
         self.assertAlmostEqual(row[14], 2.5)
         self.assertAlmostEqual(row[16], 0.3)
+
+    def test_stale_ubx_falls_back_to_fresh_gga(self):
+        now = time.time()
+        dev = {
+            "pvt": {
+                "time": "010203",
+                "alt": 80.0,
+                "lat": 37.0,
+                "lon": 126.0,
+                "num_sv": 12,
+                "fix_type": 3,
+                "_seen_ts": now - 10.0,
+            },
+            "gga": {
+                "time": "151544",
+                "alt": 126.0,
+                "lat": 37.9306167,
+                "lon": 126.9452833,
+                "sats": 8,
+                "fix_q": 1,
+                "_seen_ts": now,
+            },
+            "rmc": None,
+        }
+        with mock.patch.dict(os.environ, {"GPS_ROW_STALE_MAX_SEC": "3"}, clear=False):
+            row = gps_mod._gps_build_return(dev)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row[0], "151544")
+        self.assertAlmostEqual(row[2], 37.9306167)
+        self.assertEqual(row[12], "NMEA")
+
+    def test_stale_ubx_without_gga_returns_none(self):
+        dev = {
+            "pvt": {
+                "time": "010203",
+                "alt": 80.0,
+                "lat": 37.0,
+                "lon": 126.0,
+                "num_sv": 12,
+                "fix_type": 3,
+                "_seen_ts": time.time() - 10.0,
+            },
+            "gga": None,
+            "rmc": None,
+        }
+        with mock.patch.dict(os.environ, {"GPS_ROW_STALE_MAX_SEC": "3"}, clear=False):
+            self.assertIsNone(gps_mod._gps_build_return(dev))
+
+    def test_nmea_tail_trim_prevents_unbounded_partial_buffer(self):
+        dev = {"_nmea_tail": b"x" * 80, "gga": None, "rmc": None}
+        with mock.patch.dict(os.environ, {"GPS_NMEA_TAIL_MAX_BYTES": "64"}, clear=False):
+            gps_mod._nmea_feed_bytes(dev, b"y" * 16)
+        self.assertEqual(dev["_nmea_tail"], b"")
+
+    def test_i2c_available_error_can_recover_by_stream_reading_gga(self):
+        body = "GNGGA,151544,3755.8370,N,12656.7170,E,1,08,1.0,126.0,M,46.9,M,,"
+        sentence = _nmea_sentence(body)
+        dev = {
+            "kind": "i2c_ublox",
+            "addr": 0x42,
+            "gga": None,
+            "rmc": None,
+            "pvt": None,
+            "_nmea_tail": b"",
+            "_ubx_tail": b"",
+            "_i2c_error_count": 0,
+        }
+        fake = _FakeI2CRecovery(sentence)
+        with mock.patch("lib.i2c_bus.get_i2c", return_value=fake), mock.patch(
+            "lib.i2c_bus.i2c_lock", side_effect=_null_lock
+        ), mock.patch("lib.i2c_bus.reset_i2c") as reset_i2c, mock.patch.dict(
+            os.environ,
+            {
+                "GPS_I2C_RECOVERY_READ_BYTES": str(len(sentence)),
+                "GPS_ROW_STALE_MAX_SEC": "3",
+            },
+            clear=False,
+        ):
+            row = gps_mod._gps_readdata_i2c(dev)
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row[12], "NMEA")
+        self.assertAlmostEqual(row[2], 37.9306167, places=5)
+        self.assertEqual(dev["_i2c_error_count"], 0)
+        reset_i2c.assert_not_called()
 
 
 if __name__ == "__main__":
