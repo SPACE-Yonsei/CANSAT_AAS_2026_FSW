@@ -12,6 +12,7 @@ READ_SIZE   = 32
 
 I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
+NMEA_CACHE_MAX_AGE_SEC = float(os.getenv("GPS_NMEA_CACHE_MAX_AGE_SEC", "2.0"))
 
 class I2CLock:
     def __init__(self, path=I2C_LOCK_PATH):
@@ -64,6 +65,12 @@ def log_gps(text):
 from smbus2 import SMBus
 
 def init_gps():
+    global _read_buffer, _last_gga_data, _last_rmc_data, _last_gga_ts, _last_rmc_ts
+    _read_buffer = b''
+    _last_gga_data = None
+    _last_rmc_data = None
+    _last_gga_ts = 0.0
+    _last_rmc_ts = 0.0
     bus = SMBus(I2C_BUS_NUM)
     return bus
 
@@ -81,6 +88,10 @@ def _i2c_read_block(bus):
 
 
 _read_buffer = b''
+_last_gga_data = None
+_last_rmc_data = None
+_last_gga_ts = 0.0
+_last_rmc_ts = 0.0
 
 
 def read_gps(pi, timeout: float = 1.0):
@@ -124,9 +135,11 @@ def read_gps(pi, timeout: float = 1.0):
 
 
 def parse_gps_data(NMEA_lines):
+    global _last_gga_data, _last_rmc_data, _last_gga_ts, _last_rmc_ts
     gga_data = None
     rmc_data = None
     gps_data = None
+    now = time.time()
 
     for line in NMEA_lines:
         try:
@@ -143,6 +156,8 @@ def parse_gps_data(NMEA_lines):
             #print(f"[DEBUG][parse] GGA ({len(parts)} fields): {parts}")
             if len(parts) > 7:
                 gga_data = parts
+                _last_gga_data = parts
+                _last_gga_ts = now
 
         # RMC
         elif decoded_line.startswith(('$GPRMC', '$GNRMC')):
@@ -150,13 +165,18 @@ def parse_gps_data(NMEA_lines):
             #print(f"[DEBUG][parse] RMC ({len(parts)} fields): {parts}")
             if len(parts) > 10:
                 rmc_data = parts
+                _last_rmc_data = parts
+                _last_rmc_ts = now
         else:
             continue
 
-    if gga_data and rmc_data:
-        gps_data = [gga_data, rmc_data]
-    # else:
-    #     #print(f"[DEBUG][parse] parse result - gga_data: {'OK' if gga_data else 'MISSING'}, rmc_data: {'OK' if rmc_data else 'MISSING'}")
+    gga_fresh = _last_gga_data is not None and (now - _last_gga_ts) <= NMEA_CACHE_MAX_AGE_SEC
+    rmc_fresh = _last_rmc_data is not None and (now - _last_rmc_ts) <= NMEA_CACHE_MAX_AGE_SEC
+
+    # 위치/고도는 GGA가 기준이므로 GGA가 stale이면 데이터를 버린다.
+    # RMC는 stale일 수 있으므로 없는 경우 None으로 처리해 기본값 사용.
+    if gga_fresh:
+        gps_data = [_last_gga_data, _last_rmc_data if rmc_fresh else None]
 
     return gps_data
 
