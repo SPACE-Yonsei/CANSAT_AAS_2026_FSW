@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+# Replaced by setup_systemd_service.sh (default: repo owner or SUDO_USER; DietPi often root/dietpi, not pi).
 User=pi
 WorkingDirectory=/opt/cansat-fsw
 ExecStart=/opt/cansat-fsw/startup.sh
