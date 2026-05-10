@@ -13,8 +13,8 @@ class TestGpsApp(unittest.TestCase):
         gpsapp._last_good_position = None
         gpsapp._last_good_motion = None
         gpsapp._anchor_position = None
-        gpsapp._last_gps_time = None
-        gpsapp._duplicate_gps_time_count = 0
+        gpsapp._last_epoch_gps_time = None
+        gpsapp._epoch_gps_time_seen_since = 0.0
         gpsapp.GPS_HEALTH = 0
         gpsapp.POS_HEALTH = 0
         gpsapp.MOTION_HEALTH = 0
@@ -55,7 +55,7 @@ class TestGpsApp(unittest.TestCase):
         now = time.time()
         health, _ = gpsapp._position_health(37.56, 126.93, 1, 8, "041559", 0.0, now)
         self.assertEqual(health, 1)
-        gpsapp._hold_or_update_position(37.56, 126.93, health, now)
+        gpsapp._hold_or_update_position(37.56, 126.93, health, now, "041559")
         health, _ = gpsapp._position_health(38.56, 127.93, 1, 8, "041600", 0.0, now + 0.2)
         self.assertEqual(health, 0)
 

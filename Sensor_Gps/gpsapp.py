@@ -36,7 +36,10 @@ GPS_HEALTH = 0
 
 GPS_POS_STALE_TIMEOUT_SEC = 1.5
 GPS_MOTION_STALE_TIMEOUT_SEC = 1.5
-GPS_DUPLICATE_TIME_MAX = 30
+# HHMMSS advances once per UTC second; counting duplicate *samples* breaks high-rate
+# polling (e.g. 20 Hz). Treat as stuck only when the same HHMMSS persists for many
+# wall-clock seconds (receiver frozen), not many loop iterations in one second.
+GPS_TIME_STUCK_WALL_SEC = 35.0
 GPS_JUMP_MAX_SPEED = 200.0
 GPS_MAX_VALID_SPEED = 40.0
 GPS_MIN_COURSE_SPEED = 0.5
@@ -61,8 +64,8 @@ _last_good_position: Optional[dict] = None
 _last_good_motion: Optional[dict] = None
 _anchor_position: Optional[dict] = None
 _anchor_reject_streak = 0
-_last_gps_time: Optional[str] = None
-_duplicate_gps_time_count = 0
+_last_epoch_gps_time: Optional[str] = None
+_epoch_gps_time_seen_since: float = 0.0
 _gps_lock = threading.Lock()
 _lat_window = deque(maxlen=5)
 _lon_window = deque(maxlen=5)
@@ -142,6 +145,7 @@ def _apply_flight_gps_sim(data: str) -> None:
     """Parse `lat,lon,course_deg,speed_m_s[,alt_m]` or CLEAR."""
     global _sim_fix, _anchor_position, _anchor_reject_streak
     global _last_good_position, _last_good_motion
+    global _last_epoch_gps_time, _epoch_gps_time_seen_since
     text = data.strip()
     if text.upper() == "CLEAR":
         _set_sim_fix(None)
@@ -152,6 +156,8 @@ def _apply_flight_gps_sim(data: str) -> None:
             _anchor_reject_streak = 0
             _last_good_position = None
             _last_good_motion = None
+            _last_epoch_gps_time = None
+            _epoch_gps_time_seen_since = 0.0
         logger.info("GPS SIM inject cleared (hardware path resumes, anchor reset)")
         return
     parts = [x.strip() for x in text.split(",")]
@@ -253,14 +259,18 @@ def _normalize_gps_time(gps_time: str) -> str:
     return "000000"
 
 
-def _duplicate_time_ok(gps_time: str) -> bool:
-    global _last_gps_time, _duplicate_gps_time_count
-    if gps_time == _last_gps_time:
-        _duplicate_gps_time_count += 1
-    else:
-        _last_gps_time = gps_time
-        _duplicate_gps_time_count = 0
-    return _duplicate_gps_time_count <= GPS_DUPLICATE_TIME_MAX
+def _duplicate_time_ok(gps_time: str, now: Optional[float] = None) -> bool:
+    """Allow many samples per UTC second; fail only if HHMMSS is frozen on the wall clock."""
+    global _last_epoch_gps_time, _epoch_gps_time_seen_since
+    if now is None:
+        now = time.time()
+    gt = _normalize_gps_time(gps_time)
+    if gt != _last_epoch_gps_time:
+        _last_epoch_gps_time = gt
+        _epoch_gps_time_seen_since = now
+        return True
+    elapsed = now - _epoch_gps_time_seen_since
+    return elapsed < GPS_TIME_STUCK_WALL_SEC
 
 
 def _position_basic_ok(lat: float, lon: float, fix_quality: int, sats: int) -> bool:
@@ -343,7 +353,7 @@ def _position_health(
         return 1, delta
     if gps_time_s is None:
         return 0, None
-    if not _duplicate_time_ok(gps_time):
+    if not _duplicate_time_ok(gps_time, now):
         return 0, None
     if pos_age > GPS_POS_STALE_TIMEOUT_SEC:
         return 0, None
@@ -522,10 +532,10 @@ def _parse_sample(sample) -> Optional[dict]:
         return None
 
 
-def _hold_or_update_position(lat: float, lon: float, pos_health: int, now: float) -> tuple[float, float]:
+def _hold_or_update_position(lat: float, lon: float, pos_health: int, now: float, gps_time: str) -> tuple[float, float]:
     global _last_good_position, _anchor_position
     if pos_health:
-        gps_time_s = _gps_time_seconds(_last_gps_time or "")
+        gps_time_s = _gps_time_seconds(_normalize_gps_time(gps_time))
         _last_good_position = {"lat": lat, "lon": lon, "ts": now, "gps_time_s": gps_time_s}
         if _anchor_position is None:
             _anchor_position = {"lat": lat, "lon": lon}
@@ -598,7 +608,7 @@ def read_and_send_gps_data(main_queue) -> None:
                 motion_course = float(position_delta["course"])
                 motion_health = 1
 
-            lat, lon = _hold_or_update_position(sample["lat"], sample["lon"], pos_health, now)
+            lat, lon = _hold_or_update_position(sample["lat"], sample["lon"], pos_health, now, sample["gps_time"])
             velocity, direction = _hold_or_update_motion(motion_speed, motion_course, motion_health)
 
             with _gps_lock:
