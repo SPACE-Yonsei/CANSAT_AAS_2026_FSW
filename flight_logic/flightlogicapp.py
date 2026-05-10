@@ -82,6 +82,7 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 def to_launch_pad(main_queue, force: bool = False) -> None:
     global max_alt, solenoid_count, solenoid_done
     max_alt = 0.0
+    prevstate.update_maxalt(max_alt)
     solenoid_count = 0
     solenoid_done = False
     prevstate.update_solenoid_state(solenoid_count, solenoid_done)
@@ -397,6 +398,7 @@ def handle_target_coord(data: str, main_queue) -> None:
 def handle_reset_alt(_data: str, _main_queue) -> None:
     global max_alt, recent_alt
     max_alt = 0.0
+    prevstate.update_maxalt(max_alt)
     recent_alt = []
     reset_release_predictor(release_predictor)
 
@@ -451,6 +453,7 @@ def barometer_logic(main_queue, alt: float) -> None:
     global solenoid_count, solenoid_done
     now_s = time.time()
     filtered_alt = alt
+    prev_max_alt = max_alt
     recent_alt.append(alt)
     if len(recent_alt) > 3:
         recent_alt = recent_alt[-3:]
@@ -463,8 +466,11 @@ def barometer_logic(main_queue, alt: float) -> None:
     else:
         max_alt = max(max_alt, alt)
 
+    if math.isfinite(max_alt) and max_alt > prev_max_alt:
+        prevstate.update_maxalt(max_alt)
+
     if state == 0:
-        cnt_ascent = cnt_ascent + 1 if alt > 200 else 0
+        cnt_ascent = cnt_ascent + 1 if alt > 100 else 0
         if cnt_ascent >= 3:
             _reset_transition_counters()
             reset_release_predictor(release_predictor)

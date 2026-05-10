@@ -15,6 +15,7 @@ import time
 # Runstatus of application. Application is terminated when false
 GPSAPP_RUNSTATUS = True
 gps_instance = None
+GPS_STALE_TIMEOUT_SEC = 2.0
 ######################################################
 ## FUNDEMENTAL METHODS                              ##
 ######################################################
@@ -26,13 +27,13 @@ gps_instance = None
 def command_handler (recv_msg : msgstructure.MsgStructure):
     global GPSAPP_RUNSTATUS
 
-    if recv_msg.MsgID == appargs.MainAppArg.MID_TerminateProcess:
+    if recv_msg.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         # Change Runstatus to false to start termination process
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPSAPP TERMINATION DETECTED")
         GPSAPP_RUNSTATUS = False
 
     else:
-        events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
+        events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.msg_id} not handled")
     return
 
 ######################################################
@@ -98,6 +99,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
     GPS_COURSE = 0.0
 
     send_counter = 0
+    last_valid_gps_ts = 0.0
 
     while GPSAPP_RUNSTATUS:
         # Check if gps_instance is valid
@@ -125,6 +127,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_RMC_STATUS = str(rcv_data[6]).strip() if len(rcv_data) > 6 else "V"
                 GPS_SPEED_MS = float(rcv_data[7]) if len(rcv_data) > 7 else 0.0
                 GPS_COURSE = float(rcv_data[8]) if len(rcv_data) > 8 else 0.0
+                last_valid_gps_ts = time.time()
                 # Print GPS data for debugging (disabled)
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
@@ -141,8 +144,17 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"Error parsing GPS data: {e}, rcv_data={rcv_data}")
         else:
             # GPS 데이터가 없을 때 (None 또는 형식 불일치) - 이전 값 유지
-            # 로그 출력 비활성화
-            pass
+            # 단, 오래된 값은 stale로 간주해 초기값으로 리셋한다.
+            if last_valid_gps_ts > 0 and (time.time() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
+                GPS_LAT = 0.0
+                GPS_LON = 0.0
+                GPS_ALT = 0.0
+                GPS_TIME = "00:00:00"
+                GPS_SATS = 0
+                GPS_FIX_QUALITY = 0
+                GPS_RMC_STATUS = "V"
+                GPS_SPEED_MS = 0.0
+                GPS_COURSE = 0.0
 
         # gps->motor: 새 NMEA 문장이 수신된 경우에만 전송 (stale 재전송 방지)
         if rcv_data and len(rcv_data) >= 5:

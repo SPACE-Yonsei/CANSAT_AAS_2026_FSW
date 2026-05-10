@@ -1,22 +1,27 @@
-#!/usr/bin/env bash
-set -euo pipefail
+# This is the startup script
+# This script should be executed on startup
+# configure the path to contain the python code you want to run first
+# the path should be absolute
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="${ROOT_DIR}/.venv"
+# Example) python_path = /home/hyunlee/Desktop/flight_code/Python_Cansat_FSW
 
-if command -v pigpiod >/dev/null 2>&1; then
-  if ! pgrep -x pigpiod >/dev/null 2>&1; then
-    pigpiod || true
-  fi
+python_path="/home/pi/CANSAT_AAS_2026_FSW"
+venv_path="/home/pi/env/bin"
+
+if [ "${python_path}" == "not_configured" ]; then
+echo "Startup Script is not Configured! Please Edit the file"
+
+else
+echo "Starting pigpiod..."
+sudo pigpiod
+sleep 1
+
+echo "Cleaning up camera..."
+bash /home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh
+
+echo "Path > ${python_path}"
+echo "venv > ${venv_path}/activate"
+. ${venv_path}/activate;
+cd ${python_path};python3 main.py
+
 fi
-
-if [[ -d "${VENV_DIR}" ]]; then
-  # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
-fi
-
-export FSW_I2C_BUS="${FSW_I2C_BUS:-1}"
-export GPS_I2C_ADDR="${GPS_I2C_ADDR:-0x42}"
-
-cd "${ROOT_DIR}"
-exec python3 main.py
