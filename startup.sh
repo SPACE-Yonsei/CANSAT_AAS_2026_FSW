@@ -20,13 +20,16 @@ if command -v pigpiod >/dev/null 2>&1; then
   fi
 fi
 
-if [[ -n "${VENV_DIR}" ]]; then
-  # shellcheck disable=SC1091
-  source "${VENV_DIR}/bin/activate"
+PYTHON_BIN="python3"
+if [[ -n "${VENV_DIR}" && -x "${VENV_DIR}/bin/python3" ]]; then
+  PYTHON_BIN="${VENV_DIR}/bin/python3"
+elif [[ -n "${VENV_DIR}" ]]; then
+  echo "startup.sh: venv at ${VENV_DIR} has no bin/python3; using PATH python3" >&2
 fi
 
 export FSW_I2C_BUS="${FSW_I2C_BUS:-1}"
 export GPS_I2C_ADDR="${GPS_I2C_ADDR:-0x42}"
 
 cd "${ROOT_DIR}"
-exec python3 main.py
+# Use venv interpreter directly so systemd (non-interactive) always picks pip packages.
+exec "${PYTHON_BIN}" main.py
