@@ -918,39 +918,56 @@ def gps_terminate(dev: dict) -> None:
 if __name__ == "__main__":
     import time
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    print("GPS: I2C u-blox only. Set GPS_I2C_ADDR if not 0x42.", flush=True)
+    _FIX_LABEL = {0: "NoFix", 1: "DR   ", 2: "2D   ", 3: "3D   ", 4: "3D+DR", 5: "Time "}
+
+    def _cli_print(row):
+        if row is None:
+            print("[ --- ]  no fix", flush=True)
+            return
+
+        gt, alt, lat, lon, sats, fixq, _, spd, crs = row[:9]
+        source = row[12] if len(row) >= 13 else "NMEA"
+
+        if source == "UBX_NAV_PVT" and len(row) >= 21:
+            fix_type = int(row[13])
+            h_acc    = float(row[14])
+            v_acc    = float(row[15])
+            s_acc    = float(row[16])
+            fix_lbl  = _FIX_LABEL.get(fix_type, f"ft{fix_type}")
+            print(
+                f"[PVT]  fix={fix_lbl}  "
+                f"lat={lat:11.6f}  lon={lon:11.6f}  alt={alt:7.1f}m  "
+                f"sats={sats:2d}  "
+                f"h_acc={h_acc:6.2f}m  v_acc={v_acc:6.2f}m  s_acc={s_acc:5.2f}m/s  "
+                f"spd={spd:5.2f}m/s  crs={crs:6.1f}deg  "
+                f"t={gt}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[GGA]  fix={fixq}  "
+                f"lat={lat:11.6f}  lon={lon:11.6f}  alt={alt:7.1f}m  "
+                f"sats={sats:2d}  "
+                f"spd={spd:5.2f}m/s  crs={crs:6.1f}deg  "
+                f"t={gt}",
+                flush=True,
+            )
+
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    print("GPS monitor  (1s interval, Ctrl-C to quit)", flush=True)
+    print("  [PVT] = UBX-NAV-PVT  |  [GGA] = NMEA fallback  |  h_acc/v_acc: lower is better", flush=True)
+    print("-" * 90, flush=True)
+
     dev = init_gps()
-    period = _gps_cli_period_sec()
     if dev is None:
-        print(
-            "GPS init failed. Check FSW_I2C_BUS, wiring, GPS_I2C_ADDR (default 0x42), antenna.",
-            flush=True,
-        )
+        print("GPS init failed. Check I2C wiring and GPS_I2C_ADDR (default 0x42).", flush=True)
         raise SystemExit(1)
-    print(
-        f"GPS: OK, streaming data flow every {period:.2f}s: "
-        "I2C FIFO -> raw bytes -> UBX/NMEA parser -> gps row",
-        flush=True,
-    )
-    _debug_runtime_config(dev)
-    poll_count = 0
+
     try:
         while True:
-            poll_count += 1
-            _debug_section(f"GPS_POLL {poll_count}")
             row = gps_readdata(dev)
-            if row is None:
-                print("fix=no (watch GPS_FLOW/GPS_RAW/GPS_PARSE above)", flush=True)
-            else:
-                gt, alt, lat, lon, sats, fixq, st, spd, crs = row[:9]
-                source = row[12] if len(row) >= 13 else "NMEA"
-                print(
-                    f"time={gt} lat={lat:.6f} lon={lon:.6f} alt_m={alt:.1f} "
-                    f"sats={sats} fix={fixq} rmc={st} v_ms={spd:.2f} crs={crs:.1f} source={source}",
-                    flush=True,
-                )
-            time.sleep(period)
+            _cli_print(row)
+            time.sleep(1.0)
     except KeyboardInterrupt:
         print("", flush=True)
     finally:
