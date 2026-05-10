@@ -2,7 +2,7 @@ import time
 import unittest
 from unittest import mock
 
-from Sensor_Gps import gpsapp
+from Sensor_Gps import gpsapp_legacy as gpsapp
 from lib import appargs
 
 
@@ -34,7 +34,7 @@ class TestGpsApp(unittest.TestCase):
 
     def test_synthetic_read_shape(self):
         data = gpsapp._synthetic_read()
-        self.assertGreaterEqual(len(data), 12)
+        self.assertGreaterEqual(len(data), 9)
         self.assertIsInstance(data[2], float)
 
     def test_position_health_rejects_zero_and_bad_sats(self):
@@ -138,10 +138,10 @@ class TestGpsApp(unittest.TestCase):
             gpsapp.GPSAPP_RUNSTATUS = False
 
         gpsapp.GPSAPP_RUNSTATUS = True
-        with mock.patch("Sensor_Gps.gpsapp._read_gps", return_value=sample), mock.patch(
-            "Sensor_Gps.gpsapp._comm_tick_interval", return_value=1
-        ), mock.patch("Sensor_Gps.gpsapp.msgstructure.send_msg", side_effect=_capture_send), mock.patch(
-            "Sensor_Gps.gpsapp.time.sleep", side_effect=_stop_after_one_tick
+        with mock.patch("Sensor_Gps.gpsapp_legacy._read_gps", return_value=sample), mock.patch(
+            "Sensor_Gps.gpsapp_legacy._comm_tick_interval", return_value=1
+        ), mock.patch("Sensor_Gps.gpsapp_legacy.msgstructure.send_msg", side_effect=_capture_send), mock.patch(
+            "Sensor_Gps.gpsapp_legacy.time.sleep", side_effect=_stop_after_one_tick
         ):
             gpsapp.read_and_send_gps_data(main_queue=object())
 

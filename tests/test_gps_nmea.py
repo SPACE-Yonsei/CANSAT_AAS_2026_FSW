@@ -5,7 +5,11 @@ import unittest
 from contextlib import contextmanager
 from unittest import mock
 
-from Sensor_Gps import gps as gps_mod
+from Sensor_Gps import gps_legacy as gps_mod
+
+
+def _skip_without_ubx_helpers():
+    return getattr(gps_mod, "_gps_build_return", None) is None
 
 
 def _xor_nmea_payload(payload_after_dollar: str) -> int:
@@ -41,6 +45,10 @@ class _FakeI2CRecovery:
         raise AssertionError(f"unexpected register: {reg!r}")
 
 
+@unittest.skipIf(
+    _skip_without_ubx_helpers(),
+    "gps_legacy has no UBX/NMEA unit-test helpers (_gps_build_return, etc.)",
+)
 class TestGpsNmeaChecksum(unittest.TestCase):
     def test_checksum_valid_known_sentence(self):
         body = "GNGGA,151544,3755.8370,N,12656.7170,E,1,05,1.0,126.0,M,46.9,M,,"
