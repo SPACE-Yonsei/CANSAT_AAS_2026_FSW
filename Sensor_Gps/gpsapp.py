@@ -26,13 +26,13 @@ gps_instance = None
 def command_handler (recv_msg : msgstructure.MsgStructure):
     global GPSAPP_RUNSTATUS
 
-    if recv_msg.MsgID == appargs.MainAppArg.MID_TerminateProcess:
+    if recv_msg.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         # Change Runstatus to false to start termination process
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPSAPP TERMINATION DETECTED")
         GPSAPP_RUNSTATUS = False
 
     else:
-        events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.MsgID} not handled")
+        events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.msg_id} not handled")
     return
 
 ######################################################

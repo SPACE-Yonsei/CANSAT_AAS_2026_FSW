@@ -31,6 +31,15 @@ sudo sed -i "s|^User=.*|User=${TARGET_USER}|g" /etc/systemd/system/cansat-fsw.se
 
 sudo chmod +x "${ROOT_DIR}/startup.sh"
 
+# Optional: point systemd at a venv outside the repo (e.g. /root/venv).
+#   FSW_VENV_DIR=/root/venv bash setup_systemd_service.sh
+DROP_IN="/etc/systemd/system/cansat-fsw.service.d"
+if [[ -n "${FSW_VENV_DIR:-}" ]]; then
+  sudo mkdir -p "${DROP_IN}"
+  printf '%s\n' '[Service]' "Environment=FSW_VENV_DIR=${FSW_VENV_DIR}" | sudo tee "${DROP_IN}/fsw-venv.conf" >/dev/null
+  echo "wrote ${DROP_IN}/fsw-venv.conf (FSW_VENV_DIR=${FSW_VENV_DIR})"
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable cansat-fsw.service
 echo "installed cansat-fsw.service ($(grep -E '^User=' /etc/systemd/system/cansat-fsw.service || echo 'User=(unset, runs as root)'))"
