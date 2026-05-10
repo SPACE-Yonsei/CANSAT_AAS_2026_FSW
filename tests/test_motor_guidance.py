@@ -115,6 +115,14 @@ class TestFillOld(unittest.TestCase):
         self.assertEqual(inp.pos_quality, SensorQuality.OLD)
         self.assertIsNotNone(inp.pos_N)
 
+    def test_old_gps_implausibly_far_marks_stale(self):
+        inp = _fresh_l1_input()
+        old_gps = _gps(ORIGIN_LAT, 0.0, age=0.5)
+        guidance.FillOld(inp, old_gps, None, None, time.monotonic())
+        self.assertEqual(inp.pos_quality, SensorQuality.STALE)
+        self.assertIsNone(inp.pos_N)
+        self.assertIsNone(inp.pos_E)
+
     def test_too_old_gps_position_marks_stale(self):
         inp = _fresh_l1_input()
         age = guidance.POS_STALE_MAX + 0.5

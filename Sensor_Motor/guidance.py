@@ -39,6 +39,31 @@ XTRACK_HARD_MIN_M  = 50.0
 # Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
 _MAX_POS_RANGE_M   = 50_000.0   # 50 km
 
+
+def _project_position_from_origin(
+    lat: float,
+    lon: float,
+    origin_lat: float,
+    origin_lon: float,
+) -> Optional[Tuple[float, float]]:
+    try:
+        la = float(lat)
+        lo = float(lon)
+        ola = float(origin_lat)
+        olo = float(origin_lon)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (la, lo, ola, olo)):
+        return None
+    earth_r = 6_371_000.0
+    dlat = math.radians(la - ola)
+    dlon = math.radians(lo - olo)
+    pos_N = dlat * earth_r
+    pos_E = dlon * earth_r * math.cos(math.radians(ola))
+    if math.hypot(pos_N, pos_E) > _MAX_POS_RANGE_M:
+        return None
+    return pos_N, pos_E
+
 class SensorQuality(enum.Enum):
     FRESH   = "FRESH"
     OLD     = "OLD"
@@ -128,17 +153,14 @@ def FillFresh(
         and start_lat is not None
         and start_lon is not None
     ):
-        earth_r = 6_371_000.0
-        dlat = math.radians(gps.lat - start_lat)
-        dlon = math.radians(gps.lon - start_lon)
-        l1_input.pos_N = dlat * earth_r
-        l1_input.pos_E = dlon * earth_r * math.cos(math.radians(start_lat))
-        if math.hypot(l1_input.pos_N, l1_input.pos_E) > _MAX_POS_RANGE_M:
+        projected = _project_position_from_origin(gps.lat, gps.lon, start_lat, start_lon)
+        if projected is None:
             # Position implausibly far from origin (e.g. lon ≈ 0 while origin ≈ 126 °E).
             l1_input.pos_N = None
             l1_input.pos_E = None
             l1_input.pos_quality = SensorQuality.STALE
         else:
+            l1_input.pos_N, l1_input.pos_E = projected
             l1_input.pos_quality = SensorQuality.FRESH
 
     if (
@@ -201,12 +223,16 @@ def FillOld(
             origin_lon = getattr(l1_input, "origin_lon", None)
             if 0.0 <= age <= POS_STALE_MAX:
                 if origin_lat is not None and origin_lon is not None:
-                    earth_r = 6_371_000.0
-                    dlat = math.radians(old_gps.lat - origin_lat)
-                    dlon = math.radians(old_gps.lon - origin_lon)
-                    l1_input.pos_N = dlat * earth_r
-                    l1_input.pos_E = dlon * earth_r * math.cos(math.radians(origin_lat))
-                    l1_input.pos_quality = SensorQuality.OLD
+                    projected = _project_position_from_origin(
+                        old_gps.lat, old_gps.lon, origin_lat, origin_lon
+                    )
+                    if projected is None:
+                        l1_input.pos_N = None
+                        l1_input.pos_E = None
+                        l1_input.pos_quality = SensorQuality.STALE
+                    else:
+                        l1_input.pos_N, l1_input.pos_E = projected
+                        l1_input.pos_quality = SensorQuality.OLD
                 else:
                     l1_input.pos_quality = SensorQuality.STALE
             elif age > POS_STALE_MAX:
