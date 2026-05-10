@@ -20,11 +20,22 @@ if command -v pigpiod >/dev/null 2>&1; then
   fi
 fi
 
+# Pick the venv interpreter (some trees only have bin/python or bin/python3.13).
 PYTHON_BIN="python3"
-if [[ -n "${VENV_DIR}" && -x "${VENV_DIR}/bin/python3" ]]; then
-  PYTHON_BIN="${VENV_DIR}/bin/python3"
-elif [[ -n "${VENV_DIR}" ]]; then
-  echo "startup.sh: venv at ${VENV_DIR} has no bin/python3; using PATH python3" >&2
+if [[ -n "${VENV_DIR}" ]]; then
+  _picked=""
+  for _cand in python3 python3.13 python; do
+    if [[ -x "${VENV_DIR}/bin/${_cand}" ]]; then
+      _picked="${VENV_DIR}/bin/${_cand}"
+      break
+    fi
+  done
+  if [[ -n "${_picked}" ]]; then
+    PYTHON_BIN="${_picked}"
+    echo "startup.sh: using venv python ${PYTHON_BIN}" >&2
+  else
+    echo "startup.sh: venv at ${VENV_DIR} has no bin/python3|python3.13|python; using PATH python3" >&2
+  fi
 fi
 
 export FSW_I2C_BUS="${FSW_I2C_BUS:-1}"
