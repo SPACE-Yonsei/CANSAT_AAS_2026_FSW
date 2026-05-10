@@ -180,6 +180,15 @@ _START_POINT_LOCKED = False
 _START_NULL_LAT_TOL = 1.0e-4
 _START_NULL_LON_TOL = 1.0e-4
 
+# GPS sanity thresholds.  Longitudes within ±_GPS_LON_NEAR_ZERO_MAX degrees of
+# the prime meridian are treated as invalid fixes (placeholder / NMEA parse
+# error).  After start_point is locked, any fix more than
+# _GPS_POS_MAX_DELTA_DEG away from the locked longitude is also rejected.
+_GPS_EXPECTED_LON_CENTER_DEG = float(getattr(config, "GPS_EXPECTED_LON_CENTER_DEG", 126.6))
+_GPS_EXPECTED_LON_RADIUS_DEG = float(getattr(config, "GPS_EXPECTED_LON_RADIUS_DEG", 20.0))
+_GPS_MAX_VALID_SPEED_MPS = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
+_GPS_POS_MAX_DELTA_DEG  = 20.0   # deg  (~2 000 km – impossible for CanSat drop)
+
 
 def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
     if lat is None or lon is None:
@@ -199,6 +208,36 @@ def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
 
 def _is_placeholder_latlon(lat: float, lon: float) -> bool:
     return abs(lat) <= _START_NULL_LAT_TOL and abs(lon) <= _START_NULL_LON_TOL
+
+
+def _gps_position_sanity_reason(
+    lat: Optional[float],
+    lon: Optional[float],
+    start_lon: Optional[float] = None,
+) -> Optional[str]:
+    if not _finite_latlon(lat, lon):
+        return "lat/lon not finite or out of range"
+    la = float(lat)
+    lo = float(lon)
+    if _is_placeholder_latlon(la, lo):
+        return "lat/lon placeholder"
+    if abs(lo - _GPS_EXPECTED_LON_CENTER_DEG) > _GPS_EXPECTED_LON_RADIUS_DEG:
+        return (
+            f"lon={lo:.4f} outside expected "
+            f"{_GPS_EXPECTED_LON_CENTER_DEG:.1f}+/-{_GPS_EXPECTED_LON_RADIUS_DEG:.1f} deg"
+        )
+    if start_lon is not None and abs(lo - float(start_lon)) > _GPS_POS_MAX_DELTA_DEG:
+        return f"|lon-start_lon|={abs(lo - float(start_lon)):.2f} > {_GPS_POS_MAX_DELTA_DEG:.1f} deg"
+    return None
+
+
+def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
+    return (
+        math.isfinite(course_deg)
+        and math.isfinite(ground_speed)
+        and 0.0 <= course_deg < 360.0
+        and 0.5 <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
+    )
 _CONTROLLER = None
 _L1_STATE = None
 
@@ -243,6 +282,25 @@ def handle_gps(data: str) -> None:
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
+
+    # --- GPS lon sanity gate (defense against NMEA parse errors) ---------------
+    # Override pos_health supplied by GPS app when longitude is implausible.
+    if pos_health:
+        if abs(lon) < _GPS_LON_NEAR_ZERO_MAX:
+            LOGGER.warning(
+                "GPS lon sanity: lon=%.4f within %.1f° of zero, pos_health overridden False",
+                lon, _GPS_LON_NEAR_ZERO_MAX,
+            )
+            pos_health = False
+        elif _START_POINT_LOCKED and _CACHE.start_lon is not None:
+            delta = abs(lon - _CACHE.start_lon)
+            if delta > _GPS_POS_MAX_DELTA_DEG:
+                LOGGER.warning(
+                    "GPS lon sanity: |lon-start_lon|=%.2f > %.1f°, pos_health overridden False",
+                    delta, _GPS_POS_MAX_DELTA_DEG,
+                )
+                pos_health = False
+    # ---------------------------------------------------------------------------
 
     course_rad = math.radians(course_deg)
     sample = _GpsFromApp(
@@ -392,6 +450,7 @@ def handle_flight_state(data: str) -> None:
                 and gps.lon is not None
                 and -90.0 <= float(gps.lat) <= 90.0
                 and -180.0 <= float(gps.lon) <= 180.0
+                and abs(float(gps.lon)) >= _GPS_LON_NEAR_ZERO_MAX
             ):
                 _CACHE.start_lat = float(gps.lat)
                 _CACHE.start_lon = float(gps.lon)

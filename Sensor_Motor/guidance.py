@@ -35,6 +35,9 @@ XTRACK_SOFT_FACTOR = 2.0    # × L1_dist
 XTRACK_HARD_FACTOR = 4.0    # × L1_dist
 XTRACK_SOFT_MIN_M  = 20.0
 XTRACK_HARD_MIN_M  = 50.0
+# GPS-derived position sanity: reject positions farther than this from origin.
+# Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
+_MAX_POS_RANGE_M   = 50_000.0   # 50 km
 
 class SensorQuality(enum.Enum):
     FRESH   = "FRESH"
@@ -130,7 +133,13 @@ def FillFresh(
         dlon = math.radians(gps.lon - start_lon)
         l1_input.pos_N = dlat * earth_r
         l1_input.pos_E = dlon * earth_r * math.cos(math.radians(start_lat))
-        l1_input.pos_quality = SensorQuality.FRESH
+        if math.hypot(l1_input.pos_N, l1_input.pos_E) > _MAX_POS_RANGE_M:
+            # Position implausibly far from origin (e.g. lon ≈ 0 while origin ≈ 126 °E).
+            l1_input.pos_N = None
+            l1_input.pos_E = None
+            l1_input.pos_quality = SensorQuality.STALE
+        else:
+            l1_input.pos_quality = SensorQuality.FRESH
 
     if (
         gps is not None
