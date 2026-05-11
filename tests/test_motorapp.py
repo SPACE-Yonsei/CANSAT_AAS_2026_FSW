@@ -72,6 +72,26 @@ class TestHandleGps(unittest.TestCase):
         motorapp.handle_gps("37.55,126.95,90.0,12.0,0,0")
         self.assertIsNone(motorapp._CACHE.last_gps.lat)
 
+    def test_unexpected_longitude_disables_position_and_motion(self):
+        motorapp.handle_gps("37.55,50.0,90.0,12.0,1,1")
+        gps = motorapp._CACHE.latest_gps
+        self.assertFalse(gps.pos_health)
+        self.assertFalse(gps.motion_health)
+        self.assertIsNone(motorapp._CACHE.last_gps.lat)
+        self.assertIsNone(motorapp._CACHE.last_gps.course_rad)
+
+    def test_invalid_motion_does_not_update_last_motion(self):
+        motorapp.handle_gps("37.55,126.95,999.0,12.0,1,1")
+        self.assertTrue(motorapp._CACHE.latest_gps.pos_health)
+        self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
+        self.assertIsNone(motorapp._CACHE.last_gps.course_rad)
+
+    def test_motion_health_requires_position_health(self):
+        motorapp.handle_gps("37.55,126.95,90.0,12.0,0,1")
+        self.assertFalse(motorapp._CACHE.latest_gps.pos_health)
+        self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
+        self.assertIsNone(motorapp._CACHE.last_gps.course_rad)
+
     def test_healthy_motion_updates_last_gps_motion(self):
         motorapp.handle_gps("37.55,126.95,90.0,12.0,1,1")
         self.assertAlmostEqual(motorapp._CACHE.last_gps.course_rad, math.radians(90.0))
@@ -100,6 +120,12 @@ class TestHandleGpsStartPointLocking(unittest.TestCase):
         self.assertTrue(motorapp._START_POINT_LOCKED)
         self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
         self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
+
+    def test_state3_unexpected_longitude_does_not_lock_start_point(self):
+        motorapp.STATE = 3
+        motorapp.handle_gps("37.55,50.0,90.0,12.0,1,1")
+        self.assertFalse(motorapp._START_POINT_LOCKED)
+        self.assertIsNone(motorapp._CACHE.start_lon)
 
 
 class TestHandleImu(unittest.TestCase):

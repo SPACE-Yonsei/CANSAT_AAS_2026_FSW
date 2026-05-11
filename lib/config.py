@@ -41,6 +41,14 @@ XBEE_RATE_HZ = 10
 CAMERA_FPS = 30
 
 
+# GPS sanity gates.  Defaults are for the current Korea test area; update these
+# before operating at a distant site.
+GPS_EXPECTED_LON_CENTER_DEG = 126.6
+GPS_EXPECTED_LON_RADIUS_DEG = 20.0
+GPS_MIN_SATS = 4
+GPS_MAX_VALID_SPEED_MPS = 40.0
+
+
 # Release timing tuning
 RELEASE_TARGET_RATIO = 0.8  # 80% max_alt: separation altitude target
 # Below this fraction of max_alt: start descent-rate history and the FORCE_90PCT_TIMEOUT timer.

@@ -185,6 +185,13 @@ _START_NULL_LON_TOL = 1.0e-4
 _MANUAL_STEER_DELTA_DEG = min(40.0, control.DELTA_ARM_MAX_DEG)
 _MANUAL_STEER_MODES = {"LEFT", "NEUTRAL", "RIGHT"}
 
+# GPS sanity thresholds. Defaults are configured for the current Korea test
+# area and must be updated before operating at a distant site.
+_GPS_EXPECTED_LON_CENTER_DEG = float(getattr(config, "GPS_EXPECTED_LON_CENTER_DEG", 126.6))
+_GPS_EXPECTED_LON_RADIUS_DEG = float(getattr(config, "GPS_EXPECTED_LON_RADIUS_DEG", 20.0))
+_GPS_MAX_VALID_SPEED_MPS = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
+_GPS_POS_MAX_DELTA_DEG = 20.0   # deg, relative to locked start longitude
+
 
 def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
     if lat is None or lon is None:
@@ -204,6 +211,36 @@ def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
 
 def _is_placeholder_latlon(lat: float, lon: float) -> bool:
     return abs(lat) <= _START_NULL_LAT_TOL and abs(lon) <= _START_NULL_LON_TOL
+
+
+def _gps_position_sanity_reason(
+    lat: Optional[float],
+    lon: Optional[float],
+    start_lon: Optional[float] = None,
+) -> Optional[str]:
+    if not _finite_latlon(lat, lon):
+        return "lat/lon not finite or out of range"
+    la = float(lat)
+    lo = float(lon)
+    if _is_placeholder_latlon(la, lo):
+        return "lat/lon placeholder"
+    if abs(lo - _GPS_EXPECTED_LON_CENTER_DEG) > _GPS_EXPECTED_LON_RADIUS_DEG:
+        return (
+            f"lon={lo:.4f} outside expected "
+            f"{_GPS_EXPECTED_LON_CENTER_DEG:.1f}+/-{_GPS_EXPECTED_LON_RADIUS_DEG:.1f} deg"
+        )
+    if start_lon is not None and abs(lo - float(start_lon)) > _GPS_POS_MAX_DELTA_DEG:
+        return f"|lon-start_lon|={abs(lo - float(start_lon)):.2f} > {_GPS_POS_MAX_DELTA_DEG:.1f} deg"
+    return None
+
+
+def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
+    return (
+        math.isfinite(course_deg)
+        and math.isfinite(ground_speed)
+        and 0.0 <= course_deg < 360.0
+        and 0.5 <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
+    )
 _CONTROLLER = None
 _L1_STATE = None
 
@@ -248,6 +285,27 @@ def handle_gps(data: str) -> None:
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
+
+    start_lon = _CACHE.start_lon if _START_POINT_LOCKED else None
+    position_reason = _gps_position_sanity_reason(lat, lon, start_lon)
+    if position_reason is not None:
+        if pos_health or motion_health:
+            LOGGER.warning(
+                "GPS sanity: %s; pos_health/motion_health overridden False",
+                position_reason,
+            )
+        pos_health = False
+        motion_health = False
+    elif motion_health and not pos_health:
+        LOGGER.warning("GPS motion sanity: pos_health False, motion_health overridden False")
+        motion_health = False
+    elif motion_health and not _gps_motion_sane(course_deg, ground_speed):
+        LOGGER.warning(
+            "GPS motion sanity: course=%.3f speed=%.3f invalid, motion_health overridden False",
+            course_deg,
+            ground_speed,
+        )
+        motion_health = False
 
     course_rad = math.radians(course_deg)
     sample = _GpsFromApp(
@@ -397,6 +455,7 @@ def handle_flight_state(data: str) -> None:
                 and gps.lon is not None
                 and -90.0 <= float(gps.lat) <= 90.0
                 and -180.0 <= float(gps.lon) <= 180.0
+                and _gps_position_sanity_reason(float(gps.lat), float(gps.lon)) is None
             ):
                 _CACHE.start_lat = float(gps.lat)
                 _CACHE.start_lon = float(gps.lon)

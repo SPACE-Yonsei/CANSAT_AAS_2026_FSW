@@ -1,7 +1,10 @@
 # Python FSW V2 Gps App
 # Author : Hyeon Lee
 
+import math
+
 from lib import appargs
+from lib import config
 from lib import msgstructure
 from lib import events
 from Sensor_Gps import gps
@@ -16,6 +19,54 @@ import time
 GPSAPP_RUNSTATUS = True
 gps_instance = None
 GPS_STALE_TIMEOUT_SEC = 2.0
+
+
+def _is_finite(value: float) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _lon_in_expected_area(lon: float) -> bool:
+    try:
+        center = float(config.GPS_EXPECTED_LON_CENTER_DEG)
+        radius = float(config.GPS_EXPECTED_LON_RADIUS_DEG)
+    except (TypeError, ValueError):
+        center = 126.6
+        radius = 20.0
+    return abs(float(lon) - center) <= radius
+
+
+def _position_health(lat: float, lon: float, fix_quality: int, sats: int) -> int:
+    return int(
+        _is_finite(lat)
+        and _is_finite(lon)
+        and -90.0 <= float(lat) <= 90.0
+        and -180.0 <= float(lon) <= 180.0
+        and float(lat) != 0.0
+        and float(lon) != 0.0
+        and _lon_in_expected_area(float(lon))
+        and int(fix_quality) >= 1
+        and int(sats) >= int(getattr(config, "GPS_MIN_SATS", 4))
+    )
+
+
+def _calc_motion_health(
+    speed_mps: float,
+    course_deg: float,
+    rmc_status: str,
+    pos_health: int,
+) -> int:
+    max_speed = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
+    return int(
+        bool(pos_health)
+        and str(rmc_status).strip().upper() == "A"
+        and _is_finite(speed_mps)
+        and _is_finite(course_deg)
+        and 0.5 <= float(speed_mps) <= max_speed
+        and 0.0 <= float(course_deg) < 360.0
+    )
 ######################################################
 ## FUNDEMENTAL METHODS                              ##
 ######################################################
@@ -157,12 +208,17 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_COURSE = 0.0
 
         # gps->motor: 새 NMEA 문장이 수신된 경우에만 전송 (stale 재전송 방지)
+        # handle_gps() 기대 포맷: lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth
         if rcv_data and len(rcv_data) >= 5:
+            _pos_health = _position_health(GPS_LAT, GPS_LON, GPS_FIX_QUALITY, GPS_SATS)
+            _motion_health = _calc_motion_health(
+                GPS_SPEED_MS, GPS_COURSE, GPS_RMC_STATUS, _pos_health
+            )
             msgstructure.send_msg(
                 Main_Queue,
                 appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
                 appargs.GpsAppArg.MID_motor_gps,
-                f"{GPS_LAT},{GPS_LON},{GPS_SPEED_MS:.2f},{GPS_COURSE:.2f},{GPS_FIX_QUALITY},{GPS_SATS},{GPS_RMC_STATUS}"
+                f"{GPS_LAT},{GPS_LON},{GPS_COURSE:.4f},{GPS_SPEED_MS:.4f},{_pos_health},{_motion_health}"
             )
 
         send_counter += 1
