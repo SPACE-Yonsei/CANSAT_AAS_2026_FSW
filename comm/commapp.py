@@ -74,6 +74,10 @@ class TelemetryData:
     left_pulse: int = 0
     right_pulse: int = 0
     guidance_state: str = ""
+    motor_enabled: int = -1
+    force_action_enabled: int = -1
+    release_action_enabled: int = -1
+    egg_action_enabled: int = -1
     packet_count: int = 0
 
 
@@ -242,6 +246,55 @@ def cmd_mec(option: str, main_queue) -> bool:
         appargs.MotorAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_MEC,
         option,
+    )
+
+
+def cmd_fac(option: str, main_queue) -> bool:
+    opt = option.strip().upper().replace(" ", "")
+    if opt in {"ON", "OFF"}:
+        payload = f"ALL,{opt}"
+    else:
+        parts = [p for p in opt.split(",") if p]
+        if len(parts) != 2:
+            return False
+        actor, state = parts[0], parts[1]
+        actor_alias = {
+            "REL": "REL",
+            "RELEASE": "REL",
+            "EGG": "EGG",
+        }
+        actor_norm = actor_alias.get(actor)
+        if actor_norm is None or state not in {"ON", "OFF"}:
+            return False
+        payload = f"{actor_norm},{state}"
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_FAC,
+        payload,
+    )
+
+
+def cmd_mtr(option: str, main_queue) -> bool:
+    normalized = option.strip().upper()
+    aliases = {
+        "L": "LEFT",
+        "LEFT": "LEFT",
+        "N": "NEUTRAL",
+        "NEUTRAL": "NEUTRAL",
+        "R": "RIGHT",
+        "RIGHT": "RIGHT",
+    }
+    mode = aliases.get(normalized)
+    if mode is None:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_MTR,
+        mode,
     )
 
 
@@ -429,6 +482,14 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.current_heading = float(fields[8])
             tlm_data.desired_heading = float(fields[9])
             tlm_data.guidance_state = fields[10].strip()
+            if len(fields) >= 12:
+                tlm_data.motor_enabled = int(float(fields[11]))
+            if len(fields) >= 13:
+                tlm_data.force_action_enabled = int(float(fields[12]))
+            if len(fields) >= 14:
+                tlm_data.release_action_enabled = int(float(fields[13]))
+            if len(fields) >= 15:
+                tlm_data.egg_action_enabled = int(float(fields[14]))
     except (ValueError, TypeError) as exc:
         logger.warning(
             "Dropped malformed telemetry payload mid=%s data=%r (%s)",
@@ -488,6 +549,35 @@ def _send_one_tlm_frame(serial_instance) -> None:
     t_lat_s, t_lon_s, _TLM_DL_TARGET = _fmt_latlon_pair_deduped(
         tlm_data.target_lat, tlm_data.target_lon, _TLM_DL_TARGET, ".6f"
     )
+    motor_enabled_s = ""
+    try:
+        me = int(tlm_data.motor_enabled)
+        if me >= 0:
+            motor_enabled_s = str(int(bool(me)))
+    except (TypeError, ValueError):
+        motor_enabled_s = ""
+    force_action_enabled_s = ""
+    try:
+        fe = int(tlm_data.force_action_enabled)
+        if fe >= 0:
+            force_action_enabled_s = str(int(bool(fe)))
+    except (TypeError, ValueError):
+        force_action_enabled_s = ""
+    release_action_enabled_s = ""
+    try:
+        re = int(tlm_data.release_action_enabled)
+        if re >= 0:
+            release_action_enabled_s = str(int(bool(re)))
+    except (TypeError, ValueError):
+        release_action_enabled_s = ""
+    egg_action_enabled_s = ""
+    try:
+        ee = int(tlm_data.egg_action_enabled)
+        if ee >= 0:
+            egg_action_enabled_s = str(int(bool(ee)))
+    except (TypeError, ValueError):
+        egg_action_enabled_s = ""
+
     line = (
         f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
         f"{tlm_data.mode},{tlm_data.state},"
@@ -503,7 +593,8 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{t_lat_s},{t_lon_s},"
         f"{_fmt_opt_float(tlm_data.carrot_lat, '.6f')},{_fmt_opt_float(tlm_data.carrot_lon, '.6f')},"
         f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},{_fmt_opt_float(tlm_data.desired_heading, '.2f')},"
-        f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state}\n"
+        f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state},{motor_enabled_s},{force_action_enabled_s},"
+        f"{release_action_enabled_s},{egg_action_enabled_s}\n"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if ok:
@@ -554,6 +645,10 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_cal(option, main_queue)
     if cmd == "MEC":
         return cmd_mec(option, main_queue)
+    if cmd == "FAC":
+        return cmd_fac(option, main_queue)
+    if cmd == "MTR":
+        return cmd_mtr(option, main_queue)
     if cmd == "SS":
         return cmd_ss(option, main_queue)
     if cmd == "RBT":

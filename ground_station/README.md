@@ -31,7 +31,10 @@ python ground_station/ground_station.py
 - `SIM,ENABLE|ACTIVATE|DISABLE`
 - `SIMP,<pressure>`
 - `CAL,<value>`
+- `FAC,REL,ON|OFF` (Release GPIO 5 gate)
+- `FAC,EGG,ON|OFF` (Egg GPIO 6 gate)
 - `MEC,ON|OFF`
+- `MTR,LEFT|NEUTRAL|RIGHT`
 - `SS,0..5`
 - `CAM,ON|OFF`
 - `TC,<lat>,<lon>`

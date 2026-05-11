@@ -81,7 +81,8 @@ TLM_FIELDS = [
     "target_lat", "target_lon",
     "carrot_lat", "carrot_lon",
     "current_heading_deg", "desired_heading_deg",
-    "left_pulse_us", "right_pulse_us", "guidance_state",
+    "left_pulse_us", "right_pulse_us", "guidance_state", "motor_enabled", "force_action_enabled",
+    "release_action_enabled", "egg_action_enabled",
 ]
 
 LEGACY_TLM_FIELDS = 30
@@ -237,6 +238,10 @@ COMMAND_PRESETS = [
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
     ("TC,37.57,126.94", "Target lat,lon (release)"),
     ("CAL,",         "Calibrate barometer (zero-set)"),
+    ("FAC,REL,ON",  "Release action ON (GPIO 5)"),
+    ("FAC,REL,OFF", "Release action OFF (GPIO 5)"),
+    ("FAC,EGG,ON",  "Egg action ON (GPIO 6)"),
+    ("FAC,EGG,OFF", "Egg action OFF (GPIO 6)"),
     ("MEC,ON",  "Mechanism ON"),
     ("MEC,OFF", "Mechanism OFF"),
     ("CAM,ON",  "Camera ON"),
@@ -329,6 +334,8 @@ class GroundStation(tk.Tk):
         self._scenario_teardown_cmds: list[str] | None = None
         self._scenario_teardown_ix: int = 0
         self._scenario_status_var = tk.StringVar(value="idle")
+        self._release_action_enabled_remote: bool | None = None
+        self._egg_action_enabled_remote: bool | None = None
 
         self._build_ui()
         self._refresh_ports()
@@ -603,16 +610,28 @@ class GroundStation(tk.Tk):
         force_box = ttk.Frame(cmd_box)
         force_box.grid(row=2, column=0, columnspan=3, sticky="ew", padx=6, pady=(2, 6))
         ttk.Label(force_box, text="Force action:").pack(side=tk.LEFT)
-        ttk.Button(
+        self._force_release_btn = ttk.Button(
             force_box,
-            text="Force RELEASE motor",
-            command=self._send_force_release,
-        ).pack(side=tk.LEFT, padx=(8, 6))
-        ttk.Button(
+            text="Release OFF",
+            width=12,
+            command=self._toggle_release_action,
+        )
+        self._force_release_btn.pack(side=tk.LEFT, padx=(8, 4))
+        self._force_egg_btn = ttk.Button(
             force_box,
-            text="Force EGG motor",
-            command=self._send_force_egg,
+            text="Egg OFF",
+            width=10,
+            command=self._toggle_egg_action,
+        )
+        self._force_egg_btn.pack(side=tk.LEFT, padx=4)
+        self._force_state_var = tk.StringVar(value="R:-- E:--")
+        ttk.Label(
+            force_box,
+            textvariable=self._force_state_var,
+            width=14,
+            anchor="w",
         ).pack(side=tk.LEFT, padx=6)
+        self._set_force_action_ui(None, None)
 
     def _build_scenario_panel(self, parent: ttk.Frame, row: int) -> None:
         """Closed-loop scenario player panel — preset + overrides + controls.
@@ -983,6 +1002,9 @@ class GroundStation(tk.Tk):
                 pass
         self._ser = None
         self._worker = None
+        self._release_action_enabled_remote = None
+        self._egg_action_enabled_remote = None
+        self._set_force_action_ui(None, None)
         self._close_csv()
         self._connect_btn.configure(text="Connect")
         self._status_var.set("Disconnected")
@@ -1028,6 +1050,29 @@ class GroundStation(tk.Tk):
         if sel:
             self._cmd_var.set(sel)
 
+    def _set_force_action_ui(
+        self,
+        release_enabled: bool | None,
+        egg_enabled: bool | None,
+    ) -> None:
+        self._force_release_btn.configure(
+            text=(
+                "Release ON" if release_enabled is True
+                else "Release OFF" if release_enabled is False
+                else "Release --"
+            )
+        )
+        self._force_egg_btn.configure(
+            text=(
+                "Egg ON" if egg_enabled is True
+                else "Egg OFF" if egg_enabled is False
+                else "Egg --"
+            )
+        )
+        r_txt = "ON" if release_enabled is True else "OFF" if release_enabled is False else "--"
+        e_txt = "ON" if egg_enabled is True else "OFF" if egg_enabled is False else "--"
+        self._force_state_var.set(f"R:{r_txt} E:{e_txt}")
+
     def _send_command(self) -> None:
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
@@ -1043,35 +1088,39 @@ class GroundStation(tk.Tk):
         if ubody.startswith("SIMG,"):
             self._clear_gps_trail()
 
-    def _send_force_release(self) -> None:
-        """Force release actuator path via state jump command."""
+    def _toggle_release_action(self) -> None:
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        ok = messagebox.askyesno(
-            "Force RELEASE",
-            "강제 RELEASE(SS,3)를 전송합니다.\n"
-            "주의: target(TC) 미설정 시 FlightLogic에서 차단됩니다.\n"
-            "계속할까요?",
-        )
-        if not ok:
-            return
-        self._send_body("SS,3")
+        cur = self._release_action_enabled_remote
+        next_enabled = not bool(cur)
+        cmd = "FAC,REL,ON" if next_enabled else "FAC,REL,OFF"
+        if self._send_body(cmd):
+            self._release_action_enabled_remote = next_enabled
+            self._set_force_action_ui(
+                self._release_action_enabled_remote,
+                self._egg_action_enabled_remote,
+            )
+            self._force_state_var.set(
+                f"R:{'ON' if next_enabled else 'OFF'} E:{'ON' if self._egg_action_enabled_remote else 'OFF' if self._egg_action_enabled_remote is False else '--'} (pending)"
+            )
 
-    def _send_force_egg(self) -> None:
-        """Force egg-drop actuator path via state jump command."""
+    def _toggle_egg_action(self) -> None:
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        ok = messagebox.askyesno(
-            "Force EGG",
-            "강제 EGG(SS,4)를 전송합니다.\n"
-            "주의: 즉시 에그 솔레노이드 트리거 조건으로 진입할 수 있습니다.\n"
-            "계속할까요?",
-        )
-        if not ok:
-            return
-        self._send_body("SS,4")
+        cur = self._egg_action_enabled_remote
+        next_enabled = not bool(cur)
+        cmd = "FAC,EGG,ON" if next_enabled else "FAC,EGG,OFF"
+        if self._send_body(cmd):
+            self._egg_action_enabled_remote = next_enabled
+            self._set_force_action_ui(
+                self._release_action_enabled_remote,
+                self._egg_action_enabled_remote,
+            )
+            self._force_state_var.set(
+                f"R:{'ON' if self._release_action_enabled_remote else 'OFF' if self._release_action_enabled_remote is False else '--'} E:{'ON' if next_enabled else 'OFF'} (pending)"
+            )
 
     def _send_body(self, body: str) -> bool:
         """Low-level CMD send used by both manual entry and scenario player.
@@ -1139,6 +1188,14 @@ class GroundStation(tk.Tk):
         if not math.isfinite(v):
             return None
         return v
+
+    def _parse_optional_bool(self, value: str) -> bool | None:
+        s = str(value).strip().upper()
+        if s in {"1", "ON", "TRUE"}:
+            return True
+        if s in {"0", "OFF", "FALSE"}:
+            return False
+        return None
 
     def _ingest_tlm_track(self, parsed: dict[str, str]) -> None:
         """Append GPS to trail — call for every telemetry row so the path stays correct when UI is coalesced."""
@@ -1216,6 +1273,11 @@ class GroundStation(tk.Tk):
         self._heading_var.set(f"heading: {ch} / desired hdg: {dh}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
         self._guidance_var.set(f"guidance: {gstate}")
+        release_action_enabled = self._parse_optional_bool(parsed.get("release_action_enabled", ""))
+        egg_action_enabled = self._parse_optional_bool(parsed.get("egg_action_enabled", ""))
+        self._release_action_enabled_remote = release_action_enabled
+        self._egg_action_enabled_remote = egg_action_enabled
+        self._set_force_action_ui(release_action_enabled, egg_action_enabled)
         self._request_map_redraw()
 
     def _request_map_redraw(self) -> None:

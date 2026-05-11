@@ -168,6 +168,9 @@ class _Cache:
 
 MOTORAPP_RUNSTATUS: bool = True
 MOTOR_ENABLED: bool = True
+MANUAL_STEER_MODE: Optional[str] = None
+RELEASE_ACTION_ENABLED: bool = True
+EGG_ACTION_ENABLED: bool = True
 STATE: int = 0
 PI = None
 
@@ -179,6 +182,8 @@ _START_POINT_LOCKED = False
 # Align with ground_station map: (0,0) means “no fix”, not a real position.
 _START_NULL_LAT_TOL = 1.0e-4
 _START_NULL_LON_TOL = 1.0e-4
+_MANUAL_STEER_DELTA_DEG = min(40.0, control.DELTA_ARM_MAX_DEG)
+_MANUAL_STEER_MODES = {"LEFT", "NEUTRAL", "RIGHT"}
 
 
 def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
@@ -400,6 +405,9 @@ def handle_flight_state(data: str) -> None:
 
 
 def handle_release(data: str = "TRIGGER") -> None:
+    if not RELEASE_ACTION_ENABLED:
+        LOGGER.warning("Burnwire trigger ignored: RELEASE_ACTION_ENABLED=False")
+        return
     try:
         from . import Motor_Release
     except Exception as exc:
@@ -414,6 +422,9 @@ def handle_release(data: str = "TRIGGER") -> None:
 
 
 def handle_egg_drop() -> None:
+    if not EGG_ACTION_ENABLED:
+        LOGGER.warning("Egg trigger ignored: EGG_ACTION_ENABLED=False")
+        return
     try:
         from . import Motor_Egg
     except Exception as exc:
@@ -443,6 +454,69 @@ def handle_mec(data: str) -> None:
         LOGGER.warning("Unknown MEC command: %r", data)
 
 
+def handle_fac(data: str) -> None:
+    global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
+    raw = data.strip().upper().replace(" ", "")
+    parts = [p for p in raw.split(",") if p]
+    if len(parts) == 1 and parts[0] in {"ON", "OFF"}:
+        actor = "ALL"
+        state = parts[0]
+    elif len(parts) == 2 and parts[0] in {"ALL", "REL", "EGG"} and parts[1] in {"ON", "OFF"}:
+        actor = parts[0]
+        state = parts[1]
+    else:
+        LOGGER.warning("Unknown FAC command: %r", data)
+        return
+
+    enabled = state == "ON"
+    if actor in {"ALL", "REL"}:
+        RELEASE_ACTION_ENABLED = enabled
+    if actor in {"ALL", "EGG"}:
+        EGG_ACTION_ENABLED = enabled
+    LOGGER.info(
+        "FORCE_ACTION gate updated | actor=%s state=%s | release=%s egg=%s",
+        actor,
+        state,
+        RELEASE_ACTION_ENABLED,
+        EGG_ACTION_ENABLED,
+    )
+
+
+def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
+    cmd = control.SetNeutral(now, f"MANUAL_{mode}")
+    if mode == "LEFT":
+        left_pw, right_pw, left_angle, right_angle, delta_arm, _ = control.ConnectRoMo(
+            -_MANUAL_STEER_DELTA_DEG
+        )
+        cmd.left_pw = left_pw
+        cmd.right_pw = right_pw
+        cmd.left_angle_deg = left_angle
+        cmd.right_angle_deg = right_angle
+        cmd.delta_arm_deg = delta_arm
+    elif mode == "RIGHT":
+        left_pw, right_pw, left_angle, right_angle, delta_arm, _ = control.ConnectRoMo(
+            _MANUAL_STEER_DELTA_DEG
+        )
+        cmd.left_pw = left_pw
+        cmd.right_pw = right_pw
+        cmd.left_angle_deg = left_angle
+        cmd.right_angle_deg = right_angle
+        cmd.delta_arm_deg = delta_arm
+    cmd.valid = True
+    cmd.fallback_mode = f"MANUAL_{mode}"
+    return cmd
+
+
+def handle_mtr(data: str) -> None:
+    global MANUAL_STEER_MODE
+    cmd = data.strip().upper()
+    if cmd not in _MANUAL_STEER_MODES:
+        LOGGER.warning("Unknown MTR command: %r", data)
+        return
+    MANUAL_STEER_MODE = cmd
+    LOGGER.info("MANUAL_STEER_MODE = %s", MANUAL_STEER_MODE)
+
+
 def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
     if main_queue is None:
         return
@@ -467,6 +541,10 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
             _fmt(math.degrees(float(getattr(g_out, "current_heading_rad", float("nan")))), 2),
             _fmt(math.degrees(float(getattr(g_out, "desired_heading_rad", float("nan")))), 2),
             diag_state,
+            str(int(bool(MOTOR_ENABLED))),
+            str(int(bool(RELEASE_ACTION_ENABLED and EGG_ACTION_ENABLED))),
+            str(int(bool(RELEASE_ACTION_ENABLED))),
+            str(int(bool(EGG_ACTION_ENABLED))),
             _fmt(getattr(g_out, "crossTrack", float("nan"))),
             _fmt(getattr(g_out, "alongTrack", float("nan"))),
             _fmt(getattr(cmd, "yaw_rate_cmd_deg_s", 0.0)),
@@ -664,6 +742,25 @@ def ctrl_parafoil(main_queue=None) -> None:
                 time.sleep(period)
                 continue
 
+            if MANUAL_STEER_MODE in _MANUAL_STEER_MODES:
+                manual_cmd = _manual_steer_command(now, MANUAL_STEER_MODE)
+                manual_out = guidance.L1Output(
+                    timestamp=now,
+                    active=False,
+                    degraded=False,
+                    reason=f"MANUAL_{MANUAL_STEER_MODE}",
+                )
+                if PI is not None:
+                    control.SetServoPulsewidth(PI, manual_cmd)
+                with _UPDATE_LOCK:
+                    manual_snap = _cache_snapshot()
+                _write_control_debug_log(
+                    now, manual_snap, None, None, manual_out, manual_cmd, f"MANUAL_{MANUAL_STEER_MODE}"
+                )
+                _send_diag(main_queue, manual_cmd, manual_out, f"MANUAL_{MANUAL_STEER_MODE}")
+                time.sleep(period)
+                continue
+
             with _UPDATE_LOCK:
                 snap = _cache_snapshot()
 
@@ -748,12 +845,19 @@ def dispatch(msg: str) -> None:
         handle_egg_drop()
     elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:
         handle_mec(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
+        handle_fac(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_MTR:
+        handle_mtr(unpacked.data)
 
 
 def init() -> None:
-    global PI, MOTOR_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
+    global PI, MOTOR_ENABLED, MANUAL_STEER_MODE, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
+    MANUAL_STEER_MODE = "NEUTRAL"
+    RELEASE_ACTION_ENABLED = True
+    EGG_ACTION_ENABLED = True
 
     target_lat, target_lon = prevstate.get_target_gps()
     if (

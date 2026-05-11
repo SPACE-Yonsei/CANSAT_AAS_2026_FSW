@@ -34,6 +34,7 @@ def _dispatch(sender_id: int, mid: int, data: str) -> None:
 def _reset() -> None:
     motorapp.MOTORAPP_RUNSTATUS = True
     motorapp.MOTOR_ENABLED = True
+    motorapp.MANUAL_STEER_MODE = "NEUTRAL"
     motorapp.STATE = 0
     motorapp._PREV_STATE = -1
     motorapp._START_POINT_LOCKED = False
@@ -92,6 +93,10 @@ class TestMessageRouting(unittest.TestCase):
         motorapp.MOTOR_ENABLED = False
         _dispatch(appargs.CommAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, "ON")
         self.assertTrue(motorapp.MOTOR_ENABLED)
+
+    def test_mtr_right_updates_manual_mode(self):
+        _dispatch(appargs.CommAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MTR, "RIGHT")
+        self.assertEqual(motorapp.MANUAL_STEER_MODE, "RIGHT")
 
     def test_invalid_message_no_crash(self):
         motorapp.dispatch("bad_message_no_pipes")
@@ -153,6 +158,12 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
                                     control.LEFT_MIN_PULSE)
             self.assertLessEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
                                  control.LEFT_MAX_PULSE)
+
+    def test_manual_steer_left_command_outputs_turning_pulses(self):
+        cmd = motorapp._manual_steer_command(time.monotonic(), "LEFT")
+        self.assertNotEqual(cmd.left_pw, control.LEFT_NEUTRAL)
+        self.assertNotEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
+        self.assertLess(cmd.delta_arm_deg, 0.0)
 
 
 if __name__ == "__main__":

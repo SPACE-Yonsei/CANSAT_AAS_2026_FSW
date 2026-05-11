@@ -46,7 +46,7 @@ RELEASE_TARGET_RATIO = 0.8  # 80% max_alt: separation altitude target
 # Below this fraction of max_alt: start descent-rate history and the FORCE_90PCT_TIMEOUT timer.
 RELEASE_PREDICT_START_RATIO = 0.9
 RELEASE_HARD_TRIGGER_RATIO = 0.85  # hard fallback if prediction is not viable
-RELEASE_BURNWIRE_DELAY_SEC = 3.0
+RELEASE_BURNWIRE_DELAY_SEC = 5.0
 RELEASE_PREDICT_TIME_MIN_SEC = 0.0
 RELEASE_PREDICT_TIME_MAX_SEC = 5.0
 RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_TIMEOUT

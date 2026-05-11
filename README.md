@@ -2,6 +2,10 @@
 
 Python multiprocessing flight software for Yonsei Space-Y CANSAT.
 
+## Documentation
+
+- Korean FSW architecture/operation guide: `docs/FSW_설명서.md`
+
 ## Current Architecture
 
 - `main.py`: process orchestration, queue/pipe routing, restart/terminate handling
@@ -243,8 +247,8 @@ FSW_LOG_TLM=0 python3 main.py
 
 
 # 전체 로그 통채로로
-scp -r root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/eventlogs .
-scp -r root@192.168.1.100:/root/CANSAT_AAS_2026_FSW/sensorlogs .
+scp -r root@192.168.96.168:/root/CANSAT_AAS_2026_FSW/eventlogs .
+scp -r root@192.168.96.168:/root/CANSAT_AAS_2026_FSW/sensorlogs .
 
 # csv만
 scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/*.csv" "$env:USERPROFILE\Desktop\fsw_logs\"
@@ -255,4 +259,4 @@ ssh root@192.168.1.100 "ls -t /root/CANSAT_AAS_2026_FSW/logs/*.csv | head -1"
 scp "root@192.168.0.42:/root/CANSAT_AAS_2026_FSW/logs/<위에서_나온_파일>.csv" .
 
 # 영상
-scp "root@192.168.123.168:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.h264" .
+scp "root@192.168.96.168:/root/CANSAT_AAS_2026_FSW/PICAM_Video/*.h264" .
