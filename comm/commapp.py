@@ -688,6 +688,11 @@ def commapp_main(main_queue, main_pipe) -> None:
 
     serial_instance = uartserial.init_serial()
     _comm_serial = serial_instance
+    try:
+        logger.info("Sending XBee reset pulse on comm startup")
+        xbeereset.send_reset_pulse()
+    except Exception as exc:
+        logger.warning("XBee reset pulse on startup failed: %s", exc)
     if uartserial.is_dummy_serial(serial_instance):
         logger.warning(
             "Comm UART is in DummySerial mode (no hardware TX/RX). "

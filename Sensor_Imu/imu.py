@@ -71,7 +71,7 @@ HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
 # Quaternion-frozen watchdog: if the raw quat is bit-identical for this many consecutive
 # reads, treat the chip as hung and surface a soft failure so ``imuapp`` triggers reinit
 # (which pulses ``IMU_BNO085_RST_PIN`` when ``IMU_BNO085_RST_ENABLE=1``).
-FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 12, 3, 500)
+FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 5, 3, 500)
 
 _ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
 _LAST_VALID = {
