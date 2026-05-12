@@ -43,13 +43,6 @@ _distance_window = deque(maxlen=5)
 _distance_lock = threading.Lock()
 _dist_hw = None
 
-_READ_FAIL_LOG_INTERVAL_SEC = 5.0
-_FILTER_REJECT_LOG_INTERVAL_SEC = 5.0
-_last_read_fail_log_ts = 0.0
-_last_filter_reject_log_ts = 0.0
-_read_fail_count = 0
-_filter_reject_count = 0
-
 
 def _distance_rate_hz() -> float:
     try:
@@ -93,8 +86,6 @@ def _synthetic_read_distance() -> float:
 
 def read_distance_data() -> None:
     global DISTANCE_MM, DISTANCE_HEALTH, _last_update_ts, _dist_hw
-    global _last_read_fail_log_ts, _last_filter_reject_log_ts
-    global _read_fail_count, _filter_reject_count
     period = _distance_period_sec()
     while DISTANCEAPP_RUNSTATUS:
         try:
@@ -117,18 +108,7 @@ def read_distance_data() -> None:
                 if _dist_hw is not False:
                     try:
                         raw = float(dist_driver.read_range_mm(_dist_hw))
-                    except Exception as exc:
-                        _read_fail_count += 1
-                        now = time.time()
-                        if (now - _last_read_fail_log_ts) >= _READ_FAIL_LOG_INTERVAL_SEC:
-                            logger.warning(
-                                "Distance: read_range_mm failed x%d in last %.1fs (last err: %s)",
-                                _read_fail_count,
-                                _READ_FAIL_LOG_INTERVAL_SEC,
-                                exc,
-                            )
-                            _last_read_fail_log_ts = now
-                            _read_fail_count = 0
+                    except Exception:
                         raw = _synthetic_read_distance()
                 else:
                     raw = _synthetic_read_distance()

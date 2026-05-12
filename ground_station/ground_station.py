@@ -542,6 +542,7 @@ class GroundStation(tk.Tk):
         self._map_points: dict[str, tuple[float, float]] = {}
         self._held_start_latlon: tuple[float, float] | None = None
         self._held_target_latlon: tuple[float, float] | None = None
+        self._held_current_latlon: tuple[float, float] | None = None
         # 1.0 = auto fit; scale < 1 → zoom in, > 1 → zoom out (applied to map half-extents).
         self._map_user_scale: float = 1.0
         self._current_heading_deg = math.nan
@@ -1582,9 +1583,11 @@ class GroundStation(tk.Tk):
         if (
             cur_lat is not None
             and cur_lon is not None
-            and _valid_gps_latlon(cur_lat, cur_lon)
+            and _is_meaningful_target_latlon(cur_lat, cur_lon)
         ):
-            self._map_points["current"] = (cur_lat, cur_lon)
+            self._held_current_latlon = (cur_lat, cur_lon)
+        if self._held_current_latlon is not None:
+            self._map_points["current"] = self._held_current_latlon
 
         self._current_heading_deg = cur_hdg if cur_hdg is not None else math.nan
         self._desired_heading_deg = des_hdg if des_hdg is not None else math.nan
