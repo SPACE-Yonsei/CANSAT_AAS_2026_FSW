@@ -8,7 +8,10 @@
       "WebFetch(domain:www.researchgate.net)",
       "mcp__notion__API-retrieve-a-page",
       "Read(C:\\Users\\ms kang\\Desktop\\**)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(pip install *)",
+      "Read(//c/logs/sensorlogs/run_20260510_191040/**)",
+      "Read(//c/logs/sensorlogs/run_20260510_201444/**)"
     ]
   }
 }
