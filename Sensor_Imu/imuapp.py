@@ -58,6 +58,7 @@ _imu_instance = None
 _i2c_instance = None
 _yaw_ema = None
 _gyrz_ema = None
+_startup_yaw_zeroed = False
 EMA_ALPHA = 0.9
 
 
@@ -85,6 +86,18 @@ def _ema(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
     if prev is None:
         return cur
     return alpha * cur + (1.0 - alpha) * prev
+
+
+def _calibrate_startup_yaw(raw_yaw: float) -> None:
+    """Treat the first valid yaw after app start as 0 deg reference."""
+    global _startup_yaw_zeroed
+    if _startup_yaw_zeroed:
+        return
+    offset = _wrap_deg(-float(raw_yaw))
+    prevstate.PREV_YAW_OFFSET = offset
+    prevstate.YAW_OFFSET = offset
+    _startup_yaw_zeroed = True
+    logger.info("IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg)", raw_yaw, offset)
 
 
 def command_handler(recv_msg: str) -> None:
@@ -118,8 +131,9 @@ def _read_sensor_sample():
 
 
 def imuapp_init() -> None:
-    global _i2c_instance, _imu_instance
+    global _i2c_instance, _imu_instance, _startup_yaw_zeroed
     prevstate.refresh_runtime_overrides()
+    _startup_yaw_zeroed = False
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -191,6 +205,7 @@ def read_imu_data() -> None:
 
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
+        _calibrate_startup_yaw(float(yaw))
         _yaw_ema = _ema(_yaw_ema, _apply_yaw_offset(float(yaw)))
         _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
 

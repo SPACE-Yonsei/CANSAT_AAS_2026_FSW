@@ -19,6 +19,13 @@ import time
 GPSAPP_RUNSTATUS = True
 gps_instance = None
 GPS_STALE_TIMEOUT_SEC = 2.0
+SIM_GPS_ACTIVE = False
+SIM_GPS_LAT = 0.0
+SIM_GPS_LON = 0.0
+SIM_GPS_ALT = 0.0
+SIM_GPS_SPEED_MS = 0.0
+SIM_GPS_COURSE = 0.0
+_SIM_GPS_LOCK = threading.Lock()
 
 
 def _is_finite(value: float) -> bool:
@@ -77,12 +84,47 @@ def _calc_motion_health(
 # Handles received message
 def command_handler (recv_msg : msgstructure.MsgStructure):
     global GPSAPP_RUNSTATUS
+    global SIM_GPS_ACTIVE, SIM_GPS_LAT, SIM_GPS_LON, SIM_GPS_ALT, SIM_GPS_SPEED_MS, SIM_GPS_COURSE
 
     if recv_msg.msg_id == appargs.MainAppArg.MID_TerminateProcess:
         # Change Runstatus to false to start termination process
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPSAPP TERMINATION DETECTED")
         GPSAPP_RUNSTATUS = False
 
+    elif recv_msg.msg_id == appargs.GpsAppArg.MID_flight_gps_sim:
+        data = str(recv_msg.data).strip()
+        if data.upper() == "CLEAR":
+            with _SIM_GPS_LOCK:
+                SIM_GPS_ACTIVE = False
+                SIM_GPS_LAT = 0.0
+                SIM_GPS_LON = 0.0
+                SIM_GPS_ALT = 0.0
+                SIM_GPS_SPEED_MS = 0.0
+                SIM_GPS_COURSE = 0.0
+            return
+        parts = [x.strip() for x in data.split(",") if x.strip() != ""]
+        if len(parts) not in (4, 5):
+            return
+        try:
+            lat = float(parts[0])
+            lon = float(parts[1])
+            course = float(parts[2])
+            speed = float(parts[3])
+            alt = float(parts[4]) if len(parts) == 5 else 0.0
+        except ValueError:
+            return
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+            return
+        if lat == 0.0 and lon == 0.0:
+            return
+        with _SIM_GPS_LOCK:
+            SIM_GPS_ACTIVE = True
+            SIM_GPS_LAT = lat
+            SIM_GPS_LON = lon
+            SIM_GPS_ALT = alt
+            SIM_GPS_SPEED_MS = speed
+            SIM_GPS_COURSE = course % 360.0
+        return
     else:
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"MID {recv_msg.msg_id} not handled")
     return
@@ -153,17 +195,36 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
     last_valid_gps_ts = 0.0
 
     while GPSAPP_RUNSTATUS:
-        # Check if gps_instance is valid
-        if gps_instance is None:
-            time.sleep(0.04)
-            continue
-        
-        try:
-            rcv_data = gps.gps_readdata(gps_instance)
-        except Exception as e:
-            events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"Error reading GPS data: {e}")
-            time.sleep(0.1)
-            continue
+        sim_sample = None
+        with _SIM_GPS_LOCK:
+            if SIM_GPS_ACTIVE:
+                sim_sample = (
+                    SIM_GPS_LAT,
+                    SIM_GPS_LON,
+                    SIM_GPS_ALT,
+                    SIM_GPS_SPEED_MS,
+                    SIM_GPS_COURSE,
+                )
+        if sim_sample is not None:
+            GPS_TIME = time.strftime("%H:%M:%S")
+            GPS_LAT, GPS_LON, GPS_ALT, GPS_SPEED_MS, GPS_COURSE = sim_sample
+            GPS_SATS = max(int(getattr(config, "GPS_MIN_SATS", 4)), 4)
+            GPS_FIX_QUALITY = 1
+            GPS_RMC_STATUS = "A"
+            last_valid_gps_ts = time.time()
+            rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts]
+        else:
+            # Check if gps_instance is valid
+            if gps_instance is None:
+                time.sleep(0.04)
+                continue
+
+            try:
+                rcv_data = gps.gps_readdata(gps_instance)
+            except Exception as e:
+                events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, f"Error reading GPS data: {e}")
+                time.sleep(0.1)
+                continue
 
         # 데이터가 유효할 때만 변수를 업데이트한다 (None이거나 유효하지 않으면 이전 값 유지)
         # gps.py 반환:
