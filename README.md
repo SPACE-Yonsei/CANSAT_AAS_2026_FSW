@@ -243,6 +243,11 @@ FSW_LOG_TLM=0 python3 main.py
 - **One UART, one peripheral**: the Pi’s primary UART is for XBee/comm; use **I2C GNSS** for GPS.
 - **Baud match**: set XCTU **Interface Data Rate** to the same value as FSW `UART_BAUD` (default `9600`). Example: `UART_BAUD=115200 python3 main.py`.
 - **Wiring**: XBee DIN → Pi TX, DOUT → Pi RX, common GND; logic is 3.3 V.
+- **SparkFun XBee Explorer I2C (SC16IS750)**: use I2C bridge backend instead of tty UART.
+  - `UART_BACKEND=sc16is750`
+  - `SC16IS750_I2C_BUS=1` (or your bus)
+  - `SC16IS750_I2C_ADDR=0x48` (board jumper dependent)
+  - `UART_BAUD=38400` (must match XBee BD)
 - **Sanity check**: loop back or use another PC serial monitor at the same baud to confirm bytes leave the Pi when TLM logging is on.
 
 
