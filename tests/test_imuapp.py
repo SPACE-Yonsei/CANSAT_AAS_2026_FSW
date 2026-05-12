@@ -34,6 +34,24 @@ class TestImuApp(unittest.TestCase):
         finally:
             prevstate.YAW_OFFSET = old_offset
 
+    def test_calibrate_startup_yaw_sets_zero_reference_once(self):
+        old_prev_offset = prevstate.PREV_YAW_OFFSET
+        old_offset = prevstate.YAW_OFFSET
+        old_zeroed = imuapp._startup_yaw_zeroed
+        try:
+            prevstate.PREV_YAW_OFFSET = 0.0
+            prevstate.YAW_OFFSET = 0.0
+            imuapp._startup_yaw_zeroed = False
+            imuapp._calibrate_startup_yaw(123.0)
+            self.assertAlmostEqual(imuapp._apply_yaw_offset(123.0), 0.0)
+            first_offset = prevstate.YAW_OFFSET
+            imuapp._calibrate_startup_yaw(45.0)
+            self.assertAlmostEqual(prevstate.YAW_OFFSET, first_offset)
+        finally:
+            prevstate.PREV_YAW_OFFSET = old_prev_offset
+            prevstate.YAW_OFFSET = old_offset
+            imuapp._startup_yaw_zeroed = old_zeroed
+
     def test_synthetic_sample_shape(self):
         sample = imuapp._synthetic_sample()
         self.assertEqual(len(sample), 12)

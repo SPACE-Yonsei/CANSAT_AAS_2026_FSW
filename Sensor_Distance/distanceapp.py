@@ -146,23 +146,6 @@ def read_distance_data() -> None:
                     DISTANCE_HEALTH = 1
                     _last_update_ts = time.time()
             else:
-                if raw != 0.0:
-                    _filter_reject_count += 1
-                    now = time.time()
-                    if (now - _last_filter_reject_log_ts) >= _FILTER_REJECT_LOG_INTERVAL_SEC:
-                        lo, hi = _valid_mm_bounds()
-                        logger.warning(
-                            "Distance: %d raw samples rejected by band [%.0f, %.0f] mm "
-                            "in last %.1fs (last raw=%.1f mm). "
-                            "If bench-testing, set env DISTANCE_MIN_MM lower (e.g. 50).",
-                            _filter_reject_count,
-                            lo,
-                            hi,
-                            _FILTER_REJECT_LOG_INTERVAL_SEC,
-                            raw,
-                        )
-                        _last_filter_reject_log_ts = now
-                        _filter_reject_count = 0
                 with _distance_lock:
                     DISTANCE_MM = 0.0
                 DISTANCE_HEALTH = 0
