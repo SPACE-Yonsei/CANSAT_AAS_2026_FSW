@@ -43,6 +43,7 @@ from Sensor_Motor.control import (
     MakeCtrler,
     ProduceCtrlInput,
     ProduceCtrlOutput,
+    NEUTRAL_ARM_DEG,
 )
 
 # ===========================================================================
@@ -59,8 +60,8 @@ SIM_RATE_HZ      = 20        # Simulation rate (Hz); 20 Hz = FSW default
 
 # ── Wind disturbance ────────────────────────────────────────────────────────
 # Constant base wind (NE frame, m/s). Positive N = northward, positive E = eastward.
-WIND_N_MPS       =  5.0      # base northward wind component
-WIND_E_MPS       =  5.0      # base eastward wind component
+WIND_N_MPS       =   0     # base northward wind component
+WIND_E_MPS       =  2.0      # base eastward wind component
 # Turbulence: random noise added each step (0 = off, ~0.3 = light, ~1.0 = severe)
 WIND_TURB_STD    =  0.5      # std-dev of per-step Gaussian turbulence (m/s)
 UDP_HOST         = "127.0.0.1"
@@ -371,11 +372,17 @@ def main() -> None:
 
             if step % SIM_RATE_HZ == 0:
                 dist = math.hypot(sim_pos_N - target_N, sim_pos_E - target_E)
+                L = ctrl_out.left_angle_deg
+                R = ctrl_out.right_angle_deg
+                dL = L - NEUTRAL_ARM_DEG
+                dR = R - NEUTRAL_ARM_DEG
                 print(
                     f"  t={now:6.1f}s | alt={sim_alt:6.1f}m | "
-                    f"dist_to_target={dist:6.1f}m | "
-                    f"mode={l1_out.reason:<25s} | "
-                    f"yaw_cmd={math.degrees(l1_out.yaw_rate_cmd_rad_s):+6.2f} deg/s"
+                    f"dist={dist:6.1f}m | "
+                    f"yaw={math.degrees(l1_out.yaw_rate_cmd_rad_s):+6.2f} deg/s | "
+                    f"L={L:5.1f}°({dL:+5.1f}) R={R:5.1f}°({dR:+5.1f}) | "
+                    f"delta={ctrl_out.delta_arm_deg:+5.1f}° | "
+                    f"{l1_out.reason}"
                 )
 
             step += 1
