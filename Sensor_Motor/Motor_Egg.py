@@ -135,3 +135,29 @@ def terminate_solenoid() -> None:
     except Exception as exc:
         logger.debug("Solenoid terminate error (safe to ignore): %s", exc)
     SOLENOID_READY = False
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s  %(message)s")
+
+    print("\n=== Solenoid Test (Egg Drop) ===")
+    print(f"  GPIO pin     : {SOLENOID_GPIO}")
+    print(f"  Pulses       : {SOLENOID_REPEAT}")
+    print(f"  ON duration  : {SOLENOID_ON_SEC:.2f} s")
+    print(f"  OFF interval : {SOLENOID_OFF_SEC:.2f} s")
+    print(f"  Activate lvl : {_EGG_ACTIVATE_LEVEL}  /  Deactivate lvl : {_EGG_DEACTIVATE_LEVEL}")
+
+    try:
+        init_solenoid()
+        print(f"  Ready        : {SOLENOID_READY}")
+
+        input("\nEnter를 누르면 솔레노이드를 작동합니다 (Ctrl+C 취소)... ")
+        activate_solenoid()
+        print(f"  Ready (post) : {SOLENOID_READY}")
+        print("완료. 종료합니다.")
+
+    except KeyboardInterrupt:
+        print("\n프로그램 종료 요청 (Ctrl+C)")
+
+    finally:
+        terminate_solenoid()
+        print(f"  Ready (종료) : {SOLENOID_READY}")
