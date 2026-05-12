@@ -210,6 +210,7 @@ def gps_readdata(pi):
     if gps_data is not None:
         gga = gps_data[0]
         rmc = gps_data[1] if len(gps_data) > 1 else None
+        gga_sample_ts = float(gps_data[2]) if len(gps_data) > 2 else 0.0
 
         # 시간
         if gga[1]:
@@ -290,8 +291,24 @@ def gps_readdata(pi):
                 ground_speed_knots = 0.0
                 ground_speed_ms = 0.0
                 course_over_ground = 0.0
-        # modified_gps_data = ["12:34:56", 120.5, 37.5665, 126.9780, 10, 1, "A", 3.2, 45.0]
-        modified_gps_data = [gps_time, alt, lat, lon, fixed_sat, fix_quality, rmc_status, ground_speed_ms, course_over_ground]
+        # modified_gps_data = [
+        #   "12:34:56", 120.5, 37.5665, 126.9780, 10, 1, "A", 3.2, 45.0, 1715400000.0
+        # ]
+        # The last element is the timestamp when the latest valid GGA was seen.
+        # gpsapp must use this value (not local read time) for stale accounting so
+        # cached NMEA rows do not reset the stale timeout.
+        modified_gps_data = [
+            gps_time,
+            alt,
+            lat,
+            lon,
+            fixed_sat,
+            fix_quality,
+            rmc_status,
+            ground_speed_ms,
+            course_over_ground,
+            gga_sample_ts,
+        ]
         #print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록
         if fix_quality == 0:

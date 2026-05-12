@@ -19,9 +19,11 @@ def send_reset_pulse() -> None:
     try:
         # Floating -> low pulse -> floating (open-drain style)
         pi.set_mode(pin, pigpio.INPUT)
+        pi.set_pull_up_down(pin, pigpio.PUD_UP)
         pi.set_mode(pin, pigpio.OUTPUT)
         pi.write(pin, 0)
         time.sleep(max(0.01, low_sec))
         pi.set_mode(pin, pigpio.INPUT)
+        pi.set_pull_up_down(pin, pigpio.PUD_UP)
     finally:
         pi.stop()

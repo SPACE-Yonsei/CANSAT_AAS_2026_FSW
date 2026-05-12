@@ -166,7 +166,8 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             continue
 
         # 데이터가 유효할 때만 변수를 업데이트한다 (None이거나 유효하지 않으면 이전 값 유지)
-        # gps.py 반환: [time, alt, lat, lon, sats, fix_quality, rmc_status, speed_ms, course]
+        # gps.py 반환:
+        # [time, alt, lat, lon, sats, fix_quality, rmc_status, speed_ms, course, gga_sample_ts]
         if rcv_data and len(rcv_data) >= 5:
             try:
                 GPS_TIME = rcv_data[0]
@@ -178,7 +179,13 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_RMC_STATUS = str(rcv_data[6]).strip() if len(rcv_data) > 6 else "V"
                 GPS_SPEED_MS = float(rcv_data[7]) if len(rcv_data) > 7 else 0.0
                 GPS_COURSE = float(rcv_data[8]) if len(rcv_data) > 8 else 0.0
-                last_valid_gps_ts = time.time()
+                # Use driver-side GGA sample timestamp for stale accounting.
+                # This prevents cache re-reads from resetting the stale timeout.
+                if len(rcv_data) > 9 and _is_finite(rcv_data[9]) and float(rcv_data[9]) > 0.0:
+                    last_valid_gps_ts = float(rcv_data[9])
+                else:
+                    # Backward compatibility for older gps.py payloads.
+                    last_valid_gps_ts = time.time()
                 # Print GPS data for debugging (disabled)
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
