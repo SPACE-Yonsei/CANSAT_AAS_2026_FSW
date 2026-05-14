@@ -124,7 +124,6 @@ class L1Output:
     carrot_lat: Optional[float] = None
     carrot_lon: Optional[float] = None
     current_heading_rad: float = 0.0
-    desired_heading_rad: float = 0.0
 
 
 def FillFresh(
@@ -407,8 +406,14 @@ def ProduceL1Output(
     carrot_N = carrot_along * unit_N
     carrot_E = carrot_along * unit_E
 
-    desired_heading = math.atan2(carrot_E - pos_E, carrot_N - pos_N)
-    nu = (desired_heading - course + math.pi) % (2.0 * math.pi) - math.pi
+    path_heading = math.atan2(unit_E, unit_N)
+    # nu1: turn angle caused by position error. It drives cross-track error
+    # back toward the path.
+    nu1 = math.atan2(-cross, max(L1_distance, 1e-6))
+    # nu2: turn angle caused by direction error. It aligns current course to
+    # the path heading.
+    nu2 = (path_heading - course + math.pi) % (2.0 * math.pi) - math.pi
+    nu = (nu1 + nu2 + math.pi) % (2.0 * math.pi) - math.pi
     K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
     lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu)
     lat_acc = max(-LAT_ACC_MAX, min(LAT_ACC_MAX, lat_acc))
@@ -421,8 +426,8 @@ def ProduceL1Output(
     out.lat_acc_cmd_mps2 = lat_acc
     out.ground_speed_mps = float(speed)
     out.L1_distance = L1_distance
-    out.nu1 = math.atan2(cross, max(L1_distance, 1e-6))
-    out.nu2 = nu - out.nu1
+    out.nu1 = nu1
+    out.nu2 = nu2
     out.nu = nu
     out.crossTrack = cross
     out.alongTrack = along
@@ -435,5 +440,4 @@ def ProduceL1Output(
     out.carrot_lat = origin_lat + math.degrees(carrot_N / earth_r)
     out.carrot_lon = origin_lon + math.degrees(carrot_E / (earth_r * math.cos(math.radians(origin_lat))))
     out.current_heading_rad = course
-    out.desired_heading_rad = desired_heading
     return out

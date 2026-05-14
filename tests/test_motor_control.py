@@ -32,8 +32,8 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(control.DELTA_ARM_MAX_DEG, 160.0)
 
     def test_pwm_zero_positions(self):
-        self.assertEqual(control.LEFT_ZERO, 2400)
-        self.assertEqual(control.RIGHT_ZERO, 600)
+        self.assertEqual(control.LEFT_ZERO, 2480)
+        self.assertEqual(control.RIGHT_ZERO, 636)
 
     def test_neutral_pulse_derivation(self):
         expected_left = int(control.LEFT_ZERO - control.NEUTRAL_ARM_DEG * control.PULSE_PER_DEG)

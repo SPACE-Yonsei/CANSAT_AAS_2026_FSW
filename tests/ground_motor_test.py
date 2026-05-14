@@ -59,7 +59,7 @@ STEP_SEC = 3.0           # Section C 각 단계 지속 시간 (초)
 #   cross < 0  →  왼쪽 이탈   →  nu > 0  →  우선회
 #
 # 헤딩 오차 관계:
-#   course 북향(0) 기준, desired_heading이 오른쪽(E)이면 nu > 0 → 우선회
+#   course 북향(0) 기준, nu > 0 → 우선회
 SCENARIOS = [
     {
         "name": "STRAIGHT",

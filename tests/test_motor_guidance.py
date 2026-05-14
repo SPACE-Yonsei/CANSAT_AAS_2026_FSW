@@ -286,6 +286,26 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertGreater(out.crossTrack, 0.0)
         self.assertLess(out.yaw_rate_cmd_rad_s, 0.0)
 
+    def test_nu1_is_position_driven_turn_angle(self):
+        """Right of northward path requires a negative nu1 left-turn correction."""
+        inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
+        out = self._run(inp)
+        self.assertTrue(out.active)
+        self.assertGreater(out.crossTrack, 0.0)
+        self.assertLess(out.nu1, 0.0)
+        self.assertAlmostEqual(out.nu2, 0.0, places=6)
+        self.assertAlmostEqual(out.nu, out.nu1, places=6)
+
+    def test_nu2_is_direction_driven_turn_angle(self):
+        """On a northward path, a 15-deg right course error gives nu2=-15 deg."""
+        inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=15.0, speed=8.0)
+        out = self._run(inp)
+        self.assertTrue(out.active)
+        self.assertAlmostEqual(out.crossTrack, 0.0, places=6)
+        self.assertAlmostEqual(out.nu1, 0.0, places=6)
+        self.assertAlmostEqual(out.nu2, math.radians(-15.0), places=6)
+        self.assertAlmostEqual(out.nu, out.nu2, places=6)
+
     def test_course_rate_clamped_to_max(self):
         inp = self._active_input(pos_n=100.0, pos_e=-500.0, course_deg=90.0, speed=8.0)
         out = self._run(inp)

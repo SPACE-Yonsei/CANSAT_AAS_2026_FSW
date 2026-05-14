@@ -81,7 +81,7 @@ TLM_FIELDS = [
     "start_lat", "start_lon",
     "target_lat", "target_lon",
     "carrot_lat", "carrot_lon",
-    "current_heading_deg", "desired_heading_deg",
+    "current_heading_deg",
     "left_pulse_us", "right_pulse_us", "guidance_state", "motor_enabled", "force_action_enabled",
     "release_action_enabled", "egg_action_enabled",
 ]
@@ -546,7 +546,6 @@ class GroundStation(tk.Tk):
         # 1.0 = auto fit; scale < 1 → zoom in, > 1 → zoom out (applied to map half-extents).
         self._map_user_scale: float = 1.0
         self._current_heading_deg = math.nan
-        self._desired_heading_deg = math.nan
         self._left_pulse_us = 0
         self._right_pulse_us = 0
         # Avoid blocking the Tk mainloop: CSV flush / map redraw / console scroll are debounced.
@@ -779,7 +778,7 @@ class GroundStation(tk.Tk):
         self._right_pulse_var = tk.StringVar(value="0 us")
         ttk.Label(bars, textvariable=self._right_pulse_var, width=10).grid(row=1, column=2, sticky="e")
 
-        self._heading_var = tk.StringVar(value="heading: -- / desired hdg: --")
+        self._heading_var = tk.StringVar(value="heading: --")
         ttk.Label(
             bars,
             textvariable=self._heading_var,
@@ -1560,7 +1559,6 @@ class GroundStation(tk.Tk):
         carrot_lat = self._parse_optional_float(parsed.get("carrot_lat", ""))
         carrot_lon = self._parse_optional_float(parsed.get("carrot_lon", ""))
         cur_hdg = self._parse_optional_float(parsed.get("current_heading_deg", ""))
-        des_hdg = self._parse_optional_float(parsed.get("desired_heading_deg", ""))
 
         if start_lat is not None and start_lon is not None:
             self._held_start_latlon = (start_lat, start_lon)
@@ -1590,7 +1588,6 @@ class GroundStation(tk.Tk):
             self._map_points["current"] = self._held_current_latlon
 
         self._current_heading_deg = cur_hdg if cur_hdg is not None else math.nan
-        self._desired_heading_deg = des_hdg if des_hdg is not None else math.nan
 
         left_pulse = self._parse_optional_float(parsed.get("left_pulse_us", ""))
         right_pulse = self._parse_optional_float(parsed.get("right_pulse_us", ""))
@@ -1601,8 +1598,7 @@ class GroundStation(tk.Tk):
         self._left_pulse_var.set(f"{self._left_pulse_us} us")
         self._right_pulse_var.set(f"{self._right_pulse_us} us")
         ch = "--" if not math.isfinite(self._current_heading_deg) else f"{self._current_heading_deg:.1f}deg"
-        dh = "--" if not math.isfinite(self._desired_heading_deg) else f"{self._desired_heading_deg:.1f}deg"
-        self._heading_var.set(f"heading: {ch} / desired hdg: {dh}")
+        self._heading_var.set(f"heading: {ch}")
         gstate = parsed.get("guidance_state", "").strip() or "--"
         self._guidance_var.set(f"guidance(fs): {gstate}")
         cmd_echo = parsed.get("cmd_echo", "").strip().upper()
@@ -1851,16 +1847,11 @@ class GroundStation(tk.Tk):
 
         if "current" in self._map_points:
             cx, cy = project(*self._map_points["current"])
-            for deg, color in (
-                (self._current_heading_deg, "#38bdf8"),
-                (self._desired_heading_deg, "#fbbf24"),
-            ):
-                if not math.isfinite(deg):
-                    continue
-                rad = math.radians(deg)
+            if math.isfinite(self._current_heading_deg):
+                rad = math.radians(self._current_heading_deg)
                 dx = math.sin(rad) * 36.0
                 dy = -math.cos(rad) * 36.0
-                c.create_line(cx, cy, cx + dx, cy + dy, fill=color, width=3, arrow=tk.LAST)
+                c.create_line(cx, cy, cx + dx, cy + dy, fill="#38bdf8", width=3, arrow=tk.LAST)
             c.create_text(
                 cx, cy + 22,
                 text=(

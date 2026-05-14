@@ -70,7 +70,6 @@ class TelemetryData:
     carrot_lat: float = float("nan")
     carrot_lon: float = float("nan")
     current_heading: float = float("nan")
-    desired_heading: float = float("nan")
     left_pulse: int = 0
     right_pulse: int = 0
     guidance_state: str = ""
@@ -470,7 +469,7 @@ def command_handler(recv_msg: str) -> None:
             if fields[0].strip().upper() == "F":
                 _simp_tlm_alt_hold = None
                 _reset_tlm_geo_dedupe()
-        elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 11:
+        elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 10:
             tlm_data.left_pulse = int(float(fields[0]))
             tlm_data.right_pulse = int(float(fields[1]))
             tlm_data.start_lat = float(fields[2])
@@ -480,16 +479,15 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.carrot_lat = float(fields[6])
             tlm_data.carrot_lon = float(fields[7])
             tlm_data.current_heading = float(fields[8])
-            tlm_data.desired_heading = float(fields[9])
-            tlm_data.guidance_state = fields[10].strip()
+            tlm_data.guidance_state = fields[9].strip()
+            if len(fields) >= 11:
+                tlm_data.motor_enabled = int(float(fields[10]))
             if len(fields) >= 12:
-                tlm_data.motor_enabled = int(float(fields[11]))
+                tlm_data.force_action_enabled = int(float(fields[11]))
             if len(fields) >= 13:
-                tlm_data.force_action_enabled = int(float(fields[12]))
+                tlm_data.release_action_enabled = int(float(fields[12]))
             if len(fields) >= 14:
-                tlm_data.release_action_enabled = int(float(fields[13]))
-            if len(fields) >= 15:
-                tlm_data.egg_action_enabled = int(float(fields[14]))
+                tlm_data.egg_action_enabled = int(float(fields[13]))
     except (ValueError, TypeError) as exc:
         logger.warning(
             "Dropped malformed telemetry payload mid=%s data=%r (%s)",
@@ -592,7 +590,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{s_lat_s},{s_lon_s},"
         f"{t_lat_s},{t_lon_s},"
         f"{_fmt_opt_float(tlm_data.carrot_lat, '.6f')},{_fmt_opt_float(tlm_data.carrot_lon, '.6f')},"
-        f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},{_fmt_opt_float(tlm_data.desired_heading, '.2f')},"
+        f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},"
         f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state},{motor_enabled_s},{force_action_enabled_s},"
         f"{release_action_enabled_s},{egg_action_enabled_s}\n"
     )

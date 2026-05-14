@@ -230,7 +230,7 @@ def main() -> None:
             "yaw_rate_cmd_rad_s": 0.0, "lat_acc_cmd_mps2": 0.0,
             "nu": 0.0, "nu1": 0.0, "nu2": 0.0,
             "crossTrack": 0.0, "alongTrack": 0.0, "L1_distance": 5.0,
-            "heading_rad": 0.0, "desired_heading_rad": 0.0,
+            "heading_rad": 0.0,
             "left_angle_deg": 80.0, "right_angle_deg": 80.0,
             "delta_arm_deg": 0.0, "left_pw": 1591, "right_pw": 1524,
             "alt_m": START_ALT_M, "active": False,
@@ -341,7 +341,6 @@ def main() -> None:
                 "alongTrack":  round(l1_out.alongTrack,  3),
                 "L1_distance": round(l1_out.L1_distance, 3),
                 "heading_rad": round(l1_out.current_heading_rad, 5),
-                "desired_heading_rad": round(l1_out.desired_heading_rad, 5),
                 # Control outputs (arm angles: 0° = up, 80° = neutral, 160° = full brake)
                 "left_angle_deg":  round(ctrl_out.left_angle_deg,  2),
                 "right_angle_deg": round(ctrl_out.right_angle_deg, 2),

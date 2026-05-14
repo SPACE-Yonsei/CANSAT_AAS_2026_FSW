@@ -76,7 +76,7 @@ _TLM_FIELDS = [
     "start_lat", "start_lon",
     "target_lat", "target_lon",
     "carrot_lat", "carrot_lon",
-    "current_heading_deg", "desired_heading_deg",
+    "current_heading_deg",
     "left_pulse_us", "right_pulse_us", "guidance_state", "motor_enabled", "force_action_enabled",
     "release_action_enabled", "egg_action_enabled",
 ]

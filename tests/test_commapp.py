@@ -148,7 +148,7 @@ class TestCommApp(unittest.TestCase):
         ser = DummySerial()
         diag = (
             "1500,1500,12.111000,34.222000,56.333000,78.444000,"
-            "37.500000,126.600000,10.0,20.0,ACTIVE"
+            "37.500000,126.600000,10.0,ACTIVE"
         )
         msg = msgstructure.fill_msg(
             appargs.MotorAppArg.AppID,
