@@ -109,22 +109,23 @@ class MockGPS:
     speed: Optional[float] = None       # m/s
     pos_ts: Optional[float] = None
     motion_ts: Optional[float] = None
-    pos_health: bool = True
-    motion_health: bool = True
 
 
 @dataclass
 class MockIMU:
     gyrz: Optional[float] = None       # rad/s (positive = right turn)
     ts: Optional[float] = None
-    health: bool = True
+    freefall: int = 0   # 1=자유낙하, 0=정상
+    tumble:   int = 0   # 1=텀블링,  0=안정
+    health:   int = 1
 
 
 @dataclass
 class MockBaro:
     alt: Optional[float] = None        # m AGL
     ts: Optional[float] = None
-    health: bool = True
+    sink_rate: Optional[float] = None
+    health:    int = 1
 
 
 # ===========================================================================
@@ -277,10 +278,9 @@ def main() -> None:
                 course=gnd_course,   # GPS sees ground track, not body heading
                 speed=gnd_speed,
                 pos_ts=now, motion_ts=now,
-                pos_health=True, motion_health=True,
             )
-            imu  = MockIMU(gyrz=sim_gyrz,   ts=now, health=True)
-            baro = MockBaro(alt=sim_alt,     ts=now, health=True)
+            imu  = MockIMU(gyrz=sim_gyrz, ts=now)
+            baro = MockBaro(alt=sim_alt,   ts=now)
 
             # ── Call real guidance.py ────────────────────────────────────
             l1_input, mode = ProduceL1Input(

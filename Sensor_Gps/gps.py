@@ -256,6 +256,12 @@ def gps_readdata(pi):
         except (ValueError, IndexError):
             fix_quality = 0
 
+        # HDOP (Horizontal Dilution of Precision) — GGA field 8
+        try:
+            hdop = float(gga[8]) if len(gga) > 8 and gga[8] else float('inf')
+        except (ValueError, IndexError):
+            hdop = float('inf')
+
         # RMC 메시지에서 상태, 지상 속도, 방향 추출
         rmc_status = "V"  # V=void, A=active
         ground_speed_knots = 0.0
@@ -295,16 +301,17 @@ def gps_readdata(pi):
         # gpsapp must use this value (not local read time) for stale accounting so
         # cached NMEA rows do not reset the stale timeout.
         modified_gps_data = [
-            gps_time,
-            alt,
-            lat,
-            lon,
-            fixed_sat,
-            fix_quality,
-            rmc_status,
-            ground_speed_ms,
-            course_over_ground,
-            gga_sample_ts,
+            gps_time,           # [0]
+            alt,                # [1]
+            lat,                # [2]
+            lon,                # [3]
+            fixed_sat,          # [4]
+            fix_quality,        # [5]
+            rmc_status,         # [6]
+            ground_speed_ms,    # [7]
+            course_over_ground, # [8]
+            gga_sample_ts,      # [9]
+            hdop,               # [10] GGA field 8 — 정밀도 지표, 파싱 실패 시 inf
         ]
         #print(f"[DEBUG][gps_readdata] output: time={gps_time}, alt={alt}, lat={lat}, lon={lon}, sats={fixed_sat}, fix={fix_quality}, status={rmc_status}, spd={ground_speed_ms:.3f}m/s, cog={course_over_ground}")
         # Fix quality가 0이면 fix가 없는 상태이므로 로그에 기록

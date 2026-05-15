@@ -107,30 +107,40 @@ class _GpsFromApp:
     lon: Optional[float] = None
     course_rad: Optional[float] = None
     speed_mps: Optional[float] = None
-    sample_ts: Optional[float] = None
-    rx_ts: Optional[float] = None
     pos_ts: Optional[float] = None
     motion_ts: Optional[float] = None
-    pos_health: bool = False
-    motion_health: bool = False
+    rx_ts: Optional[float] = None
 
 
 @dataclass
 class _ImuFromApp:
     gyrz_rad_s: Optional[float] = None
-    sample_ts: Optional[float] = None
-    rx_ts: Optional[float] = None
     ts: Optional[float] = None
-    health: bool = False
+    rx_ts: Optional[float] = None
+    freefall: int = 0   # 1=자유낙하 중, 0=정상
+    tumble:   int = 0   # 1=텀블링 중,  0=안정
+    health:   int = 0   # 1=하드웨어 정상
 
 
 @dataclass
 class _BaroFromApp:
-    alt_m: Optional[float] = None
-    sample_ts: Optional[float] = None
-    rx_ts: Optional[float] = None
-    ts: Optional[float] = None
-    health: bool = False
+    alt_m:     Optional[float] = None
+    sink_rate: Optional[float] = None
+    ts:        Optional[float] = None
+    rx_ts:     Optional[float] = None
+    health:    int = 0  # 1=하드웨어 정상
+
+
+@dataclass
+class _DeadReckoning:
+    """GPS stale 구간의 추정 위치 (constant-velocity propagation)."""
+    lat:        Optional[float] = None
+    lon:        Optional[float] = None
+    ts:         Optional[float] = None   # 이 추정값이 계산된 시각 (monotonic)
+    anchor_lat: Optional[float] = None   # 직전 GPS fix 위치
+    anchor_lon: Optional[float] = None
+    anchor_ts:  Optional[float] = None   # 직전 GPS fix 시각
+    valid:      bool = False
 
 
 @dataclass
@@ -158,6 +168,8 @@ class _Cache:
             maxlen=_history_len(float(config.BAROMETER_RATE_HZ), BARO_HISTORY_SEC)
         )
     )
+
+    dr: _DeadReckoning = field(default_factory=_DeadReckoning)
 
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
@@ -240,16 +252,63 @@ def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
         and 0.0 <= course_deg < 360.0
         and 0.5 <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
     )
+
+
+def _dead_reckon(dr: _DeadReckoning, last_gps: _GpsFromApp, now: float) -> _DeadReckoning:
+    """Constant-velocity dead reckoning from last GPS fix.
+
+    anchor 갱신: last_gps.pos_ts 가 기존 anchor_ts 보다 새로우면 앵커를 교체.
+    전파:        anchor로부터 last_gps.course_rad + speed_mps 로 now 시각까지 선형 외삽.
+    모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
+    """
+    # anchor 교체
+    if (
+        last_gps.pos_ts is not None
+        and last_gps.lat is not None
+        and last_gps.lon is not None
+        and (dr.anchor_ts is None or last_gps.pos_ts > dr.anchor_ts)
+    ):
+        dr.anchor_lat = last_gps.lat
+        dr.anchor_lon = last_gps.lon
+        dr.anchor_ts  = last_gps.pos_ts
+        dr.valid = True
+
+    if not dr.valid or dr.anchor_ts is None:
+        return dr
+
+    speed  = last_gps.speed_mps
+    course = last_gps.course_rad
+    if speed is None or course is None:
+        dr.lat = dr.anchor_lat
+        dr.lon = dr.anchor_lon
+        dr.ts  = now
+        return dr
+
+    dt     = max(0.0, now - dr.anchor_ts)
+    dist_m = float(speed) * dt
+
+    earth_r    = 6_371_000.0
+    anchor_lat = float(dr.anchor_lat)
+    anchor_lon = float(dr.anchor_lon)
+    d_N = dist_m * math.cos(float(course))
+    d_E = dist_m * math.sin(float(course))
+    dr.lat = anchor_lat + math.degrees(d_N / earth_r)
+    dr.lon = anchor_lon + math.degrees(d_E / (earth_r * math.cos(math.radians(anchor_lat))))
+    dr.ts  = now
+    return dr
+
+
 _CONTROLLER = None
 _L1_STATE = None
 
 def _cache_snapshot() -> _Cache:
-    latest_gps = _GpsFromApp(**vars(_CACHE.latest_gps))
-    last_gps = _GpsFromApp(**vars(_CACHE.last_gps))
-    latest_imu = _ImuFromApp(**vars(_CACHE.latest_imu))
-    last_imu = _ImuFromApp(**vars(_CACHE.last_imu))
+    latest_gps  = _GpsFromApp(**vars(_CACHE.latest_gps))
+    last_gps    = _GpsFromApp(**vars(_CACHE.last_gps))
+    latest_imu  = _ImuFromApp(**vars(_CACHE.latest_imu))
+    last_imu    = _ImuFromApp(**vars(_CACHE.last_imu))
     latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
-    last_baro = _BaroFromApp(**vars(_CACHE.last_baro))
+    last_baro   = _BaroFromApp(**vars(_CACHE.last_baro))
+    dr          = _DeadReckoning(**vars(_CACHE.dr))
 
     return _Cache(
         latest_gps=latest_gps,
@@ -258,6 +317,7 @@ def _cache_snapshot() -> _Cache:
         last_imu=last_imu,
         latest_baro=latest_baro,
         last_baro=last_baro,
+        dr=dr,
         target_lat=_CACHE.target_lat,
         target_lon=_CACHE.target_lon,
         start_lat=_CACHE.start_lat,
@@ -266,103 +326,79 @@ def _cache_snapshot() -> _Cache:
 
 #handler
 def handle_gps(data: str) -> None:
-    """lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth[,sample_ts]"""
+    """lat,lon,pos_ts,course_deg,spd_mps,motion_ts — fidelity already verified by gpsapp."""
     global _START_POINT_LOCKED
     fields = data.split(",")
-    if len(fields) not in (6, 7):
-        LOGGER.warning("GNSS parse: expected 6 or 7 fields | raw=%r", data)
+    if len(fields) != 6:
+        LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
         return
     try:
-        lat = float(fields[0])
-        lon = float(fields[1])
-        course_deg = float(fields[2])
-        ground_speed = float(fields[3])
-        pos_health = bool(int(float(fields[4])))
-        motion_health = bool(int(float(fields[5])))
+        lat       = float(fields[0])
+        lon       = float(fields[1])
+        pos_ts    = float(fields[2])
+        course_deg = float(fields[3])   # nan when motion invalid
+        speed_mps  = float(fields[4])   # nan when motion invalid
+        motion_ts  = float(fields[5])   # nan when motion invalid
         rx_ts = time.monotonic()
-        sample_ts = float(fields[6]) if len(fields) == 7 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
-    start_lon = _CACHE.start_lon if _START_POINT_LOCKED else None
-    position_reason = _gps_position_sanity_reason(lat, lon, start_lon)
-    if position_reason is not None:
-        if pos_health or motion_health:
-            LOGGER.warning(
-                "GPS sanity: %s; pos_health/motion_health overridden False",
-                position_reason,
-            )
-        pos_health = False
-        motion_health = False
-    elif motion_health and not pos_health:
-        LOGGER.warning("GPS motion sanity: pos_health False, motion_health overridden False")
-        motion_health = False
-    elif motion_health and not _gps_motion_sane(course_deg, ground_speed):
-        LOGGER.warning(
-            "GPS motion sanity: course=%.3f speed=%.3f invalid, motion_health overridden False",
-            course_deg,
-            ground_speed,
-        )
-        motion_health = False
+    pos_valid    = not math.isnan(lat) and not math.isnan(lon)
+    motion_valid = not math.isnan(course_deg)
 
-    course_rad = math.radians(course_deg)
+    course_rad = math.radians(course_deg) if motion_valid else float("nan")
     sample = _GpsFromApp(
-        lat=lat,
-        lon=lon,
-        course_rad=course_rad,
-        speed_mps=ground_speed,
-        sample_ts=sample_ts,
+        lat=lat if pos_valid else None,
+        lon=lon if pos_valid else None,
+        course_rad=course_rad if motion_valid else None,
+        speed_mps=speed_mps if motion_valid else None,
+        pos_ts=pos_ts if pos_valid else None,
+        motion_ts=motion_ts if motion_valid else None,
         rx_ts=rx_ts,
-        pos_ts=sample_ts,
-        motion_ts=sample_ts,
-        pos_health=pos_health,
-        motion_health=motion_health,
     )
     with _UPDATE_LOCK:
         _CACHE.latest_gps = sample
         _CACHE.gps_history.append(sample)
-        if pos_health:
+        if pos_valid:
             _CACHE.last_gps.lat = lat
             _CACHE.last_gps.lon = lon
-            _CACHE.last_gps.sample_ts = sample_ts
+            _CACHE.last_gps.pos_ts = pos_ts
             _CACHE.last_gps.rx_ts = rx_ts
-            _CACHE.last_gps.pos_ts = sample_ts
-            _CACHE.last_gps.pos_health = True
-        if motion_health:
+        if motion_valid:
             _CACHE.last_gps.course_rad = course_rad
-            _CACHE.last_gps.speed_mps = ground_speed
-            _CACHE.last_gps.sample_ts = sample_ts
+            _CACHE.last_gps.speed_mps = speed_mps
+            _CACHE.last_gps.motion_ts = motion_ts
             _CACHE.last_gps.rx_ts = rx_ts
-            _CACHE.last_gps.motion_ts = sample_ts
-            _CACHE.last_gps.motion_health = True
-        if not _START_POINT_LOCKED and STATE >= 3 and pos_health:
+        if not _START_POINT_LOCKED and STATE >= 3 and pos_valid:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
             prevstate.update_start_point(float(lat), float(lon), True)
 
 def handle_imu(data: str) -> None:
-    """roll,pitch,yaw,accx,accy,accz,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health[,sample_ts]"""
+    """roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health"""
     fields = data.split(",")
     try:
-        if len(fields) not in (13, 14):
-            LOGGER.warning("IMU parse: expected 13 or 14 fields, got %d | raw=%r", len(fields), data)
+        if len(fields) != 16:
+            LOGGER.warning("IMU parse: expected 16 fields, got %d | raw=%r", len(fields), data)
             return
         gyrz_deg_s = float(fields[11])
-        health = bool(int(float(fields[12])))
+        sample_ts  = float(fields[12])
+        freefall   = int(float(fields[13]))
+        tumble     = int(float(fields[14]))
+        health     = int(float(fields[15]))
         rx_ts = time.monotonic()
-        sample_ts = float(fields[13]) if len(fields) == 14 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
         return
 
-    gyrz_rad_s = math.radians(gyrz_deg_s)
     imu = _ImuFromApp(
-        gyrz_rad_s=gyrz_rad_s,
-        sample_ts=sample_ts,
-        rx_ts=rx_ts,
+        gyrz_rad_s=math.radians(gyrz_deg_s),
         ts=sample_ts,
+        rx_ts=rx_ts,
+        freefall=freefall,
+        tumble=tumble,
         health=health,
     )
     with _UPDATE_LOCK:
@@ -373,22 +409,27 @@ def handle_imu(data: str) -> None:
 
 
 def handle_barometer(data: str) -> None:
-    """altitude_m[,health[,sample_ts]]"""
+    """alt_m,sample_ts,sink_rate,health"""
     fields = data.split(",")
     try:
-        alt_m = float(fields[0].strip())
-        health = bool(int(float(fields[1]))) if len(fields) >= 2 else True
+        if len(fields) != 4:
+            LOGGER.warning("Baro parse: expected 4 fields, got %d | raw=%r", len(fields), data)
+            return
+        alt_m     = float(fields[0].strip())
+        sample_ts = float(fields[1])
+        sink_s    = fields[2].strip()
+        sink_rate = None if sink_s == "nan" else float(sink_s)
+        health    = int(float(fields[3]))
         rx_ts = time.monotonic()
-        sample_ts = float(fields[2]) if len(fields) >= 3 else rx_ts
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
 
     baro = _BaroFromApp(
         alt_m=alt_m,
-        sample_ts=sample_ts,
-        rx_ts=rx_ts,
+        sink_rate=sink_rate,
         ts=sample_ts,
+        rx_ts=rx_ts,
         health=health,
     )
     with _UPDATE_LOCK:
@@ -449,12 +490,11 @@ def handle_flight_state(data: str) -> None:
             gps = _CACHE.latest_gps
             if (
                 not _START_POINT_LOCKED
-                and gps.pos_health
+                and gps.pos_ts is not None
                 and gps.lat is not None
                 and gps.lon is not None
                 and -90.0 <= float(gps.lat) <= 90.0
                 and -180.0 <= float(gps.lon) <= 180.0
-                and _gps_position_sanity_reason(float(gps.lat), float(gps.lon)) is None
             ):
                 _CACHE.start_lat = float(gps.lat)
                 _CACHE.start_lon = float(gps.lon)
@@ -702,15 +742,15 @@ def _write_control_debug_log(
                     _fmt_log(gps.lon, 8),
                     _deg_log(gps.course_rad),
                     _fmt_log(gps.speed_mps, 4),
-                    str(int(bool(gps.pos_health))),
-                    str(int(bool(gps.motion_health))),
+                    str(int(gps.pos_ts is not None)),
+                    str(int(gps.motion_ts is not None)),
                     _age_s(now, gps.pos_ts),
                     _age_s(now, gps.motion_ts),
                     _deg_log(imu.gyrz_rad_s),
-                    str(int(bool(imu.health))),
+                    str(imu.health),
                     _age_s(now, imu.ts),
                     _fmt_log(baro.alt_m, 3),
-                    str(int(bool(baro.health))),
+                    str(baro.health),
                     _age_s(now, baro.ts),
                     _fmt_log(getattr(snap, "start_lat", None), 8),
                     _fmt_log(getattr(snap, "start_lon", None), 8),
@@ -820,6 +860,9 @@ def ctrl_parafoil(main_queue=None) -> None:
             with _UPDATE_LOCK:
                 snap = _cache_snapshot()
 
+            # DR을 현재 시각으로 갱신 (lock 밖 — snap 은 이미 복사됨)
+            _dead_reckon(snap.dr, snap.last_gps, now)
+
             l1_input, mode = guidance.ProduceL1Input(
                 gps=snap.latest_gps,
                 imu=snap.latest_imu,
@@ -827,6 +870,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 old_gps=snap.last_gps,
                 old_imu=snap.last_imu,
                 old_baro=snap.last_baro,
+                dr=snap.dr,
                 origin_lat=snap.start_lat,
                 origin_lon=snap.start_lon,
                 target_lat=snap.target_lat,
@@ -849,7 +893,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
                 yaw_rate_meas_deg_s = float("nan")
-                if snap.latest_imu.health and snap.latest_imu.gyrz_rad_s is not None:
+                if snap.latest_imu.gyrz_rad_s is not None:
                     yaw_rate_meas_deg_s = math.degrees(float(snap.latest_imu.gyrz_rad_s))
                 cmd = control.ProduceCtrlOutput(
                     _CONTROLLER,

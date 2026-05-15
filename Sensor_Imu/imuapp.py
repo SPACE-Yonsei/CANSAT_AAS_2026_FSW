@@ -58,8 +58,23 @@ _imu_instance = None
 _i2c_instance = None
 _yaw_ema = None
 _gyrz_ema = None
+_acc_norm_ema: Optional[float] = None
+_gyro_norm_ema: Optional[float] = None
 _startup_yaw_zeroed = False
 EMA_ALPHA = 0.9
+
+# freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
+FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
+TUMBLE_GYRO_NORM_THRESHOLD_DEGS  = float(os.environ.get("TUMBLE_GYRO_NORM_DEGS",  "200.0"))
+ACC_NORM_EMA_ALPHA  = 0.3  # 빠른 반응 (freefall 감지)
+GYRO_NORM_EMA_ALPHA = 0.3
+
+# freefall / tumble 상태 (send 스레드가 읽음)
+FREEFALL = 0  # 1=자유낙하 중, 0=정상(중력 있음)
+TUMBLE   = 0  # 1=텀블링 중,  0=안정(정상 선회)
+
+# sample_ts: read 스레드에서 캡처, send 스레드가 읽음
+_last_sample_mono_ts: float = 0.0
 
 
 def _imu_read_period_sec() -> float:
@@ -182,7 +197,10 @@ def _stale_watchdog_check() -> bool:
 
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
-    global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _yaw_ema, _gyrz_ema
+    global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _last_sample_mono_ts
+    global _yaw_ema, _gyrz_ema, _acc_norm_ema, _gyro_norm_ema
+    global FREEFALL, TUMBLE
+    import math as _math
     period = _imu_read_period_sec()
     while IMUAPP_RUNSTATUS:
         if _stale_watchdog_check():
@@ -206,8 +224,16 @@ def read_imu_data() -> None:
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
         _calibrate_startup_yaw(float(yaw))
-        _yaw_ema = _ema(_yaw_ema, _apply_yaw_offset(float(yaw)))
+        _yaw_ema  = _ema(_yaw_ema,  _apply_yaw_offset(float(yaw)))
         _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
+
+        # freefall / tumble 판정 (EMA smoothing으로 단발 스파이크 방지)
+        acc_norm_raw  = _math.sqrt(float(accx)**2 + float(accy)**2 + float(accz)**2)
+        gyro_norm_raw = _math.sqrt(float(gyrx)**2 + float(gyry)**2 + float(gyrz)**2)
+        _acc_norm_ema  = _ema(_acc_norm_ema,  acc_norm_raw,  ACC_NORM_EMA_ALPHA)
+        _gyro_norm_ema = _ema(_gyro_norm_ema, gyro_norm_raw, GYRO_NORM_EMA_ALPHA)
+        freefall_flag = 1 if _acc_norm_ema  <  FREEFALL_ACC_NORM_THRESHOLD_MPS2 else 0
+        tumble_flag   = 1 if _gyro_norm_ema >= TUMBLE_GYRO_NORM_THRESHOLD_DEGS  else 0
 
         with _imu_lock:
             ROLL = float(roll)
@@ -216,7 +242,10 @@ def read_imu_data() -> None:
             ACCX, ACCY, ACCZ = float(accx), float(accy), float(accz)
             MAGX, MAGY, MAGZ = float(magx), float(magy), float(magz)
             GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(_gyrz_ema)
-            _last_sample_ts = time.time()
+            FREEFALL = freefall_flag
+            TUMBLE   = tumble_flag
+            _last_sample_ts       = time.time()
+            _last_sample_mono_ts  = time.monotonic()
 
         HEALTH = 1
         time.sleep(period)
@@ -231,21 +260,24 @@ def send_imu_data(main_queue) -> None:
             HEALTH = 0
 
         with _imu_lock:
-            yaw = YAW
-            gyrz = GYRZ
-            fr = ROLL
-            fp = PITCH
-            fy = YAW
+            fr   = ROLL
+            fp   = PITCH
+            fy   = YAW
             accx, accy, accz = ACCX, ACCY, ACCZ
             magx, magy, magz = MAGX, MAGY, MAGZ
-            gyrx, gyry = GYRX, GYRY
+            gyrx, gyry, gyrz = GYRX, GYRY, GYRZ
+            freefall = FREEFALL
+            tumble   = TUMBLE
+            sample_mono_ts = _last_sample_mono_ts
 
+        # health 포함해서 항상 전송 — motorapp/guidance가 health 값으로 판단
+        # freefall(1=자유낙하), tumble(1=텀블링)은 값으로 전달
         msgstructure.send_msg(
             main_queue,
             appargs.ImuAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.ImuAppArg.MID_motor_imu,
-            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{HEALTH},{time.monotonic()}",
+            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)}",
         )
         tick += 1
         if tick >= 10:

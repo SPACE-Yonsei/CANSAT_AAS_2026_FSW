@@ -30,6 +30,20 @@ _prs_window = deque(maxlen=5)
 _baro_hw = None
 _last_baro_read_warn_ts = 0.0
 
+# sink_rate 계산용 상수 — 환경변수로 오버라이드 가능
+SINK_RATE_EMA_ALPHA     = float(os.environ.get("SINK_RATE_EMA_ALPHA", "0.3"))
+SINK_RATE_MIN_DT_S      = 0.04   # 25Hz 이상 호출 시 미분 건너뜀
+SINK_RATE_MAX_VALID_MPS = 30.0   # spike 거부 임계
+
+# sink_rate 상태 (read 스레드 전용)
+_last_filtered_alt: Optional[float] = None
+_last_alt_mono_ts:  Optional[float] = None
+_sink_rate_ema:     Optional[float] = None
+
+# 공유 상태 (send 스레드가 읽음)
+SINK_RATE:           Optional[float] = None
+_last_sample_mono_ts: float = 0.0
+
 
 def _barometer_rate_hz() -> float:
     try:
@@ -75,6 +89,12 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
         )
 
 
+def _ema(prev: Optional[float], cur: float, alpha: float) -> float:
+    if prev is None:
+        return cur
+    return alpha * cur + (1.0 - alpha) * prev
+
+
 def _median(values):
     if not values:
         return 0.0
@@ -93,6 +113,7 @@ def _synthetic_raw():
 def read_barometer_data() -> None:
     global ALTITUDE, TEMPERATURE, PRESSURE, BAROMETER_HEALTH, _last_sample_ts, _baro_hw
     global _last_baro_read_warn_ts
+    global _last_filtered_alt, _last_alt_mono_ts, _sink_rate_ema, SINK_RATE, _last_sample_mono_ts
     period = _barometer_period_sec()
     while BAROMETERAPP_RUNSTATUS:
         try:
@@ -141,11 +162,26 @@ def read_barometer_data() -> None:
             tmp = _median(_tmp_window)
             alt = _median(_alt_window) - BAROMETER_OFFSET
 
+            # sink_rate: median 필터 이후 미분 + EMA smoothing
+            now_mono = time.monotonic()
+            sink_rate_sample: Optional[float] = None
+            if _last_filtered_alt is not None and _last_alt_mono_ts is not None:
+                dt = now_mono - _last_alt_mono_ts
+                if dt >= SINK_RATE_MIN_DT_S:
+                    raw_sink = (_last_filtered_alt - alt) / dt  # positive = 하강
+                    if abs(raw_sink) <= SINK_RATE_MAX_VALID_MPS:
+                        _sink_rate_ema = _ema(_sink_rate_ema, raw_sink, SINK_RATE_EMA_ALPHA)
+                        sink_rate_sample = _sink_rate_ema
+            _last_filtered_alt = alt
+            _last_alt_mono_ts  = now_mono
+
             with _baro_lock:
-                PRESSURE = prs
+                PRESSURE    = prs
                 TEMPERATURE = tmp
-                ALTITUDE = alt
-                _last_sample_ts = time.time()
+                ALTITUDE    = alt
+                SINK_RATE   = sink_rate_sample
+                _last_sample_ts       = time.time()
+                _last_sample_mono_ts  = now_mono
                 BAROMETER_HEALTH = 1 if hardware_ok else 0
         except Exception:
             BAROMETER_HEALTH = 0
@@ -161,10 +197,12 @@ def send_barometer_data(main_queue) -> None:
         if time.time() - _last_sample_ts > BAROMETER_STALE_TIMEOUT_SEC:
             BAROMETER_HEALTH = 0
         with _baro_lock:
-            alt = ALTITUDE
-            prs = PRESSURE
-            tmp = TEMPERATURE
-            health = int(BAROMETER_HEALTH)
+            alt          = ALTITUDE
+            prs          = PRESSURE
+            tmp          = TEMPERATURE
+            health       = int(BAROMETER_HEALTH)
+            sink_rate    = SINK_RATE
+            sample_mono_ts = _last_sample_mono_ts
         msgstructure.send_msg(
             main_queue,
             appargs.BarometerAppArg.AppID,
@@ -172,12 +210,13 @@ def send_barometer_data(main_queue) -> None:
             appargs.BarometerAppArg.MID_flight_alt,
             f"{alt},{health}",
         )
+        sink_str = f"{sink_rate:.4f}" if sink_rate is not None else "nan"
         msgstructure.send_msg(
             main_queue,
             appargs.BarometerAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.BarometerAppArg.MID_motor_alt,
-            f"{alt},{health},{time.monotonic()}",
+            f"{alt:.4f},{sample_mono_ts:.4f},{sink_str},{health}",
         )
         tick += 1
         if tick >= comm_tick_interval:

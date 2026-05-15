@@ -2,6 +2,7 @@
 # Author : Hyeon Lee
 
 import math
+import os
 
 from lib import appargs
 from lib import config
@@ -19,6 +20,16 @@ import time
 GPSAPP_RUNSTATUS = True
 gps_instance = None
 GPS_STALE_TIMEOUT_SEC = 2.0
+
+# pos fidelity 상수 — 환경변수로 오버라이드 가능
+GPS_MAX_HDOP     = float(os.environ.get("GPS_MAX_HDOP",     "3.0"))
+GPS_MAX_JUMP_MPS = float(os.environ.get("GPS_MAX_JUMP_MPS", "50.0"))
+
+# jump rate 추적용 상태 (단일 스레드에서만 접근)
+_prev_valid_lat: float = 0.0
+_prev_valid_lon: float = 0.0
+_prev_valid_ts:  float = 0.0
+
 SIM_GPS_ACTIVE = False
 SIM_GPS_LAT = 0.0
 SIM_GPS_LON = 0.0
@@ -45,29 +56,59 @@ def _lon_in_expected_area(lon: float) -> bool:
     return abs(float(lon) - center) <= radius
 
 
-def _position_health(lat: float, lon: float, fix_quality: int, sats: int) -> int:
-    return int(
-        _is_finite(lat)
-        and _is_finite(lon)
-        and -90.0 <= float(lat) <= 90.0
-        and -180.0 <= float(lon) <= 180.0
-        and float(lat) != 0.0
-        and float(lon) != 0.0
-        and _lon_in_expected_area(float(lon))
-        and int(fix_quality) >= 1
-        and int(sats) >= int(getattr(config, "GPS_MIN_SATS", 4))
-    )
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2.0 * math.asin(math.sqrt(max(0.0, min(1.0, a))))
 
 
-def _calc_motion_health(
+def _eval_pos_fidelity(
+    lat: float, lon: float, hdop: float,
+    sats: int, fix_quality: int, now: float,
+) -> bool:
+    global _prev_valid_lat, _prev_valid_lon, _prev_valid_ts
+
+    # Gate 1: 기본 유효성
+    if not (_is_finite(lat) and _is_finite(lon)):
+        return False
+    if not (-90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0):
+        return False
+    if float(lat) == 0.0 or float(lon) == 0.0:
+        return False
+    if not _lon_in_expected_area(float(lon)):
+        return False
+    if int(fix_quality) < 1:
+        return False
+    if int(sats) < int(getattr(config, "GPS_MIN_SATS", 4)):
+        return False
+
+    # Gate 2: 정밀도 (HDOP)
+    if not _is_finite(hdop) or float(hdop) > GPS_MAX_HDOP:
+        return False
+
+    # Gate 3: 연속성 (jump rate)
+    if _prev_valid_ts > 0:
+        dt = now - _prev_valid_ts
+        if dt > 0:
+            dist_m = _haversine_m(_prev_valid_lat, _prev_valid_lon, float(lat), float(lon))
+            if dist_m / dt > GPS_MAX_JUMP_MPS:
+                return False
+
+    return True
+
+
+def _eval_motion_fidelity(
+    pos_health: bool,
+    rmc_status: str,
     speed_mps: float,
     course_deg: float,
-    rmc_status: str,
-    pos_health: int,
-) -> int:
+) -> bool:
     max_speed = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
-    return int(
-        bool(pos_health)
+    return (
+        pos_health
         and str(rmc_status).strip().upper() == "A"
         and _is_finite(speed_mps)
         and _is_finite(course_deg)
@@ -212,7 +253,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             GPS_FIX_QUALITY = 1
             GPS_RMC_STATUS = "A"
             last_valid_gps_ts = time.time()
-            rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts]
+            rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts, 1.0]  # [10]=hdop=1.0 (sim)
         else:
             # Check if gps_instance is valid
             if gps_instance is None:
@@ -275,19 +316,34 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_SPEED_MS = 0.0
                 GPS_COURSE = 0.0
 
-        # gps->motor: 새 NMEA 문장이 수신된 경우에만 전송 (stale 재전송 방지)
-        # handle_gps() 기대 포맷: lat,lon,course_deg,groundSpeed_mps,posHealth,motionHealth
+        # gps->motor: pos_health 통과 시에만 전송 (fidelity gate)
+        # 포맷: lat,lon,pos_ts,course_deg,spd_mps,motion_ts
+        #   pos fidelity 실패 → 전송 없음
+        #   motion fidelity 실패 → course/spd/motion_ts 를 nan으로 전송
         if rcv_data and len(rcv_data) >= 5:
-            _pos_health = _position_health(GPS_LAT, GPS_LON, GPS_FIX_QUALITY, GPS_SATS)
-            _motion_health = _calc_motion_health(
-                GPS_SPEED_MS, GPS_COURSE, GPS_RMC_STATUS, _pos_health
-            )
-            msgstructure.send_msg(
-                Main_Queue,
-                appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-                appargs.GpsAppArg.MID_motor_gps,
-                f"{GPS_LAT},{GPS_LON},{GPS_COURSE:.4f},{GPS_SPEED_MS:.4f},{_pos_health},{_motion_health}"
-            )
+            now_mono = time.monotonic()
+            hdop = float(rcv_data[10]) if len(rcv_data) > 10 and _is_finite(rcv_data[10]) else float('inf')
+
+            pos_health = _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
+            motion_health = _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
+
+            if pos_health:
+                global _prev_valid_lat, _prev_valid_lon, _prev_valid_ts
+                _prev_valid_lat = GPS_LAT
+                _prev_valid_lon = GPS_LON
+                _prev_valid_ts  = now_mono
+
+                pts   = f"{now_mono:.4f}"
+                crs_s = f"{GPS_COURSE:.4f}"   if motion_health else "nan"
+                spd_s = f"{GPS_SPEED_MS:.4f}" if motion_health else "nan"
+                mts   = f"{now_mono:.4f}"     if motion_health else "nan"
+
+                msgstructure.send_msg(
+                    Main_Queue,
+                    appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+                    appargs.GpsAppArg.MID_motor_gps,
+                    f"{GPS_LAT:.7f},{GPS_LON:.7f},{pts},{crs_s},{spd_s},{mts}"
+                )
 
         send_counter += 1
         if send_counter >= 10:
