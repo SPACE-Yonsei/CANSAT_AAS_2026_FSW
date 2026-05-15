@@ -414,8 +414,9 @@ def ProduceL1Output(
     # the path heading.
     nu2 = (path_heading - course + math.pi) % (2.0 * math.pi) - math.pi
     nu = (nu1 + nu2 + math.pi) % (2.0 * math.pi) - math.pi
+    nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
     K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
-    lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu)
+    lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
     lat_acc = max(-LAT_ACC_MAX, min(LAT_ACC_MAX, lat_acc))
     yaw_rate = lat_acc / speed_for_l1
     yaw_rate = max(-COURSE_RATE_MAX, min(COURSE_RATE_MAX, yaw_rate))
