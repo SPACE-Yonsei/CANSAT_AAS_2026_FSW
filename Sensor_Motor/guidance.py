@@ -16,9 +16,9 @@ from typing import Optional, Tuple
 
 #Sensor age
 POS_FRESH_AGE    = 1.0    # s
-POS_STALE_MAX    = 3.0    # s
+POS_STALE_MAX    = 5.0    # s
 MOTION_FRESH_AGE = 1.0    # s
-MOTION_STALE_MAX = 3.0    # s
+MOTION_STALE_MAX = 5.0    # s
 GYRZ_FRESH_AGE   = 0.20   # s
 GYRZ_STALE_MAX   = 0.50   # s
 ALT_FRESH_AGE    = 0.50   # s

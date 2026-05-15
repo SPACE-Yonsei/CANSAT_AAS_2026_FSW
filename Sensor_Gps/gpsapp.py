@@ -19,11 +19,11 @@ import time
 # Runstatus of application. Application is terminated when false
 GPSAPP_RUNSTATUS = True
 gps_instance = None
-GPS_STALE_TIMEOUT_SEC = 2.0
+GPS_STALE_TIMEOUT_SEC = 5.0
 
 # pos fidelity 상수 — 환경변수로 오버라이드 가능
 GPS_MAX_HDOP     = float(os.environ.get("GPS_MAX_HDOP",     "3.0"))
-GPS_MAX_JUMP_MPS = float(os.environ.get("GPS_MAX_JUMP_MPS", "50.0"))
+GPS_MAX_JUMP_MPS = float(os.environ.get("GPS_MAX_JUMP_MPS", "30.0"))
 
 # jump rate 추적용 상태 (단일 스레드에서만 접근)
 _prev_valid_lat: float = 0.0

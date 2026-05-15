@@ -10,7 +10,7 @@ I2C_BUS_NUM = 1
 GNSS_ADDR   = 0x42
 READ_SIZE   = 32
 
-I2C_LOCK_PATH = os.getenv("I2C_LOCK_PATH", "/tmp/i2c-1.lock")
+I2C_LOCK_PATH = os.getenv("FSW_I2C_LOCK_FILE", "/tmp/fsw_i2c.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
 NMEA_CACHE_MAX_AGE_SEC = float(os.getenv("GPS_NMEA_CACHE_MAX_AGE_SEC", "2.0"))
 
@@ -203,7 +203,7 @@ def unit_convert_deg(raw_angle):
 def gps_readdata(pi):
     # Reduce timeout from 1.0 to 0.2 seconds to avoid I2C bus blocking
     # This allows faster polling when running with other sensors
-    NMEA_lines = read_gps(pi, timeout=0.2)
+    NMEA_lines = read_gps(pi, timeout=0.08)
     gps_data = parse_gps_data(NMEA_lines)
     modified_gps_data = []
 
