@@ -13,7 +13,7 @@ import enum
 import math
 from typing import Optional
 
-from lib import timebase
+from lib import config, timebase
 
 #Sensor age
 POS_FRESH_AGE    = 1.0    # s
@@ -51,7 +51,7 @@ L1_PERIOD_S        = 8.0
 L1_MIN_M           = 5.0
 V_MIN_MPS          = 2.0
 LAT_ACC_MAX        = 4.0    # m/s^2
-COURSE_RATE_MAX    = 0.6    # rad/s
+COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S)
 # GPS-derived position sanity: reject positions farther than this from origin.
 # Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
 _MAX_POS_RANGE_M   = 50_000.0   # 50 km
@@ -105,16 +105,45 @@ def project_from_origin(
 
 
 class SensorQuality(enum.Enum):
-    FRESH   = "FRESH"
-    FRESHED = "FRESHED"
-    STALE   = "STALE"
+    FRESH   = config.SENSOR_QUALITY_FRESH
+    FRESHED = config.SENSOR_QUALITY_FRESHED
+    STALE   = config.SENSOR_QUALITY_STALE
 
 class ControlMode(enum.Enum):
-    NOMINAL_CLOSED_LOOP  = "NOMINAL_CLOSED_LOOP"
-    NOMINAL_FEEDFORWARD  = "NOMINAL_FEEDFORWARD"
-    DEGRADED_CLOSED_LOOP = "DEGRADED_CLOSED_LOOP"
-    DEGRADED_FEEDFORWARD = "DEGRADED_FEEDFORWARD"
-    FAIL                 = "FAIL"
+    NOMINAL_CLOSED_LOOP  = config.CONTROL_MODE_NOMINAL_CLOSED_LOOP
+    NOMINAL_FEEDFORWARD  = config.CONTROL_MODE_NOMINAL_FEEDFORWARD
+    DEGRADED_CLOSED_LOOP = config.CONTROL_MODE_DEGRADED_CLOSED_LOOP
+    DEGRADED_FEEDFORWARD = config.CONTROL_MODE_DEGRADED_FEEDFORWARD
+    FAIL                 = config.CONTROL_MODE_FAIL
+
+
+class FailReason(enum.Enum):
+    NONE = config.FAIL_REASON_NONE
+    FREEFALL = config.FAIL_REASON_FREEFALL
+    TUMBLE_YAW_DOMINANT = config.FAIL_REASON_TUMBLE_YAW_DOMINANT
+    TUMBLE_ROLLPITCH = config.FAIL_REASON_TUMBLE_ROLLPITCH
+    NO_POSITION = config.FAIL_REASON_NO_POSITION
+    NO_MOTION = config.FAIL_REASON_NO_MOTION
+    DR_TIMEOUT = config.FAIL_REASON_DR_TIMEOUT
+    SENSOR_BLACKOUT = config.FAIL_REASON_SENSOR_BLACKOUT
+    UNSTABLE_BODY = config.FAIL_REASON_UNSTABLE_BODY
+    INVALID_PATH = config.FAIL_REASON_INVALID_PATH
+    L1_INPUT = config.FAIL_REASON_L1_INPUT
+
+
+@dataclass(frozen=True)
+class ControlPolicy:
+    confidence_scale: float
+    yaw_rate_cmd_max_deg_s: float
+    lat_acc_max_mps2: float
+    delta_ff_max_deg: float
+    delta_pid_max_deg: float
+    delta_total_max_deg: float
+    max_arm_rate_deg_s: float
+    pid_enabled: bool
+    l1_enabled: bool = True
+    l1_period_s: float = L1_PERIOD_S
+    fallback_mode: str = config.CTRL_FALLBACK_NONE
 
 @dataclass
 class L1Input:
@@ -122,7 +151,10 @@ class L1Input:
     pos_E: Optional[float] = None
     course: Optional[float] = None
     ground_speed_mps: Optional[float] = None
+    yaw: Optional[float] = None
     gyrz: Optional[float] = None
+    gyrx: Optional[float] = None
+    gyry: Optional[float] = None
     alt: Optional[float] = None
     pos_quality: SensorQuality = SensorQuality.STALE
     motion_quality: SensorQuality = SensorQuality.STALE
@@ -133,6 +165,9 @@ class L1Input:
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
     control_mode: Optional[ControlMode] = None
+    fail_reason: FailReason = FailReason.NONE
+    dr_valid: bool = False
+    dr_age_s: Optional[float] = None
     sink_rate: Optional[float] = None
     freefall: int = 0
     tumble: int = 0
@@ -153,13 +188,122 @@ def l1_reset(state: L1State) -> None:
     state.last_yaw_rate_cmd_rad_s = 0.0
     state.last_update_ts = None
 
+
+def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NONE) -> ControlPolicy:
+    if mode == ControlMode.NOMINAL_CLOSED_LOOP:
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_NOMINAL_CLOSED_LOOP_CONFIDENCE_SCALE,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_NOMINAL_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
+            pid_enabled=True,
+        )
+    if mode == ControlMode.NOMINAL_FEEDFORWARD:
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_NOMINAL_FEEDFORWARD_CONFIDENCE_SCALE,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_NOMINAL_FEEDFORWARD_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+        )
+    if mode == ControlMode.DEGRADED_CLOSED_LOOP:
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_DEGRADED_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
+            pid_enabled=True,
+            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE, 1.0e-6),
+        )
+    if mode == ControlMode.DEGRADED_FEEDFORWARD:
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_DEGRADED_FEEDFORWARD_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE, 1.0e-6),
+        )
+    if fail_reason == FailReason.TUMBLE_YAW_DOMINANT:
+        return ControlPolicy(
+            confidence_scale=0.0,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_TUMBLE_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=0.0,
+            delta_ff_max_deg=config.MOTOR_TUMBLE_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=0.0,
+            delta_total_max_deg=config.MOTOR_TUMBLE_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_TUMBLE_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+            l1_enabled=False,
+        )
+    if fail_reason == FailReason.NO_MOTION:
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
+            yaw_rate_cmd_max_deg_s=config.MOTOR_TARGET_BEARING_YAW_RATE_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=0.0,
+            delta_ff_max_deg=config.MOTOR_TARGET_BEARING_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=0.0,
+            delta_total_max_deg=config.MOTOR_TARGET_BEARING_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+            l1_enabled=False,
+        )
+    return ControlPolicy(
+        confidence_scale=0.0,
+        yaw_rate_cmd_max_deg_s=0.0,
+        lat_acc_max_mps2=0.0,
+        delta_ff_max_deg=0.0,
+        delta_pid_max_deg=0.0,
+        delta_total_max_deg=0.0,
+        max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+        pid_enabled=False,
+        l1_enabled=False,
+    )
+
+
+def _apply_policy(out: L1Output, policy: ControlPolicy) -> None:
+    out.confidence_scale = policy.confidence_scale
+    out.yaw_rate_cmd_max_deg_s = policy.yaw_rate_cmd_max_deg_s
+    out.lat_acc_max_mps2 = policy.lat_acc_max_mps2
+    out.delta_ff_max_deg = policy.delta_ff_max_deg
+    out.delta_pid_max_deg = policy.delta_pid_max_deg
+    out.delta_total_max_deg = policy.delta_total_max_deg
+    out.max_arm_rate_deg_s = policy.max_arm_rate_deg_s
+    out.pid_enabled = policy.pid_enabled
+
+
+def _wrap_pi(angle_rad: float) -> float:
+    return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
+
 #have to add member
 @dataclass
 class L1Output:
     timestamp: float = 0.0
     nominal: bool = False
     degraded: bool = False
-    reason: str = "INIT"
+    control_valid: bool = False
+    reason: str = config.MOTOR_REASON_INIT
+    fail_reason: str = config.FAIL_REASON_NONE
+    confidence_scale: float = 0.0
+    yaw_rate_cmd_max_deg_s: float = 0.0
+    lat_acc_max_mps2: float = 0.0
+    delta_ff_max_deg: float = 0.0
+    delta_pid_max_deg: float = 0.0
+    delta_total_max_deg: float = 0.0
+    max_arm_rate_deg_s: float = 0.0
+    pid_enabled: bool = False
     yaw_rate_cmd_rad_s: float = 0.0
     lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
@@ -194,6 +338,9 @@ def FillFresh(
     """Fill L1Input with fresh sensor values only."""
     gps_course = getattr(gps, "course", getattr(gps, "course_rad", None)) if gps is not None else None
     gps_speed = getattr(gps, "speed", getattr(gps, "speed_mps", None)) if gps is not None else None
+    imu_yaw = getattr(imu, "yaw", getattr(imu, "yaw_rad", None)) if imu is not None else None
+    imu_gyrx = getattr(imu, "gyrx", getattr(imu, "gyrx_rad_s", None)) if imu is not None else None
+    imu_gyry = getattr(imu, "gyry", getattr(imu, "gyry_rad_s", None)) if imu is not None else None
     imu_gyrz = getattr(imu, "gyrz", getattr(imu, "gyrz_rad_s", None)) if imu is not None else None
     baro_alt = getattr(baro, "alt", getattr(baro, "alt_m", None)) if baro is not None else None
 
@@ -237,6 +384,9 @@ def FillFresh(
         and getattr(imu, "health", 1)
         and timebase.valid_age(imu.ts, now, GYRZ_FRESH_AGE)
     ):
+        l1_input.yaw = imu_yaw
+        l1_input.gyrx = imu_gyrx
+        l1_input.gyry = imu_gyry
         l1_input.gyrz = imu_gyrz
         l1_input.gyrz_quality = SensorQuality.FRESH
         l1_input.freefall = getattr(imu, "freefall", 0)
@@ -266,6 +416,9 @@ def FillFreshed(
     """Fill non-fresh fields with history-derived freshed estimates."""
     freshed_gps_course = getattr(freshed_gps, "course", getattr(freshed_gps, "course_rad", None)) if freshed_gps is not None else None
     freshed_gps_speed = getattr(freshed_gps, "speed", getattr(freshed_gps, "speed_mps", None)) if freshed_gps is not None else None
+    freshed_imu_yaw = getattr(freshed_imu, "yaw", getattr(freshed_imu, "yaw_rad", None)) if freshed_imu is not None else None
+    freshed_imu_gyrx = getattr(freshed_imu, "gyrx", getattr(freshed_imu, "gyrx_rad_s", None)) if freshed_imu is not None else None
+    freshed_imu_gyry = getattr(freshed_imu, "gyry", getattr(freshed_imu, "gyry_rad_s", None)) if freshed_imu is not None else None
     freshed_imu_gyrz = getattr(freshed_imu, "gyrz", getattr(freshed_imu, "gyrz_rad_s", None)) if freshed_imu is not None else None
     freshed_baro_alt = getattr(freshed_baro, "alt", getattr(freshed_baro, "alt_m", None)) if freshed_baro is not None else None
 
@@ -343,6 +496,9 @@ def FillFreshed(
             and getattr(freshed_imu, "health", 1)
         ):
             if timebase.valid_age(freshed_imu.ts, now, GYRZ_EST_AGE):
+                l1_input.yaw          = freshed_imu_yaw
+                l1_input.gyrx         = freshed_imu_gyrx
+                l1_input.gyry         = freshed_imu_gyry
                 l1_input.gyrz         = freshed_imu_gyrz
                 l1_input.gyrz_quality = SensorQuality.FRESHED
                 l1_input.freefall     = getattr(freshed_imu, "freefall", 0)
@@ -369,11 +525,43 @@ def FillFreshed(
 
     return l1_input
 
+
+def _body_fail_reason(l1_input: L1Input) -> FailReason:
+    def _deg(value) -> Optional[float]:
+        try:
+            value_f = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value_f):
+            return None
+        return math.degrees(value_f)
+
+    gx = _deg(l1_input.gyrx)
+    gy = _deg(l1_input.gyry)
+    gz = _deg(l1_input.gyrz)
+    if gx is None and gy is None and gz is None:
+        return FailReason.UNSTABLE_BODY if l1_input.tumble else FailReason.NONE
+    roll_pitch_abs = max(abs(gx or 0.0), abs(gy or 0.0))
+    yaw_abs = abs(gz or 0.0)
+    yaw_dominant = (
+        yaw_abs > config.MOTOR_TUMBLE_YAW_DOMINANT_MIN_DEG_S
+        and yaw_abs > config.MOTOR_TUMBLE_YAW_DOMINANT_RATIO * roll_pitch_abs
+    )
+    roll_pitch_dominant = roll_pitch_abs > config.MOTOR_TUMBLE_ROLLPITCH_MIN_DEG_S
+    if yaw_dominant:
+        return FailReason.TUMBLE_YAW_DOMINANT
+    if roll_pitch_dominant:
+        return FailReason.TUMBLE_ROLLPITCH
+    return FailReason.UNSTABLE_BODY if l1_input.tumble else FailReason.NONE
+
+
 def DecideControlMode(l1_input: L1Input) -> ControlMode:
     # 1=자유낙하 중, 1=텀블링 중 → FAIL
     if l1_input.freefall:
+        l1_input.fail_reason = FailReason.FREEFALL
         return ControlMode.FAIL
     if l1_input.tumble:
+        l1_input.fail_reason = _body_fail_reason(l1_input)
         return ControlMode.FAIL
 
     pos_quality    = l1_input.pos_quality
@@ -381,8 +569,19 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     gyrz_quality   = l1_input.gyrz_quality
 
     if pos_quality    == SensorQuality.STALE:
+        if (
+            motion_quality == SensorQuality.STALE
+            and gyrz_quality == SensorQuality.STALE
+            and l1_input.alt_quality == SensorQuality.STALE
+        ):
+            l1_input.fail_reason = FailReason.SENSOR_BLACKOUT
+        elif l1_input.dr_age_s is not None and l1_input.dr_age_s > POS_DR_AGE:
+            l1_input.fail_reason = FailReason.DR_TIMEOUT
+        else:
+            l1_input.fail_reason = FailReason.NO_POSITION
         return ControlMode.FAIL
     if motion_quality == SensorQuality.STALE:
+        l1_input.fail_reason = FailReason.NO_MOTION
         return ControlMode.FAIL
 
     closed_loop = (
@@ -392,11 +591,15 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     nominal = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
 
     if nominal and closed_loop:
+        l1_input.fail_reason = FailReason.NONE
         return ControlMode.NOMINAL_CLOSED_LOOP
     if nominal:
+        l1_input.fail_reason = FailReason.NONE
         return ControlMode.NOMINAL_FEEDFORWARD
     if closed_loop:
+        l1_input.fail_reason = FailReason.NONE
         return ControlMode.DEGRADED_CLOSED_LOOP
+    l1_input.fail_reason = FailReason.NONE
     return ControlMode.DEGRADED_FEEDFORWARD
 
 #prepocessing: fill fresh -> fill unfresh -> decide control mode -> produce L1 input
@@ -421,6 +624,13 @@ def ProduceL1Input(
     l1_input.origin_lon = origin_lon
     l1_input.target_lat = target_lat
     l1_input.target_lon = target_lon
+    if dr is not None:
+        l1_input.dr_valid = bool(getattr(dr, "valid", False))
+        dr_ts = getattr(dr, "ts", None)
+        if dr_ts is None:
+            dr_ts = getattr(dr, "anchor_ts", None)
+        dr_age = timebase.age(now, dr_ts)
+        l1_input.dr_age_s = dr_age if math.isfinite(dr_age) else None
 
     FillFresh(l1_input, gps, imu, baro, origin_lat, origin_lon, now)
     FillFreshed(l1_input, freshed_gps, freshed_imu, freshed_baro, now, dr=dr)
@@ -442,9 +652,51 @@ def ProduceL1Output(
     out.reason = getattr(mode, "value", str(mode))
     out.target_lat = target_lat
     out.target_lon = target_lon
+    fail_reason = getattr(l1_input, "fail_reason", FailReason.NONE)
+    if not isinstance(fail_reason, FailReason):
+        try:
+            fail_reason = FailReason(str(fail_reason))
+        except ValueError:
+            fail_reason = FailReason.NONE
+    out.fail_reason = fail_reason.value
+    policy = _policy_for_mode(mode, fail_reason)
+    _apply_policy(out, policy)
 
     if mode == ControlMode.FAIL:
-        out.reason = "FAIL"
+        out.reason = fail_reason.value if fail_reason != FailReason.NONE else config.CONTROL_MODE_FAIL
+        if fail_reason == FailReason.TUMBLE_YAW_DOMINANT and l1_input.gyrz is not None:
+            gyrz_deg_s = math.degrees(float(l1_input.gyrz))
+            yaw_cmd_deg_s = max(
+                -policy.yaw_rate_cmd_max_deg_s,
+                min(policy.yaw_rate_cmd_max_deg_s, -config.MOTOR_TUMBLE_COUNTER_YAW_GAIN * gyrz_deg_s),
+            )
+            out.control_valid = True
+            out.yaw_rate_cmd_rad_s = math.radians(yaw_cmd_deg_s)
+            out.ground_speed_mps = float(getattr(l1_input, "ground_speed_mps", 0.0) or 0.0)
+            return out
+        if (
+            fail_reason == FailReason.NO_MOTION
+            and l1_input.pos_N is not None
+            and l1_input.pos_E is not None
+            and l1_input.yaw is not None
+            and origin_lat is not None
+            and origin_lon is not None
+            and target_lat is not None
+            and target_lon is not None
+        ):
+            target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
+            bearing_to_target = math.atan2(target_E - l1_input.pos_E, target_N - l1_input.pos_N)
+            heading_error = _wrap_pi(bearing_to_target - float(l1_input.yaw))
+            yaw_cmd_rad_s = config.MOTOR_TARGET_BEARING_GAIN * heading_error
+            yaw_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
+            out.control_valid = True
+            out.yaw_rate_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
+            out.target_N = target_N
+            out.target_E = target_E
+            out.pos_N = l1_input.pos_N
+            out.pos_E = l1_input.pos_E
+            out.current_heading_rad = float(l1_input.yaw)
+            return out
         return out
 
     pos_N = getattr(l1_input, "pos_N", None)
@@ -461,17 +713,19 @@ def ProduceL1Output(
         or target_lat is None
         or target_lon is None
     ):
-        out.reason = "FAIL_L1_INPUT"
+        out.reason = config.FAIL_REASON_L1_INPUT
+        out.fail_reason = FailReason.L1_INPUT.value
         return out
 
     target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
     path_len = math.hypot(target_N, target_E)
     if path_len <= 1e-6:
-        out.reason = "INVALID_PATH"
+        out.reason = config.FAIL_REASON_INVALID_PATH
+        out.fail_reason = FailReason.INVALID_PATH.value
         return out
 
     speed_for_l1 = max(float(speed), V_MIN_MPS)
-    L1_distance = max((L1_DAMPING * L1_PERIOD_S / math.pi) * speed_for_l1, L1_MIN_M)
+    L1_distance = max((L1_DAMPING * policy.l1_period_s / math.pi) * speed_for_l1, L1_MIN_M)
     unit_N = target_N / path_len
     unit_E = target_E / path_len
     along = pos_N * unit_N + pos_E * unit_E
@@ -491,12 +745,15 @@ def ProduceL1Output(
     nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
     K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
     lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
-    lat_acc = max(-LAT_ACC_MAX, min(LAT_ACC_MAX, lat_acc))
+    lat_acc *= policy.confidence_scale
+    lat_acc = max(-policy.lat_acc_max_mps2, min(policy.lat_acc_max_mps2, lat_acc))
     yaw_rate = lat_acc / speed_for_l1
-    yaw_rate = max(-COURSE_RATE_MAX, min(COURSE_RATE_MAX, yaw_rate))
+    yaw_rate_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
+    yaw_rate = max(-yaw_rate_max_rad_s, min(yaw_rate_max_rad_s, yaw_rate))
 
     out.nominal = True
     out.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
+    out.control_valid = True
     out.yaw_rate_cmd_rad_s = yaw_rate
     out.lat_acc_cmd_mps2 = lat_acc
     out.ground_speed_mps = float(speed)

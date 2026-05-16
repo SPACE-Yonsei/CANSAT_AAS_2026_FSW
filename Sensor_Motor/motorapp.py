@@ -44,6 +44,8 @@ _CONTROL_LOG_HEADER = [
     "motor_enabled",
     "diag_state",
     "guidance_reason",
+    "fail_reason",
+    "confidence_scale",
     "guidance_mode",
     "control_mode",
     "nominal",
@@ -245,7 +247,11 @@ _START_POINT_LOCKED = False
 _START_NULL_LAT_TOL = 1.0e-4
 _START_NULL_LON_TOL = 1.0e-4
 _MANUAL_STEER_DELTA_DEG = min(40.0, control.DELTA_ARM_MAX_DEG)
-_MANUAL_STEER_MODES = {"LEFT", "NEUTRAL", "RIGHT"}
+_MANUAL_STEER_MODES = {
+    config.MOTOR_MANUAL_LEFT,
+    config.MOTOR_MANUAL_NEUTRAL,
+    config.MOTOR_MANUAL_RIGHT,
+}
 
 # GPS sanity thresholds. Defaults are configured for the current Korea test
 # area and must be updated before operating at a distant site.
@@ -976,8 +982,8 @@ def handle_fac(data: str) -> None:
 
 
 def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
-    cmd = control.WriteNeutral(now, f"MANUAL_{mode}")
-    if mode == "LEFT":
+    cmd = control.WriteNeutral(now, f"{config.MOTOR_REASON_MANUAL_PREFIX}{mode}")
+    if mode == config.MOTOR_MANUAL_LEFT:
         left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
             -_MANUAL_STEER_DELTA_DEG
         )
@@ -986,7 +992,7 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
         cmd.left_angle_deg = left_angle
         cmd.right_angle_deg = right_angle
         cmd.delta_arm_deg = delta_arm
-    elif mode == "RIGHT":
+    elif mode == config.MOTOR_MANUAL_RIGHT:
         left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
             _MANUAL_STEER_DELTA_DEG
         )
@@ -996,7 +1002,7 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
         cmd.right_angle_deg = right_angle
         cmd.delta_arm_deg = delta_arm
     cmd.valid = True
-    cmd.fallback_mode = f"MANUAL_{mode}"
+    cmd.fallback_mode = f"{config.MOTOR_REASON_MANUAL_PREFIX}{mode}"
     return cmd
 
 
@@ -1128,6 +1134,8 @@ def _write_control_debug_log(
                     str(int(bool(MOTOR_ENABLED))),
                     diag_state,
                     str(getattr(g_out, "reason", "")),
+                    str(getattr(g_out, "fail_reason", "")),
+                    _fmt_log(getattr(g_out, "confidence_scale", None), 4),
                     str(getattr(mode, "value", mode) if mode is not None else ""),
                     str(getattr(cmd, "mode", "")),
                     str(int(bool(getattr(g_out, "nominal", False)))),
@@ -1212,24 +1220,28 @@ def ctrl_parafoil(main_queue=None) -> None:
             if not MOTOR_ENABLED or STATE < 3:
                 if PI is not None:
                     control.WriteZero(PI)
-                idle_cmd = control.WriteNeutral(now, "IDLE")
-                idle_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="IDLE")
+                idle_cmd = control.WriteNeutral(now, config.MOTOR_REASON_IDLE)
+                idle_out = guidance.L1Output(
+                    timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_IDLE
+                )
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
-                _write_control_debug_log(now, idle_snap, None, None, idle_out, idle_cmd, "IDLE")
-                _send_diag(main_queue, idle_cmd, idle_out, "IDLE")
+                _write_control_debug_log(now, idle_snap, None, None, idle_out, idle_cmd, config.MOTOR_REASON_IDLE)
+                _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE)
                 time.sleep(period)
                 continue
 
             if STATE == 5:
                 if PI is not None:
                     control.WriteOff(PI)
-                landed_cmd = control.WriteNeutral(now, "LANDED")
-                landed_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="LANDED")
+                landed_cmd = control.WriteNeutral(now, config.MOTOR_REASON_LANDED)
+                landed_out = guidance.L1Output(
+                    timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_LANDED
+                )
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
-                _write_control_debug_log(now, landed_snap, None, None, landed_out, landed_cmd, "LANDED")
-                _send_diag(main_queue, landed_cmd, landed_out, "LANDED")
+                _write_control_debug_log(now, landed_snap, None, None, landed_out, landed_cmd, config.MOTOR_REASON_LANDED)
+                _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED)
                 time.sleep(period)
                 continue
 
@@ -1239,16 +1251,22 @@ def ctrl_parafoil(main_queue=None) -> None:
                     timestamp=now,
                     nominal=False,
                     degraded=False,
-                    reason=f"MANUAL_{MANUAL_STEER_MODE}",
+                    reason=f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}",
                 )
                 if PI is not None:
                     control.ProducePulse(PI, manual_cmd)
                 with _UPDATE_LOCK:
                     manual_snap = _cache_snapshot()
                 _write_control_debug_log(
-                    now, manual_snap, None, None, manual_out, manual_cmd, f"MANUAL_{MANUAL_STEER_MODE}"
+                    now,
+                    manual_snap,
+                    None,
+                    None,
+                    manual_out,
+                    manual_cmd,
+                    f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}",
                 )
-                _send_diag(main_queue, manual_cmd, manual_out, f"MANUAL_{MANUAL_STEER_MODE}")
+                _send_diag(main_queue, manual_cmd, manual_out, f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}")
                 time.sleep(period)
                 continue
 
@@ -1298,12 +1316,16 @@ def ctrl_parafoil(main_queue=None) -> None:
                 l1_state=_L1_STATE,
             )
 
-            if bool(getattr(g_out, "nominal", False)):
+            if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
                 yaw_rate_meas_deg_s = float("nan")
-                if snap.latest_imu.gyrz_rad_s is not None:
-                    yaw_rate_meas_deg_s = math.degrees(float(snap.latest_imu.gyrz_rad_s))
+                if (
+                    getattr(l1_input, "gyrz", None) is not None
+                    and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
+                    in (guidance.SensorQuality.FRESH, guidance.SensorQuality.FRESHED)
+                ):
+                    yaw_rate_meas_deg_s = math.degrees(float(l1_input.gyrz))
                 cmd = control.ProduceCtrlOutput(
                     _CONTROLLER,
                     control.ProduceCtrlInput(g_out, now),
@@ -1311,14 +1333,15 @@ def ctrl_parafoil(main_queue=None) -> None:
                     now,
                 )
             else:
-                cmd = control.WriteNeutral(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
+                cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
 
             if PI is not None:
                 control.ProducePulse(PI, cmd)
             diag_state = (
-                "DEGRADED" if bool(getattr(g_out, "nominal", False)) and bool(getattr(g_out, "degraded", False))
-                else "ACTIVE" if bool(getattr(g_out, "nominal", False))
-                else str(getattr(g_out, "reason", "DISABLED") or "DISABLED")
+                config.MOTOR_REASON_DEGRADED
+                if bool(getattr(g_out, "control_valid", False)) and bool(getattr(g_out, "degraded", False))
+                else config.MOTOR_REASON_ACTIVE if bool(getattr(g_out, "nominal", False))
+                else str(getattr(g_out, "reason", config.MOTOR_REASON_DISABLED) or config.MOTOR_REASON_DISABLED)
             )
             _write_control_debug_log(now, snap, l1_input, mode, g_out, cmd, diag_state)
             _send_diag(main_queue, cmd, g_out, diag_state)
@@ -1364,7 +1387,7 @@ def init() -> None:
     global PI, MOTOR_ENABLED, MANUAL_STEER_MODE, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
-    MANUAL_STEER_MODE = "NEUTRAL"
+    MANUAL_STEER_MODE = config.MOTOR_MANUAL_NEUTRAL
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
 

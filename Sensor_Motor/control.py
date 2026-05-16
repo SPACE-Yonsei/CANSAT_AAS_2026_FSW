@@ -9,7 +9,7 @@ Both sum to at most DELTA_TOTAL_MAX_DEG. Arm angles are slew-rate limited before
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from lib import config, timebase
@@ -65,9 +65,9 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 @dataclass
 class ControlConfig:
     # Feedforward shaping
-    YAW_RATE_CMD_MAX_DEG_S: float = 40.0       # command saturation ceiling
+    YAW_RATE_CMD_MAX_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S
     YAW_RATE_DEADBAND_DEG_S: float = 3.0       # below this, FF output is zero to avoid dithering
-    DELTA_FF_MAX_DEG: float = 115.0            # FF authority budget (leaves room for PID trim)
+    DELTA_FF_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
     DELTA_MIN_EFFECTIVE_DEG: float = 8.0       # minimum FF deflection above deadband
     EXPO: float = 0.8                          # <1 gives finer control near center
 
@@ -77,11 +77,11 @@ class ControlConfig:
     K_I: float = 0.02
     K_D: float = 0.0
     I_LIMIT_DEG: float = 25.0                  # anti-windup clamp on accumulated integral
-    DELTA_PID_MAX_DEG: float = 45.0            # PID authority budget
+    DELTA_PID_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
 
     # Authority and slew
-    DELTA_TOTAL_MAX_DEG: float = 160.0         # hard limit on FF + PID sum
-    MAX_ARM_RATE_DEG_S: float = 100.0          # per-arm slew-rate limit
+    DELTA_TOTAL_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
+    MAX_ARM_RATE_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
 
 
 @dataclass
@@ -106,6 +106,12 @@ class CtrlInput:
     ground_speed_mps: float = 0.0
     valid: bool = False
     timestamp: float = 0.0
+    pid_enabled: bool = True
+    yaw_rate_cmd_max_deg_s: Optional[float] = None
+    delta_ff_max_deg: Optional[float] = None
+    delta_pid_max_deg: Optional[float] = None
+    delta_total_max_deg: Optional[float] = None
+    max_arm_rate_deg_s: Optional[float] = None
 
 
 @dataclass
@@ -124,12 +130,12 @@ class CtrlOutput:
     saturated: bool = False
     sensor_valid: bool = False
     valid: bool = False
-    mode: str = "NEUTRAL"
-    fallback_mode: str = "NEUTRAL"
+    mode: str = config.CTRL_MODE_NEUTRAL
+    fallback_mode: str = config.CTRL_MODE_NEUTRAL
     guidance_command_age_s: float = 0.0
 
 
-def WriteNeutral(now: float, mode: str = "NEUTRAL") -> CtrlOutput:
+def WriteNeutral(now: float, mode: str = config.CTRL_MODE_NEUTRAL) -> CtrlOutput:
     """Produce a neutral PWM command object without touching hardware."""
     cmd = CtrlOutput(timestamp=now)
     cmd.mode = mode
@@ -140,13 +146,23 @@ def WriteNeutral(now: float, mode: str = "NEUTRAL") -> CtrlOutput:
 def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
     # Accept nominal AND degraded guidance modes — both produce usable commands.
     # FAIL mode sets nominal=False, degraded=False; only that path yields valid=False.
-    is_valid = bool(getattr(g_out, "nominal", False) or getattr(g_out, "degraded", False))
+    is_valid = bool(
+        getattr(g_out, "control_valid", False)
+        or getattr(g_out, "nominal", False)
+        or getattr(g_out, "degraded", False)
+    )
     return CtrlInput(
         yaw_rate_cmd_deg_s=math.degrees(float(getattr(g_out, "yaw_rate_cmd_rad_s", 0.0) or 0.0)),
         lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
         ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
         valid=is_valid,
         timestamp=float(getattr(g_out, "timestamp", now) or now),
+        pid_enabled=bool(getattr(g_out, "pid_enabled", True)),
+        yaw_rate_cmd_max_deg_s=getattr(g_out, "yaw_rate_cmd_max_deg_s", None),
+        delta_ff_max_deg=getattr(g_out, "delta_ff_max_deg", None),
+        delta_pid_max_deg=getattr(g_out, "delta_pid_max_deg", None),
+        delta_total_max_deg=getattr(g_out, "delta_total_max_deg", None),
+        max_arm_rate_deg_s=getattr(g_out, "max_arm_rate_deg_s", None),
     )
 
 
@@ -208,7 +224,25 @@ def ProduceCtrlOutput(
       4. Desired arm angles from ConnectRoMo are slew-rate limited before pulse output.
     """
     out = CtrlOutput(timestamp=now)
-    cfg = ctl.config
+    cfg_base = ctl.config
+    cfg = replace(
+        cfg_base,
+        YAW_RATE_CMD_MAX_DEG_S=float(cmd.yaw_rate_cmd_max_deg_s)
+        if cmd.yaw_rate_cmd_max_deg_s is not None else cfg_base.YAW_RATE_CMD_MAX_DEG_S,
+        DELTA_FF_MAX_DEG=float(cmd.delta_ff_max_deg)
+        if cmd.delta_ff_max_deg is not None else cfg_base.DELTA_FF_MAX_DEG,
+        DELTA_PID_MAX_DEG=float(cmd.delta_pid_max_deg)
+        if cmd.delta_pid_max_deg is not None else cfg_base.DELTA_PID_MAX_DEG,
+        DELTA_TOTAL_MAX_DEG=float(cmd.delta_total_max_deg)
+        if cmd.delta_total_max_deg is not None else cfg_base.DELTA_TOTAL_MAX_DEG,
+        MAX_ARM_RATE_DEG_S=float(cmd.max_arm_rate_deg_s)
+        if cmd.max_arm_rate_deg_s is not None else cfg_base.MAX_ARM_RATE_DEG_S,
+    )
+
+    if not cmd.valid:
+        out.mode = config.CTRL_MODE_NEUTRAL
+        out.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
+        return out
 
     yaw_rate_cmd = cmd.yaw_rate_cmd_deg_s
     if yaw_rate_cmd == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
@@ -220,8 +254,8 @@ def ProduceCtrlOutput(
     # --- Two-stage guidance timeout ---
     if age > GUIDANCE_TIMEOUT_FAIL_S:
         # Command is too stale to trust; revert to neutral.
-        out.mode = "GUIDANCE_TIMEOUT"
-        out.fallback_mode = "GUIDANCE_TIMEOUT"
+        out.mode = config.CTRL_MODE_GUIDANCE_TIMEOUT
+        out.fallback_mode = config.CTRL_FALLBACK_GUIDANCE_TIMEOUT
         out.valid = False
         out.left_angle_deg = NEUTRAL_ARM_DEG
         out.right_angle_deg = NEUTRAL_ARM_DEG
@@ -232,10 +266,11 @@ def ProduceCtrlOutput(
     if age > GUIDANCE_TIMEOUT_ATTENUATE_S:
         # Stale but not dead: attenuate to limit uncommanded drift.
         yaw_rate_cmd *= 0.5
-        out.fallback_mode = "GUIDANCE_ATTENUATED"
+        out.fallback_mode = config.CTRL_FALLBACK_GUIDANCE_ATTENUATED
     else:
-        out.fallback_mode = "NONE"
+        out.fallback_mode = config.CTRL_FALLBACK_NONE
 
+    yaw_rate_cmd = _clamp(yaw_rate_cmd, -cfg.YAW_RATE_CMD_MAX_DEG_S, cfg.YAW_RATE_CMD_MAX_DEG_S)
     out.yaw_rate_cmd_deg_s = yaw_rate_cmd
 
     # dt is shared by PID integration and slew-rate limit; always advances so
@@ -251,14 +286,16 @@ def ProduceCtrlOutput(
     sensor_valid = math.isfinite(yaw_rate_meas_deg_s) and not gyro_spike
     out.sensor_valid = sensor_valid
     if gyro_spike:
-        out.fallback_mode = "GYRO_SPIKE"
+        out.fallback_mode = config.CTRL_FALLBACK_GYRO_SPIKE
 
     # --- PID closed-loop trim (only when gyro measurement is valid) ---
     integral = ctl.pid.integral_deg
     delta_pid = 0.0
     error = 0.0
 
-    if sensor_valid:
+    pid_active = bool(cmd.pid_enabled and cfg.DELTA_PID_MAX_DEG > 0.0 and sensor_valid)
+
+    if pid_active:
         out.yaw_rate_meas_deg_s = yaw_rate_meas_deg_s
         error = yaw_rate_cmd - yaw_rate_meas_deg_s
         if abs(error) < cfg.ERROR_DEADBAND_DEG_S:
@@ -272,11 +309,11 @@ def ProduceCtrlOutput(
         )
         integral = integral_candidate
         out.yaw_rate_error_deg_s = error
-        out.mode = "CLOSED_LOOP"
+        out.mode = config.CTRL_MODE_CLOSED_LOOP
     else:
         # No gyro: FF only. Decay the integral so stale windup does not accumulate.
         integral = ctl.pid.integral_deg * INTEGRAL_DECAY_RATE
-        out.mode = "FEEDFORWARD_ONLY"
+        out.mode = config.CTRL_MODE_FEEDFORWARD_ONLY
 
     # --- Combine FF + PID and clamp total authority ---
     delta_sum = delta_ff + delta_pid
@@ -310,7 +347,7 @@ def ProduceCtrlOutput(
     out.valid = True
 
     # --- State update ---
-    if sensor_valid:
+    if pid_active:
         ctl.pid.prev_error_deg = error
         # Conditional anti-windup: only block integral growth when the error is
         # pushing the output deeper into saturation (same sign as delta_sum).
