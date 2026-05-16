@@ -12,7 +12,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from lib import config
+from lib import config, timebase
 
 
 PARAFOIL_LEFT_MOTOR_PIN = config.PARAFOIL_LEFT_GPIO
@@ -214,7 +214,7 @@ def ProduceCtrlOutput(
     if yaw_rate_cmd == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
         yaw_rate_cmd = math.degrees(cmd.lat_acc_cmd_mps2 / max(cmd.ground_speed_mps, V_MIN_MPS))
 
-    age = now - cmd.timestamp
+    age = timebase.age(now, cmd.timestamp)
     out.guidance_command_age_s = age
 
     # --- Two-stage guidance timeout ---
@@ -240,7 +240,7 @@ def ProduceCtrlOutput(
 
     # dt is shared by PID integration and slew-rate limit; always advances so
     # slew tracking stays accurate even when the gyro is temporarily unavailable.
-    dt = _clamp((now - ctl.pid.prev_time) if ctl.pid.prev_time > 0 else 0.1, 0.01, 0.2)
+    dt = timebase.clamp_dt(now, ctl.pid.prev_time, default_s=0.1, min_s=0.01, max_s=0.2)
 
     # --- Feedforward: expo-shaped, deadbanded ---
     delta_ff = yaw_rate_to_delta_ff(yaw_rate_cmd, cfg)

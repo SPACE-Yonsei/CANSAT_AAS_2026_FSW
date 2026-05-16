@@ -8,6 +8,7 @@ from lib import appargs
 from lib import config
 from lib import msgstructure
 from lib import events
+from lib import timebase
 from Sensor_Gps import gps
 
 import signal
@@ -252,7 +253,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             GPS_SATS = max(int(getattr(config, "GPS_MIN_SATS", 4)), 4)
             GPS_FIX_QUALITY = 1
             GPS_RMC_STATUS = "A"
-            last_valid_gps_ts = time.time()
+            last_valid_gps_ts = timebase.wall_now()
             rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts, 1.0]  # [10]=hdop=1.0 (sim)
         else:
             # Check if gps_instance is valid
@@ -287,7 +288,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                     last_valid_gps_ts = float(rcv_data[9])
                 else:
                     # Backward compatibility for older gps.py payloads.
-                    last_valid_gps_ts = time.time()
+                    last_valid_gps_ts = timebase.wall_now()
                 # Print GPS data for debugging (disabled)
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
@@ -305,7 +306,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         else:
             # GPS 데이터가 없을 때 (None 또는 형식 불일치) - 이전 값 유지
             # 단, 오래된 값은 stale로 간주해 초기값으로 리셋한다.
-            if last_valid_gps_ts > 0 and (time.time() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
+            if last_valid_gps_ts > 0 and (timebase.wall_now() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
                 GPS_LAT = 0.0
                 GPS_LON = 0.0
                 GPS_ALT = 0.0
@@ -321,7 +322,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         #   pos fidelity 실패 → 전송 없음
         #   motion fidelity 실패 → course/spd/motion_ts 를 nan으로 전송
         if rcv_data and len(rcv_data) >= 5:
-            now_mono = time.monotonic()
+            now_mono = timebase.now()
             hdop = float(rcv_data[10]) if len(rcv_data) > 10 and _is_finite(rcv_data[10]) else float('inf')
 
             pos_health = _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)

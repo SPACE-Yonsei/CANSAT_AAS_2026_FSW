@@ -13,6 +13,8 @@ import enum
 import math
 from typing import Optional
 
+from lib import timebase
+
 #Sensor age
 POS_FRESH_AGE    = 1.0    # s
 MOTION_FRESH_AGE = 1.0    # s
@@ -201,7 +203,7 @@ def FillFresh(
         and gps.lon is not None
         and gps.pos_ts is not None
         and getattr(gps, "pos_health", 1)
-        and now - gps.pos_ts <= POS_FRESH_AGE
+        and timebase.valid_age(gps.pos_ts, now, POS_FRESH_AGE)
         and start_lat is not None
         and start_lon is not None
     ):
@@ -222,7 +224,7 @@ def FillFresh(
         and gps_speed is not None
         and gps.motion_ts is not None
         and getattr(gps, "motion_health", 1)
-        and now - gps.motion_ts <= MOTION_FRESH_AGE
+        and timebase.valid_age(gps.motion_ts, now, MOTION_FRESH_AGE)
     ):
         l1_input.course = gps_course
         l1_input.ground_speed_mps = gps_speed
@@ -233,7 +235,7 @@ def FillFresh(
         and imu_gyrz is not None
         and imu.ts is not None
         and getattr(imu, "health", 1)
-        and now - imu.ts <= GYRZ_FRESH_AGE
+        and timebase.valid_age(imu.ts, now, GYRZ_FRESH_AGE)
     ):
         l1_input.gyrz = imu_gyrz
         l1_input.gyrz_quality = SensorQuality.FRESH
@@ -245,7 +247,7 @@ def FillFresh(
         and baro_alt is not None
         and baro.ts is not None
         and getattr(baro, "health", 1)
-        and now - baro.ts <= ALT_FRESH_AGE
+        and timebase.valid_age(baro.ts, now, ALT_FRESH_AGE)
     ):
         l1_input.alt         = baro_alt
         l1_input.alt_quality = SensorQuality.FRESH
@@ -279,7 +281,7 @@ def FillFreshed(
             and freshed_gps.lon is not None
             and freshed_gps.pos_ts is not None
             and getattr(freshed_gps, "pos_health", 1)
-            and 0.0 <= now - freshed_gps.pos_ts <= POS_EST_AGE
+            and timebase.valid_age(freshed_gps.pos_ts, now, POS_EST_AGE)
             and origin_lat is not None
             and origin_lon is not None
         ):
@@ -324,8 +326,7 @@ def FillFreshed(
             and freshed_gps.motion_ts is not None
             and getattr(freshed_gps, "motion_health", 1)
         ):
-            age = now - freshed_gps.motion_ts
-            if 0.0 <= age <= MOTION_EST_AGE:
+            if timebase.valid_age(freshed_gps.motion_ts, now, MOTION_EST_AGE):
                 l1_input.course = freshed_gps_course
                 l1_input.ground_speed_mps = freshed_gps_speed
                 l1_input.motion_quality = SensorQuality.FRESHED
@@ -341,8 +342,7 @@ def FillFreshed(
             and freshed_imu.ts is not None
             and getattr(freshed_imu, "health", 1)
         ):
-            age = now - freshed_imu.ts
-            if 0.0 <= age <= GYRZ_EST_AGE:
+            if timebase.valid_age(freshed_imu.ts, now, GYRZ_EST_AGE):
                 l1_input.gyrz         = freshed_imu_gyrz
                 l1_input.gyrz_quality = SensorQuality.FRESHED
                 l1_input.freefall     = getattr(freshed_imu, "freefall", 0)
@@ -359,8 +359,7 @@ def FillFreshed(
             and freshed_baro.ts is not None
             and getattr(freshed_baro, "health", 1)
         ):
-            age = now - freshed_baro.ts
-            if 0.0 <= age <= ALT_EST_AGE:
+            if timebase.valid_age(freshed_baro.ts, now, ALT_EST_AGE):
                 l1_input.alt         = freshed_baro_alt
                 l1_input.alt_quality = SensorQuality.FRESHED
             else:

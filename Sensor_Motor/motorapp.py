@@ -20,7 +20,7 @@ import threading
 import time
 from typing import Optional
 
-from lib import appargs, config, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate, timebase
 
 from . import control, guidance
 
@@ -315,7 +315,7 @@ def _gps_position_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
         and sample.lat is not None
         and sample.lon is not None
         and sample.pos_ts is not None
-        and 0.0 <= now - sample.pos_ts <= age
+        and timebase.valid_age(sample.pos_ts, now, age)
     )
 
 
@@ -325,7 +325,7 @@ def _gps_motion_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
         and sample.course_rad is not None
         and sample.speed_mps is not None
         and sample.motion_ts is not None
-        and 0.0 <= now - sample.motion_ts <= age
+        and timebase.valid_age(sample.motion_ts, now, age)
     )
 
 
@@ -341,7 +341,7 @@ def _imu_gyrz_valid(sample: _ImuFromApp, now: float, age: float) -> bool:
         sample.health
         and sample.gyrz_rad_s is not None
         and sample.ts is not None
-        and 0.0 <= now - sample.ts <= age
+        and timebase.valid_age(sample.ts, now, age)
     )
 
 
@@ -350,7 +350,7 @@ def _baro_alt_valid(sample: _BaroFromApp, now: float, age: float) -> bool:
         sample.health
         and sample.alt_m is not None
         and sample.ts is not None
-        and 0.0 <= now - sample.ts <= age
+        and timebase.valid_age(sample.ts, now, age)
     )
 
 
@@ -430,11 +430,12 @@ def _est_course_with_gyro_propagation(
     if (
         gyrz_rad_s is None
         or not math.isfinite(float(gyrz_rad_s))
-        or motion_ts >= now
-        or now - motion_ts > guidance.MOTION_HISTORY_AGE
+        or not timebase.valid_age(motion_ts, now, guidance.MOTION_HISTORY_AGE)
     ):
         return float(course_rad), float(motion_ts)
-    return (float(course_rad) + float(gyrz_rad_s) * (now - motion_ts)) % (2.0 * math.pi), now
+    return (
+        float(course_rad) + float(gyrz_rad_s) * timebase.age(now, motion_ts)
+    ) % (2.0 * math.pi), now
 
 
 def _est_gps_from_history(
@@ -444,7 +445,7 @@ def _est_gps_from_history(
     origin_lon: Optional[float] = None,
     gyrz_rad_s: Optional[float] = None,
 ) -> _GpsFromApp:
-    now = time.monotonic() if now is None else now
+    now = timebase.now() if now is None else now
     freshed = _GpsFromApp()
     pos_samples = _valid_gps_position_samples(history, now)
     motion_samples = _valid_gps_motion_samples(history, now)
@@ -452,7 +453,7 @@ def _est_gps_from_history(
 
     if velocity is not None:
         latest_pos = pos_samples[-1]
-        age = max(0.0, now - latest_pos.pos_ts)
+        age = timebase.nonnegative_age(now, latest_pos.pos_ts)
         n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
         v_n, v_e = velocity
         lat, lon = guidance.ne_to_latlon(n1 + v_n * age, e1 + v_e * age, origin_lat, origin_lon)
@@ -478,7 +479,7 @@ def _est_gps_from_history(
             gyrz_rad_s,
         )
         speed = float(latest_motion.speed_mps)
-        pos_age = max(0.0, now - latest_pos.pos_ts)
+        pos_age = timebase.nonnegative_age(now, latest_pos.pos_ts)
         n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
         dist_m = speed * pos_age
         lat, lon = guidance.ne_to_latlon(
@@ -503,8 +504,7 @@ def _est_gps_from_history(
         and math.isfinite(float(gyrz_rad_s))
         and freshed.course_rad is not None
         and freshed.motion_ts is not None
-        and freshed.motion_ts < now
-        and now - freshed.motion_ts <= guidance.MOTION_HISTORY_AGE
+        and timebase.valid_age(freshed.motion_ts, now, guidance.MOTION_HISTORY_AGE)
     ):
         freshed.course_rad, freshed.motion_ts = _est_course_with_gyro_propagation(
             freshed.course_rad,
@@ -516,20 +516,20 @@ def _est_gps_from_history(
 
 
 def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
-    now = time.monotonic() if now is None else now
+    now = timebase.now() if now is None else now
     recent = [
         sample
         for sample in history
         if (
             _imu_gyrz_valid(sample, now, guidance.GYRZ_HISTORY_AGE)
-            and now - sample.ts <= IMU_ESTIMATE_SEC
+            and timebase.valid_age(sample.ts, now, IMU_ESTIMATE_SEC)
         )
     ]
     if recent:
         weighted_sum = 0.0
         weight_total = 0.0
         for sample in recent:
-            age = max(0.0, now - sample.ts)
+            age = timebase.nonnegative_age(now, sample.ts)
             weight = max(0.05, 1.0 - age / max(IMU_ESTIMATE_SEC, 1.0e-6))
             weighted_sum += float(sample.gyrz_rad_s) * weight
             weight_total += weight
@@ -545,7 +545,7 @@ def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
 
 
 def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp:
-    now = time.monotonic() if now is None else now
+    now = timebase.now() if now is None else now
     samples = [
         sample
         for sample in history
@@ -572,7 +572,7 @@ def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp
     if sink_rate is None or not math.isfinite(float(sink_rate)):
         return _BaroFromApp(**vars(latest))
 
-    age = max(0.0, now - latest.ts)
+    age = timebase.nonnegative_age(now, latest.ts)
     return _BaroFromApp(
         alt_m=float(latest.alt_m) - float(sink_rate) * age,
         sink_rate=float(sink_rate),
@@ -616,7 +616,7 @@ def _est_dead_reckon(
         and motion_source.speed_mps is not None
         and math.isfinite(float(motion_source.course_rad))
         and math.isfinite(float(motion_source.speed_mps))
-        and 0.0 <= now - motion_source.motion_ts <= guidance.MOTION_DR_AGE
+        and timebase.valid_age(motion_source.motion_ts, now, guidance.MOTION_DR_AGE)
         and (dr.motion_ts is None or motion_source.motion_ts > dr.motion_ts)
     ):
         dr.course_rad = motion_source.course_rad
@@ -626,7 +626,7 @@ def _est_dead_reckon(
     if not dr.valid or dr.anchor_ts is None:
         return dr
 
-    if now - dr.anchor_ts > guidance.POS_DR_AGE:
+    if not timebase.valid_age(dr.anchor_ts, now, guidance.POS_DR_AGE):
         dr.valid = False
         return dr
 
@@ -637,13 +637,13 @@ def _est_dead_reckon(
         dr.lon = dr.anchor_lon
         dr.ts  = now
         return dr
-    if dr.motion_ts is not None and now - dr.motion_ts > guidance.MOTION_DR_AGE:
+    if dr.motion_ts is not None and not timebase.valid_age(dr.motion_ts, now, guidance.MOTION_DR_AGE):
         dr.lat = dr.anchor_lat
         dr.lon = dr.anchor_lon
         dr.ts  = now
         return dr
 
-    dt     = max(0.0, now - dr.anchor_ts)
+    dt     = timebase.nonnegative_age(now, dr.anchor_ts)
     dist_m = float(speed) * dt
 
     anchor_lat = float(dr.anchor_lat)
@@ -722,7 +722,7 @@ def handle_gps(data: str) -> None:
         course_deg = float(fields[3])   # nan when motion invalid
         speed_mps  = float(fields[4])   # nan when motion invalid
         motion_ts  = float(fields[5])   # nan when motion invalid
-        rx_ts = time.monotonic()
+        rx_ts = timebase.now()
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
@@ -776,7 +776,7 @@ def handle_imu(data: str) -> None:
         freefall   = int(float(fields[13]))
         tumble     = int(float(fields[14]))
         health     = int(float(fields[15]))
-        rx_ts = time.monotonic()
+        rx_ts = timebase.now()
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
         return
@@ -817,7 +817,7 @@ def handle_barometer(data: str) -> None:
         sink_s    = fields[2].strip()
         sink_rate = None if sink_s == "nan" else float(sink_s)
         health    = int(float(fields[3]))
-        rx_ts = time.monotonic()
+        rx_ts = timebase.now()
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)
         return
@@ -1075,7 +1075,7 @@ def _age_s(now: float, timestamp: Optional[float]) -> str:
     if timestamp is None:
         return ""
     try:
-        age = now - float(timestamp)
+        age = timebase.age(now, timestamp)
     except (TypeError, ValueError):
         return ""
     return "" if not math.isfinite(age) else f"{age:.4f}"
@@ -1207,7 +1207,7 @@ def ctrl_parafoil(main_queue=None) -> None:
     global _CONTROLLER
     period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
     while MOTORAPP_RUNSTATUS:
-        now = time.monotonic()
+        now = timebase.now()
         try:
             if not MOTOR_ENABLED or STATE < 3:
                 if PI is not None:

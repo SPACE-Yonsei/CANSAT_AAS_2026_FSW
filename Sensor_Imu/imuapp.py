@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from lib import appargs, config, msgstructure, prevstate, sensorlog
+from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
 
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ def imuapp_init() -> None:
 
 def _try_reinit() -> None:
     global _i2c_instance, _imu_instance, _last_reinit_ts
-    _last_reinit_ts = time.time()
+    _last_reinit_ts = timebase.wall_now()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -179,7 +179,7 @@ def _stale_watchdog_check() -> bool:
     Returns ``True`` if a reinit was triggered (so caller can skip the rest of the
     loop iteration). Debounced by ``IMU_REINIT_COOLDOWN_SEC`` to avoid reinit storms.
     """
-    now = time.time()
+    now = timebase.wall_now()
     if _last_sample_ts <= 0.0:
         return False
     if (now - _last_sample_ts) <= IMU_STALE_REINIT_SEC:
@@ -244,8 +244,8 @@ def read_imu_data() -> None:
             GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(_gyrz_ema)
             FREEFALL = freefall_flag
             TUMBLE   = tumble_flag
-            _last_sample_ts       = time.time()
-            _last_sample_mono_ts  = time.monotonic()
+            _last_sample_ts       = timebase.wall_now()
+            _last_sample_mono_ts  = timebase.now()
 
         HEALTH = 1
         time.sleep(period)
@@ -255,7 +255,7 @@ def send_imu_data(main_queue) -> None:
     global HEALTH
     tick = 0
     while IMUAPP_RUNSTATUS:
-        now = time.time()
+        now = timebase.wall_now()
         if now - _last_sample_ts > IMU_STALE_TIMEOUT_SEC:
             HEALTH = 0
 
