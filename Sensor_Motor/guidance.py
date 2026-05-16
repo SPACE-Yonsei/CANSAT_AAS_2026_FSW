@@ -3,7 +3,7 @@
 Implements ArduPilot L1 navigation controller logic ported to Python.
 Reference: libraries/AP_L1_Control/AP_L1_Control.cpp :: update_waypoint()
 
-Sign convention: commanded_angular_velocity < 0 = LEFT turn.
+Sign convention: commanded_angular_velocity > 0 = RIGHT turn, < 0 = LEFT turn.
 Units: _deg / _rad / _m / _ms / _mps suffixes throughout.
 """
 

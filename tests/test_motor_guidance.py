@@ -5,7 +5,7 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from Sensor_Motor import guidance
+from Sensor_Motor import control, guidance
 from Sensor_Motor.guidance import SensorQuality, ControlMode
 
 ORIGIN_LAT = 37.55
@@ -291,6 +291,34 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertTrue(out.nominal)
         self.assertGreater(out.crossTrack, 0.0)
         self.assertLess(out.angular_velocity_cmd_rad_s, 0.0)
+
+    def test_left_of_path_guidance_drives_right_brake_down(self):
+        inp = self._active_input(pos_n=100.0, pos_e=-50.0, course_deg=0.0, speed=8.0)
+        g_out = self._run(inp)
+        cmd = control.ProduceCtrlOutput(
+            control.MakeCtrler(),
+            control.ProduceCtrlInput(g_out, g_out.timestamp),
+            float("nan"),
+            g_out.timestamp,
+        )
+        self.assertGreater(g_out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertGreater(cmd.delta_arm_deg, 0.0)
+        self.assertLess(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
+        self.assertGreater(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
+
+    def test_right_of_path_guidance_drives_left_brake_down(self):
+        inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
+        g_out = self._run(inp)
+        cmd = control.ProduceCtrlOutput(
+            control.MakeCtrler(),
+            control.ProduceCtrlInput(g_out, g_out.timestamp),
+            float("nan"),
+            g_out.timestamp,
+        )
+        self.assertLess(g_out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertLess(cmd.delta_arm_deg, 0.0)
+        self.assertGreater(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
+        self.assertLess(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_nu1_is_position_driven_turn_angle(self):
         """Right of northward path requires a negative nu1 left-turn correction."""

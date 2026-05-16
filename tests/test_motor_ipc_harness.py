@@ -179,6 +179,16 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
         self.assertNotEqual(cmd.left_pw, control.LEFT_NEUTRAL)
         self.assertNotEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
         self.assertLess(cmd.delta_arm_deg, 0.0)
+        self.assertGreater(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
+        self.assertLess(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
+
+    def test_manual_steer_right_command_outputs_turning_pulses(self):
+        cmd = motorapp._manual_steer_command(time.monotonic(), "RIGHT")
+        self.assertNotEqual(cmd.left_pw, control.LEFT_NEUTRAL)
+        self.assertNotEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
+        self.assertGreater(cmd.delta_arm_deg, 0.0)
+        self.assertLess(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
+        self.assertGreater(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
 
 if __name__ == "__main__":

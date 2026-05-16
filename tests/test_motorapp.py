@@ -440,6 +440,17 @@ class TestHistoryEstimates(unittest.TestCase):
         self.assertIsNone(dr.anchor_lat)
         self.assertAlmostEqual(dr.speed_mps, 8.0)
 
+    def test_positive_nav_gyrz_propagates_course_clockwise(self):
+        t0 = time.monotonic()
+        course, motion_ts = motorapp._est_course_with_gyro_propagation(
+            math.radians(90.0),
+            t0,
+            t0 + 1.0,
+            math.radians(10.0),
+        )
+        self.assertAlmostEqual(course, math.radians(100.0), places=6)
+        self.assertAlmostEqual(motion_ts, t0 + 1.0)
+
     def test_imu_history_weighted_average_within_feedback_window(self):
         t0 = time.monotonic() - 0.4
         history = [
