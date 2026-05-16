@@ -351,11 +351,11 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
         l1_input.gyrz is not None
         and gyrz_quality in (SensorQuality.FRESH, SensorQuality.FRESHED)
     )
-    active = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
+    nominal = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
 
-    if active and closed_loop:
+    if nominal and closed_loop:
         return ControlMode.NOMINAL_CLOSED_LOOP
-    if active:
+    if nominal:
         return ControlMode.NOMINAL_FEEDFORWARD
     if closed_loop:
         return ControlMode.DEGRADED_CLOSED_LOOP
