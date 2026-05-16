@@ -234,7 +234,7 @@ def main() -> None:
             "heading_rad": 0.0,
             "left_angle_deg": 80.0, "right_angle_deg": 80.0,
             "delta_arm_deg": 0.0, "left_pw": 1591, "right_pw": 1524,
-            "alt_m": START_ALT_M, "active": False,
+            "alt_m": START_ALT_M, "nominal": False,
             "wind_N": 0.0, "wind_E": 0.0, "gnd_speed_mps": 0.0,
         }
         with open(DATA_FILE, "w") as _f:
@@ -349,7 +349,7 @@ def main() -> None:
                 "right_pw": ctrl_out.right_pw,
                 # State
                 "alt_m":  round(sim_alt, 2),
-                "active": l1_out.nominal,
+                "nominal": l1_out.nominal,
                 # Wind
                 "wind_N": round(wind_N, 3),
                 "wind_E": round(wind_E, 3),

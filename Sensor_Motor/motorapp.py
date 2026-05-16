@@ -47,7 +47,7 @@ _CONTROL_LOG_HEADER = [
     "guidance_reason",
     "guidance_mode",
     "control_mode",
-    "active",
+    "nominal",
     "degraded",
     "valid",
     "gps_lat",
@@ -1174,7 +1174,7 @@ def _write_control_debug_log(
                     str(getattr(g_out, "reason", "")),
                     str(getattr(mode, "value", mode) if mode is not None else ""),
                     str(getattr(cmd, "mode", "")),
-                    str(int(bool(getattr(g_out, "active", False)))),
+                    str(int(bool(getattr(g_out, "nominal", False)))),
                     str(int(bool(getattr(g_out, "degraded", False)))),
                     str(int(bool(getattr(cmd, "valid", False)))),
                     _fmt_log(gps.lat, 8),
@@ -1342,7 +1342,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 l1_state=_L1_STATE,
             )
 
-            if bool(getattr(g_out, "active", False)):
+            if bool(getattr(g_out, "nominal", False)):
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
                 yaw_rate_meas_deg_s = float("nan")
@@ -1360,8 +1360,8 @@ def ctrl_parafoil(main_queue=None) -> None:
             if PI is not None:
                 control.SetServoPulsewidth(PI, cmd)
             diag_state = (
-                "DEGRADED" if bool(getattr(g_out, "active", False)) and bool(getattr(g_out, "degraded", False))
-                else "ACTIVE" if bool(getattr(g_out, "active", False))
+                "DEGRADED" if bool(getattr(g_out, "nominal", False)) and bool(getattr(g_out, "degraded", False))
+                else "ACTIVE" if bool(getattr(g_out, "nominal", False))
                 else str(getattr(g_out, "reason", "DISABLED") or "DISABLED")
             )
             _write_control_debug_log(now, snap, l1_input, mode, g_out, cmd, diag_state)

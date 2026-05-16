@@ -117,7 +117,7 @@ def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
         yaw_rate_cmd_deg_s=math.degrees(float(getattr(g_out, "yaw_rate_cmd_rad_s", 0.0) or 0.0)),
         lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
         ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
-        valid=bool(getattr(g_out, "active", False)),
+        valid=bool(getattr(g_out, "nominal", False)),
         timestamp=float(getattr(g_out, "timestamp", now) or now),
     )
 

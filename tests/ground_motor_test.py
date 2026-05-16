@@ -269,7 +269,7 @@ def run_section_b() -> None:
         _row("입력 course", f"{math.degrees(sc['course_rad']):+.1f}°")
 
         _sep("L1 Output")
-        _row("active",          str(g_out.nominal))
+        _row("nominal",         str(g_out.nominal))
         _row("nu_deg",          f"{math.degrees(g_out.nu):+.3f}°")
         _row("  nu1 (xtrack)",  f"{math.degrees(g_out.nu1):+.3f}°  crosstrack 기여")
         _row("  nu2 (heading)", f"{math.degrees(g_out.nu2):+.3f}°  heading error 기여")

@@ -157,7 +157,7 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
             yaw_rate_cmd_rad_s=0.5,
             lat_acc_cmd_mps2=1.5,
             ground_speed_mps=7.0,
-            active=True,
+            nominal=True,
             timestamp=100.0,
         )
         gcmd = control.ProduceCtrlInput(l1, 100.0)
@@ -166,13 +166,13 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
         self.assertAlmostEqual(gcmd.ground_speed_mps, 7.0)
         self.assertAlmostEqual(gcmd.lat_acc_cmd_mps2, 1.5)
 
-    def test_inactive_l1_gives_invalid_cmd(self):
+    def test_non_nominal_l1_gives_invalid_cmd(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
             yaw_rate_cmd_rad_s=0.0,
             lat_acc_cmd_mps2=0.0,
             ground_speed_mps=0.0,
-            active=False,
+            nominal=False,
             timestamp=100.0,
         )
         gcmd = control.ProduceCtrlInput(l1, 100.0)
