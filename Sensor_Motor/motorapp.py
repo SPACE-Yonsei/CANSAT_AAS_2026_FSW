@@ -161,6 +161,32 @@ class _DeadReckoning:
 
 
 @dataclass
+class _EstimatedSample:
+    """한 제어 주기에서 history 기반으로 산출된 추정 센서값."""
+    # GPS position
+    lat:          Optional[float] = None
+    lon:          Optional[float] = None
+    pos_ts:       Optional[float] = None
+    pos_valid:    bool = False
+    # GPS motion
+    course_rad:   Optional[float] = None
+    speed_mps:    Optional[float] = None
+    motion_ts:    Optional[float] = None
+    motion_valid: bool = False
+    # IMU
+    gyrz_rad_s:   Optional[float] = None
+    gyrz_ts:      Optional[float] = None
+    gyrz_valid:   bool = False
+    # Baro
+    alt_m:        Optional[float] = None
+    sink_rate:    Optional[float] = None
+    alt_ts:       Optional[float] = None
+    alt_valid:    bool = False
+    # 이 샘플이 산출된 제어 주기 시각
+    ts:           Optional[float] = None
+
+
+@dataclass
 class _Cache:
     latest_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
     gps_history: deque[_GpsFromApp] = field(
@@ -184,6 +210,15 @@ class _Cache:
     )
 
     dr: _DeadReckoning = field(default_factory=_DeadReckoning)
+
+    estimated_history: deque[_EstimatedSample] = field(
+        default_factory=lambda: deque(
+            maxlen=_history_len(
+                float(config.MOTOR_RATE_HZ),
+                max(guidance.POS_DR_AGE, guidance.MOTION_DR_AGE, guidance.ALT_DR_AGE),
+            )
+        )
+    )
 
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
@@ -653,6 +688,32 @@ def _dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _D
     return dr
 
 
+def _make_estimated_sample(
+    freshed_gps: _GpsFromApp,
+    freshed_imu: _ImuFromApp,
+    freshed_baro: _BaroFromApp,
+    now: float,
+) -> _EstimatedSample:
+    return _EstimatedSample(
+        lat          = freshed_gps.lat,
+        lon          = freshed_gps.lon,
+        pos_ts       = freshed_gps.pos_ts,
+        pos_valid    = bool(freshed_gps.pos_health and freshed_gps.lat is not None),
+        course_rad   = freshed_gps.course_rad,
+        speed_mps    = freshed_gps.speed_mps,
+        motion_ts    = freshed_gps.motion_ts,
+        motion_valid = bool(freshed_gps.motion_health and freshed_gps.course_rad is not None),
+        gyrz_rad_s   = freshed_imu.gyrz_rad_s,
+        gyrz_ts      = freshed_imu.ts,
+        gyrz_valid   = bool(freshed_imu.health and freshed_imu.gyrz_rad_s is not None),
+        alt_m        = freshed_baro.alt_m,
+        sink_rate    = freshed_baro.sink_rate,
+        alt_ts       = freshed_baro.ts,
+        alt_valid    = bool(freshed_baro.health and freshed_baro.alt_m is not None),
+        ts           = now,
+    )
+
+
 _CONTROLLER = None
 _L1_STATE = None
 
@@ -670,6 +731,9 @@ def _cache_snapshot() -> _Cache:
         latest_baro=latest_baro,
         baro_history=_copy_deque(_CACHE.baro_history, _BaroFromApp, _CACHE.baro_history.maxlen),
         dr=dr,
+        estimated_history=_copy_deque(
+            _CACHE.estimated_history, _EstimatedSample, _CACHE.estimated_history.maxlen
+        ),
         target_lat=_CACHE.target_lat,
         target_lon=_CACHE.target_lon,
         start_lat=_CACHE.start_lat,
@@ -1235,6 +1299,10 @@ def ctrl_parafoil(main_queue=None) -> None:
             )
             freshed_baro = _freshed_baro_from_history(snap.baro_history, now)
             _dead_reckon(snap.dr, freshed_gps, now)
+
+            est = _make_estimated_sample(freshed_gps, freshed_imu, freshed_baro, now)
+            with _UPDATE_LOCK:
+                _CACHE.estimated_history.append(est)
 
             l1_input, mode = guidance.ProduceL1Input(
                 gps=snap.latest_gps,
