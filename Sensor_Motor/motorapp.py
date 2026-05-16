@@ -582,7 +582,7 @@ def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp
 
 def _est_dead_reckon(
     dr: _DeadReckoning,
-    fresh_gps: _GpsFromApp,
+    latest_gps: _GpsFromApp,
     est_gps: _GpsFromApp,
     now: float,
 ) -> _DeadReckoning:
@@ -594,17 +594,17 @@ def _est_dead_reckon(
     모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
     """
     if (
-        _gps_position_valid(fresh_gps, now, guidance.POS_FRESH_AGE)
-        and (dr.anchor_ts is None or fresh_gps.pos_ts > dr.anchor_ts)
+        _gps_position_valid(latest_gps, now, guidance.POS_FRESH_AGE)
+        and (dr.anchor_ts is None or latest_gps.pos_ts > dr.anchor_ts)
     ):
-        dr.anchor_lat = fresh_gps.lat
-        dr.anchor_lon = fresh_gps.lon
-        dr.anchor_ts  = fresh_gps.pos_ts
+        dr.anchor_lat = latest_gps.lat
+        dr.anchor_lon = latest_gps.lon
+        dr.anchor_ts  = latest_gps.pos_ts
         dr.valid = True
 
     motion_source = (
-        fresh_gps
-        if _gps_motion_valid(fresh_gps, now, guidance.MOTION_FRESH_AGE)
+        latest_gps
+        if _gps_motion_valid(latest_gps, now, guidance.MOTION_FRESH_AGE)
         else est_gps
     )
     if (
