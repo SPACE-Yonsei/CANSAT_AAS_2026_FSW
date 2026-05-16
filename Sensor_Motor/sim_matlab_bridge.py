@@ -219,7 +219,7 @@ def main() -> None:
             "start_N": 0.0, "start_E": 0.0,
             "target_N": target_N, "target_E": target_E,
             "carrot_N": 0.0, "carrot_E": 0.0,
-            "yaw_rate_cmd_rad_s": 0.0, "lat_acc_cmd_mps2": 0.0,
+            "angular_velocity_cmd_rad_s": 0.0, "lat_acc_cmd_mps2": 0.0,
             "nu": 0.0, "nu1": 0.0, "nu2": 0.0,
             "crossTrack": 0.0, "alongTrack": 0.0, "L1_distance": 5.0,
             "heading_rad": 0.0,
@@ -297,7 +297,7 @@ def main() -> None:
             )
 
             # ── Integrate kinematics (with wind drift) ──────────────────
-            yaw_cmd   = l1_out.yaw_rate_cmd_rad_s if l1_out.nominal else 0.0
+            yaw_cmd   = l1_out.angular_velocity_cmd_rad_s if l1_out.nominal else 0.0
             sim_gyrz  = yaw_cmd                       # 1-step delay feedback
             sim_heading += yaw_cmd * dt
             sim_heading  = (sim_heading + math.pi) % (2.0 * math.pi) - math.pi
@@ -323,7 +323,7 @@ def main() -> None:
                 "carrot_N": round(l1_out.carrot_N, 3),
                 "carrot_E": round(l1_out.carrot_E, 3),
                 # L1 guidance outputs
-                "yaw_rate_cmd_rad_s": round(l1_out.yaw_rate_cmd_rad_s, 5),
+                "angular_velocity_cmd_rad_s": round(l1_out.angular_velocity_cmd_rad_s, 5),
                 "lat_acc_cmd_mps2":   round(l1_out.lat_acc_cmd_mps2,   5),
                 "nu":          round(l1_out.nu,          5),
                 "nu1":         round(l1_out.nu1,         5),
@@ -369,7 +369,7 @@ def main() -> None:
                 print(
                     f"  t={now:6.1f}s | alt={sim_alt:6.1f}m | "
                     f"dist={dist:6.1f}m | "
-                    f"yaw={math.degrees(l1_out.yaw_rate_cmd_rad_s):+6.2f} deg/s | "
+                    f"yaw={math.degrees(l1_out.angular_velocity_cmd_rad_s):+6.2f} deg/s | "
                     f"L={L:5.1f}°({dL:+5.1f}) R={R:5.1f}°({dR:+5.1f}) | "
                     f"delta={ctrl_out.delta_arm_deg:+5.1f}° | "
                     f"{l1_out.reason}"

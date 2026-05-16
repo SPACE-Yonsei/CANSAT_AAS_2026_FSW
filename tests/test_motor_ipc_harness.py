@@ -165,7 +165,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
             pi = control.init_control()
             ctl = control.MakeCtrler()
             gcmd = control.CtrlInput(
-                yaw_rate_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
+                angular_velocity_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
             )
             cmd = control.ProduceCtrlOutput(ctl, gcmd, float("nan"), time.monotonic())
             control.ProducePulse(pi, cmd)

@@ -65,8 +65,8 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 @dataclass
 class ControlConfig:
     # Feedforward shaping
-    YAW_RATE_CMD_MAX_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S
-    YAW_RATE_DEADBAND_DEG_S: float = 3.0       # below this, FF output is zero to avoid dithering
+    ANGULAR_VELOCITY_CMD_MAX_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S
+    ANGULAR_VELOCITY_DEADBAND_DEG_S: float = 3.0       # below this, FF output is zero to avoid dithering
     DELTA_FF_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
     DELTA_MIN_EFFECTIVE_DEG: float = 8.0       # minimum FF deflection above deadband
     EXPO: float = 0.8                          # <1 gives finer control near center
@@ -101,13 +101,13 @@ class Ctrler:
 
 @dataclass
 class CtrlInput:
-    yaw_rate_cmd_deg_s: float = 0.0
+    angular_velocity_cmd_deg_s: float = 0.0
     lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
     valid: bool = False
     timestamp: float = 0.0
     pid_enabled: bool = True
-    yaw_rate_cmd_max_deg_s: Optional[float] = None
+    angular_velocity_cmd_max_deg_s: Optional[float] = None
     delta_ff_max_deg: Optional[float] = None
     delta_pid_max_deg: Optional[float] = None
     delta_total_max_deg: Optional[float] = None
@@ -124,9 +124,9 @@ class CtrlOutput:
     delta_arm_deg: float = 0.0
     delta_ff_deg: float = 0.0
     delta_pid_deg: float = 0.0
-    yaw_rate_cmd_deg_s: float = 0.0
-    yaw_rate_meas_deg_s: float = float("nan")
-    yaw_rate_error_deg_s: float = 0.0
+    angular_velocity_cmd_deg_s: float = 0.0
+    angular_velocity_meas_deg_s: float = float("nan")
+    angular_velocity_error_deg_s: float = 0.0
     saturated: bool = False
     sensor_valid: bool = False
     valid: bool = False
@@ -152,13 +152,13 @@ def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
         or getattr(g_out, "degraded", False)
     )
     return CtrlInput(
-        yaw_rate_cmd_deg_s=math.degrees(float(getattr(g_out, "yaw_rate_cmd_rad_s", 0.0) or 0.0)),
+        angular_velocity_cmd_deg_s=math.degrees(float(getattr(g_out, "angular_velocity_cmd_rad_s", 0.0) or 0.0)),
         lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
         ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
         valid=is_valid,
         timestamp=float(getattr(g_out, "timestamp", now) or now),
         pid_enabled=bool(getattr(g_out, "pid_enabled", True)),
-        yaw_rate_cmd_max_deg_s=getattr(g_out, "yaw_rate_cmd_max_deg_s", None),
+        angular_velocity_cmd_max_deg_s=getattr(g_out, "angular_velocity_cmd_max_deg_s", None),
         delta_ff_max_deg=getattr(g_out, "delta_ff_max_deg", None),
         delta_pid_max_deg=getattr(g_out, "delta_pid_max_deg", None),
         delta_total_max_deg=getattr(g_out, "delta_total_max_deg", None),
@@ -166,18 +166,18 @@ def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
     )
 
 
-def yaw_rate_to_delta_ff(yaw_rate_cmd_deg_s: float, cfg: ControlConfig) -> float:
-    """Map yaw-rate command to feedforward differential arm deflection.
+def angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s: float, cfg: ControlConfig) -> float:
+    """Map angular velocity command to feedforward differential arm deflection.
 
     Expo curve gives proportional authority at small inputs and approaches
     DELTA_FF_MAX_DEG at full command, preserving DELTA_PID_MAX_DEG headroom for trim.
     Below DEADBAND returns zero so tiny commands don't cause dithering.
     Sign: positive = right turn (right arm down, left arm up).
     """
-    clamped = _clamp(yaw_rate_cmd_deg_s, -cfg.YAW_RATE_CMD_MAX_DEG_S, cfg.YAW_RATE_CMD_MAX_DEG_S)
-    if abs(clamped) < cfg.YAW_RATE_DEADBAND_DEG_S:
+    clamped = _clamp(angular_velocity_cmd_deg_s, -cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S, cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S)
+    if abs(clamped) < cfg.ANGULAR_VELOCITY_DEADBAND_DEG_S:
         return 0.0
-    x = abs(clamped) / cfg.YAW_RATE_CMD_MAX_DEG_S
+    x = abs(clamped) / cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S
     delta = cfg.DELTA_MIN_EFFECTIVE_DEG + (cfg.DELTA_FF_MAX_DEG - cfg.DELTA_MIN_EFFECTIVE_DEG) * (x ** cfg.EXPO)
     return math.copysign(delta, clamped)
 
@@ -212,7 +212,7 @@ def controller_reset(ctl: Ctrler) -> None:
 def ProduceCtrlOutput(
     ctl: Ctrler,
     cmd: CtrlInput,
-    yaw_rate_meas_deg_s: float,
+    angular_velocity_meas_deg_s: float,
     now: float,
 ) -> CtrlOutput:
     """Compute brake servo command from GuidanceCommand + optional gyro feedback.
@@ -227,8 +227,8 @@ def ProduceCtrlOutput(
     cfg_base = ctl.config
     cfg = replace(
         cfg_base,
-        YAW_RATE_CMD_MAX_DEG_S=float(cmd.yaw_rate_cmd_max_deg_s)
-        if cmd.yaw_rate_cmd_max_deg_s is not None else cfg_base.YAW_RATE_CMD_MAX_DEG_S,
+        ANGULAR_VELOCITY_CMD_MAX_DEG_S=float(cmd.angular_velocity_cmd_max_deg_s)
+        if cmd.angular_velocity_cmd_max_deg_s is not None else cfg_base.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
         DELTA_FF_MAX_DEG=float(cmd.delta_ff_max_deg)
         if cmd.delta_ff_max_deg is not None else cfg_base.DELTA_FF_MAX_DEG,
         DELTA_PID_MAX_DEG=float(cmd.delta_pid_max_deg)
@@ -244,9 +244,9 @@ def ProduceCtrlOutput(
         out.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
         return out
 
-    yaw_rate_cmd = cmd.yaw_rate_cmd_deg_s
-    if yaw_rate_cmd == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
-        yaw_rate_cmd = math.degrees(cmd.lat_acc_cmd_mps2 / max(cmd.ground_speed_mps, V_MIN_MPS))
+    angular_velocity_cmd_deg_s = cmd.angular_velocity_cmd_deg_s
+    if angular_velocity_cmd_deg_s == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
+        angular_velocity_cmd_deg_s = math.degrees(cmd.lat_acc_cmd_mps2 / max(cmd.ground_speed_mps, V_MIN_MPS))
 
     age = timebase.age(now, cmd.timestamp)
     out.guidance_command_age_s = age
@@ -265,25 +265,25 @@ def ProduceCtrlOutput(
 
     if age > GUIDANCE_TIMEOUT_ATTENUATE_S:
         # Stale but not dead: attenuate to limit uncommanded drift.
-        yaw_rate_cmd *= 0.5
+        angular_velocity_cmd_deg_s *= 0.5
         out.fallback_mode = config.CTRL_FALLBACK_GUIDANCE_ATTENUATED
     else:
         out.fallback_mode = config.CTRL_FALLBACK_NONE
 
-    yaw_rate_cmd = _clamp(yaw_rate_cmd, -cfg.YAW_RATE_CMD_MAX_DEG_S, cfg.YAW_RATE_CMD_MAX_DEG_S)
-    out.yaw_rate_cmd_deg_s = yaw_rate_cmd
+    angular_velocity_cmd_deg_s = _clamp(angular_velocity_cmd_deg_s, -cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S, cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S)
+    out.angular_velocity_cmd_deg_s = angular_velocity_cmd_deg_s
 
     # dt is shared by PID integration and slew-rate limit; always advances so
     # slew tracking stays accurate even when the gyro is temporarily unavailable.
     dt = timebase.clamp_dt(now, ctl.pid.prev_time, default_s=0.1, min_s=0.01, max_s=0.2)
 
     # --- Feedforward: expo-shaped, deadbanded ---
-    delta_ff = yaw_rate_to_delta_ff(yaw_rate_cmd, cfg)
+    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, cfg)
 
     # --- Gyro spike rejection ---
     # A single IMU glitch can saturate the integral in one cycle; discard the sample instead.
-    gyro_spike = math.isfinite(yaw_rate_meas_deg_s) and abs(yaw_rate_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
-    sensor_valid = math.isfinite(yaw_rate_meas_deg_s) and not gyro_spike
+    gyro_spike = math.isfinite(angular_velocity_meas_deg_s) and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
+    sensor_valid = math.isfinite(angular_velocity_meas_deg_s) and not gyro_spike
     out.sensor_valid = sensor_valid
     if gyro_spike:
         out.fallback_mode = config.CTRL_FALLBACK_GYRO_SPIKE
@@ -296,8 +296,8 @@ def ProduceCtrlOutput(
     pid_active = bool(cmd.pid_enabled and cfg.DELTA_PID_MAX_DEG > 0.0 and sensor_valid)
 
     if pid_active:
-        out.yaw_rate_meas_deg_s = yaw_rate_meas_deg_s
-        error = yaw_rate_cmd - yaw_rate_meas_deg_s
+        out.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
+        error = angular_velocity_cmd_deg_s - angular_velocity_meas_deg_s
         if abs(error) < cfg.ERROR_DEADBAND_DEG_S:
             error = 0.0
         derivative = (error - ctl.pid.prev_error_deg) / dt
@@ -308,7 +308,7 @@ def ProduceCtrlOutput(
             cfg.DELTA_PID_MAX_DEG,
         )
         integral = integral_candidate
-        out.yaw_rate_error_deg_s = error
+        out.angular_velocity_error_deg_s = error
         out.mode = config.CTRL_MODE_CLOSED_LOOP
     else:
         # No gyro: FF only. Decay the integral so stale windup does not accumulate.

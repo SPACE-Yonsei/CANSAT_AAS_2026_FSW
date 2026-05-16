@@ -117,7 +117,7 @@ class ScenarioConfig:
     reference_speed_ms: float = 8.0
     # If None, derived from the turn-distance model above.
     pulse_to_yaw_gain: Optional[float] = None
-    yaw_rate_max_deg_s: float = 35.0  # safety clamp on simulated yaw
+    angular_velocity_max_deg_s: float = 35.0  # safety clamp on simulated angular velocity
 
     target_radius_m: float = 8.0      # stop scenario when within this radius
     stop_on_target_reach: bool = True
@@ -267,7 +267,7 @@ class ScenarioState:
     heading_deg: float = 0.0
     course_deg: float = 0.0
     ground_speed_ms: float = 0.0
-    yaw_rate_deg_s: float = 0.0
+    angular_velocity_deg_s: float = 0.0
     distance_to_target_m: float = math.inf
     finished: bool = False
     finish_reason: str = ""
@@ -413,10 +413,10 @@ class ScenarioRunner:
         right_pw = _coerce_int(tlm.get("right_pulse_us"), _NEUTRAL_RIGHT_PW)
         delta_arm_deg = (left_pw + right_pw - _PULSE_SUM_NEUTRAL) / _PULSE_PER_DEG
         gain = self._pulse_to_yaw_gain()
-        yaw_rate = _clamp(
+        angular_velocity_deg_s = _clamp(
             gain * delta_arm_deg,
-            -cfg.yaw_rate_max_deg_s,
-            cfg.yaw_rate_max_deg_s,
+            -cfg.angular_velocity_max_deg_s,
+            cfg.angular_velocity_max_deg_s,
         )
 
         substeps = max(1, int(cfg.integration_substeps))
@@ -424,7 +424,7 @@ class ScenarioRunner:
 
         # 2~6. Integrate heading/kinematics in substeps to reduce coarse jumps.
         for _ in range(substeps):
-            self.state.heading_deg = (self.state.heading_deg + yaw_rate * dt) % 360.0
+            self.state.heading_deg = (self.state.heading_deg + angular_velocity_deg_s * dt) % 360.0
 
             # 3. Compute wind components (meteorological convention: wind FROM
             #    that bearing, so the actual airmass moves opposite).
@@ -459,7 +459,7 @@ class ScenarioRunner:
             self.state.alt_m = max(0.0, self.state.alt_m - descent * dt)
             self.state.elapsed_s += dt
 
-        self.state.yaw_rate_deg_s = yaw_rate
+        self.state.angular_velocity_deg_s = angular_velocity_deg_s
 
         # 7. Distance to target.
         self.state.distance_to_target_m = _haversine_m(

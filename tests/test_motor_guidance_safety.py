@@ -70,12 +70,12 @@ class TestGuidanceSafetyGates(unittest.TestCase):
         self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "NO_POSITION")
 
-    def test_inactive_output_has_zero_yaw_rate(self):
+    def test_inactive_output_has_zero_angular_velocity(self):
         out = guidance.ProduceL1Output(
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
-        self.assertAlmostEqual(out.yaw_rate_cmd_rad_s, 0.0)
+        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
 
     def test_inactive_output_has_zero_lat_acc(self):
         out = guidance.ProduceL1Output(

@@ -165,7 +165,7 @@ def run_single_case(case: SimulationCase) -> SimulationResult:
     ctrl_output = control.ProduceCtrlOutput(
         ctrler,
         ctrl_input,
-        yaw_rate_meas_deg_s=case.gyrz_deg_s,
+        angular_velocity_meas_deg_s=case.gyrz_deg_s,
         now=now,
     )
 
@@ -204,7 +204,7 @@ def print_summary_row(result: SimulationResult) -> None:
     print(
         f"x={result.case.x_m:+7.1f} m | "
         f"cross={g.crossTrack:+8.2f} m | "
-        f"yaw_cmd={g.yaw_rate_cmd_rad_s:+7.4f} rad/s | "
+        f"yaw_cmd={g.angular_velocity_cmd_rad_s:+7.4f} rad/s | "
         f"lat_acc={g.lat_acc_cmd_mps2:+7.3f} m/s^2 | "
         f"L={c.left_angle_deg:6.2f} deg | "
         f"R={c.right_angle_deg:6.2f} deg | "

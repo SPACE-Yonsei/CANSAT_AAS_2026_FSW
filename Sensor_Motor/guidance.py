@@ -3,7 +3,7 @@
 Implements ArduPilot L1 navigation controller logic ported to Python.
 Reference: libraries/AP_L1_Control/AP_L1_Control.cpp :: update_waypoint()
 
-Sign convention: commanded_yaw_rate < 0 = LEFT turn.
+Sign convention: commanded_angular_velocity < 0 = LEFT turn.
 Units: _deg / _rad / _m / _ms / _mps suffixes throughout.
 """
 
@@ -294,14 +294,14 @@ class L1Output:
     reason: str = config.MOTOR_REASON_INIT
     fail_reason: str = config.FAIL_REASON_NONE
     confidence_scale: float = 0.0
-    yaw_rate_cmd_max_deg_s: float = 0.0
+    angular_velocity_cmd_max_deg_s: float = 0.0
     lat_acc_max_mps2: float = 0.0
     delta_ff_max_deg: float = 0.0
     delta_pid_max_deg: float = 0.0
     delta_total_max_deg: float = 0.0
     max_arm_rate_deg_s: float = 0.0
     pid_enabled: bool = False
-    yaw_rate_cmd_rad_s: float = 0.0
+    angular_velocity_cmd_rad_s: float = 0.0
     lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
     L1_distance: float = 0.0
@@ -664,11 +664,11 @@ def ProduceL1Output(
         if fail_reason == FailReason.TUMBLE_YAW_DOMINANT and l1_input.gyrz is not None:
             gyrz_deg_s = math.degrees(float(l1_input.gyrz))
             yaw_cmd_deg_s = max(
-                -policy.yaw_rate_cmd_max_deg_s,
-                min(policy.yaw_rate_cmd_max_deg_s, -config.MOTOR_TUMBLE_COUNTER_YAW_GAIN * gyrz_deg_s),
+                -policy.angular_velocity_cmd_max_deg_s,
+                min(policy.angular_velocity_cmd_max_deg_s, -config.MOTOR_TUMBLE_COUNTER_YAW_GAIN * gyrz_deg_s),
             )
             l1_output.control_valid = True
-            l1_output.yaw_rate_cmd_rad_s = math.radians(yaw_cmd_deg_s)
+            l1_output.angular_velocity_cmd_rad_s = math.radians(yaw_cmd_deg_s)
             l1_output.ground_speed_mps = float(getattr(l1_input, "ground_speed_mps", 0.0) or 0.0)
             return l1_output
         if (
@@ -685,9 +685,9 @@ def ProduceL1Output(
             bearing_to_target = math.atan2(target_E - l1_input.pos_E, target_N - l1_input.pos_N)
             heading_error = _wrap_pi(bearing_to_target - float(l1_input.yaw))
             yaw_cmd_rad_s = config.MOTOR_TARGET_BEARING_GAIN * heading_error
-            yaw_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
+            yaw_max_rad_s = math.radians(policy.angular_velocity_cmd_max_deg_s)
             l1_output.control_valid = True
-            l1_output.yaw_rate_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
+            l1_output.angular_velocity_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
             l1_output.target_N = target_N
             l1_output.target_E = target_E
             l1_output.pos_N = l1_input.pos_N
@@ -744,14 +744,14 @@ def ProduceL1Output(
     lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
     lat_acc *= policy.confidence_scale
     lat_acc = max(-policy.lat_acc_max_mps2, min(policy.lat_acc_max_mps2, lat_acc))
-    yaw_rate = lat_acc / speed_for_l1
-    yaw_rate_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
-    yaw_rate = max(-yaw_rate_max_rad_s, min(yaw_rate_max_rad_s, yaw_rate))
+    angular_velocity_rad_s = lat_acc / speed_for_l1
+    angular_velocity_max_rad_s = math.radians(policy.angular_velocity_cmd_max_deg_s)
+    angular_velocity_rad_s = max(-angular_velocity_max_rad_s, min(angular_velocity_max_rad_s, angular_velocity_rad_s))
 
     l1_output.nominal = True
     l1_output.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
     l1_output.control_valid = True
-    l1_output.yaw_rate_cmd_rad_s = yaw_rate
+    l1_output.angular_velocity_cmd_rad_s = angular_velocity_rad_s
     l1_output.lat_acc_cmd_mps2 = lat_acc
     l1_output.ground_speed_mps = float(speed)
     l1_output.L1_distance = L1_distance

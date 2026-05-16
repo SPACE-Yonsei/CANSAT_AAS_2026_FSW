@@ -287,7 +287,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                   f"alt={s.alt_m:6.1f}m  "
                   f"hdg={s.heading_deg:5.1f}deg  "
                   f"course={s.course_deg:5.1f}deg  "
-                  f"yaw_rate={s.yaw_rate_deg_s:+5.1f}deg/s  "
+                  f"angular_velocity={s.angular_velocity_deg_s:+5.1f}deg/s  "
                   f"d_target={s.distance_to_target_m:6.1f}m  "
                   f"gs={s.ground_speed_ms:4.1f}m/s")
             if not still_running:

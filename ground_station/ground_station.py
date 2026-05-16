@@ -1161,7 +1161,7 @@ class GroundStation(tk.Tk):
         self._scenario_status_var.set(
             f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
             f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
-            f"hdg={s.heading_deg:5.1f}deg  yr={s.yaw_rate_deg_s:+5.1f}deg/s  "
+            f"hdg={s.heading_deg:5.1f}deg  yr={s.angular_velocity_deg_s:+5.1f}deg/s  "
             f"fsw_state={fsw_state}"
         )
         if still_running and delay_ms is not None:

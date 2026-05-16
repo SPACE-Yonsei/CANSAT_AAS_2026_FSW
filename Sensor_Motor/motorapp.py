@@ -85,9 +85,9 @@ _CONTROL_LOG_HEADER = [
     "nu2_deg",
     "current_heading_deg",
     "lat_acc_cmd_mps2",
-    "yaw_rate_cmd_deg_s",
-    "yaw_rate_meas_deg_s",
-    "yaw_rate_error_deg_s",
+    "angular_velocity_cmd_deg_s",
+    "angular_velocity_meas_deg_s",
+    "angular_velocity_error_deg_s",
     "delta_ff_deg",
     "delta_pid_deg",
     "delta_arm_deg",
@@ -1003,9 +1003,9 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
             str(int(bool(EGG_ACTION_ENABLED))),
             _fmt(getattr(g_out, "crossTrack", float("nan"))),
             _fmt(getattr(g_out, "alongTrack", float("nan"))),
-            _fmt(getattr(cmd, "yaw_rate_cmd_deg_s", 0.0)),
-            _fmt(getattr(cmd, "yaw_rate_meas_deg_s", float("nan"))),
-            _fmt(getattr(cmd, "yaw_rate_error_deg_s", 0.0)),
+            _fmt(getattr(cmd, "angular_velocity_cmd_deg_s", 0.0)),
+            _fmt(getattr(cmd, "angular_velocity_meas_deg_s", float("nan"))),
+            _fmt(getattr(cmd, "angular_velocity_error_deg_s", 0.0)),
             _fmt(getattr(cmd, "delta_ff_deg", 0.0)),
             _fmt(getattr(cmd, "delta_pid_deg", 0.0)),
             _fmt(getattr(cmd, "delta_arm_deg", 0.0)),
@@ -1133,9 +1133,9 @@ def _write_control_debug_log(
                     _deg_log(getattr(g_out, "nu2", None)),
                     _deg_log(getattr(g_out, "current_heading_rad", None)),
                     _fmt_log(getattr(g_out, "lat_acc_cmd_mps2", None), 4),
-                    _fmt_log(getattr(cmd, "yaw_rate_cmd_deg_s", None), 4),
-                    _fmt_log(getattr(cmd, "yaw_rate_meas_deg_s", None), 4),
-                    _fmt_log(getattr(cmd, "yaw_rate_error_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "angular_velocity_cmd_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "angular_velocity_meas_deg_s", None), 4),
+                    _fmt_log(getattr(cmd, "angular_velocity_error_deg_s", None), 4),
                     _fmt_log(getattr(cmd, "delta_ff_deg", None), 4),
                     _fmt_log(getattr(cmd, "delta_pid_deg", None), 4),
                     _fmt_log(getattr(cmd, "delta_arm_deg", None), 4),
@@ -1252,17 +1252,17 @@ def ctrl_parafoil(main_queue=None) -> None:
             if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
-                yaw_rate_meas_deg_s = float("nan")
+                angular_velocity_meas_deg_s = float("nan")
                 if (
                     getattr(l1_input, "gyrz", None) is not None
                     and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
                     in (guidance.SensorQuality.FRESH, guidance.SensorQuality.FRESHED)
                 ):
-                    yaw_rate_meas_deg_s = math.degrees(float(l1_input.gyrz))
+                    angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
                 cmd = control.ProduceCtrlOutput(
                     _CONTROLLER,
                     control.ProduceCtrlInput(g_out, now),
-                    yaw_rate_meas_deg_s,
+                    angular_velocity_meas_deg_s,
                     now,
                 )
             else:

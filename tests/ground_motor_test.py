@@ -3,7 +3,7 @@
 tests/ground_motor_test.py
 지상 정지 상태에서 모터 방향 및 L1 파이프라인 검증.
 
-Section A  ConnectRoMo 직접 sweep  — yaw_rate 입력 대비 PWM/각도 출력
+Section A  ConnectRoMo 직접 sweep  — angular_velocity 입력 대비 PWM/각도 출력
 Section B  L1 파이프라인 시나리오  — 하드코딩 위치 → guidance → control → PWM
 Section C  실물 서보 sweep          — pigpio 연결 시 실제 암 움직임 (--live)
 
@@ -173,8 +173,8 @@ def _pass_fail(actual: str, expected: str) -> str:
 # ══════════════════════════════════════════════════════════════════════
 def run_section_a() -> None:
     _header("SECTION A  ConnectRoMo 직접 sweep")
-    print(f"  부호 규약: yaw_rate > 0  →  delta_arm > 0  →  우선회")
-    print(f"             yaw_rate < 0  →  delta_arm < 0  →  좌선회")
+    print(f"  부호 규약: angular_velocity > 0  →  delta_arm > 0  →  우선회")
+    print(f"             angular_velocity < 0  →  delta_arm < 0  →  좌선회")
     print(f"  암 규약  : angle > {control.NEUTRAL_ARM_DEG}°  →  내려감(제동)  |  angle < {control.NEUTRAL_ARM_DEG}°  →  올라감(해제)")
 
     sweep = [
@@ -189,7 +189,7 @@ def run_section_a() -> None:
 
     for yr, label in sweep:
         lp, rp, la, ra, delta = control.ConnectRoMo(yr)
-        _block_open(f"yaw_rate = {yr:+.1f} deg/s  [{label}]")
+        _block_open(f"angular_velocity = {yr:+.1f} deg/s  [{label}]")
         _row("delta_arm_deg",    f"{delta:+.2f}°")
         _row("left_angle_deg",   f"{la:.2f}°   {_arm_note(la)}")
         _row("right_angle_deg",  f"{ra:.2f}°   {_arm_note(ra)}")
@@ -276,12 +276,12 @@ def run_section_b() -> None:
         _row("crossTrack_m",    f"{g_out.crossTrack:+.2f} m")
         _row("alongTrack_m",    f"{g_out.alongTrack:+.2f} m")
         _row("L1_distance_m",   f"{g_out.L1_distance:.2f} m")
-        _row("yaw_rate_cmd",    f"{g_out.yaw_rate_cmd_rad_s:+.4f} rad/s  "
-                                f"({math.degrees(g_out.yaw_rate_cmd_rad_s):+.2f} deg/s)")
+        _row("angular_velocity_cmd", f"{g_out.angular_velocity_cmd_rad_s:+.4f} rad/s  "
+                                    f"({math.degrees(g_out.angular_velocity_cmd_rad_s):+.2f} deg/s)")
         _row("lat_acc_cmd",     f"{g_out.lat_acc_cmd_mps2:+.4f} m/s²")
 
         _sep("Control Output")
-        _row("delta_ff_deg",    f"{cmd.delta_ff_deg:+.3f}°  (K_FF × yaw_rate_cmd)")
+        _row("delta_ff_deg",    f"{cmd.delta_ff_deg:+.3f}°  (K_FF × angular_velocity_cmd)")
         _row("delta_pid_deg",   f"{cmd.delta_pid_deg:+.3f}°  (현재 K_P=K_I=K_D=0)")
         _row("delta_arm_deg",   f"{cmd.delta_arm_deg:+.3f}°  (ff + pid)")
         _row("left_angle_deg",  f"{cmd.left_angle_deg:.2f}°   {_arm_note(cmd.left_angle_deg)}")
@@ -305,14 +305,14 @@ def run_section_c(pi) -> None:
     _header("SECTION C  실물 서보 sweep  [LIVE]")
     print(f"  각 단계 지속 시간 : {STEP_SEC}s")
     print(f"  GPIO  Left={control.PARAFOIL_LEFT_MOTOR_PIN}  Right={control.PARAFOIL_RIGHT_MOTOR_PIN}")
-    print(f"  부호 규약: yaw_rate > 0 → 우선회 / yaw_rate < 0 → 좌선회")
+    print(f"  부호 규약: angular_velocity > 0 → 우선회 / angular_velocity < 0 → 좌선회")
 
     ctl = control.MakeCtrler()
 
     for step_name, yr, step_desc in LIVE_STEPS:
         now = time.monotonic()
         ctrl_in = control.CtrlInput(
-            yaw_rate_cmd_deg_s=yr,
+            angular_velocity_cmd_deg_s=yr,
             lat_acc_cmd_mps2=0.0,
             ground_speed_mps=GROUND_SPEED_MPS,
             valid=True,
@@ -322,7 +322,7 @@ def run_section_c(pi) -> None:
 
         _block_open(f"STEP: {step_name}")
         _row("설명",            step_desc)
-        _row("yaw_rate_cmd",   f"{yr:+.1f} deg/s")
+        _row("angular_velocity_cmd_deg_s", f"{yr:+.1f} deg/s")
         _row("delta_arm_deg",  f"{cmd.delta_arm_deg:+.2f}°")
         _row("left_angle_deg", f"{cmd.left_angle_deg:.2f}°   {_arm_note(cmd.left_angle_deg)}")
         _row("right_angle_deg",f"{cmd.right_angle_deg:.2f}°   {_arm_note(cmd.right_angle_deg)}")

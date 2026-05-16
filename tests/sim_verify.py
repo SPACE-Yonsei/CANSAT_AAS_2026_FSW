@@ -226,11 +226,11 @@ class PhysicsState:
             self.servo_delta_actual
         )
 
-    def step_pendulum(self, yaw_rate_phy: float, dt: float):
+    def step_pendulum(self, angular_velocity_phy_deg_s: float, dt: float):
         ddphi_rad = (
             -2.0 * ZETA * OMEGA_N * math.radians(self.pend_phidot)
             - OMEGA_N ** 2 * math.radians(self.pend_phi)
-            + math.radians(K_COUPLE * yaw_rate_phy)
+            + math.radians(K_COUPLE * angular_velocity_phy_deg_s)
         )
         self.pend_phidot += math.degrees(ddphi_rad) * dt
         self.pend_phi    += self.pend_phidot * dt
@@ -261,11 +261,11 @@ class PhysicsState:
         return gps_vec, gps_fid
 
     def sensor_imu(self, heading_true: float,
-                   yaw_rate_true: float, pend_phi_deg: float):
+                   angular_velocity_true_deg_s: float, pend_phi_deg: float):
         drift = self.rng.normal(0.0, BIAS_DRIFT_RATE * math.sqrt(DT))
         self.imu_bias_gyrz = max(-0.2, min(0.2, self.imu_bias_gyrz + drift))
         yaw   = heading_true + K_MAG_PEND * pend_phi_deg + self.rng.normal(0.0, YAW_NOISE_DEG)
-        gyrz  = (math.radians(yaw_rate_true) + self.imu_bias_gyrz
+        gyrz  = (math.radians(angular_velocity_true_deg_s) + self.imu_bias_gyrz
                  + self.rng.normal(0.0, GYRZ_NOISE_RPS))
         return SimpleNamespace(yaw=yaw, gyrz=gyrz)
 
@@ -317,7 +317,7 @@ def _run_sim(init_heading: float,
     # Initial state
     E, N, alt     = 0.0, 0.0, start_alt
     heading       = init_heading
-    yaw_rate_phy  = 0.0
+    angular_velocity_phy_deg_s  = 0.0
 
     h_cmd_yr  = []
     h_phase   = []
@@ -341,13 +341,13 @@ def _run_sim(init_heading: float,
 
         # Sensors
         gps_vec, gps_fid = phys.sensor_gps(E, N, V_E_gnd, V_N_gnd, step)
-        imu_data          = phys.sensor_imu(heading, yaw_rate_phy, phys.pend_phi)
+        imu_data          = phys.sensor_imu(heading, angular_velocity_phy_deg_s, phys.pend_phi)
         baro_m            = max(0.1, phys.sensor_baro(alt))
 
         # Guidance + control
         g_result = motor_guidance.guidance(imu_data, gps_vec, gps_fid,
                                            target_ns, baro_m=baro_m)
-        cmd_yr   = g_result.commanded_yaw_rate
+        cmd_yr   = g_result.commanded_angular_velocity
         phase    = g_result.state
 
         m_result       = motor_control.control(mock_pi, cmd_yr)
@@ -359,11 +359,11 @@ def _run_sim(init_heading: float,
         if enable_turbulence:
             descent_rate = max(descent_rate + phys.turb_w * 0.3, 1.0)
 
-        # Yaw rate (corrected sign: negative delta → positive/right turn)
-        yaw_rate_phy = -effective_delta * 1.0 * (Va_fwd / VA_BASE)
-        phys.step_pendulum(yaw_rate_phy, DT)
+        # Angular velocity (corrected sign: negative delta → positive/right turn)
+        angular_velocity_phy_deg_s = -effective_delta * 1.0 * (Va_fwd / VA_BASE)
+        phys.step_pendulum(angular_velocity_phy_deg_s, DT)
 
-        heading = (heading + yaw_rate_phy * DT) % 360.0
+        heading = (heading + angular_velocity_phy_deg_s * DT) % 360.0
         hdg_rad = math.radians(heading)
         E += V_E_gnd * DT
         N += V_N_gnd * DT
@@ -815,7 +815,7 @@ def run_q2():
                                           target_ns_i, baro_m=0.0)
     _check("I3: Baro=0 mid-flight -> guidance returns BARO_INVALID",
            result_baro.state == "BARO_INVALID",
-           f'state="{result_baro.state}" cmd_yr={result_baro.commanded_yaw_rate}')
+           f'state="{result_baro.state}" cmd_yr={result_baro.commanded_angular_velocity}')
 
 # ==============================================================================
 # SECTION 12 — Q3: Jitter / Oscillation Analysis
@@ -992,7 +992,7 @@ def run_q4():
 
     print()
     print("  Testing behavior when heading error ≈ ±180 degrees.")
-    print("  At exactly 180 error: sin(180)=0 → desired_yaw_rate=0.")
+    print("  At exactly 180 error: sin(180)=0 → desired_angular_velocity=0.")
     print("  Escape mechanism: sensor noise + _carrot() clamping asymmetry.")
     print()
 

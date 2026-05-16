@@ -56,14 +56,14 @@ class TestConnectRoMo(unittest.TestCase):
         self.assertAlmostEqual(delta, 0.0)
 
     def test_positive_cmd_right_turn_geometry(self):
-        """Positive yaw_rate -> right turn: left arm up (angle down), right arm down (angle up)."""
+        """Positive angular_velocity -> right turn: left arm up (angle down), right arm down (angle up)."""
         lp, rp, la, ra, delta = control.ConnectRoMo(10.0)
         self.assertGreater(delta, 0.0)
         self.assertLess(la, control.NEUTRAL_ARM_DEG)
         self.assertGreater(ra, control.NEUTRAL_ARM_DEG)
 
     def test_negative_cmd_left_turn_geometry(self):
-        """Negative yaw_rate -> left turn: left arm down (angle up), right arm up (angle down)."""
+        """Negative angular_velocity -> left turn: left arm down (angle up), right arm up (angle down)."""
         lp, rp, la, ra, delta = control.ConnectRoMo(-10.0)
         self.assertLess(delta, 0.0)
         self.assertGreater(la, control.NEUTRAL_ARM_DEG)
@@ -159,14 +159,14 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
     def test_converts_rad_to_deg(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
-            yaw_rate_cmd_rad_s=0.5,
+            angular_velocity_cmd_rad_s=0.5,
             lat_acc_cmd_mps2=1.5,
             ground_speed_mps=7.0,
             nominal=True,
             timestamp=100.0,
         )
         gcmd = control.ProduceCtrlInput(l1, 100.0)
-        self.assertAlmostEqual(gcmd.yaw_rate_cmd_deg_s, math.degrees(0.5), places=5)
+        self.assertAlmostEqual(gcmd.angular_velocity_cmd_deg_s, math.degrees(0.5), places=5)
         self.assertTrue(gcmd.valid)
         self.assertAlmostEqual(gcmd.ground_speed_mps, 7.0)
         self.assertAlmostEqual(gcmd.lat_acc_cmd_mps2, 1.5)
@@ -174,7 +174,7 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
     def test_non_nominal_l1_gives_invalid_cmd(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
-            yaw_rate_cmd_rad_s=0.0,
+            angular_velocity_cmd_rad_s=0.0,
             lat_acc_cmd_mps2=0.0,
             ground_speed_mps=0.0,
             nominal=False,
@@ -186,9 +186,9 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
 
 class TestControllerUpdate(unittest.TestCase):
     @staticmethod
-    def _cmd(yaw_rate=0.0, ts=100.0, lat_acc=0.0, speed=0.0):
+    def _cmd(angular_velocity_deg_s=0.0, ts=100.0, lat_acc=0.0, speed=0.0):
         return control.CtrlInput(
-            yaw_rate_cmd_deg_s=yaw_rate,
+            angular_velocity_cmd_deg_s=angular_velocity_deg_s,
             lat_acc_cmd_mps2=lat_acc,
             ground_speed_mps=speed,
             valid=True,
@@ -205,7 +205,7 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.delta_arm_deg, 0.0)
 
-    def test_positive_yaw_rate_right_turn(self):
+    def test_positive_angular_velocity_right_turn(self):
         """Positive cmd -> right turn: left_angle < NEUTRAL, right_angle > NEUTRAL."""
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), float("nan"), 100.0)
@@ -213,7 +213,7 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertLess(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertGreater(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
-    def test_negative_yaw_rate_left_turn(self):
+    def test_negative_angular_velocity_left_turn(self):
         """Negative cmd -> left turn: left_angle > NEUTRAL, right_angle < NEUTRAL."""
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(-10.0), float("nan"), 100.0)
@@ -259,12 +259,12 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
-    def test_lat_acc_converts_to_yaw_rate_when_cmd_zero(self):
+    def test_lat_acc_converts_to_angular_velocity_when_cmd_zero(self):
         ctl = self._ctl()
-        cmd = self._cmd(yaw_rate=0.0, lat_acc=2.0, speed=4.0)
+        cmd = self._cmd(angular_velocity_deg_s=0.0, lat_acc=2.0, speed=4.0)
         out = control.ProduceCtrlOutput(ctl, cmd, float("nan"), 100.0)
         expected = math.degrees(2.0 / max(4.0, control.V_MIN_MPS))
-        self.assertAlmostEqual(out.yaw_rate_cmd_deg_s, expected, places=5)
+        self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, expected, places=5)
 
     def test_controller_reset_clears_pid(self):
         ctl = self._ctl(K_I=1.0)

@@ -149,14 +149,14 @@ class TestPhysics(unittest.TestCase):
             setattr(cfg, k, v)
         return cfg
 
-    def test_neutral_pulses_no_yaw_rate(self):
+    def test_neutral_pulses_no_angular_velocity(self):
         cfg = self._basic_cfg()
         sent, send = _make_recorder()
         runner = ScenarioRunner(send, _const_tlm(1511, 1489), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         for _ in range(5):
             runner.tick()
-        self.assertAlmostEqual(runner.state.yaw_rate_deg_s, 0.0, places=3)
+        self.assertAlmostEqual(runner.state.angular_velocity_deg_s, 0.0, places=3)
         self.assertAlmostEqual(runner.state.heading_deg, 0.0, places=3)
 
     def test_asymmetric_pulses_produce_yaw(self):
@@ -167,7 +167,7 @@ class TestPhysics(unittest.TestCase):
         runner = ScenarioRunner(send, _const_tlm(1700, 1700), lambda _m: None, cfg)
         runner.start(sleep_fn=_no_sleep)
         runner.tick()
-        self.assertGreater(runner.state.yaw_rate_deg_s, 0.0,
+        self.assertGreater(runner.state.angular_velocity_deg_s, 0.0,
                            "positive delta_arm should turn right (positive yaw rate)")
 
     def test_altitude_decreases_at_descent_rate(self):

@@ -333,8 +333,8 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
                 current_crosstrack = float(getattr(result, "crosstrack_error", math.nan))
                 current_along_track = float(getattr(result, "along_track", math.nan))
                 current_heading_error = float(getattr(result, "heading_error", math.nan))
-                current_desired_yr = float(getattr(result, "desired_yaw_rate", math.nan))
-                current_cmd_yr = float(result.commanded_yaw_rate)
+                current_desired_yr = float(getattr(result, "desired_angular_velocity", math.nan))
+                current_cmd_yr = float(result.commanded_angular_velocity)
                 if result.state == "FDIR":
                     safety_action = "neutral"
                     motor_control.set_neutral(control_backend)
@@ -353,8 +353,8 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
                     "current_crosstrack_error_m": current_crosstrack,
                     "current_along_track_m": current_along_track,
                     "current_heading_error_deg": current_heading_error,
-                    "current_desired_yaw_rate_deg_s": current_desired_yr,
-                    "current_commanded_yaw_rate_deg_s": current_cmd_yr,
+                    "current_desired_angular_velocity_deg_s": current_desired_yr,
+                    "current_commanded_angular_velocity_deg_s": current_cmd_yr,
                     "current_pulse_offset_us": pulse_offset,
                     "current_left_pulse_us": left_pulse,
                     "current_right_pulse_us": right_pulse,
@@ -407,7 +407,7 @@ def _segment_table(rows: list[dict], segments: list[str]) -> list[dict]:
             continue
         sub = [rows[i] for i in idxs]
         fdir_pass_ratio = sum(1 for r in sub if _bool(r, "fdir_pass")) / len(sub)
-        finite_guidance_cols = ("distance_m", "heading_error_deg", "desired_yaw_rate_deg_s", "commanded_yaw_rate_deg_s")
+        finite_guidance_cols = ("distance_m", "heading_error_deg", "desired_angular_velocity_deg_s", "commanded_angular_velocity_deg_s")
         finite_ratio = sum(
             1
             for r in sub
@@ -520,8 +520,8 @@ def _write_result_csv(path: Path, rows: list[dict], replay_rows: list[dict], seg
         "current_crosstrack_error_m",
         "current_along_track_m",
         "current_heading_error_deg",
-        "current_desired_yaw_rate_deg_s",
-        "current_commanded_yaw_rate_deg_s",
+        "current_desired_angular_velocity_deg_s",
+        "current_commanded_angular_velocity_deg_s",
         "current_pulse_offset_us",
         "current_left_pulse_us",
         "current_right_pulse_us",
@@ -548,8 +548,8 @@ def _write_markdown(path: Path, rows: list[dict], segments: list[str], replay_ro
         "gps_course_deg",
         "yaw_deg",
         "gyrz_deg_s",
-        "desired_yaw_rate_deg_s",
-        "commanded_yaw_rate_deg_s",
+        "desired_angular_velocity_deg_s",
+        "commanded_angular_velocity_deg_s",
         "pulse_offset_us",
         "left_pulse_us",
         "right_pulse_us",

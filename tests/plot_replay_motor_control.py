@@ -69,8 +69,8 @@ def _prepare_axes(rows: list[dict]):
     if not any(math.isfinite(v) for v in t):
         t = _series(rows, "tick")
 
-    desired = _series(rows, "current_desired_yaw_rate_deg_s")
-    commanded = _series(rows, "current_commanded_yaw_rate_deg_s")
+    desired = _series(rows, "current_desired_angular_velocity_deg_s")
+    commanded = _series(rows, "current_commanded_angular_velocity_deg_s")
     measured = _series(rows, "gyrz_deg_s")
     left_pulse = _series(rows, "current_left_pulse_us")
     right_pulse = _series(rows, "current_right_pulse_us")

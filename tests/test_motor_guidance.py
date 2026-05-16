@@ -266,25 +266,25 @@ class TestProduceL1Output(unittest.TestCase):
         inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
         self.assertTrue(out.nominal)
-        self.assertTrue(math.isfinite(out.yaw_rate_cmd_rad_s))
+        self.assertTrue(math.isfinite(out.angular_velocity_cmd_rad_s))
         self.assertTrue(math.isfinite(out.lat_acc_cmd_mps2))
 
     def test_left_of_path_commands_right_turn(self):
-        """Vehicle west of northward path → crossTrack<0, yaw_rate>0 (right turn)."""
+        """Vehicle west of northward path → crossTrack<0, angular_velocity>0 (right turn)."""
         # cross = unit_N*pos_E - unit_E*pos_N = 1*(-50) - 0*100 = -50
         inp = self._active_input(pos_n=100.0, pos_e=-50.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
         self.assertTrue(out.nominal)
         self.assertLess(out.crossTrack, 0.0)
-        self.assertGreater(out.yaw_rate_cmd_rad_s, 0.0)
+        self.assertGreater(out.angular_velocity_cmd_rad_s, 0.0)
 
     def test_right_of_path_commands_left_turn(self):
-        """Vehicle east of northward path → crossTrack>0, yaw_rate<0 (left turn)."""
+        """Vehicle east of northward path → crossTrack>0, angular_velocity<0 (left turn)."""
         inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
         self.assertTrue(out.nominal)
         self.assertGreater(out.crossTrack, 0.0)
-        self.assertLess(out.yaw_rate_cmd_rad_s, 0.0)
+        self.assertLess(out.angular_velocity_cmd_rad_s, 0.0)
 
     def test_nu1_is_position_driven_turn_angle(self):
         """Right of northward path requires a negative nu1 left-turn correction."""
@@ -309,7 +309,7 @@ class TestProduceL1Output(unittest.TestCase):
     def test_course_rate_clamped_to_max(self):
         inp = self._active_input(pos_n=100.0, pos_e=-500.0, course_deg=90.0, speed=8.0)
         out = self._run(inp)
-        self.assertLessEqual(abs(out.yaw_rate_cmd_rad_s), guidance.COURSE_RATE_MAX + 1e-9)
+        self.assertLessEqual(abs(out.angular_velocity_cmd_rad_s), guidance.COURSE_RATE_MAX + 1e-9)
 
     def test_lat_acc_clamped_to_max(self):
         inp = self._active_input(pos_n=100.0, pos_e=-500.0, course_deg=90.0, speed=8.0)
@@ -328,13 +328,13 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertTrue(out.nominal)
         self.assertFalse(out.degraded)
 
-    def test_yaw_rate_zero_when_inactive(self):
+    def test_angular_velocity_zero_when_inactive(self):
         inp = self._active_input()
         out = guidance.ProduceL1Output(
             inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic()
         )
-        self.assertAlmostEqual(out.yaw_rate_cmd_rad_s, 0.0)
+        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
 
 
 class TestProduceL1Input(unittest.TestCase):
