@@ -648,32 +648,32 @@ def ProduceL1Output(
     now: float,
     l1_state=None,
 ) -> L1Output:
-    out = L1Output(timestamp=now)
-    out.reason = getattr(mode, "value", str(mode))
-    out.target_lat = target_lat
-    out.target_lon = target_lon
+    l1_output = L1Output(timestamp=now)
+    l1_output.reason = getattr(mode, "value", str(mode))
+    l1_output.target_lat = target_lat
+    l1_output.target_lon = target_lon
     fail_reason = getattr(l1_input, "fail_reason", FailReason.NONE)
     if not isinstance(fail_reason, FailReason):
         try:
             fail_reason = FailReason(str(fail_reason))
         except ValueError:
             fail_reason = FailReason.NONE
-    out.fail_reason = fail_reason.value
+    l1_output.fail_reason = fail_reason.value
     policy = _policy_for_mode(mode, fail_reason)
-    _apply_policy(out, policy)
+    _apply_policy(l1_output, policy)
 
     if mode == ControlMode.FAIL:
-        out.reason = fail_reason.value if fail_reason != FailReason.NONE else config.CONTROL_MODE_FAIL
+        l1_output.reason = fail_reason.value if fail_reason != FailReason.NONE else config.CONTROL_MODE_FAIL
         if fail_reason == FailReason.TUMBLE_YAW_DOMINANT and l1_input.gyrz is not None:
             gyrz_deg_s = math.degrees(float(l1_input.gyrz))
             yaw_cmd_deg_s = max(
                 -policy.yaw_rate_cmd_max_deg_s,
                 min(policy.yaw_rate_cmd_max_deg_s, -config.MOTOR_TUMBLE_COUNTER_YAW_GAIN * gyrz_deg_s),
             )
-            out.control_valid = True
-            out.yaw_rate_cmd_rad_s = math.radians(yaw_cmd_deg_s)
-            out.ground_speed_mps = float(getattr(l1_input, "ground_speed_mps", 0.0) or 0.0)
-            return out
+            l1_output.control_valid = True
+            l1_output.yaw_rate_cmd_rad_s = math.radians(yaw_cmd_deg_s)
+            l1_output.ground_speed_mps = float(getattr(l1_input, "ground_speed_mps", 0.0) or 0.0)
+            return l1_output
         if (
             fail_reason == FailReason.NO_MOTION
             and l1_input.pos_N is not None
@@ -689,15 +689,15 @@ def ProduceL1Output(
             heading_error = _wrap_pi(bearing_to_target - float(l1_input.yaw))
             yaw_cmd_rad_s = config.MOTOR_TARGET_BEARING_GAIN * heading_error
             yaw_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
-            out.control_valid = True
-            out.yaw_rate_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
-            out.target_N = target_N
-            out.target_E = target_E
-            out.pos_N = l1_input.pos_N
-            out.pos_E = l1_input.pos_E
-            out.current_heading_rad = float(l1_input.yaw)
-            return out
-        return out
+            l1_output.control_valid = True
+            l1_output.yaw_rate_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
+            l1_output.target_N = target_N
+            l1_output.target_E = target_E
+            l1_output.pos_N = l1_input.pos_N
+            l1_output.pos_E = l1_input.pos_E
+            l1_output.current_heading_rad = float(l1_input.yaw)
+            return l1_output
+        return l1_output
 
     pos_N = getattr(l1_input, "pos_N", None)
     pos_E = getattr(l1_input, "pos_E", None)
@@ -713,16 +713,16 @@ def ProduceL1Output(
         or target_lat is None
         or target_lon is None
     ):
-        out.reason = config.FAIL_REASON_L1_INPUT
-        out.fail_reason = FailReason.L1_INPUT.value
-        return out
+        l1_output.reason = config.FAIL_REASON_L1_INPUT
+        l1_output.fail_reason = FailReason.L1_INPUT.value
+        return l1_output
 
     target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
     path_len = math.hypot(target_N, target_E)
     if path_len <= 1e-6:
-        out.reason = config.FAIL_REASON_INVALID_PATH
-        out.fail_reason = FailReason.INVALID_PATH.value
-        return out
+        l1_output.reason = config.FAIL_REASON_INVALID_PATH
+        l1_output.fail_reason = FailReason.INVALID_PATH.value
+        return l1_output
 
     speed_for_l1 = max(float(speed), V_MIN_MPS)
     L1_distance = max((L1_DAMPING * policy.l1_period_s / math.pi) * speed_for_l1, L1_MIN_M)
@@ -751,24 +751,24 @@ def ProduceL1Output(
     yaw_rate_max_rad_s = math.radians(policy.yaw_rate_cmd_max_deg_s)
     yaw_rate = max(-yaw_rate_max_rad_s, min(yaw_rate_max_rad_s, yaw_rate))
 
-    out.nominal = True
-    out.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
-    out.control_valid = True
-    out.yaw_rate_cmd_rad_s = yaw_rate
-    out.lat_acc_cmd_mps2 = lat_acc
-    out.ground_speed_mps = float(speed)
-    out.L1_distance = L1_distance
-    out.nu1 = nu1
-    out.nu2 = nu2
-    out.nu = nu
-    out.crossTrack = cross
-    out.alongTrack = along
-    out.pos_N = pos_N
-    out.pos_E = pos_E
-    out.target_N = target_N
-    out.target_E = target_E
-    out.carrot_N = carrot_N
-    out.carrot_E = carrot_E
-    out.carrot_lat, out.carrot_lon = ne_to_latlon(carrot_N, carrot_E, origin_lat, origin_lon)
-    out.current_heading_rad = course
-    return out
+    l1_output.nominal = True
+    l1_output.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
+    l1_output.control_valid = True
+    l1_output.yaw_rate_cmd_rad_s = yaw_rate
+    l1_output.lat_acc_cmd_mps2 = lat_acc
+    l1_output.ground_speed_mps = float(speed)
+    l1_output.L1_distance = L1_distance
+    l1_output.nu1 = nu1
+    l1_output.nu2 = nu2
+    l1_output.nu = nu
+    l1_output.crossTrack = cross
+    l1_output.alongTrack = along
+    l1_output.pos_N = pos_N
+    l1_output.pos_E = pos_E
+    l1_output.target_N = target_N
+    l1_output.target_E = target_E
+    l1_output.carrot_N = carrot_N
+    l1_output.carrot_E = carrot_E
+    l1_output.carrot_lat, l1_output.carrot_lon = ne_to_latlon(carrot_N, carrot_E, origin_lat, origin_lon)
+    l1_output.current_heading_rad = course
+    return l1_output
