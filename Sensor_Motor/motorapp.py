@@ -120,6 +120,17 @@ class _GpsFromApp:
 
 @dataclass
 class _ImuFromApp:
+    roll_rad: Optional[float] = None
+    pitch_rad: Optional[float] = None
+    yaw_rad: Optional[float] = None
+    accx_mps2: Optional[float] = None
+    accy_mps2: Optional[float] = None
+    accz_mps2: Optional[float] = None
+    magx_uT: Optional[float] = None
+    magy_uT: Optional[float] = None
+    magz_uT: Optional[float] = None
+    gyrx_rad_s: Optional[float] = None
+    gyry_rad_s: Optional[float] = None
     gyrz_rad_s: Optional[float] = None
     ts: Optional[float] = None
     rx_ts: Optional[float] = None
@@ -540,14 +551,10 @@ def _freshed_imu_from_history(history, now: Optional[float] = None) -> _ImuFromA
             weighted_sum += float(sample.gyrz_rad_s) * weight
             weight_total += weight
         latest = recent[-1]
-        return _ImuFromApp(
-            gyrz_rad_s=weighted_sum / weight_total,
-            ts=latest.ts,
-            rx_ts=latest.rx_ts,
-            freefall=latest.freefall,
-            tumble=latest.tumble,
-            health=1,
-        )
+        freshed = _ImuFromApp(**vars(latest))
+        freshed.gyrz_rad_s = weighted_sum / weight_total
+        freshed.health = 1
+        return freshed
     for sample in reversed(history):
         if (
             sample.health
@@ -722,6 +729,17 @@ def handle_imu(data: str) -> None:
         if len(fields) != 16:
             LOGGER.warning("IMU parse: expected 16 fields, got %d | raw=%r", len(fields), data)
             return
+        roll_deg   = float(fields[0])
+        pitch_deg  = float(fields[1])
+        yaw_deg    = float(fields[2])
+        accx_mps2  = float(fields[3])
+        accy_mps2  = float(fields[4])
+        accz_mps2  = float(fields[5])
+        magx_uT    = float(fields[6])
+        magy_uT    = float(fields[7])
+        magz_uT    = float(fields[8])
+        gyrx_deg_s = float(fields[9])
+        gyry_deg_s = float(fields[10])
         gyrz_deg_s = float(fields[11])
         sample_ts  = float(fields[12])
         freefall   = int(float(fields[13]))
@@ -733,6 +751,17 @@ def handle_imu(data: str) -> None:
         return
 
     imu = _ImuFromApp(
+        roll_rad=math.radians(roll_deg),
+        pitch_rad=math.radians(pitch_deg),
+        yaw_rad=math.radians(yaw_deg),
+        accx_mps2=accx_mps2,
+        accy_mps2=accy_mps2,
+        accz_mps2=accz_mps2,
+        magx_uT=magx_uT,
+        magy_uT=magy_uT,
+        magz_uT=magz_uT,
+        gyrx_rad_s=math.radians(gyrx_deg_s),
+        gyry_rad_s=math.radians(gyry_deg_s),
         gyrz_rad_s=math.radians(gyrz_deg_s),
         ts=sample_ts,
         rx_ts=rx_ts,

@@ -30,9 +30,27 @@ def _gps_msg(lat=37.55, lon=126.95, course=90.0, speed=12.0, pos=True, motion=Tr
     return f"{lat_s},{lon_s},{ts:.4f},{course_s},{speed_s},{motion_ts}"
 
 
-def _imu_msg(gyrz=2.5, health=1, ts=None):
+def _imu_msg(
+    roll=1.0,
+    pitch=2.0,
+    yaw=45.0,
+    accx=0.1,
+    accy=0.2,
+    accz=0.3,
+    magx=0.4,
+    magy=0.5,
+    magz=0.6,
+    gyrx=0.0,
+    gyry=0.0,
+    gyrz=2.5,
+    health=1,
+    ts=None,
+):
     ts = time.monotonic() if ts is None else ts
-    return f"1.0,2.0,45.0,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,{gyrz},{ts:.4f},0,0,{health}"
+    return (
+        f"{roll},{pitch},{yaw},{accx},{accy},{accz},"
+        f"{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{ts:.4f},0,0,{health}"
+    )
 
 
 def _baro_msg(alt=200.5, health=1, sink=1.2, ts=None):
@@ -165,6 +183,37 @@ class TestHandleImu(unittest.TestCase):
         self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(2.5))
         self.assertTrue(imu.health)
 
+    def test_valid_payload_preserves_all_imu_fields(self):
+        motorapp.handle_imu(
+            _imu_msg(
+                roll=10.0,
+                pitch=-5.0,
+                yaw=270.0,
+                accx=1.1,
+                accy=2.2,
+                accz=3.3,
+                magx=4.4,
+                magy=5.5,
+                magz=6.6,
+                gyrx=7.7,
+                gyry=8.8,
+                gyrz=9.9,
+            )
+        )
+        imu = motorapp._CACHE.latest_imu
+        self.assertAlmostEqual(imu.roll_rad, math.radians(10.0))
+        self.assertAlmostEqual(imu.pitch_rad, math.radians(-5.0))
+        self.assertAlmostEqual(imu.yaw_rad, math.radians(270.0))
+        self.assertAlmostEqual(imu.accx_mps2, 1.1)
+        self.assertAlmostEqual(imu.accy_mps2, 2.2)
+        self.assertAlmostEqual(imu.accz_mps2, 3.3)
+        self.assertAlmostEqual(imu.magx_uT, 4.4)
+        self.assertAlmostEqual(imu.magy_uT, 5.5)
+        self.assertAlmostEqual(imu.magz_uT, 6.6)
+        self.assertAlmostEqual(imu.gyrx_rad_s, math.radians(7.7))
+        self.assertAlmostEqual(imu.gyry_rad_s, math.radians(8.8))
+        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(9.9))
+
     def test_valid_payload_uses_sample_ts(self):
         motorapp.handle_imu(_imu_msg(ts=99.9))
         self.assertAlmostEqual(motorapp._CACHE.latest_imu.ts, 99.9, places=3)
@@ -184,6 +233,7 @@ class TestHandleImu(unittest.TestCase):
         motorapp.handle_imu(_imu_msg(gyrz=3.0, ts=t0 + 0.05))
         self.assertEqual(len(motorapp._CACHE.imu_history), 1)
         self.assertAlmostEqual(motorapp._CACHE.imu_history[-1].gyrz_rad_s, math.radians(2.5))
+        self.assertAlmostEqual(motorapp._CACHE.imu_history[-1].yaw_rad, math.radians(45.0))
 
     def test_unhealthy_imu_skips_history(self):
         t0 = time.monotonic() - 0.1
