@@ -232,7 +232,6 @@ class _Cache:
 
 MOTORAPP_RUNSTATUS: bool = True
 MOTOR_ENABLED: bool = True
-MANUAL_STEER_MODE: Optional[str] = None
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
 STATE: int = 0
@@ -246,13 +245,6 @@ _START_POINT_LOCKED = False
 # Align with ground_station map: (0,0) means "no fix", not a real position.
 _START_NULL_LAT_TOL = 1.0e-4
 _START_NULL_LON_TOL = 1.0e-4
-_MANUAL_STEER_DELTA_DEG = min(40.0, control.DELTA_ARM_MAX_DEG)
-_MANUAL_STEER_MODES = {
-    config.MOTOR_MANUAL_LEFT,
-    config.MOTOR_MANUAL_NEUTRAL,
-    config.MOTOR_MANUAL_RIGHT,
-}
-
 # GPS sanity thresholds. Defaults are configured for the current Korea test
 # area and must be updated before operating at a distant site.
 _GPS_EXPECTED_LON_CENTER_DEG = float(getattr(config, "GPS_EXPECTED_LON_CENTER_DEG", 126.6))
@@ -981,40 +973,6 @@ def handle_fac(data: str) -> None:
     )
 
 
-def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
-    cmd = control.WriteNeutral(now, f"{config.MOTOR_REASON_MANUAL_PREFIX}{mode}")
-    if mode == config.MOTOR_MANUAL_LEFT:
-        left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
-            -_MANUAL_STEER_DELTA_DEG
-        )
-        cmd.left_pw = left_pw
-        cmd.right_pw = right_pw
-        cmd.left_angle_deg = left_angle
-        cmd.right_angle_deg = right_angle
-        cmd.delta_arm_deg = delta_arm
-    elif mode == config.MOTOR_MANUAL_RIGHT:
-        left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
-            _MANUAL_STEER_DELTA_DEG
-        )
-        cmd.left_pw = left_pw
-        cmd.right_pw = right_pw
-        cmd.left_angle_deg = left_angle
-        cmd.right_angle_deg = right_angle
-        cmd.delta_arm_deg = delta_arm
-    cmd.valid = True
-    cmd.fallback_mode = f"{config.MOTOR_REASON_MANUAL_PREFIX}{mode}"
-    return cmd
-
-
-def handle_mtr(data: str) -> None:
-    global MANUAL_STEER_MODE
-    cmd = data.strip().upper()
-    if cmd not in _MANUAL_STEER_MODES:
-        LOGGER.warning("Unknown MTR command: %r", data)
-        return
-    MANUAL_STEER_MODE = cmd
-    LOGGER.info("MANUAL_STEER_MODE = %s", MANUAL_STEER_MODE)
-
 
 def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
     if main_queue is None:
@@ -1245,31 +1203,6 @@ def ctrl_parafoil(main_queue=None) -> None:
                 time.sleep(period)
                 continue
 
-            if MANUAL_STEER_MODE in _MANUAL_STEER_MODES:
-                manual_cmd = _manual_steer_command(now, MANUAL_STEER_MODE)
-                manual_out = guidance.L1Output(
-                    timestamp=now,
-                    nominal=False,
-                    degraded=False,
-                    reason=f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}",
-                )
-                if PI is not None:
-                    control.ProducePulse(PI, manual_cmd)
-                with _UPDATE_LOCK:
-                    manual_snap = _cache_snapshot()
-                _write_control_debug_log(
-                    now,
-                    manual_snap,
-                    None,
-                    None,
-                    manual_out,
-                    manual_cmd,
-                    f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}",
-                )
-                _send_diag(main_queue, manual_cmd, manual_out, f"{config.MOTOR_REASON_MANUAL_PREFIX}{MANUAL_STEER_MODE}")
-                time.sleep(period)
-                continue
-
             with _UPDATE_LOCK:
                 snap = _cache_snapshot()
 
@@ -1379,15 +1312,12 @@ def dispatch(msg: str) -> None:
         handle_mec(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
-    elif mid == appargs.CommAppArg.MID_RouteCmd_MTR:
-        handle_mtr(unpacked.data)
 
 
 def init() -> None:
-    global PI, MOTOR_ENABLED, MANUAL_STEER_MODE, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
+    global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
-    MANUAL_STEER_MODE = config.MOTOR_MANUAL_NEUTRAL
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
 
