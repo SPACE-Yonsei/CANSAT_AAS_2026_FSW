@@ -208,6 +208,16 @@ class TestDecideControlMode(unittest.TestCase):
         mode, _ = guidance.DecideControlMode(inp)
         self.assertEqual(mode, ControlMode.FAIL)
 
+    def test_tumble_without_dominant_axis_reports_unstable_body(self):
+        inp = self._inp(SensorQuality.FRESH, SensorQuality.FRESH, SensorQuality.FRESH)
+        inp.tumble = 1
+        inp.gyrx = math.radians(10.0)
+        inp.gyry = math.radians(20.0)
+        inp.gyrz = math.radians(5.0)
+        mode, reason = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.FAIL)
+        self.assertEqual(reason, guidance.FailReason.UNSTABLE_BODY)
+
 
 class TestProduceL1Output(unittest.TestCase):
     TARGET_LAT = ORIGIN_LAT + 900.0 / 111_000.0  # ~900 m north

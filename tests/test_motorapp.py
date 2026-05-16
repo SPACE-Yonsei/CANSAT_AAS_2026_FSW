@@ -90,6 +90,16 @@ class TestHandleGps(unittest.TestCase):
         self.assertTrue(gps.pos_health)
         self.assertTrue(gps.motion_health)
 
+    def test_legacy_7_field_gps_payload_updates_cache(self):
+        motorapp.handle_gps("37.55,126.95,0.4,90.0,1,12,A")
+        gps = motorapp._CACHE.latest_gps
+        self.assertAlmostEqual(gps.lat, 37.55)
+        self.assertAlmostEqual(gps.lon, 126.95)
+        self.assertAlmostEqual(gps.course_rad, math.radians(90.0))
+        self.assertAlmostEqual(gps.speed_mps, 0.4)
+        self.assertTrue(gps.pos_health)
+        self.assertTrue(gps.motion_health)
+
     def test_valid_payload_uses_position_ts(self):
         motorapp.handle_gps(_gps_msg(ts=100.5))
         gps = motorapp._CACHE.latest_gps
@@ -189,6 +199,17 @@ class TestHandleImu(unittest.TestCase):
         self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-2.5))  # negated: IMU gz+ = CCW
         self.assertTrue(imu.health)
 
+    def test_legacy_14_field_payload(self):
+        motorapp.handle_imu(
+            "1,2,45,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,2.5,1,77.7"
+        )
+        imu = motorapp._CACHE.latest_imu
+        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-2.5))
+        self.assertAlmostEqual(imu.ts, 77.7)
+        self.assertEqual(imu.freefall, 0)
+        self.assertEqual(imu.tumble, 0)
+        self.assertTrue(imu.health)
+
     def test_valid_payload_preserves_all_imu_fields(self):
         motorapp.handle_imu(
             _imu_msg(
@@ -255,6 +276,13 @@ class TestHandleBarometer(unittest.TestCase):
     def test_valid_payload(self):
         motorapp.handle_barometer(_baro_msg(alt=150.0))
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 150.0)
+        self.assertTrue(motorapp._CACHE.latest_baro.health)
+
+    def test_legacy_3_field_payload(self):
+        motorapp.handle_barometer("150.0,1,77.7")
+        self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 150.0)
+        self.assertAlmostEqual(motorapp._CACHE.latest_baro.ts, 77.7)
+        self.assertIsNone(motorapp._CACHE.latest_baro.sink_rate)
         self.assertTrue(motorapp._CACHE.latest_baro.health)
 
     def test_alt_and_health(self):

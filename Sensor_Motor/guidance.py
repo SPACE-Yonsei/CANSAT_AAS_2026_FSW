@@ -16,10 +16,10 @@ from typing import Optional
 from lib import config, timebase
 
 #Sensor age
-POS_FRESH_AGE    = 1.0    # s
-MOTION_FRESH_AGE = 1.0    # s
-GYRZ_FRESH_AGE   = 0.20   # s
-ALT_FRESH_AGE    = 0.50   # s
+POS_FRESH_AGE    = 1.5    # s
+MOTION_FRESH_AGE = 1.5    # s
+GYRZ_FRESH_AGE   = 0.30   # s
+ALT_FRESH_AGE    = 0.75   # s
 
 # History sample age limits for estimation inputs.
 POS_HISTORY_AGE    = 5.0    # s
@@ -122,6 +122,7 @@ class FailReason(enum.Enum):
     FREEFALL = config.FAIL_REASON_FREEFALL
     TUMBLE_YAW_DOMINANT = config.FAIL_REASON_TUMBLE_YAW_DOMINANT
     TUMBLE_ROLLPITCH = config.FAIL_REASON_TUMBLE_ROLLPITCH
+    UNSTABLE_BODY = config.FAIL_REASON_UNSTABLE_BODY
     NO_POSITION = config.FAIL_REASON_NO_POSITION
     NO_MOTION = config.FAIL_REASON_NO_MOTION
     DR_TIMEOUT = config.FAIL_REASON_DR_TIMEOUT

@@ -244,7 +244,8 @@ def ProduceCtrlOutput(
         out.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
         return out
 
-    angular_velocity_cmd_deg_s = cmd.angular_velocity_cmd_deg_s
+    angular_velocity_cmd_raw_deg_s = float(cmd.angular_velocity_cmd_deg_s)
+    angular_velocity_cmd_deg_s = angular_velocity_cmd_raw_deg_s
 
     age = timebase.age(now, cmd.timestamp)
     out.guidance_command_age_s = age
@@ -268,7 +269,17 @@ def ProduceCtrlOutput(
     else:
         out.fallback_mode = config.CTRL_FALLBACK_NONE
 
-    angular_velocity_cmd_deg_s = _clamp(angular_velocity_cmd_deg_s, -cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S, cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S)
+    angular_velocity_cmd_deg_s = _clamp(
+        angular_velocity_cmd_deg_s,
+        -cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+        cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+    )
+    command_clamped = not math.isclose(
+        angular_velocity_cmd_deg_s,
+        angular_velocity_cmd_raw_deg_s,
+        rel_tol=0.0,
+        abs_tol=1.0e-9,
+    )
     out.angular_velocity_cmd_deg_s = angular_velocity_cmd_deg_s
 
     # dt is shared by PID integration and slew-rate limit; always advances so
@@ -315,7 +326,8 @@ def ProduceCtrlOutput(
 
     # --- Combine FF + PID and clamp total authority ---
     delta_sum = delta_ff + delta_pid
-    saturated = abs(delta_sum) > cfg.DELTA_TOTAL_MAX_DEG
+    authority_saturated = abs(delta_sum) > cfg.DELTA_TOTAL_MAX_DEG
+    saturated = command_clamped or authority_saturated
     out.saturated = saturated
     delta_total = _clamp(delta_sum, -cfg.DELTA_TOTAL_MAX_DEG, cfg.DELTA_TOTAL_MAX_DEG)
 

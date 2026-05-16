@@ -30,6 +30,7 @@ GPS_HISTORY_SEC = 10.0
 IMU_HISTORY_SEC = 2.0
 BARO_HISTORY_SEC = 10.0
 GPS_REGRESSION_SEC = 3.0
+GPS_MOTION_MIN_VALID_MPS = 0.3
 IMU_ESTIMATE_SEC = 0.50
 BARO_REGRESSION_SEC = 3.0
 
@@ -302,7 +303,51 @@ def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
         math.isfinite(course_deg)
         and math.isfinite(ground_speed)
         and 0.0 <= course_deg < 360.0
-        and 0.5 <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
+        and GPS_MOTION_MIN_VALID_MPS <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
+    )
+
+
+def _is_binary_health_field(value: str) -> bool:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        return False
+    return parsed in (0.0, 1.0)
+
+
+def _gps_payload_looks_legacy(fields) -> bool:
+    """Detect old lat,lon,course_deg,speed_mps,pos_health,motion_health payloads."""
+    if len(fields) != 6:
+        return False
+    if not (_is_binary_health_field(fields[4]) and _is_binary_health_field(fields[5])):
+        return False
+    try:
+        course_deg = float(fields[2])
+        speed_mps = float(fields[3])
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(course_deg) and math.isfinite(speed_mps) and 0.0 <= course_deg < 360.0
+
+
+def _gps_payload_looks_legacy_fidelity(fields) -> bool:
+    """Detect old lat,lon,speed_mps,course_deg,fix_quality,sats,rmc_status payloads."""
+    if len(fields) != 7:
+        return False
+    try:
+        speed_mps = float(fields[2])
+        course_deg = float(fields[3])
+        fix_quality = int(float(fields[4]))
+        sats = int(float(fields[5]))
+    except (TypeError, ValueError):
+        return False
+    rmc_status = str(fields[6]).strip().upper()
+    return (
+        math.isfinite(speed_mps)
+        and math.isfinite(course_deg)
+        and 0.0 <= course_deg < 360.0
+        and fix_quality >= 0
+        and sats >= 0
+        and rmc_status in {"A", "V"}
     )
 
 
@@ -417,7 +462,7 @@ def _est_position_regression_velocity(
     v_n = (n1 - n0) / dt
     v_e = (e1 - e0) / dt
     speed = math.hypot(v_n, v_e)
-    if not math.isfinite(speed) or speed < 0.5 or speed > _GPS_MAX_VALID_SPEED_MPS:
+    if not math.isfinite(speed) or speed < GPS_MOTION_MIN_VALID_MPS or speed > _GPS_MAX_VALID_SPEED_MPS:
         return None
     return v_n, v_e
 
@@ -710,28 +755,56 @@ def _cache_snapshot() -> _Cache:
 
 #handler
 def handle_gps(data: str) -> None:
-    """lat,lon,pos_ts,course_deg,spd_mps,motion_ts - fidelity already verified by gpsapp."""
+    """Parse GPS payload and update cache.
+
+    Current gpsapp payload is lat,lon,pos_ts,course_deg,spd_mps,motion_ts.
+    Legacy harnesses may still send lat,lon,course_deg,spd_mps,pos_health,motion_health.
+    Older sensor logs may send lat,lon,spd_mps,course_deg,fix_quality,sats,rmc_status.
+    """
     global _START_POINT_LOCKED
     fields = data.split(",")
-    if len(fields) != 6:
-        LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
+    if len(fields) not in (6, 7):
+        LOGGER.warning("GNSS parse: expected 6 or 7 fields | raw=%r", data)
         return
     try:
         lat       = float(fields[0])
         lon       = float(fields[1])
-        pos_ts    = float(fields[2])
-        course_deg = float(fields[3])   # nan when motion invalid
-        speed_mps  = float(fields[4])   # nan when motion invalid
-        motion_ts  = float(fields[5])   # nan when motion invalid
         rx_ts = timebase.now()
+        if _gps_payload_looks_legacy(fields):
+            course_deg = float(fields[2])
+            speed_mps = float(fields[3])
+            pos_ts = rx_ts
+            motion_ts = rx_ts
+            payload_pos_health = bool(int(float(fields[4])))
+            payload_motion_health = bool(int(float(fields[5])))
+        elif _gps_payload_looks_legacy_fidelity(fields):
+            speed_mps = float(fields[2])
+            course_deg = float(fields[3])
+            fix_quality = int(float(fields[4]))
+            sats = int(float(fields[5]))
+            rmc_status = str(fields[6]).strip().upper()
+            pos_ts = rx_ts
+            motion_ts = rx_ts
+            payload_pos_health = (
+                fix_quality >= 1
+                and sats >= int(getattr(config, "GPS_MIN_SATS", 4))
+            )
+            payload_motion_health = rmc_status == "A"
+        else:
+            pos_ts = float(fields[2])
+            course_deg = float(fields[3])   # nan when motion invalid
+            speed_mps = float(fields[4])    # nan when motion invalid
+            motion_ts = float(fields[5])    # nan when motion invalid
+            payload_pos_health = True
+            payload_motion_health = True
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
     with _UPDATE_LOCK:
         start_lon = _CACHE.start_lon
-    pos_valid = _gps_position_sanity_reason(lat, lon, start_lon) is None
-    motion_valid = pos_valid and _gps_motion_sane(course_deg, speed_mps)
+    pos_valid = payload_pos_health and _gps_position_sanity_reason(lat, lon, start_lon) is None
+    motion_valid = payload_motion_health and pos_valid and _gps_motion_sane(course_deg, speed_mps)
 
     course_rad = math.radians(course_deg) if motion_valid else float("nan")
     sample = _GpsFromApp(
@@ -755,11 +828,18 @@ def handle_gps(data: str) -> None:
             prevstate.update_start_point(float(lat), float(lon), True)
 
 def handle_imu(data: str) -> None:
-    """roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health"""
+    """Parse IMU payload and update cache.
+
+    Current payload:
+      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health
+
+    Legacy sensor-log payload:
+      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health,sample_ts
+    """
     fields = data.split(",")
     try:
-        if len(fields) != 16:
-            LOGGER.warning("IMU parse: expected 16 fields, got %d | raw=%r", len(fields), data)
+        if len(fields) not in (14, 16):
+            LOGGER.warning("IMU parse: expected 14 or 16 fields, got %d | raw=%r", len(fields), data)
             return
         roll_deg   = float(fields[0])
         pitch_deg  = float(fields[1])
@@ -773,10 +853,16 @@ def handle_imu(data: str) -> None:
         gyrx_deg_s = float(fields[9])
         gyry_deg_s = float(fields[10])
         gyrz_deg_s = float(fields[11])
-        sample_ts  = float(fields[12])
-        freefall   = int(float(fields[13]))
-        tumble     = int(float(fields[14]))
-        health     = int(float(fields[15]))
+        if len(fields) == 16:
+            sample_ts  = float(fields[12])
+            freefall   = int(float(fields[13]))
+            tumble     = int(float(fields[14]))
+            health     = int(float(fields[15]))
+        else:
+            health     = int(float(fields[12]))
+            sample_ts  = float(fields[13])
+            freefall   = 0
+            tumble     = 0
         rx_ts = timebase.now()
     except (ValueError, IndexError) as exc:
         LOGGER.warning("IMU parse error: %s | raw=%r", exc, data)
@@ -807,17 +893,29 @@ def handle_imu(data: str) -> None:
 
 
 def handle_barometer(data: str) -> None:
-    """alt_m,sample_ts,sink_rate,health"""
+    """Parse barometer payload and update cache.
+
+    Current payload:
+      alt_m,sample_ts,sink_rate,health
+
+    Legacy sensor-log payload:
+      alt_m,health,sample_ts
+    """
     fields = data.split(",")
     try:
-        if len(fields) != 4:
-            LOGGER.warning("Baro parse: expected 4 fields, got %d | raw=%r", len(fields), data)
+        if len(fields) not in (3, 4):
+            LOGGER.warning("Baro parse: expected 3 or 4 fields, got %d | raw=%r", len(fields), data)
             return
         alt_m     = float(fields[0].strip())
-        sample_ts = float(fields[1])
-        sink_s    = fields[2].strip()
-        sink_rate = None if sink_s == "nan" else float(sink_s)
-        health    = int(float(fields[3]))
+        if len(fields) == 4:
+            sample_ts = float(fields[1])
+            sink_s    = fields[2].strip()
+            sink_rate = None if sink_s == "nan" else float(sink_s)
+            health    = int(float(fields[3]))
+        else:
+            health    = int(float(fields[1]))
+            sample_ts = float(fields[2])
+            sink_rate = None
         rx_ts = timebase.now()
     except (ValueError, IndexError) as exc:
         LOGGER.warning("Baro parse error: %s | raw=%r", exc, data)

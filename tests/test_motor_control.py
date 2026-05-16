@@ -253,11 +253,28 @@ class TestControllerUpdate(unittest.TestCase):
 
     def test_guidance_timeout_neutralizes(self):
         ctl = self._ctl()
-        out = control.ProduceCtrlOutput(ctl, self._cmd(10.0, ts=99.0), 0.0, 100.0)
+        out = control.ProduceCtrlOutput(
+            ctl,
+            self._cmd(10.0, ts=100.0 - control.GUIDANCE_TIMEOUT_FAIL_S - 0.1),
+            0.0,
+            100.0,
+        )
         self.assertEqual(out.mode, "GUIDANCE_TIMEOUT")
         self.assertFalse(out.valid)
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
+
+    def test_guidance_timeout_attenuates_before_neutral(self):
+        ctl = self._ctl()
+        out = control.ProduceCtrlOutput(
+            ctl,
+            self._cmd(10.0, ts=100.0 - control.GUIDANCE_TIMEOUT_ATTENUATE_S - 0.1),
+            0.0,
+            100.0,
+        )
+        self.assertTrue(out.valid)
+        self.assertEqual(out.fallback_mode, "GUIDANCE_ATTENUATED")
+        self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 5.0)
 
     def test_angular_velocity_cmd_zero_stays_zero(self):
         # lat_acc fallback was removed (P8): control uses angular_velocity_cmd_deg_s as-is.
