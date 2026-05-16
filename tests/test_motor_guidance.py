@@ -180,27 +180,33 @@ class TestDecideControlMode(unittest.TestCase):
 
     def test_fresh_pos_motion_no_gyrz_gives_active_feedforward(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.NOMINAL_FEEDFORWARD)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.NOMINAL_FEEDFORWARD)
 
     def test_fresh_pos_motion_with_fresh_gyrz_gives_active_closed_loop(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.FRESH, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.NOMINAL_CLOSED_LOOP)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.NOMINAL_CLOSED_LOOP)
 
     def test_freshed_pos_motion_no_gyrz_gives_degraded_feedforward(self):
         inp = self._inp(SensorQuality.FRESHED, SensorQuality.FRESHED)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.DEGRADED_FEEDFORWARD)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.DEGRADED_FEEDFORWARD)
 
     def test_freshed_pos_motion_with_freshed_gyrz_gives_degraded_closed_loop(self):
         inp = self._inp(SensorQuality.FRESHED, SensorQuality.FRESHED, SensorQuality.FRESHED)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.DEGRADED_CLOSED_LOOP)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.DEGRADED_CLOSED_LOOP)
 
     def test_stale_position_gives_fail(self):
         inp = self._inp(SensorQuality.STALE, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.FAIL)
 
     def test_stale_motion_gives_fail(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.STALE)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.FAIL)
+        mode, _ = guidance.DecideControlMode(inp)
+        self.assertEqual(mode, ControlMode.FAIL)
 
 
 class TestProduceL1Output(unittest.TestCase):

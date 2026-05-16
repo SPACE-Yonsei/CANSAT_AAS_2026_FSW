@@ -245,8 +245,6 @@ def ProduceCtrlOutput(
         return out
 
     angular_velocity_cmd_deg_s = cmd.angular_velocity_cmd_deg_s
-    if angular_velocity_cmd_deg_s == 0.0 and cmd.lat_acc_cmd_mps2 != 0.0 and cmd.ground_speed_mps > 0.0:
-        angular_velocity_cmd_deg_s = math.degrees(cmd.lat_acc_cmd_mps2 / max(cmd.ground_speed_mps, V_MIN_MPS))
 
     age = timebase.age(now, cmd.timestamp)
     out.guidance_command_age_s = age

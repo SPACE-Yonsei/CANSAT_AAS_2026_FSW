@@ -140,7 +140,6 @@ class ControlPolicy:
     pid_enabled: bool
     l1_enabled: bool = True
     l1_period_s: float = L1_PERIOD_S
-    fallback_mode: str = config.CTRL_FALLBACK_NONE
 
 @dataclass
 class L1Input:
@@ -552,14 +551,12 @@ def _body_fail_reason(l1_input: L1Input) -> FailReason:
     return FailReason.UNSTABLE_BODY if l1_input.tumble else FailReason.NONE
 
 
-def DecideControlMode(l1_input: L1Input) -> ControlMode:
+def DecideControlMode(l1_input: L1Input) -> tuple[ControlMode, FailReason]:
     # 1=자유낙하 중, 1=텀블링 중 → FAIL
     if l1_input.freefall:
-        l1_input.fail_reason = FailReason.FREEFALL
-        return ControlMode.FAIL
+        return ControlMode.FAIL, FailReason.FREEFALL
     if l1_input.tumble:
-        l1_input.fail_reason = _body_fail_reason(l1_input)
-        return ControlMode.FAIL
+        return ControlMode.FAIL, _body_fail_reason(l1_input)
 
     pos_quality    = l1_input.pos_quality
     motion_quality = l1_input.motion_quality
@@ -572,14 +569,14 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
             and gyrz_quality == SensorQuality.STALE
             and l1_input.alt_quality == SensorQuality.STALE
         ):
-            l1_input.fail_reason = FailReason.SENSOR_BLACKOUT
+            fail = FailReason.SENSOR_BLACKOUT
         elif pos_quality == SensorQuality.STALE and l1_input.dr_age_s is not None and l1_input.dr_age_s > POS_DR_AGE:
-            l1_input.fail_reason = FailReason.DR_TIMEOUT
+            fail = FailReason.DR_TIMEOUT
         elif pos_quality == SensorQuality.STALE:
-            l1_input.fail_reason = FailReason.NO_POSITION
+            fail = FailReason.NO_POSITION
         else:
-            l1_input.fail_reason = FailReason.NO_MOTION
-        return ControlMode.FAIL
+            fail = FailReason.NO_MOTION
+        return ControlMode.FAIL, fail
 
     closed_loop = (
         l1_input.gyrz is not None
@@ -588,16 +585,12 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     nominal = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
 
     if nominal and closed_loop:
-        l1_input.fail_reason = FailReason.NONE
-        return ControlMode.NOMINAL_CLOSED_LOOP
+        return ControlMode.NOMINAL_CLOSED_LOOP, FailReason.NONE
     if nominal:
-        l1_input.fail_reason = FailReason.NONE
-        return ControlMode.NOMINAL_FEEDFORWARD
+        return ControlMode.NOMINAL_FEEDFORWARD, FailReason.NONE
     if closed_loop:
-        l1_input.fail_reason = FailReason.NONE
-        return ControlMode.DEGRADED_CLOSED_LOOP
-    l1_input.fail_reason = FailReason.NONE
-    return ControlMode.DEGRADED_FEEDFORWARD
+        return ControlMode.DEGRADED_CLOSED_LOOP, FailReason.NONE
+    return ControlMode.DEGRADED_FEEDFORWARD, FailReason.NONE
 
 #prepocessing: fill fresh -> fill unfresh -> decide control mode -> produce L1 input
 #receives data directly from apps 
@@ -631,8 +624,9 @@ def ProduceL1Input(
 
     FillFresh(l1_input, gps, imu, baro, origin_lat, origin_lon, now)
     FillFreshed(l1_input, freshed_gps, freshed_imu, freshed_baro, now, dr=dr)
-    control_mode = DecideControlMode(l1_input)
+    control_mode, fail_reason = DecideControlMode(l1_input)
     l1_input.control_mode = control_mode
+    l1_input.fail_reason = fail_reason
     return (l1_input, control_mode)
 
 def ProduceL1Output(
@@ -738,7 +732,7 @@ def ProduceL1Output(
     # nu2: turn angle caused by direction error. It aligns current course to
     # the path heading.
     nu2 = (path_heading - course + math.pi) % (2.0 * math.pi) - math.pi
-    nu = (nu1 + nu2 + math.pi) % (2.0 * math.pi) - math.pi
+    nu = _wrap_pi(nu1 + nu2)
     nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
     K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
     lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)

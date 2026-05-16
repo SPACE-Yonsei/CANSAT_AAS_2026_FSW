@@ -238,6 +238,7 @@ STATE: int = 0
 PI = None
 
 _UPDATE_LOCK = threading.Lock()
+_CTRL_LOCK = threading.Lock()
 _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
@@ -864,6 +865,7 @@ def handle_flight_state(data: str) -> None:
         return
 
     LOGGER.info("State %d -> %d", STATE, new_state)
+    do_ctrl_reset = False
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE = new_state
@@ -877,8 +879,7 @@ def handle_flight_state(data: str) -> None:
                     guidance.l1_reset(_L1_STATE)
                 except Exception:
                     LOGGER.debug("Failed to reset L1 state", exc_info=True)
-            if _CONTROLLER is not None and hasattr(control, "controller_reset"):
-                control.controller_reset(_CONTROLLER)
+            do_ctrl_reset = True
         elif new_state in (3, 4):
             gps = _CACHE.latest_gps
             if (
@@ -893,6 +894,10 @@ def handle_flight_state(data: str) -> None:
                 _CACHE.start_lon = float(gps.lon)
                 _START_POINT_LOCKED = True
                 prevstate.update_start_point(float(gps.lat), float(gps.lon), True)
+
+    if do_ctrl_reset and _CONTROLLER is not None and hasattr(control, "controller_reset"):
+        with _CTRL_LOCK:
+            control.controller_reset(_CONTROLLER)
 
 
 def handle_release(data: str = "TRIGGER") -> None:
@@ -974,7 +979,8 @@ def handle_fac(data: str) -> None:
 
 
 
-def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
+def _send_diag(main_queue, cmd, g_out, diag_state: str,
+               start_lat=None, start_lon=None) -> None:
     if main_queue is None:
         return
 
@@ -989,8 +995,8 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str) -> None:
         [
             str(getattr(cmd, "left_pw", 0)),
             str(getattr(cmd, "right_pw", 0)),
-            _fmt(_CACHE.start_lat, 6),
-            _fmt(_CACHE.start_lon, 6),
+            _fmt(start_lat, 6),
+            _fmt(start_lon, 6),
             _fmt(getattr(g_out, "target_lat", _CACHE.target_lat), 6),
             _fmt(getattr(g_out, "target_lon", _CACHE.target_lon), 6),
             _fmt(getattr(g_out, "carrot_lat", float("nan")), 6),
@@ -1185,7 +1191,8 @@ def ctrl_parafoil(main_queue=None) -> None:
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
                 _write_control_debug_log(now, idle_snap, None, None, idle_out, idle_cmd, config.MOTOR_REASON_IDLE)
-                _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE)
+                _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE,
+                           idle_snap.start_lat, idle_snap.start_lon)
                 time.sleep(period)
                 continue
 
@@ -1199,7 +1206,8 @@ def ctrl_parafoil(main_queue=None) -> None:
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
                 _write_control_debug_log(now, landed_snap, None, None, landed_out, landed_cmd, config.MOTOR_REASON_LANDED)
-                _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED)
+                _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED,
+                           landed_snap.start_lat, landed_snap.start_lon)
                 time.sleep(period)
                 continue
 
@@ -1259,12 +1267,13 @@ def ctrl_parafoil(main_queue=None) -> None:
                     in (guidance.SensorQuality.FRESH, guidance.SensorQuality.FRESHED)
                 ):
                     angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
-                cmd = control.ProduceCtrlOutput(
-                    _CONTROLLER,
-                    control.ProduceCtrlInput(g_out, now),
-                    angular_velocity_meas_deg_s,
-                    now,
-                )
+                with _CTRL_LOCK:
+                    cmd = control.ProduceCtrlOutput(
+                        _CONTROLLER,
+                        control.ProduceCtrlInput(g_out, now),
+                        angular_velocity_meas_deg_s,
+                        now,
+                    )
             else:
                 cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
 
@@ -1277,7 +1286,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 else str(getattr(g_out, "reason", config.MOTOR_REASON_DISABLED) or config.MOTOR_REASON_DISABLED)
             )
             _write_control_debug_log(now, snap, l1_input, mode, g_out, cmd, diag_state)
-            _send_diag(main_queue, cmd, g_out, diag_state)
+            _send_diag(main_queue, cmd, g_out, diag_state, snap.start_lat, snap.start_lon)
 
         except Exception as exc:
             LOGGER.error("ctrl_paragldr exception: %s", exc, exc_info=True)

@@ -259,12 +259,13 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
-    def test_lat_acc_converts_to_angular_velocity_when_cmd_zero(self):
+    def test_angular_velocity_cmd_zero_stays_zero(self):
+        # lat_acc fallback was removed (P8): control uses angular_velocity_cmd_deg_s as-is.
+        # Guidance is responsible for converting lat_acc to angular_velocity.
         ctl = self._ctl()
         cmd = self._cmd(angular_velocity_deg_s=0.0, lat_acc=2.0, speed=4.0)
         out = control.ProduceCtrlOutput(ctl, cmd, float("nan"), 100.0)
-        expected = math.degrees(2.0 / max(4.0, control.V_MIN_MPS))
-        self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, expected, places=5)
+        self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 0.0, places=5)
 
     def test_controller_reset_clears_pid(self):
         ctl = self._ctl(K_I=1.0)
