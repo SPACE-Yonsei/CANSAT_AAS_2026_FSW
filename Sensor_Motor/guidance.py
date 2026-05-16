@@ -77,12 +77,12 @@ class SensorQuality(enum.Enum):
 SENSOR_QUALITY = SensorQuality
 
 class ControlMode(enum.Enum):
-    ACTIVE_CLOSED_LOOP   = "ACTIVE_CLOSED_LOOP"
-    ACTIVE_FEEDFORWARD   = "ACTIVE_FEEDFORWARD"
+    NOMINAL_CLOSED_LOOP  = "NOMINAL_CLOSED_LOOP"
+    NOMINAL_FEEDFORWARD  = "NOMINAL_FEEDFORWARD"
     DEGRADED_CLOSED_LOOP = "DEGRADED_CLOSED_LOOP"
     DEGRADED_FEEDFORWARD = "DEGRADED_FEEDFORWARD"
     FAIL                 = "FAIL"
-CONTORL_MODE = ControlMode
+CONTROL_MODE = ControlMode
 
 @dataclass
 class L1Input:
@@ -340,9 +340,9 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     active = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
 
     if active and closed_loop:
-        return ControlMode.ACTIVE_CLOSED_LOOP
+        return ControlMode.NOMINAL_CLOSED_LOOP
     if active:
-        return ControlMode.ACTIVE_FEEDFORWARD
+        return ControlMode.NOMINAL_FEEDFORWARD
     if closed_loop:
         return ControlMode.DEGRADED_CLOSED_LOOP
     return ControlMode.DEGRADED_FEEDFORWARD

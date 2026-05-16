@@ -180,11 +180,11 @@ class TestDecideControlMode(unittest.TestCase):
 
     def test_fresh_pos_motion_no_gyrz_gives_active_feedforward(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.ACTIVE_FEEDFORWARD)
+        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.NOMINAL_FEEDFORWARD)
 
     def test_fresh_pos_motion_with_fresh_gyrz_gives_active_closed_loop(self):
         inp = self._inp(SensorQuality.FRESH, SensorQuality.FRESH, SensorQuality.FRESH)
-        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.ACTIVE_CLOSED_LOOP)
+        self.assertEqual(guidance.DecideControlMode(inp), ControlMode.NOMINAL_CLOSED_LOOP)
 
     def test_freshed_pos_motion_no_gyrz_gives_degraded_feedforward(self):
         inp = self._inp(SensorQuality.FRESHED, SensorQuality.FRESHED)
@@ -217,12 +217,12 @@ class TestProduceL1Output(unittest.TestCase):
         inp.ground_speed_mps = speed
         inp.gyrz = 0.0
         inp.gyrz_quality = SensorQuality.FRESH
-        inp.control_mode = ControlMode.ACTIVE_CLOSED_LOOP
+        inp.control_mode = ControlMode.NOMINAL_CLOSED_LOOP
         inp.origin_lat = ORIGIN_LAT
         inp.origin_lon = ORIGIN_LON
         return inp
 
-    def _run(self, inp, mode=ControlMode.ACTIVE_CLOSED_LOOP,
+    def _run(self, inp, mode=ControlMode.NOMINAL_CLOSED_LOOP,
              target_lat=None, target_lon=None):
         tgt_lat = target_lat if target_lat is not None else self.TARGET_LAT
         tgt_lon = target_lon if target_lon is not None else self.TARGET_LON
@@ -238,7 +238,7 @@ class TestProduceL1Output(unittest.TestCase):
     def test_no_target_returns_inactive(self):
         inp = self._active_input()
         out = guidance.ProduceL1Output(
-            inp, ControlMode.ACTIVE_CLOSED_LOOP,
+            inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic()
         )
         self.assertFalse(out.active)
@@ -247,7 +247,7 @@ class TestProduceL1Output(unittest.TestCase):
     def test_no_origin_returns_inactive(self):
         inp = self._active_input()
         out = guidance.ProduceL1Output(
-            inp, ControlMode.ACTIVE_CLOSED_LOOP,
+            inp, ControlMode.NOMINAL_CLOSED_LOOP,
             None, None, self.TARGET_LAT, self.TARGET_LON, time.monotonic()
         )
         self.assertFalse(out.active)
@@ -256,7 +256,7 @@ class TestProduceL1Output(unittest.TestCase):
     def test_zero_path_length_returns_invalid_path(self):
         inp = self._active_input()
         out = guidance.ProduceL1Output(
-            inp, ControlMode.ACTIVE_CLOSED_LOOP,
+            inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic()
         )
         self.assertFalse(out.active)
@@ -324,14 +324,14 @@ class TestProduceL1Output(unittest.TestCase):
 
     def test_active_mode_degraded_false(self):
         inp = self._active_input()
-        out = self._run(inp, mode=ControlMode.ACTIVE_CLOSED_LOOP)
+        out = self._run(inp, mode=ControlMode.NOMINAL_CLOSED_LOOP)
         self.assertTrue(out.active)
         self.assertFalse(out.degraded)
 
     def test_yaw_rate_zero_when_inactive(self):
         inp = self._active_input()
         out = guidance.ProduceL1Output(
-            inp, ControlMode.ACTIVE_CLOSED_LOOP,
+            inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic()
         )
         self.assertAlmostEqual(out.yaw_rate_cmd_rad_s, 0.0)
@@ -348,7 +348,7 @@ class TestProduceL1Input(unittest.TestCase):
             gps, imu, baro, None, None, None,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON + 0.01, now,
         )
-        self.assertEqual(mode, ControlMode.ACTIVE_CLOSED_LOOP)
+        self.assertEqual(mode, ControlMode.NOMINAL_CLOSED_LOOP)
         self.assertEqual(l1_input.pos_quality, SensorQuality.FRESH)
         self.assertEqual(l1_input.motion_quality, SensorQuality.FRESH)
         self.assertEqual(l1_input.gyrz_quality, SensorQuality.FRESH)
@@ -360,7 +360,7 @@ class TestProduceL1Input(unittest.TestCase):
             gps, None, None, None, None, None,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON, now,
         )
-        self.assertEqual(mode, ControlMode.ACTIVE_FEEDFORWARD)
+        self.assertEqual(mode, ControlMode.NOMINAL_FEEDFORWARD)
 
     def test_no_origin_gives_fail(self):
         now = time.monotonic()

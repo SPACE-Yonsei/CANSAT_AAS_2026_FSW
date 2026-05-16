@@ -218,7 +218,7 @@ def _make_l1_input(pos_N: float, pos_E: float, course_rad: float) -> guidance.L1
     inp.origin_lon  = ORIGIN_LON
     inp.target_lat  = TARGET_LAT
     inp.target_lon  = TARGET_LON
-    inp.control_mode = guidance.ControlMode.ACTIVE_FEEDFORWARD
+    inp.control_mode = guidance.ControlMode.NOMINAL_FEEDFORWARD
     return inp
 
 
@@ -227,7 +227,7 @@ def run_section_b() -> None:
     print(f"  Origin : ({ORIGIN_LAT:.4f}, {ORIGIN_LON:.4f})")
     print(f"  Target : ({TARGET_LAT:.6f}, {TARGET_LON:.4f})  [북쪽 500m 고정]")
     print(f"  Speed  : {GROUND_SPEED_MPS} m/s (가상)  |  gyrz = {GYRZ_RAD_S} rad/s")
-    print(f"  Mode   : ACTIVE_FEEDFORWARD (GPS only, gyro 피드백 없음)")
+    print(f"  Mode   : NOMINAL_FEEDFORWARD (GPS only, gyro 피드백 없음)")
 
     total = 0
     passed = 0
@@ -239,7 +239,7 @@ def run_section_b() -> None:
         l1_in = _make_l1_input(sc["pos_N"], sc["pos_E"], sc["course_rad"])
         g_out = guidance.ProduceL1Output(
             l1_in,
-            guidance.ControlMode.ACTIVE_FEEDFORWARD,
+            guidance.ControlMode.NOMINAL_FEEDFORWARD,
             ORIGIN_LAT, ORIGIN_LON,
             TARGET_LAT, TARGET_LON,
             now,

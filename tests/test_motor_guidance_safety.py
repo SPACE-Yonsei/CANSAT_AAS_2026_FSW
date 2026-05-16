@@ -23,7 +23,7 @@ def _active_input(pos_n=100.0, pos_e=0.0):
     inp.ground_speed_mps = 8.0
     inp.gyrz = 0.1
     inp.gyrz_quality = SensorQuality.FRESH
-    inp.control_mode = ControlMode.ACTIVE_CLOSED_LOOP
+    inp.control_mode = ControlMode.NOMINAL_CLOSED_LOOP
     inp.origin_lat = ORIGIN_LAT
     inp.origin_lon = ORIGIN_LON
     return inp
@@ -32,7 +32,7 @@ def _active_input(pos_n=100.0, pos_e=0.0):
 class TestGuidanceSafetyGates(unittest.TestCase):
     def test_no_target_returns_inactive(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
         self.assertFalse(out.active)
@@ -40,7 +40,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
 
     def test_partial_target_lon_missing_returns_inactive(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, None, time.monotonic(),
         )
         self.assertFalse(out.active)
@@ -48,7 +48,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
 
     def test_no_origin_returns_inactive(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             None, None, TARGET_LAT, TARGET_LON, time.monotonic(),
         )
         self.assertFalse(out.active)
@@ -64,7 +64,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
 
     def test_origin_equals_target_returns_invalid_path(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
         )
         self.assertFalse(out.active)
@@ -72,14 +72,14 @@ class TestGuidanceSafetyGates(unittest.TestCase):
 
     def test_inactive_output_has_zero_yaw_rate(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
         self.assertAlmostEqual(out.yaw_rate_cmd_rad_s, 0.0)
 
     def test_inactive_output_has_zero_lat_acc(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.ACTIVE_CLOSED_LOOP,
+            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
         self.assertAlmostEqual(out.lat_acc_cmd_mps2, 0.0)

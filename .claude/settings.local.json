@@ -11,7 +11,9 @@
       "Bash(python *)",
       "Bash(pip install *)",
       "Read(//c/logs/sensorlogs/run_20260510_191040/**)",
-      "Read(//c/logs/sensorlogs/run_20260510_201444/**)"
+      "Read(//c/logs/sensorlogs/run_20260510_201444/**)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_motor_guidance.py tests/test_motor_guidance_safety.py -q)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_motor_guidance.py tests/test_motor_guidance_safety.py -q 2>&1)"
     ]
   }
 }
