@@ -11,8 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import enum
 import math
-import time
-from typing import Optional, Tuple
+from typing import Optional
 
 #Sensor age
 POS_FRESH_AGE    = 1.0    # s
@@ -51,44 +50,62 @@ L1_MIN_M           = 5.0
 V_MIN_MPS          = 2.0
 LAT_ACC_MAX        = 4.0    # m/s^2
 COURSE_RATE_MAX    = 0.6    # rad/s
-XTRACK_SOFT_FACTOR = 2.0    # × L1_dist
-XTRACK_HARD_FACTOR = 4.0    # × L1_dist
-XTRACK_SOFT_MIN_M  = 20.0
-XTRACK_HARD_MIN_M  = 50.0
 # GPS-derived position sanity: reject positions farther than this from origin.
 # Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
 _MAX_POS_RANGE_M   = 50_000.0   # 50 km
+EARTH_RADIUS_M     = 6_371_000.0
 
 
-def _project_position_from_origin(
+def latlon_to_ne(
     lat: float,
     lon: float,
     origin_lat: float,
     origin_lon: float,
-) -> Optional[Tuple[float, float]]:
+) -> tuple[float, float]:
+    d_n = math.radians(float(lat) - float(origin_lat)) * EARTH_RADIUS_M
+    d_e = (
+        math.radians(float(lon) - float(origin_lon))
+        * EARTH_RADIUS_M
+        * math.cos(math.radians(float(origin_lat)))
+    )
+    return d_n, d_e
+
+
+def ne_to_latlon(
+    pos_n: float,
+    pos_e: float,
+    origin_lat: float,
+    origin_lon: float,
+) -> tuple[float, float]:
+    lat = float(origin_lat) + math.degrees(float(pos_n) / EARTH_RADIUS_M)
+    cos_lat = max(1.0e-6, abs(math.cos(math.radians(float(origin_lat)))))
+    lon = float(origin_lon) + math.degrees(float(pos_e) / (EARTH_RADIUS_M * cos_lat))
+    return lat, lon
+
+
+def project_from_origin(
+    lat: float,
+    lon: float,
+    origin_lat: float,
+    origin_lon: float,
+    max_range_m: Optional[float] = None,
+) -> Optional[tuple[float, float]]:
     try:
-        la = float(lat)
-        lo = float(lon)
-        ola = float(origin_lat)
-        olo = float(origin_lon)
+        pos_n, pos_e = latlon_to_ne(lat, lon, origin_lat, origin_lon)
     except (TypeError, ValueError):
         return None
-    if not all(math.isfinite(v) for v in (la, lo, ola, olo)):
+    values = (float(lat), float(lon), float(origin_lat), float(origin_lon), pos_n, pos_e)
+    if not all(math.isfinite(v) for v in values):
         return None
-    earth_r = 6_371_000.0
-    dlat = math.radians(la - ola)
-    dlon = math.radians(lo - olo)
-    pos_N = dlat * earth_r
-    pos_E = dlon * earth_r * math.cos(math.radians(ola))
-    if math.hypot(pos_N, pos_E) > _MAX_POS_RANGE_M:
+    if max_range_m is not None and math.hypot(pos_n, pos_e) > float(max_range_m):
         return None
-    return pos_N, pos_E
+    return pos_n, pos_e
+
 
 class SensorQuality(enum.Enum):
     FRESH   = "FRESH"
     FRESHED = "FRESHED"
     STALE   = "STALE"
-SENSOR_QUALITY = SensorQuality
 
 class ControlMode(enum.Enum):
     NOMINAL_CLOSED_LOOP  = "NOMINAL_CLOSED_LOOP"
@@ -96,7 +113,6 @@ class ControlMode(enum.Enum):
     DEGRADED_CLOSED_LOOP = "DEGRADED_CLOSED_LOOP"
     DEGRADED_FEEDFORWARD = "DEGRADED_FEEDFORWARD"
     FAIL                 = "FAIL"
-CONTROL_MODE = ControlMode
 
 @dataclass
 class L1Input:
@@ -118,7 +134,22 @@ class L1Input:
     sink_rate: Optional[float] = None
     freefall: int = 0
     tumble: int = 0
-L1_INPUT = L1Input()
+
+
+@dataclass
+class L1State:
+    """Reserved state for future degraded/weak L1 command shaping."""
+    last_yaw_rate_cmd_rad_s: float = 0.0
+    last_update_ts: Optional[float] = None
+
+
+def make_l1_state() -> L1State:
+    return L1State()
+
+
+def l1_reset(state: L1State) -> None:
+    state.last_yaw_rate_cmd_rad_s = 0.0
+    state.last_update_ts = None
 
 #have to add member
 @dataclass
@@ -174,7 +205,9 @@ def FillFresh(
         and start_lat is not None
         and start_lon is not None
     ):
-        projected = _project_position_from_origin(gps.lat, gps.lon, start_lat, start_lon)
+        projected = project_from_origin(
+            gps.lat, gps.lon, start_lat, start_lon, max_range_m=_MAX_POS_RANGE_M
+        )
         if projected is None:
             l1_input.pos_N = None
             l1_input.pos_E = None
@@ -250,8 +283,12 @@ def FillFreshed(
             and origin_lat is not None
             and origin_lon is not None
         ):
-            projected = _project_position_from_origin(
-                freshed_gps.lat, freshed_gps.lon, origin_lat, origin_lon
+            projected = project_from_origin(
+                freshed_gps.lat,
+                freshed_gps.lon,
+                origin_lat,
+                origin_lon,
+                max_range_m=_MAX_POS_RANGE_M,
             )
             if projected is not None:
                 l1_input.pos_N, l1_input.pos_E = projected
@@ -268,7 +305,9 @@ def FillFreshed(
                 and origin_lat is not None
                 and origin_lon is not None
             ):
-                projected = _project_position_from_origin(dr_lat, dr_lon, origin_lat, origin_lon)
+                projected = project_from_origin(
+                    dr_lat, dr_lon, origin_lat, origin_lon, max_range_m=_MAX_POS_RANGE_M
+                )
                 if projected is not None:
                     l1_input.pos_N, l1_input.pos_E = projected
                     l1_input.pos_quality = SensorQuality.FRESHED
@@ -426,11 +465,7 @@ def ProduceL1Output(
         out.reason = "FAIL_L1_INPUT"
         return out
 
-    earth_r = 6_371_000.0
-    dlat = math.radians(target_lat - origin_lat)
-    dlon = math.radians(target_lon - origin_lon)
-    target_N = dlat * earth_r
-    target_E = dlon * earth_r * math.cos(math.radians(origin_lat))
+    target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
     path_len = math.hypot(target_N, target_E)
     if path_len <= 1e-6:
         out.reason = "INVALID_PATH"
@@ -478,7 +513,6 @@ def ProduceL1Output(
     out.target_E = target_E
     out.carrot_N = carrot_N
     out.carrot_E = carrot_E
-    out.carrot_lat = origin_lat + math.degrees(carrot_N / earth_r)
-    out.carrot_lon = origin_lon + math.degrees(carrot_E / (earth_r * math.cos(math.radians(origin_lat))))
+    out.carrot_lat, out.carrot_lon = ne_to_latlon(carrot_N, carrot_E, origin_lat, origin_lon)
     out.current_heading_rad = course
     return out

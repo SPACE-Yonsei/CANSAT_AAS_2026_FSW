@@ -105,7 +105,8 @@ class CtrlOutput:
     guidance_command_age_s: float = 0.0
 
 
-def SetNeutral(now: float, mode: str = "NEUTRAL") -> CtrlOutput:
+def WriteNeutral(now: float, mode: str = "NEUTRAL") -> CtrlOutput:
+    """Produce a neutral PWM command object without touching hardware."""
     cmd = CtrlOutput(timestamp=now)
     cmd.mode = mode
     cmd.fallback_mode = mode
@@ -138,8 +139,7 @@ def ConnectRoMo(yaw_rate_cmd_deg_s: float):
     left_pw = int(_clamp(left_pw, LEFT_MIN_PULSE, LEFT_MAX_PULSE))
     right_pw = int(_clamp(right_pw, RIGHT_MIN_PULSE, RIGHT_MAX_PULSE))
 
-    offset = 0.0
-    return left_pw, right_pw, left_angle, right_angle, delta_arm_deg, offset
+    return left_pw, right_pw, left_angle, right_angle, delta_arm_deg
 
 
 def MakeCtrler(cfg: Optional[ControlConfig] = None) -> Ctrler:
@@ -215,7 +215,7 @@ def ProduceCtrlOutput(
         if sensor_valid:
             integral = 0.0
 
-    left_pw, right_pw, left_angle, right_angle, delta_arm, _ = ConnectRoMo(delta_arm)
+    left_pw, right_pw, left_angle, right_angle, delta_arm = ConnectRoMo(delta_arm)
 
     out.delta_ff_deg = delta_ff
     out.delta_pid_deg = delta_pid
@@ -256,7 +256,7 @@ def init_control():
     return None
 
 
-def SetZero(pi) -> None:
+def WriteZero(pi) -> None:
     """Set both arms to 0 deg."""
     if pi is None:
         return
@@ -264,14 +264,24 @@ def SetZero(pi) -> None:
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_ZERO_PULSE)
 
 
-def SetOff(pi) -> None:
+def WriteOff(pi) -> None:
     if pi is None:
         return
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, 0)
     pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, 0)
 
 
-def SetServoPulsewidth(pi, cmd: CtrlOutput) -> None:
+def Set180(pi) -> None:
+    """Set both arms to 180 deg, clamped by configured servo limits."""
+    if pi is None:
+        return
+    left_pw = int(_clamp(LEFT_ZERO - 180.0 * PULSE_PER_DEG, LEFT_MIN_PULSE, LEFT_MAX_PULSE))
+    right_pw = int(_clamp(RIGHT_ZERO + 180.0 * PULSE_PER_DEG, RIGHT_MIN_PULSE, RIGHT_MAX_PULSE))
+    pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, left_pw)
+    pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, right_pw)
+
+
+def ProducePulse(pi, cmd: CtrlOutput) -> None:
     if pi is None:
         return
     pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, cmd.left_pw)

@@ -188,7 +188,7 @@ def run_section_a() -> None:
     ]
 
     for yr, label in sweep:
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(yr)
+        lp, rp, la, ra, delta = control.ConnectRoMo(yr)
         _block_open(f"yaw_rate = {yr:+.1f} deg/s  [{label}]")
         _row("delta_arm_deg",    f"{delta:+.2f}°")
         _row("left_angle_deg",   f"{la:.2f}°   {_arm_note(la)}")
@@ -330,7 +330,7 @@ def run_section_c(pi) -> None:
         _row("right_pw",       f"{cmd.right_pw} us  →  GPIO {control.PARAFOIL_RIGHT_MOTOR_PIN}")
         _block_close()
 
-        control.SetServoPulsewidth(pi, cmd)
+        control.ProducePulse(pi, cmd)
 
         for remaining in range(int(STEP_SEC), 0, -1):
             print(f"\r  실행 중... {remaining}s 남음  ", end="", flush=True)

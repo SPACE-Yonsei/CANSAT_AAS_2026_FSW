@@ -141,7 +141,7 @@
 1. 센서 MID 수신 -> 내부 캐시 갱신
 2. `guidance.ProduceL1Input/Output`으로 유도명령 계산
 3. `control.ProduceCtrlOutput`으로 yaw-rate PI 제어
-4. `SetServoPulsewidth`로 좌우 서보 펄스 출력
+4. `ProducePulse`로 좌우 서보 펄스 출력
 5. 진단 payload를 Comm에 송신(MID `MID_comm_motor_diag`)
 
 안전/운용 포인트:

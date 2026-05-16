@@ -312,7 +312,7 @@ def _replay_current_code(rows: list[dict]) -> list[dict]:
                 motor_control.set_neutral(control_backend)
             elif motorapp.STATE == 5:
                 safety_action = "motors_off"
-                motor_control.SetOff(control_backend)
+                motor_control.WriteOff(control_backend)
                 left_pulse = 0
                 right_pulse = 0
             elif fdir_reason is not None:
@@ -664,4 +664,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

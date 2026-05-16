@@ -5,6 +5,7 @@ import time
 import unittest
 
 from Sensor_Motor import motorapp
+from Sensor_Motor import guidance
 from Sensor_Motor.motorapp import _Cache
 
 
@@ -293,7 +294,7 @@ class TestHistoryEstimates(unittest.TestCase):
         t0 = time.monotonic() - 2.0
         origin_lat = 37.55
         origin_lon = 126.95
-        lat_10m_north, lon_same = motorapp._ne_to_latlon(10.0, 0.0, origin_lat, origin_lon)
+        lat_10m_north, lon_same = guidance.ne_to_latlon(10.0, 0.0, origin_lat, origin_lon)
         history = [
             motorapp._GpsFromApp(
                 lat=origin_lat,
@@ -315,7 +316,7 @@ class TestHistoryEstimates(unittest.TestCase):
             origin_lat=origin_lat,
             origin_lon=origin_lon,
         )
-        est_n, est_e = motorapp._project_latlon_to_ne(
+        est_n, est_e = guidance.latlon_to_ne(
             freshed.lat,
             freshed.lon,
             origin_lat,
@@ -373,7 +374,7 @@ class TestHistoryEstimates(unittest.TestCase):
             origin_lat=origin_lat,
             origin_lon=origin_lon,
         )
-        est_n, est_e = motorapp._project_latlon_to_ne(
+        est_n, est_e = guidance.latlon_to_ne(
             freshed.lat,
             freshed.lon,
             origin_lat,
@@ -410,7 +411,7 @@ class TestHistoryEstimates(unittest.TestCase):
             motorapp._GpsFromApp(),
             t0 + 2.0,
         )
-        est_n, est_e = motorapp._project_latlon_to_ne(
+        est_n, est_e = guidance.latlon_to_ne(
             next_snap.dr.lat,
             next_snap.dr.lon,
             origin_lat,

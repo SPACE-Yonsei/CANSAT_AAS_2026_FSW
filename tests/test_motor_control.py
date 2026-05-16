@@ -48,7 +48,7 @@ class TestConstants(unittest.TestCase):
 
 class TestConnectRoMo(unittest.TestCase):
     def test_zero_gives_neutral(self):
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(0.0)
+        lp, rp, la, ra, delta = control.ConnectRoMo(0.0)
         self.assertEqual(lp, control.LEFT_NEUTRAL)
         self.assertEqual(rp, control.RIGHT_NEUTRAL)
         self.assertAlmostEqual(la, control.NEUTRAL_ARM_DEG)
@@ -56,26 +56,26 @@ class TestConnectRoMo(unittest.TestCase):
         self.assertAlmostEqual(delta, 0.0)
 
     def test_positive_cmd_right_turn_geometry(self):
-        """Positive yaw_rate → right turn: left arm up (angle↓), right arm down (angle↑)."""
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(10.0)
+        """Positive yaw_rate -> right turn: left arm up (angle down), right arm down (angle up)."""
+        lp, rp, la, ra, delta = control.ConnectRoMo(10.0)
         self.assertGreater(delta, 0.0)
         self.assertLess(la, control.NEUTRAL_ARM_DEG)
         self.assertGreater(ra, control.NEUTRAL_ARM_DEG)
 
     def test_negative_cmd_left_turn_geometry(self):
-        """Negative yaw_rate → left turn: left arm down (angle↑), right arm up (angle↓)."""
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(-10.0)
+        """Negative yaw_rate -> left turn: left arm down (angle up), right arm up (angle down)."""
+        lp, rp, la, ra, delta = control.ConnectRoMo(-10.0)
         self.assertLess(delta, 0.0)
         self.assertGreater(la, control.NEUTRAL_ARM_DEG)
         self.assertLess(ra, control.NEUTRAL_ARM_DEG)
 
     def test_large_positive_clamps_arm_to_limits(self):
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(9999.0)
+        lp, rp, la, ra, delta = control.ConnectRoMo(9999.0)
         self.assertAlmostEqual(la, control.ARM_MIN_DEG)
         self.assertAlmostEqual(ra, control.ARM_MAX_DEG)
 
     def test_large_negative_clamps_arm_to_limits(self):
-        lp, rp, la, ra, delta, _ = control.ConnectRoMo(-9999.0)
+        lp, rp, la, ra, delta = control.ConnectRoMo(-9999.0)
         self.assertAlmostEqual(la, control.ARM_MAX_DEG)
         self.assertAlmostEqual(ra, control.ARM_MIN_DEG)
 
@@ -106,18 +106,23 @@ class TestInitAndSetters(unittest.TestCase):
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_ZERO_PULSE)
 
     def test_set_zero_restores_zero_pulse(self):
-        control.SetZero(self.pi)
+        control.WriteZero(self.pi)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], control.LEFT_ZERO_PULSE)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_ZERO_PULSE)
 
     def test_set_motors_off_sends_zero_width(self):
-        control.SetOff(self.pi)
+        control.WriteOff(self.pi)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 0)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 0)
 
+    def test_set_180_sends_max_angle_pulse(self):
+        control.Set180(self.pi)
+        self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], control.LEFT_MIN_PULSE)
+        self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_MAX_PULSE)
+
     def test_set_brake_command_sends_cmd_pulses(self):
         cmd = control.CtrlOutput(timestamp=time.monotonic(), left_pw=1700, right_pw=1300)
-        control.SetServoPulsewidth(self.pi, cmd)
+        control.ProducePulse(self.pi, cmd)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 1700)
         self.assertEqual(self.pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 1300)
 
@@ -127,25 +132,25 @@ class TestInitAndSetters(unittest.TestCase):
         self.assertEqual(control.PARAFOIL_RIGHT_MOTOR_PIN, config.PARAFOIL_RIGHT_GPIO)
 
     def test_set_zero_none_no_crash(self):
-        control.SetZero(None)
+        control.WriteZero(None)
 
     def test_set_motors_off_none_no_crash(self):
-        control.SetOff(None)
+        control.WriteOff(None)
 
     def test_set_brake_command_none_no_crash(self):
-        control.SetServoPulsewidth(None, control.SetNeutral(time.monotonic()))
+        control.ProducePulse(None, control.WriteNeutral(time.monotonic()))
 
 
 class TestNeutralCommand(unittest.TestCase):
     def test_neutral_command_pulses(self):
-        cmd = control.SetNeutral(time.monotonic())
+        cmd = control.WriteNeutral(time.monotonic())
         self.assertEqual(cmd.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
         self.assertAlmostEqual(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_neutral_command_mode_label(self):
-        cmd = control.SetNeutral(time.monotonic(), "IDLE")
+        cmd = control.WriteNeutral(time.monotonic(), "IDLE")
         self.assertEqual(cmd.mode, "IDLE")
         self.assertEqual(cmd.fallback_mode, "IDLE")
 
@@ -201,7 +206,7 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertAlmostEqual(out.delta_arm_deg, 0.0)
 
     def test_positive_yaw_rate_right_turn(self):
-        """Positive cmd → right turn: left_angle < NEUTRAL, right_angle > NEUTRAL."""
+        """Positive cmd -> right turn: left_angle < NEUTRAL, right_angle > NEUTRAL."""
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), float("nan"), 100.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
@@ -209,7 +214,7 @@ class TestControllerUpdate(unittest.TestCase):
         self.assertGreater(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_negative_yaw_rate_left_turn(self):
-        """Negative cmd → left turn: left_angle > NEUTRAL, right_angle < NEUTRAL."""
+        """Negative cmd -> left turn: left_angle > NEUTRAL, right_angle < NEUTRAL."""
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(-10.0), float("nan"), 100.0)
         self.assertLess(out.delta_arm_deg, 0.0)

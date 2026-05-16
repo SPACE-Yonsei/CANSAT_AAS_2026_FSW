@@ -37,6 +37,8 @@ from Sensor_Motor.guidance import (
     ControlMode,
     ProduceL1Input,
     ProduceL1Output,
+    latlon_to_ne,
+    ne_to_latlon,
 )
 from Sensor_Motor.control import (
     ControlConfig,
@@ -77,25 +79,14 @@ CTRL_CFG = ControlConfig(K_FF=1.0, K_P=0.0, K_I=0.0, K_D=0.0)
 # ===========================================================================
 # ── Earth geometry helpers ──────────────────────────────────────────────────
 # ===========================================================================
-EARTH_R = 6_371_000.0
-
-
 def latlon_to_NE(lat: float, lon: float,
                  origin_lat: float, origin_lon: float) -> tuple[float, float]:
-    dlat = math.radians(lat - origin_lat)
-    dlon = math.radians(lon - origin_lon)
-    N = dlat * EARTH_R
-    E = dlon * EARTH_R * math.cos(math.radians(origin_lat))
-    return N, E
+    return latlon_to_ne(lat, lon, origin_lat, origin_lon)
 
 
 def NE_to_latlon(N: float, E: float,
                  origin_lat: float, origin_lon: float) -> tuple[float, float]:
-    lat = origin_lat + math.degrees(N / EARTH_R)
-    lon = origin_lon + math.degrees(
-        E / (EARTH_R * math.cos(math.radians(origin_lat)))
-    )
-    return lat, lon
+    return ne_to_latlon(N, E, origin_lat, origin_lon)
 
 
 # ===========================================================================

@@ -32,7 +32,6 @@ BARO_HISTORY_SEC = 10.0
 GPS_REGRESSION_SEC = 3.0
 IMU_ESTIMATE_SEC = 0.50
 BARO_REGRESSION_SEC = 3.0
-_EARTH_RADIUS_M = 6_371_000.0
 
 _CONTROL_LOG_LOCK = threading.Lock()
 _CONTROL_LOG_FP = None
@@ -242,7 +241,7 @@ _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
 
-# Align with ground_station map: (0,0) means “no fix”, not a real position.
+# Align with ground_station map: (0,0) means "no fix", not a real position.
 _START_NULL_LAT_TOL = 1.0e-4
 _START_NULL_LON_TOL = 1.0e-4
 _MANUAL_STEER_DELTA_DEG = min(40.0, control.DELTA_ARM_MAX_DEG)
@@ -310,45 +309,48 @@ def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
     return deque((sample_type(**vars(sample)) for sample in samples), maxlen=maxlen)
 
 
-def _gps_position_fresh(sample: _GpsFromApp, now: float) -> bool:
+def _gps_position_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
     return bool(
         sample.pos_health
         and sample.lat is not None
         and sample.lon is not None
         and sample.pos_ts is not None
-        and 0.0 <= now - sample.pos_ts <= guidance.POS_FRESH_AGE
+        and 0.0 <= now - sample.pos_ts <= age
     )
 
 
-def _gps_motion_fresh(sample: _GpsFromApp, now: float) -> bool:
+def _gps_motion_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
     return bool(
         sample.motion_health
         and sample.course_rad is not None
         and sample.speed_mps is not None
         and sample.motion_ts is not None
-        and 0.0 <= now - sample.motion_ts <= guidance.MOTION_FRESH_AGE
+        and 0.0 <= now - sample.motion_ts <= age
     )
 
 
 def _gps_fresh_for_history(sample: _GpsFromApp, now: float) -> bool:
-    return bool(_gps_position_fresh(sample, now) or _gps_motion_fresh(sample, now))
+    return bool(
+        _gps_position_valid(sample, now, guidance.POS_FRESH_AGE)
+        or _gps_motion_valid(sample, now, guidance.MOTION_FRESH_AGE)
+    )
 
 
-def _imu_fresh_for_history(sample: _ImuFromApp, now: float) -> bool:
+def _imu_gyrz_valid(sample: _ImuFromApp, now: float, age: float) -> bool:
     return bool(
         sample.health
         and sample.gyrz_rad_s is not None
         and sample.ts is not None
-        and 0.0 <= now - sample.ts <= guidance.GYRZ_FRESH_AGE
+        and 0.0 <= now - sample.ts <= age
     )
 
 
-def _baro_fresh_for_history(sample: _BaroFromApp, now: float) -> bool:
+def _baro_alt_valid(sample: _BaroFromApp, now: float, age: float) -> bool:
     return bool(
         sample.health
         and sample.alt_m is not None
         and sample.ts is not None
-        and 0.0 <= now - sample.ts <= guidance.ALT_FRESH_AGE
+        and 0.0 <= now - sample.ts <= age
     )
 
 
@@ -358,51 +360,20 @@ def _push_latest_gps_to_history(cache: _Cache, now: float) -> None:
 
 
 def _push_latest_imu_to_history(cache: _Cache, now: float) -> None:
-    if _imu_fresh_for_history(cache.latest_imu, now):
+    if _imu_gyrz_valid(cache.latest_imu, now, guidance.GYRZ_FRESH_AGE):
         cache.imu_history.append(_ImuFromApp(**vars(cache.latest_imu)))
 
 
 def _push_latest_baro_to_history(cache: _Cache, now: float) -> None:
-    if _baro_fresh_for_history(cache.latest_baro, now):
+    if _baro_alt_valid(cache.latest_baro, now, guidance.ALT_FRESH_AGE):
         cache.baro_history.append(_BaroFromApp(**vars(cache.latest_baro)))
-
-
-def _project_latlon_to_ne(
-    lat: float,
-    lon: float,
-    origin_lat: float,
-    origin_lon: float,
-) -> tuple[float, float]:
-    d_n = math.radians(float(lat) - float(origin_lat)) * _EARTH_RADIUS_M
-    d_e = (
-        math.radians(float(lon) - float(origin_lon))
-        * _EARTH_RADIUS_M
-        * math.cos(math.radians(float(origin_lat)))
-    )
-    return d_n, d_e
-
-
-def _ne_to_latlon(
-    pos_n: float,
-    pos_e: float,
-    origin_lat: float,
-    origin_lon: float,
-) -> tuple[float, float]:
-    lat = float(origin_lat) + math.degrees(float(pos_n) / _EARTH_RADIUS_M)
-    cos_lat = max(1.0e-6, abs(math.cos(math.radians(float(origin_lat)))))
-    lon = float(origin_lon) + math.degrees(float(pos_e) / (_EARTH_RADIUS_M * cos_lat))
-    return lat, lon
 
 
 def _valid_gps_position_samples(history, now: float):
     samples = []
     for sample in history:
         if not (
-            sample.pos_health
-            and sample.lat is not None
-            and sample.lon is not None
-            and sample.pos_ts is not None
-            and 0.0 <= now - sample.pos_ts <= guidance.POS_HISTORY_AGE
+            _gps_position_valid(sample, now, guidance.POS_HISTORY_AGE)
         ):
             continue
         samples.append(sample)
@@ -413,11 +384,7 @@ def _valid_gps_motion_samples(history, now: float):
     samples = []
     for sample in history:
         if not (
-            sample.motion_health
-            and sample.course_rad is not None
-            and sample.speed_mps is not None
-            and sample.motion_ts is not None
-            and 0.0 <= now - sample.motion_ts <= guidance.MOTION_HISTORY_AGE
+            _gps_motion_valid(sample, now, guidance.MOTION_HISTORY_AGE)
         ):
             continue
         samples.append(sample)
@@ -444,8 +411,8 @@ def _est_position_regression_velocity(
     dt = latest.pos_ts - oldest.pos_ts
     if dt < 0.20:
         return None
-    n0, e0 = _project_latlon_to_ne(oldest.lat, oldest.lon, origin_lat, origin_lon)
-    n1, e1 = _project_latlon_to_ne(latest.lat, latest.lon, origin_lat, origin_lon)
+    n0, e0 = guidance.latlon_to_ne(oldest.lat, oldest.lon, origin_lat, origin_lon)
+    n1, e1 = guidance.latlon_to_ne(latest.lat, latest.lon, origin_lat, origin_lon)
     v_n = (n1 - n0) / dt
     v_e = (e1 - e0) / dt
     speed = math.hypot(v_n, v_e)
@@ -486,9 +453,9 @@ def _est_gps_from_history(
     if velocity is not None:
         latest_pos = pos_samples[-1]
         age = max(0.0, now - latest_pos.pos_ts)
-        n1, e1 = _project_latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
+        n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
         v_n, v_e = velocity
-        lat, lon = _ne_to_latlon(n1 + v_n * age, e1 + v_e * age, origin_lat, origin_lon)
+        lat, lon = guidance.ne_to_latlon(n1 + v_n * age, e1 + v_e * age, origin_lat, origin_lon)
         speed = math.hypot(v_n, v_e)
         course = math.atan2(v_e, v_n) % (2.0 * math.pi)
         freshed.lat = lat
@@ -512,9 +479,9 @@ def _est_gps_from_history(
         )
         speed = float(latest_motion.speed_mps)
         pos_age = max(0.0, now - latest_pos.pos_ts)
-        n1, e1 = _project_latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
+        n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
         dist_m = speed * pos_age
-        lat, lon = _ne_to_latlon(
+        lat, lon = guidance.ne_to_latlon(
             n1 + dist_m * math.cos(course),
             e1 + dist_m * math.sin(course),
             origin_lat,
@@ -554,10 +521,7 @@ def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
         sample
         for sample in history
         if (
-            sample.health
-            and sample.gyrz_rad_s is not None
-            and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.GYRZ_HISTORY_AGE
+            _imu_gyrz_valid(sample, now, guidance.GYRZ_HISTORY_AGE)
             and now - sample.ts <= IMU_ESTIMATE_SEC
         )
     ]
@@ -575,12 +539,7 @@ def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
         freshed.health = 1
         return freshed
     for sample in reversed(history):
-        if (
-            sample.health
-            and sample.gyrz_rad_s is not None
-            and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.GYRZ_HISTORY_AGE
-        ):
+        if _imu_gyrz_valid(sample, now, guidance.GYRZ_HISTORY_AGE):
             return _ImuFromApp(**vars(sample))
     return _ImuFromApp()
 
@@ -590,12 +549,7 @@ def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp
     samples = [
         sample
         for sample in history
-        if (
-            sample.health
-            and sample.alt_m is not None
-            and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.ALT_HISTORY_AGE
-        )
+        if _baro_alt_valid(sample, now, guidance.ALT_HISTORY_AGE)
     ]
     if not samples:
         return _BaroFromApp()
@@ -642,7 +596,7 @@ def _est_dead_reckon(
     모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
     """
     if (
-        _gps_position_fresh(fresh_gps, now)
+        _gps_position_valid(fresh_gps, now, guidance.POS_FRESH_AGE)
         and (dr.anchor_ts is None or fresh_gps.pos_ts > dr.anchor_ts)
     ):
         dr.anchor_lat = fresh_gps.lat
@@ -650,7 +604,11 @@ def _est_dead_reckon(
         dr.anchor_ts  = fresh_gps.pos_ts
         dr.valid = True
 
-    motion_source = fresh_gps if _gps_motion_fresh(fresh_gps, now) else est_gps
+    motion_source = (
+        fresh_gps
+        if _gps_motion_valid(fresh_gps, now, guidance.MOTION_FRESH_AGE)
+        else est_gps
+    )
     if (
         motion_source is not None
         and motion_source.motion_ts is not None
@@ -688,13 +646,11 @@ def _est_dead_reckon(
     dt     = max(0.0, now - dr.anchor_ts)
     dist_m = float(speed) * dt
 
-    earth_r    = 6_371_000.0
     anchor_lat = float(dr.anchor_lat)
     anchor_lon = float(dr.anchor_lon)
     d_N = dist_m * math.cos(float(course))
     d_E = dist_m * math.sin(float(course))
-    dr.lat = anchor_lat + math.degrees(d_N / earth_r)
-    dr.lon = anchor_lon + math.degrees(d_E / (earth_r * math.cos(math.radians(anchor_lat))))
+    dr.lat, dr.lon = guidance.ne_to_latlon(d_N, d_E, anchor_lat, anchor_lon)
     dr.ts  = now
     return dr
 
@@ -753,7 +709,7 @@ def _cache_snapshot() -> _Cache:
 
 #handler
 def handle_gps(data: str) -> None:
-    """lat,lon,pos_ts,course_deg,spd_mps,motion_ts — fidelity already verified by gpsapp."""
+    """lat,lon,pos_ts,course_deg,spd_mps,motion_ts - fidelity already verified by gpsapp."""
     global _START_POINT_LOCKED
     fields = data.split(",")
     if len(fields) != 6:
@@ -985,7 +941,7 @@ def handle_mec(data: str) -> None:
         prevstate.update_motor_enabled(False)
         with _UPDATE_LOCK:
             if PI is not None:
-                control.SetZero(PI)
+                control.WriteZero(PI)
         LOGGER.info("MOTOR_ENABLED = False -> zero")
     else:
         LOGGER.warning("Unknown MEC command: %r", data)
@@ -1020,9 +976,9 @@ def handle_fac(data: str) -> None:
 
 
 def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
-    cmd = control.SetNeutral(now, f"MANUAL_{mode}")
+    cmd = control.WriteNeutral(now, f"MANUAL_{mode}")
     if mode == "LEFT":
-        left_pw, right_pw, left_angle, right_angle, delta_arm, _ = control.ConnectRoMo(
+        left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
             -_MANUAL_STEER_DELTA_DEG
         )
         cmd.left_pw = left_pw
@@ -1031,7 +987,7 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
         cmd.right_angle_deg = right_angle
         cmd.delta_arm_deg = delta_arm
     elif mode == "RIGHT":
-        left_pw, right_pw, left_angle, right_angle, delta_arm, _ = control.ConnectRoMo(
+        left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
             _MANUAL_STEER_DELTA_DEG
         )
         cmd.left_pw = left_pw
@@ -1255,8 +1211,8 @@ def ctrl_parafoil(main_queue=None) -> None:
         try:
             if not MOTOR_ENABLED or STATE < 3:
                 if PI is not None:
-                    control.SetZero(PI)
-                idle_cmd = control.SetNeutral(now, "IDLE")
+                    control.WriteZero(PI)
+                idle_cmd = control.WriteNeutral(now, "IDLE")
                 idle_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="IDLE")
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
@@ -1267,8 +1223,8 @@ def ctrl_parafoil(main_queue=None) -> None:
 
             if STATE == 5:
                 if PI is not None:
-                    control.SetOff(PI)
-                landed_cmd = control.SetNeutral(now, "LANDED")
+                    control.WriteOff(PI)
+                landed_cmd = control.WriteNeutral(now, "LANDED")
                 landed_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="LANDED")
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
@@ -1286,7 +1242,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                     reason=f"MANUAL_{MANUAL_STEER_MODE}",
                 )
                 if PI is not None:
-                    control.SetServoPulsewidth(PI, manual_cmd)
+                    control.ProducePulse(PI, manual_cmd)
                 with _UPDATE_LOCK:
                     manual_snap = _cache_snapshot()
                 _write_control_debug_log(
@@ -1299,7 +1255,7 @@ def ctrl_parafoil(main_queue=None) -> None:
             with _UPDATE_LOCK:
                 snap = _cache_snapshot()
 
-            # DR을 현재 시각으로 갱신 (lock 밖 — snap 은 이미 복사됨)
+            # DR을 현재 시각으로 갱신 (lock 밖 - snap 은 이미 복사됨)
             freshed_imu = _est_imu_from_history(snap.imu_history, now)
             freshed_gps = _est_gps_from_history(
                 snap.gps_history,
@@ -1355,10 +1311,10 @@ def ctrl_parafoil(main_queue=None) -> None:
                     now,
                 )
             else:
-                cmd = control.SetNeutral(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
+                cmd = control.WriteNeutral(now, getattr(g_out, "reason", "GUIDANCE_INACTIVE"))
 
             if PI is not None:
-                control.SetServoPulsewidth(PI, cmd)
+                control.ProducePulse(PI, cmd)
             diag_state = (
                 "DEGRADED" if bool(getattr(g_out, "nominal", False)) and bool(getattr(g_out, "degraded", False))
                 else "ACTIVE" if bool(getattr(g_out, "nominal", False))
@@ -1370,7 +1326,7 @@ def ctrl_parafoil(main_queue=None) -> None:
         except Exception as exc:
             LOGGER.error("ctrl_paragldr exception: %s", exc, exc_info=True)
             if PI is not None:
-                control.SetZero(PI)
+                control.WriteZero(PI)
         time.sleep(period)
 
 

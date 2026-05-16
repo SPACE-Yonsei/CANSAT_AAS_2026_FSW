@@ -148,15 +148,15 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
     def test_neutral_command_outputs_to_servo(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
-            cmd = control.SetNeutral(time.monotonic())
-            control.SetServoPulsewidth(pi, cmd)
+            cmd = control.WriteNeutral(time.monotonic())
+            control.ProducePulse(pi, cmd)
             self.assertEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], control.LEFT_NEUTRAL)
             self.assertEqual(pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], control.RIGHT_NEUTRAL)
 
     def test_set_motors_off_clears_pulses(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
             pi = control.init_control()
-            control.SetOff(pi)
+            control.WriteOff(pi)
             self.assertEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN], 0)
             self.assertEqual(pi.pulses[control.PARAFOIL_RIGHT_MOTOR_PIN], 0)
 
@@ -168,7 +168,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
                 yaw_rate_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
             )
             cmd = control.ProduceCtrlOutput(ctl, gcmd, float("nan"), time.monotonic())
-            control.SetServoPulsewidth(pi, cmd)
+            control.ProducePulse(pi, cmd)
             self.assertGreaterEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
                                     control.LEFT_MIN_PULSE)
             self.assertLessEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
