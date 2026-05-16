@@ -124,7 +124,7 @@ L1_INPUT = L1Input()
 @dataclass
 class L1Output:
     timestamp: float = 0.0
-    active: bool = False
+    nominal: bool = False
     degraded: bool = False
     reason: str = "INIT"
     yaw_rate_cmd_rad_s: float = 0.0
@@ -461,7 +461,7 @@ def ProduceL1Output(
     yaw_rate = lat_acc / speed_for_l1
     yaw_rate = max(-COURSE_RATE_MAX, min(COURSE_RATE_MAX, yaw_rate))
 
-    out.active = True
+    out.nominal = True
     out.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
     out.yaw_rate_cmd_rad_s = yaw_rate
     out.lat_acc_cmd_mps2 = lat_acc

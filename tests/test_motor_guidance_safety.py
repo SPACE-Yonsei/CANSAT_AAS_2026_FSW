@@ -35,7 +35,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
     def test_partial_target_lon_missing_returns_inactive(self):
@@ -43,7 +43,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, None, time.monotonic(),
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
     def test_no_origin_returns_inactive(self):
@@ -51,7 +51,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             None, None, TARGET_LAT, TARGET_LON, time.monotonic(),
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
     def test_fail_mode_returns_inactive(self):
@@ -59,7 +59,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.FAIL,
             ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, TARGET_LON, time.monotonic(),
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL")
 
     def test_origin_equals_target_returns_invalid_path(self):
@@ -67,7 +67,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "INVALID_PATH")
 
     def test_inactive_output_has_zero_yaw_rate(self):

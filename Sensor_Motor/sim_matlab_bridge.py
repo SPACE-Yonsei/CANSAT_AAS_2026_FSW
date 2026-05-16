@@ -306,7 +306,7 @@ def main() -> None:
             )
 
             # ── Integrate kinematics (with wind drift) ──────────────────
-            yaw_cmd   = l1_out.yaw_rate_cmd_rad_s if l1_out.active else 0.0
+            yaw_cmd   = l1_out.yaw_rate_cmd_rad_s if l1_out.nominal else 0.0
             sim_gyrz  = yaw_cmd                       # 1-step delay feedback
             sim_heading += yaw_cmd * dt
             sim_heading  = (sim_heading + math.pi) % (2.0 * math.pi) - math.pi
@@ -349,7 +349,7 @@ def main() -> None:
                 "right_pw": ctrl_out.right_pw,
                 # State
                 "alt_m":  round(sim_alt, 2),
-                "active": l1_out.active,
+                "active": l1_out.nominal,
                 # Wind
                 "wind_N": round(wind_N, 3),
                 "wind_E": round(wind_E, 3),

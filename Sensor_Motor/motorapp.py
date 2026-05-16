@@ -1257,7 +1257,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 if PI is not None:
                     control.SetZero(PI)
                 idle_cmd = control.SetNeutral(now, "IDLE")
-                idle_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="IDLE")
+                idle_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="IDLE")
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
                 _write_control_debug_log(now, idle_snap, None, None, idle_out, idle_cmd, "IDLE")
@@ -1269,7 +1269,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 if PI is not None:
                     control.SetOff(PI)
                 landed_cmd = control.SetNeutral(now, "LANDED")
-                landed_out = guidance.L1Output(timestamp=now, active=False, degraded=False, reason="LANDED")
+                landed_out = guidance.L1Output(timestamp=now, nominal=False, degraded=False, reason="LANDED")
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
                 _write_control_debug_log(now, landed_snap, None, None, landed_out, landed_cmd, "LANDED")
@@ -1281,7 +1281,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 manual_cmd = _manual_steer_command(now, MANUAL_STEER_MODE)
                 manual_out = guidance.L1Output(
                     timestamp=now,
-                    active=False,
+                    nominal=False,
                     degraded=False,
                     reason=f"MANUAL_{MANUAL_STEER_MODE}",
                 )

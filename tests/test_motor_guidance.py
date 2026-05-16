@@ -232,7 +232,7 @@ class TestProduceL1Output(unittest.TestCase):
 
     def test_fail_mode_returns_inactive(self):
         out = self._run(self._active_input(), mode=ControlMode.FAIL)
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL")
 
     def test_no_target_returns_inactive(self):
@@ -241,7 +241,7 @@ class TestProduceL1Output(unittest.TestCase):
             inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic()
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
     def test_no_origin_returns_inactive(self):
@@ -250,7 +250,7 @@ class TestProduceL1Output(unittest.TestCase):
             inp, ControlMode.NOMINAL_CLOSED_LOOP,
             None, None, self.TARGET_LAT, self.TARGET_LON, time.monotonic()
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL_L1_INPUT")
 
     def test_zero_path_length_returns_invalid_path(self):
@@ -259,13 +259,13 @@ class TestProduceL1Output(unittest.TestCase):
             inp, ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic()
         )
-        self.assertFalse(out.active)
+        self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "INVALID_PATH")
 
     def test_on_track_returns_active_finite_output(self):
         inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertTrue(math.isfinite(out.yaw_rate_cmd_rad_s))
         self.assertTrue(math.isfinite(out.lat_acc_cmd_mps2))
 
@@ -274,7 +274,7 @@ class TestProduceL1Output(unittest.TestCase):
         # cross = unit_N*pos_E - unit_E*pos_N = 1*(-50) - 0*100 = -50
         inp = self._active_input(pos_n=100.0, pos_e=-50.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertLess(out.crossTrack, 0.0)
         self.assertGreater(out.yaw_rate_cmd_rad_s, 0.0)
 
@@ -282,7 +282,7 @@ class TestProduceL1Output(unittest.TestCase):
         """Vehicle east of northward path → crossTrack>0, yaw_rate<0 (left turn)."""
         inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertGreater(out.crossTrack, 0.0)
         self.assertLess(out.yaw_rate_cmd_rad_s, 0.0)
 
@@ -290,7 +290,7 @@ class TestProduceL1Output(unittest.TestCase):
         """Right of northward path requires a negative nu1 left-turn correction."""
         inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertGreater(out.crossTrack, 0.0)
         self.assertLess(out.nu1, 0.0)
         self.assertAlmostEqual(out.nu2, 0.0, places=6)
@@ -300,7 +300,7 @@ class TestProduceL1Output(unittest.TestCase):
         """On a northward path, a 15-deg right course error gives nu2=-15 deg."""
         inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=15.0, speed=8.0)
         out = self._run(inp)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertAlmostEqual(out.crossTrack, 0.0, places=6)
         self.assertAlmostEqual(out.nu1, 0.0, places=6)
         self.assertAlmostEqual(out.nu2, math.radians(-15.0), places=6)
@@ -319,13 +319,13 @@ class TestProduceL1Output(unittest.TestCase):
     def test_degraded_mode_sets_degraded_flag(self):
         inp = self._active_input()
         out = self._run(inp, mode=ControlMode.DEGRADED_CLOSED_LOOP)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertTrue(out.degraded)
 
     def test_active_mode_degraded_false(self):
         inp = self._active_input()
         out = self._run(inp, mode=ControlMode.NOMINAL_CLOSED_LOOP)
-        self.assertTrue(out.active)
+        self.assertTrue(out.nominal)
         self.assertFalse(out.degraded)
 
     def test_yaw_rate_zero_when_inactive(self):
