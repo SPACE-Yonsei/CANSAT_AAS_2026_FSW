@@ -230,6 +230,134 @@ class TestHandleBarometer(unittest.TestCase):
         self.assertEqual(len(motorapp._CACHE.baro_history), 0)
 
 
+class TestFreshedEstimates(unittest.TestCase):
+    def setUp(self):
+        _reset()
+
+    def test_gps_history_regression_propagates_position_and_motion(self):
+        t0 = time.monotonic() - 2.0
+        origin_lat = 37.55
+        origin_lon = 126.95
+        lat_10m_north, lon_same = motorapp._ne_to_latlon(10.0, 0.0, origin_lat, origin_lon)
+        history = [
+            motorapp._GpsFromApp(
+                lat=origin_lat,
+                lon=origin_lon,
+                pos_ts=t0,
+                pos_health=1,
+            ),
+            motorapp._GpsFromApp(
+                lat=lat_10m_north,
+                lon=lon_same,
+                pos_ts=t0 + 1.0,
+                pos_health=1,
+            ),
+        ]
+
+        freshed = motorapp._freshed_gps_from_history(
+            history,
+            now=t0 + 2.0,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+        )
+        est_n, est_e = motorapp._project_latlon_to_ne(
+            freshed.lat,
+            freshed.lon,
+            origin_lat,
+            origin_lon,
+        )
+        self.assertAlmostEqual(est_n, 20.0, delta=0.5)
+        self.assertAlmostEqual(est_e, 0.0, delta=0.5)
+        self.assertAlmostEqual(freshed.speed_mps, 10.0, delta=0.2)
+        self.assertAlmostEqual(freshed.course_rad, 0.0, delta=0.05)
+        self.assertTrue(freshed.pos_health)
+        self.assertTrue(freshed.motion_health)
+
+    def test_gps_history_short_hold_when_regression_unavailable(self):
+        t0 = time.monotonic() - 0.5
+        history = [
+            motorapp._GpsFromApp(
+                lat=37.55,
+                lon=126.95,
+                course_rad=math.radians(90.0),
+                speed_mps=8.0,
+                pos_ts=t0,
+                motion_ts=t0,
+                pos_health=1,
+                motion_health=1,
+            )
+        ]
+
+        freshed = motorapp._freshed_gps_from_history(history, now=t0 + 0.5)
+        self.assertAlmostEqual(freshed.lat, 37.55)
+        self.assertAlmostEqual(freshed.course_rad, math.radians(90.0))
+        self.assertAlmostEqual(freshed.speed_mps, 8.0)
+
+    def test_gps_history_dead_reckons_from_single_anchor_and_motion(self):
+        t0 = time.monotonic() - 1.0
+        origin_lat = 37.55
+        origin_lon = 126.95
+        history = [
+            motorapp._GpsFromApp(
+                lat=origin_lat,
+                lon=origin_lon,
+                course_rad=math.radians(90.0),
+                speed_mps=8.0,
+                pos_ts=t0,
+                motion_ts=t0,
+                pos_health=1,
+                motion_health=1,
+            )
+        ]
+
+        freshed = motorapp._freshed_gps_from_history(
+            history,
+            now=t0 + 1.0,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+        )
+        est_n, est_e = motorapp._project_latlon_to_ne(
+            freshed.lat,
+            freshed.lon,
+            origin_lat,
+            origin_lon,
+        )
+        self.assertAlmostEqual(est_n, 0.0, delta=0.5)
+        self.assertAlmostEqual(est_e, 8.0, delta=0.5)
+        self.assertAlmostEqual(freshed.course_rad, math.radians(90.0))
+
+    def test_imu_history_weighted_average_within_feedback_window(self):
+        t0 = time.monotonic() - 0.4
+        history = [
+            motorapp._ImuFromApp(gyrz_rad_s=math.radians(2.0), ts=t0 + 0.1, health=1),
+            motorapp._ImuFromApp(gyrz_rad_s=math.radians(4.0), ts=t0 + 0.3, health=1),
+        ]
+
+        freshed = motorapp._freshed_imu_from_history(history, now=t0 + 0.4)
+        self.assertAlmostEqual(freshed.gyrz_rad_s, math.radians(3.333333), places=5)
+        self.assertTrue(freshed.health)
+
+    def test_imu_history_stale_after_feedback_window(self):
+        t0 = time.monotonic() - 1.0
+        history = [motorapp._ImuFromApp(gyrz_rad_s=math.radians(2.0), ts=t0, health=1)]
+
+        freshed = motorapp._freshed_imu_from_history(history, now=t0 + 1.0)
+        self.assertIsNone(freshed.gyrz_rad_s)
+        self.assertFalse(freshed.health)
+
+    def test_baro_history_regression_propagates_altitude(self):
+        t0 = time.monotonic() - 3.0
+        history = [
+            motorapp._BaroFromApp(alt_m=200.0, ts=t0, health=1),
+            motorapp._BaroFromApp(alt_m=190.0, ts=t0 + 2.0, health=1),
+        ]
+
+        freshed = motorapp._freshed_baro_from_history(history, now=t0 + 3.0)
+        self.assertAlmostEqual(freshed.sink_rate, 5.0)
+        self.assertAlmostEqual(freshed.alt_m, 185.0)
+        self.assertTrue(freshed.health)
+
+
 class TestHandleTargetCoord(unittest.TestCase):
     def setUp(self):
         _reset()

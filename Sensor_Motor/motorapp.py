@@ -29,6 +29,10 @@ LOGGER = logging.getLogger(__name__)
 GPS_HISTORY_SEC = 10.0
 IMU_HISTORY_SEC = 2.0
 BARO_HISTORY_SEC = 10.0
+GPS_REGRESSION_SEC = 3.0
+IMU_ESTIMATE_SEC = 0.50
+BARO_REGRESSION_SEC = 3.0
+_EARTH_RADIUS_M = 6_371_000.0
 
 _CONTROL_LOG_LOCK = threading.Lock()
 _CONTROL_LOG_FP = None
@@ -308,51 +312,294 @@ def _push_latest_baro_to_history(cache: _Cache, now: float) -> None:
         cache.baro_history.append(_BaroFromApp(**vars(cache.latest_baro)))
 
 
-def _freshed_gps_from_history(history) -> _GpsFromApp:
-    freshed = _GpsFromApp()
-    for sample in reversed(history):
-        if (
-            freshed.lat is None
-            and sample.pos_health
+def _project_latlon_to_ne(
+    lat: float,
+    lon: float,
+    origin_lat: float,
+    origin_lon: float,
+) -> tuple[float, float]:
+    d_n = math.radians(float(lat) - float(origin_lat)) * _EARTH_RADIUS_M
+    d_e = (
+        math.radians(float(lon) - float(origin_lon))
+        * _EARTH_RADIUS_M
+        * math.cos(math.radians(float(origin_lat)))
+    )
+    return d_n, d_e
+
+
+def _ne_to_latlon(
+    pos_n: float,
+    pos_e: float,
+    origin_lat: float,
+    origin_lon: float,
+) -> tuple[float, float]:
+    lat = float(origin_lat) + math.degrees(float(pos_n) / _EARTH_RADIUS_M)
+    cos_lat = max(1.0e-6, abs(math.cos(math.radians(float(origin_lat)))))
+    lon = float(origin_lon) + math.degrees(float(pos_e) / (_EARTH_RADIUS_M * cos_lat))
+    return lat, lon
+
+
+def _valid_gps_position_samples(history, now: float):
+    samples = []
+    for sample in history:
+        if not (
+            sample.pos_health
             and sample.lat is not None
             and sample.lon is not None
             and sample.pos_ts is not None
+            and 0.0 <= now - sample.pos_ts <= guidance.POS_DR_AGE
         ):
-            freshed.lat = sample.lat
-            freshed.lon = sample.lon
-            freshed.pos_ts = sample.pos_ts
-            freshed.rx_ts = sample.rx_ts
-            freshed.pos_health = 1
-        if (
-            freshed.course_rad is None
-            and sample.motion_health
+            continue
+        samples.append(sample)
+    return samples
+
+
+def _valid_gps_motion_samples(history, now: float):
+    samples = []
+    for sample in history:
+        if not (
+            sample.motion_health
             and sample.course_rad is not None
             and sample.speed_mps is not None
             and sample.motion_ts is not None
+            and 0.0 <= now - sample.motion_ts <= guidance.MOTION_DR_AGE
         ):
-            freshed.course_rad = sample.course_rad
-            freshed.speed_mps = sample.speed_mps
-            freshed.motion_ts = sample.motion_ts
-            if freshed.rx_ts is None:
-                freshed.rx_ts = sample.rx_ts
-            freshed.motion_health = 1
-        if freshed.pos_health and freshed.motion_health:
+            continue
+        samples.append(sample)
+    return samples
+
+
+def _position_regression_velocity(
+    pos_samples,
+    origin_lat: Optional[float],
+    origin_lon: Optional[float],
+    now: float,
+) -> Optional[tuple[float, float]]:
+    if origin_lat is None or origin_lon is None or len(pos_samples) < 2:
+        return None
+    latest = pos_samples[-1]
+    oldest = None
+    for sample in reversed(pos_samples[:-1]):
+        if latest.pos_ts - sample.pos_ts <= GPS_REGRESSION_SEC:
+            oldest = sample
+        else:
             break
+    if oldest is None:
+        oldest = pos_samples[-2]
+    dt = latest.pos_ts - oldest.pos_ts
+    if dt < 0.20:
+        return None
+    n0, e0 = _project_latlon_to_ne(oldest.lat, oldest.lon, origin_lat, origin_lon)
+    n1, e1 = _project_latlon_to_ne(latest.lat, latest.lon, origin_lat, origin_lon)
+    v_n = (n1 - n0) / dt
+    v_e = (e1 - e0) / dt
+    speed = math.hypot(v_n, v_e)
+    if not math.isfinite(speed) or speed < 0.5 or speed > _GPS_MAX_VALID_SPEED_MPS:
+        return None
+    return v_n, v_e
+
+
+def _fill_gps_short_hold(
+    freshed: _GpsFromApp,
+    pos_samples,
+    motion_samples,
+) -> _GpsFromApp:
+    if not freshed.pos_health and pos_samples:
+        sample = pos_samples[-1]
+        freshed.lat = sample.lat
+        freshed.lon = sample.lon
+        freshed.pos_ts = sample.pos_ts
+        freshed.rx_ts = sample.rx_ts
+        freshed.pos_health = 1
+    if not freshed.motion_health and motion_samples:
+        sample = motion_samples[-1]
+        freshed.course_rad = sample.course_rad
+        freshed.speed_mps = sample.speed_mps
+        freshed.motion_ts = sample.motion_ts
+        if freshed.rx_ts is None:
+            freshed.rx_ts = sample.rx_ts
+        freshed.motion_health = 1
     return freshed
 
 
-def _freshed_imu_from_history(history) -> _ImuFromApp:
+def _course_with_gyro_propagation(
+    course_rad: float,
+    motion_ts: float,
+    now: float,
+    gyrz_rad_s: Optional[float],
+) -> tuple[float, float]:
+    if (
+        gyrz_rad_s is None
+        or not math.isfinite(float(gyrz_rad_s))
+        or motion_ts >= now
+        or now - motion_ts > guidance.MOTION_DR_AGE
+    ):
+        return float(course_rad), float(motion_ts)
+    return (float(course_rad) + float(gyrz_rad_s) * (now - motion_ts)) % (2.0 * math.pi), now
+
+
+def _freshed_gps_from_history(
+    history,
+    now: Optional[float] = None,
+    origin_lat: Optional[float] = None,
+    origin_lon: Optional[float] = None,
+    gyrz_rad_s: Optional[float] = None,
+) -> _GpsFromApp:
+    now = time.monotonic() if now is None else now
+    freshed = _GpsFromApp()
+    pos_samples = _valid_gps_position_samples(history, now)
+    motion_samples = _valid_gps_motion_samples(history, now)
+    velocity = _position_regression_velocity(pos_samples, origin_lat, origin_lon, now)
+
+    if velocity is not None:
+        latest_pos = pos_samples[-1]
+        age = max(0.0, now - latest_pos.pos_ts)
+        n1, e1 = _project_latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
+        v_n, v_e = velocity
+        lat, lon = _ne_to_latlon(n1 + v_n * age, e1 + v_e * age, origin_lat, origin_lon)
+        speed = math.hypot(v_n, v_e)
+        course = math.atan2(v_e, v_n) % (2.0 * math.pi)
+        freshed.lat = lat
+        freshed.lon = lon
+        freshed.pos_ts = now
+        freshed.rx_ts = latest_pos.rx_ts
+        freshed.pos_health = 1
+        freshed.course_rad = course
+        freshed.speed_mps = speed
+        freshed.motion_ts = now
+        freshed.motion_health = 1
+
+    if not freshed.pos_health and pos_samples and motion_samples and origin_lat is not None and origin_lon is not None:
+        latest_pos = pos_samples[-1]
+        latest_motion = motion_samples[-1]
+        course, motion_ts = _course_with_gyro_propagation(
+            latest_motion.course_rad,
+            latest_motion.motion_ts,
+            now,
+            gyrz_rad_s,
+        )
+        speed = float(latest_motion.speed_mps)
+        pos_age = max(0.0, now - latest_pos.pos_ts)
+        n1, e1 = _project_latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
+        dist_m = speed * pos_age
+        lat, lon = _ne_to_latlon(
+            n1 + dist_m * math.cos(course),
+            e1 + dist_m * math.sin(course),
+            origin_lat,
+            origin_lon,
+        )
+        freshed.lat = lat
+        freshed.lon = lon
+        freshed.pos_ts = now
+        freshed.rx_ts = latest_pos.rx_ts
+        freshed.pos_health = 1
+        freshed.course_rad = course
+        freshed.speed_mps = speed
+        freshed.motion_ts = motion_ts
+        freshed.motion_health = 1
+
+    _fill_gps_short_hold(freshed, pos_samples, motion_samples)
+
+    if (
+        freshed.motion_health
+        and gyrz_rad_s is not None
+        and math.isfinite(float(gyrz_rad_s))
+        and freshed.course_rad is not None
+        and freshed.motion_ts is not None
+        and freshed.motion_ts < now
+        and now - freshed.motion_ts <= guidance.MOTION_DR_AGE
+    ):
+        freshed.course_rad, freshed.motion_ts = _course_with_gyro_propagation(
+            freshed.course_rad,
+            freshed.motion_ts,
+            now,
+            gyrz_rad_s,
+        )
+    return freshed
+
+
+def _freshed_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
+    now = time.monotonic() if now is None else now
+    recent = [
+        sample
+        for sample in history
+        if (
+            sample.health
+            and sample.gyrz_rad_s is not None
+            and sample.ts is not None
+            and 0.0 <= now - sample.ts <= guidance.GYRZ_DR_AGE
+            and now - sample.ts <= IMU_ESTIMATE_SEC
+        )
+    ]
+    if recent:
+        weighted_sum = 0.0
+        weight_total = 0.0
+        for sample in recent:
+            age = max(0.0, now - sample.ts)
+            weight = max(0.05, 1.0 - age / max(IMU_ESTIMATE_SEC, 1.0e-6))
+            weighted_sum += float(sample.gyrz_rad_s) * weight
+            weight_total += weight
+        latest = recent[-1]
+        return _ImuFromApp(
+            gyrz_rad_s=weighted_sum / weight_total,
+            ts=latest.ts,
+            rx_ts=latest.rx_ts,
+            freefall=latest.freefall,
+            tumble=latest.tumble,
+            health=1,
+        )
     for sample in reversed(history):
-        if sample.health and sample.gyrz_rad_s is not None and sample.ts is not None:
+        if (
+            sample.health
+            and sample.gyrz_rad_s is not None
+            and sample.ts is not None
+            and 0.0 <= now - sample.ts <= guidance.GYRZ_DR_AGE
+        ):
             return _ImuFromApp(**vars(sample))
     return _ImuFromApp()
 
 
-def _freshed_baro_from_history(history) -> _BaroFromApp:
-    for sample in reversed(history):
-        if sample.health and sample.alt_m is not None and sample.ts is not None:
-            return _BaroFromApp(**vars(sample))
-    return _BaroFromApp()
+def _freshed_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp:
+    now = time.monotonic() if now is None else now
+    samples = [
+        sample
+        for sample in history
+        if (
+            sample.health
+            and sample.alt_m is not None
+            and sample.ts is not None
+            and 0.0 <= now - sample.ts <= guidance.ALT_DR_AGE
+        )
+    ]
+    if not samples:
+        return _BaroFromApp()
+
+    latest = samples[-1]
+    sink_rate = latest.sink_rate
+    oldest = None
+    for sample in reversed(samples[:-1]):
+        if latest.ts - sample.ts <= BARO_REGRESSION_SEC:
+            oldest = sample
+        else:
+            break
+    if oldest is not None:
+        dt = latest.ts - oldest.ts
+        if dt >= 0.20:
+            rate = (float(oldest.alt_m) - float(latest.alt_m)) / dt
+            if math.isfinite(rate):
+                sink_rate = rate
+
+    if sink_rate is None or not math.isfinite(float(sink_rate)):
+        return _BaroFromApp(**vars(latest))
+
+    age = max(0.0, now - latest.ts)
+    return _BaroFromApp(
+        alt_m=float(latest.alt_m) - float(sink_rate) * age,
+        sink_rate=float(sink_rate),
+        ts=now,
+        rx_ts=latest.rx_ts,
+        health=1,
+    )
 
 
 def _dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _DeadReckoning:
@@ -949,9 +1196,15 @@ def ctrl_parafoil(main_queue=None) -> None:
                 snap = _cache_snapshot()
 
             # DR을 현재 시각으로 갱신 (lock 밖 — snap 은 이미 복사됨)
-            freshed_gps = _freshed_gps_from_history(snap.gps_history)
-            freshed_imu = _freshed_imu_from_history(snap.imu_history)
-            freshed_baro = _freshed_baro_from_history(snap.baro_history)
+            freshed_imu = _freshed_imu_from_history(snap.imu_history, now)
+            freshed_gps = _freshed_gps_from_history(
+                snap.gps_history,
+                now,
+                snap.start_lat,
+                snap.start_lon,
+                freshed_imu.gyrz_rad_s,
+            )
+            freshed_baro = _freshed_baro_from_history(snap.baro_history, now)
             _dead_reckon(snap.dr, freshed_gps, now)
 
             l1_input, mode = guidance.ProduceL1Input(

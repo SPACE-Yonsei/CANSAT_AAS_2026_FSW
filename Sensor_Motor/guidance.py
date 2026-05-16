@@ -16,13 +16,19 @@ from typing import Optional, Tuple
 
 #Sensor age
 POS_FRESH_AGE    = 1.0    # s
-POS_STALE_MAX    = 5.0    # s
+POS_DR_AGE       = 5.0    # s
 MOTION_FRESH_AGE = 1.0    # s
-MOTION_STALE_MAX = 5.0    # s
+MOTION_DR_AGE    = 5.0    # s
 GYRZ_FRESH_AGE   = 0.20   # s
-GYRZ_STALE_MAX   = 0.50   # s
+GYRZ_DR_AGE      = 0.50   # s
 ALT_FRESH_AGE    = 0.50   # s
-ALT_STALE_MAX    = 3.0    # s
+ALT_DR_AGE       = 3.0    # s
+
+# Backward-compatible names. Prefer *_DR_AGE for freshed/estimated values.
+POS_STALE_MAX    = POS_DR_AGE
+MOTION_STALE_MAX = MOTION_DR_AGE
+GYRZ_STALE_MAX   = GYRZ_DR_AGE
+ALT_STALE_MAX    = ALT_DR_AGE
 
 # ── L1 parameters ─────────────────────────────────────────────────────────────
 L1_DAMPING         = 0.75
@@ -226,7 +232,7 @@ def FillFreshed(
             and freshed_gps.lon is not None
             and freshed_gps.pos_ts is not None
             and getattr(freshed_gps, "pos_health", 1)
-            and 0.0 <= now - freshed_gps.pos_ts <= POS_STALE_MAX
+            and 0.0 <= now - freshed_gps.pos_ts <= POS_DR_AGE
             and origin_lat is not None
             and origin_lon is not None
         ):
@@ -266,7 +272,7 @@ def FillFreshed(
             and getattr(freshed_gps, "motion_health", 1)
         ):
             age = now - freshed_gps.motion_ts
-            if 0.0 <= age <= MOTION_STALE_MAX:
+            if 0.0 <= age <= MOTION_DR_AGE:
                 l1_input.course = freshed_gps_course
                 l1_input.ground_speed_mps = freshed_gps_speed
                 l1_input.motion_quality = SensorQuality.FRESHED
@@ -283,7 +289,7 @@ def FillFreshed(
             and getattr(freshed_imu, "health", 1)
         ):
             age = now - freshed_imu.ts
-            if 0.0 <= age <= GYRZ_STALE_MAX:
+            if 0.0 <= age <= GYRZ_DR_AGE:
                 l1_input.gyrz         = freshed_imu_gyrz
                 l1_input.gyrz_quality = SensorQuality.FRESHED
                 l1_input.freefall     = getattr(freshed_imu, "freefall", 0)
@@ -301,7 +307,7 @@ def FillFreshed(
             and getattr(freshed_baro, "health", 1)
         ):
             age = now - freshed_baro.ts
-            if 0.0 <= age <= ALT_STALE_MAX:
+            if 0.0 <= age <= ALT_DR_AGE:
                 l1_input.alt         = freshed_baro_alt
                 l1_input.alt_quality = SensorQuality.FRESHED
             else:
