@@ -63,7 +63,7 @@ def _port_candidates(explicit: str | None) -> list[str]:
     if sys.platform.startswith("win"):
         defaults = [f"COM{i}" for i in range(1, 33)]
     else:
-        defaults = ["/dev/serial0", "/dev/ttyAMA0", "/dev/ttyAMA10", "/dev/ttyS0", "/dev/ttyUSB0", "/dev/ttyACM0"]
+        defaults = ["/dev/ttyUSB0", "/dev/ttyACM0", "/dev/serial0", "/dev/ttyS0", "/dev/ttyAMA0", "/dev/ttyAMA10"]
 
     out: list[str] = []
     for p in parts + [explicit_port] + discovered + defaults:
@@ -99,7 +99,11 @@ def init_serial(port: str | None = None, baudrate: int | None = None):
         except ValueError:
             baudrate = 38400
 
-    default_port = "COM3" if sys.platform.startswith("win") else "/dev/serial0"
+    if sys.platform.startswith("win"):
+        default_port = "COM3"
+    else:
+        env_port = os.environ.get("UART_DEVICE", "").strip()
+        default_port = env_port or "/dev/ttyUSB0"
     candidates = _port_candidates(port or default_port)
     last_exc: Exception | None = None
     for cand in candidates:
