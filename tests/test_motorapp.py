@@ -399,12 +399,17 @@ class TestHistoryEstimates(unittest.TestCase):
         )
 
         snap = motorapp._cache_snapshot()
-        motorapp._est_dead_reckon(snap.dr, gps, t0 + 1.0)
+        motorapp._est_dead_reckon(snap.dr, gps, motorapp._GpsFromApp(), t0 + 1.0)
         with motorapp._UPDATE_LOCK:
             motorapp._CACHE.dr = motorapp._DeadReckoning(**vars(snap.dr))
 
         next_snap = motorapp._cache_snapshot()
-        motorapp._est_dead_reckon(next_snap.dr, motorapp._GpsFromApp(), t0 + 2.0)
+        motorapp._est_dead_reckon(
+            next_snap.dr,
+            motorapp._GpsFromApp(),
+            motorapp._GpsFromApp(),
+            t0 + 2.0,
+        )
         est_n, est_e = motorapp._project_latlon_to_ne(
             next_snap.dr.lat,
             next_snap.dr.lon,
@@ -414,6 +419,25 @@ class TestHistoryEstimates(unittest.TestCase):
         self.assertTrue(next_snap.dr.valid)
         self.assertAlmostEqual(est_n, 0.0, delta=0.5)
         self.assertAlmostEqual(est_e, 16.0, delta=0.5)
+
+    def test_dead_reckoning_does_not_anchor_on_estimated_position(self):
+        t0 = time.monotonic() - 1.0
+        dr = motorapp._DeadReckoning()
+        est_gps = motorapp._GpsFromApp(
+            lat=37.55,
+            lon=126.95,
+            course_rad=math.radians(90.0),
+            speed_mps=8.0,
+            pos_ts=t0,
+            motion_ts=t0,
+            pos_health=1,
+            motion_health=1,
+        )
+
+        motorapp._est_dead_reckon(dr, motorapp._GpsFromApp(), est_gps, t0 + 0.5)
+        self.assertFalse(dr.valid)
+        self.assertIsNone(dr.anchor_lat)
+        self.assertAlmostEqual(dr.speed_mps, 8.0)
 
     def test_imu_history_weighted_average_within_feedback_window(self):
         t0 = time.monotonic() - 0.4

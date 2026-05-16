@@ -310,22 +310,28 @@ def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
     return deque((sample_type(**vars(sample)) for sample in samples), maxlen=maxlen)
 
 
-def _gps_fresh_for_history(sample: _GpsFromApp, now: float) -> bool:
-    pos_fresh = (
+def _gps_position_fresh(sample: _GpsFromApp, now: float) -> bool:
+    return bool(
         sample.pos_health
         and sample.lat is not None
         and sample.lon is not None
         and sample.pos_ts is not None
         and 0.0 <= now - sample.pos_ts <= guidance.POS_FRESH_AGE
     )
-    motion_fresh = (
+
+
+def _gps_motion_fresh(sample: _GpsFromApp, now: float) -> bool:
+    return bool(
         sample.motion_health
         and sample.course_rad is not None
         and sample.speed_mps is not None
         and sample.motion_ts is not None
         and 0.0 <= now - sample.motion_ts <= guidance.MOTION_FRESH_AGE
     )
-    return bool(pos_fresh or motion_fresh)
+
+
+def _gps_fresh_for_history(sample: _GpsFromApp, now: float) -> bool:
+    return bool(_gps_position_fresh(sample, now) or _gps_motion_fresh(sample, now))
 
 
 def _imu_fresh_for_history(sample: _ImuFromApp, now: float) -> bool:
@@ -622,37 +628,42 @@ def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp
     )
 
 
-def _est_dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _DeadReckoning:
+def _est_dead_reckon(
+    dr: _DeadReckoning,
+    fresh_gps: _GpsFromApp,
+    est_gps: _GpsFromApp,
+    now: float,
+) -> _DeadReckoning:
     """Constant-velocity dead reckoning from last GPS fix.
 
-    anchor 갱신: freshed_gps.pos_ts 가 기존 anchor_ts 보다 새로우면 앵커를 교체.
-    motion 갱신: freshed_gps.motion_ts 가 기존 motion_ts 보다 새로우면 course/speed를 저장.
+    anchor 갱신: fresh GPS position만 사용한다.
+    motion 갱신: fresh GPS motion을 우선 사용하고, 없으면 estimated GPS motion을 보조로 사용한다.
     전파:        anchor로부터 저장된 course_rad + speed_mps 로 now 시각까지 선형 외삽.
     모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
     """
-    # anchor 교체
     if (
-        freshed_gps.pos_ts is not None
-        and freshed_gps.lat is not None
-        and freshed_gps.lon is not None
-        and (dr.anchor_ts is None or freshed_gps.pos_ts > dr.anchor_ts)
+        _gps_position_fresh(fresh_gps, now)
+        and (dr.anchor_ts is None or fresh_gps.pos_ts > dr.anchor_ts)
     ):
-        dr.anchor_lat = freshed_gps.lat
-        dr.anchor_lon = freshed_gps.lon
-        dr.anchor_ts  = freshed_gps.pos_ts
+        dr.anchor_lat = fresh_gps.lat
+        dr.anchor_lon = fresh_gps.lon
+        dr.anchor_ts  = fresh_gps.pos_ts
         dr.valid = True
 
+    motion_source = fresh_gps if _gps_motion_fresh(fresh_gps, now) else est_gps
     if (
-        freshed_gps.motion_ts is not None
-        and freshed_gps.course_rad is not None
-        and freshed_gps.speed_mps is not None
-        and math.isfinite(float(freshed_gps.course_rad))
-        and math.isfinite(float(freshed_gps.speed_mps))
-        and (dr.motion_ts is None or freshed_gps.motion_ts > dr.motion_ts)
+        motion_source is not None
+        and motion_source.motion_ts is not None
+        and motion_source.course_rad is not None
+        and motion_source.speed_mps is not None
+        and math.isfinite(float(motion_source.course_rad))
+        and math.isfinite(float(motion_source.speed_mps))
+        and 0.0 <= now - motion_source.motion_ts <= guidance.MOTION_DR_AGE
+        and (dr.motion_ts is None or motion_source.motion_ts > dr.motion_ts)
     ):
-        dr.course_rad = freshed_gps.course_rad
-        dr.speed_mps = freshed_gps.speed_mps
-        dr.motion_ts = freshed_gps.motion_ts
+        dr.course_rad = motion_source.course_rad
+        dr.speed_mps = motion_source.speed_mps
+        dr.motion_ts = motion_source.motion_ts
 
     if not dr.valid or dr.anchor_ts is None:
         return dr
@@ -1298,7 +1309,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 freshed_imu.gyrz_rad_s,
             )
             freshed_baro = _est_baro_from_history(snap.baro_history, now)
-            _est_dead_reckon(snap.dr, freshed_gps, now)
+            _est_dead_reckon(snap.dr, snap.latest_gps, freshed_gps, now)
 
             est = _make_estimated_sample(freshed_gps, freshed_imu, freshed_baro, now)
             with _UPDATE_LOCK:
