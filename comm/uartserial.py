@@ -154,23 +154,3 @@ def receive_serial_data(ser) -> Optional[str]:
 def terminate_serial(ser) -> None:
     if ser is not None and getattr(ser, "is_open", False):
         ser.close()
-
-
-if __name__ == "__main__":
-    import os
-
-    # 환경 변수 설정 (USB 포트와 Baudrate)
-    os.environ["UART_DEVICE"] = "COM4"  # USB 포트에 맞게 수정
-    os.environ["UART_BAUD"] = "38400"   # XBee Baudrate에 맞게 수정
-
-    # UART 초기화
-    ser = init_serial()
-
-    # 데이터 송수신 테스트
-    if not is_dummy_serial(ser):
-        send_serial_data(ser, "Test Message")
-        response = receive_serial_data(ser)
-        print(f"Received: {response}")
-
-    # UART 종료
-    terminate_serial(ser)
