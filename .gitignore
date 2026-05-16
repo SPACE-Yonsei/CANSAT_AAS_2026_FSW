@@ -25,3 +25,5 @@ lib/prevstate.json
 lib/prevstate.json.lock
 lib/prevstate.json.tmp
 sensorlogs/
+
+node_modules/
