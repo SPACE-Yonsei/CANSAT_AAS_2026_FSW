@@ -126,9 +126,6 @@ class FailReason(enum.Enum):
     NO_MOTION = config.FAIL_REASON_NO_MOTION
     DR_TIMEOUT = config.FAIL_REASON_DR_TIMEOUT
     SENSOR_BLACKOUT = config.FAIL_REASON_SENSOR_BLACKOUT
-    UNSTABLE_BODY = config.FAIL_REASON_UNSTABLE_BODY
-    INVALID_PATH = config.FAIL_REASON_INVALID_PATH
-    L1_INPUT = config.FAIL_REASON_L1_INPUT
 
 
 @dataclass(frozen=True)
@@ -540,7 +537,7 @@ def _body_fail_reason(l1_input: L1Input) -> FailReason:
     gy = _deg(l1_input.gyry)
     gz = _deg(l1_input.gyrz)
     if gx is None and gy is None and gz is None:
-        return FailReason.UNSTABLE_BODY if l1_input.tumble else FailReason.NONE
+        return FailReason.TUMBLE_ROLLPITCH if l1_input.tumble else FailReason.NONE
     roll_pitch_abs = max(abs(gx or 0.0), abs(gy or 0.0))
     yaw_abs = abs(gz or 0.0)
     yaw_dominant = (
@@ -568,20 +565,20 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
     motion_quality = l1_input.motion_quality
     gyrz_quality   = l1_input.gyrz_quality
 
-    if pos_quality    == SensorQuality.STALE:
+    if pos_quality == SensorQuality.STALE or motion_quality == SensorQuality.STALE:
         if (
-            motion_quality == SensorQuality.STALE
+            pos_quality    == SensorQuality.STALE
+            and motion_quality == SensorQuality.STALE
             and gyrz_quality == SensorQuality.STALE
             and l1_input.alt_quality == SensorQuality.STALE
         ):
             l1_input.fail_reason = FailReason.SENSOR_BLACKOUT
-        elif l1_input.dr_age_s is not None and l1_input.dr_age_s > POS_DR_AGE:
+        elif pos_quality == SensorQuality.STALE and l1_input.dr_age_s is not None and l1_input.dr_age_s > POS_DR_AGE:
             l1_input.fail_reason = FailReason.DR_TIMEOUT
-        else:
+        elif pos_quality == SensorQuality.STALE:
             l1_input.fail_reason = FailReason.NO_POSITION
-        return ControlMode.FAIL
-    if motion_quality == SensorQuality.STALE:
-        l1_input.fail_reason = FailReason.NO_MOTION
+        else:
+            l1_input.fail_reason = FailReason.NO_MOTION
         return ControlMode.FAIL
 
     closed_loop = (
@@ -713,15 +710,15 @@ def ProduceL1Output(
         or target_lat is None
         or target_lon is None
     ):
-        l1_output.reason = config.FAIL_REASON_L1_INPUT
-        l1_output.fail_reason = FailReason.L1_INPUT.value
+        l1_output.reason = config.FAIL_REASON_NO_POSITION
+        l1_output.fail_reason = FailReason.NO_POSITION.value
         return l1_output
 
     target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
     path_len = math.hypot(target_N, target_E)
     if path_len <= 1e-6:
-        l1_output.reason = config.FAIL_REASON_INVALID_PATH
-        l1_output.fail_reason = FailReason.INVALID_PATH.value
+        l1_output.reason = config.FAIL_REASON_NO_POSITION
+        l1_output.fail_reason = FailReason.NO_POSITION.value
         return l1_output
 
     speed_for_l1 = max(float(speed), V_MIN_MPS)

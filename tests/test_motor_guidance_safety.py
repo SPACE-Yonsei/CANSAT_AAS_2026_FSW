@@ -36,7 +36,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_partial_target_lon_missing_returns_inactive(self):
         out = guidance.ProduceL1Output(
@@ -44,7 +44,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             ORIGIN_LAT, ORIGIN_LON, TARGET_LAT, None, time.monotonic(),
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_no_origin_returns_inactive(self):
         out = guidance.ProduceL1Output(
@@ -52,7 +52,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             None, None, TARGET_LAT, TARGET_LON, time.monotonic(),
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_fail_mode_returns_inactive(self):
         out = guidance.ProduceL1Output(
@@ -68,7 +68,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "INVALID_PATH")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_inactive_output_has_zero_yaw_rate(self):
         out = guidance.ProduceL1Output(

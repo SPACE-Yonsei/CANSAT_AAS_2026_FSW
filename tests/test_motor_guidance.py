@@ -242,7 +242,7 @@ class TestProduceL1Output(unittest.TestCase):
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic()
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_no_origin_returns_inactive(self):
         inp = self._active_input()
@@ -251,7 +251,7 @@ class TestProduceL1Output(unittest.TestCase):
             None, None, self.TARGET_LAT, self.TARGET_LON, time.monotonic()
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "FAIL_L1_INPUT")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_zero_path_length_returns_invalid_path(self):
         inp = self._active_input()
@@ -260,7 +260,7 @@ class TestProduceL1Output(unittest.TestCase):
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic()
         )
         self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "INVALID_PATH")
+        self.assertEqual(out.reason, "NO_POSITION")
 
     def test_on_track_returns_active_finite_output(self):
         inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=0.0, speed=8.0)
