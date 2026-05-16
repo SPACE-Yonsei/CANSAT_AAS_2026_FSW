@@ -218,7 +218,7 @@ class _Cache:
         default_factory=lambda: deque(
             maxlen=_history_len(
                 float(config.MOTOR_RATE_HZ),
-                max(guidance.POS_DR_AGE, guidance.MOTION_DR_AGE, guidance.ALT_DR_AGE),
+                max(guidance.POS_EST_AGE, guidance.MOTION_EST_AGE, guidance.ALT_EST_AGE),
             )
         )
     )
@@ -402,7 +402,7 @@ def _valid_gps_position_samples(history, now: float):
             and sample.lat is not None
             and sample.lon is not None
             and sample.pos_ts is not None
-            and 0.0 <= now - sample.pos_ts <= guidance.POS_DR_AGE
+            and 0.0 <= now - sample.pos_ts <= guidance.POS_HISTORY_AGE
         ):
             continue
         samples.append(sample)
@@ -417,7 +417,7 @@ def _valid_gps_motion_samples(history, now: float):
             and sample.course_rad is not None
             and sample.speed_mps is not None
             and sample.motion_ts is not None
-            and 0.0 <= now - sample.motion_ts <= guidance.MOTION_DR_AGE
+            and 0.0 <= now - sample.motion_ts <= guidance.MOTION_HISTORY_AGE
         ):
             continue
         samples.append(sample)
@@ -464,7 +464,7 @@ def _est_course_with_gyro_propagation(
         gyrz_rad_s is None
         or not math.isfinite(float(gyrz_rad_s))
         or motion_ts >= now
-        or now - motion_ts > guidance.MOTION_DR_AGE
+        or now - motion_ts > guidance.MOTION_HISTORY_AGE
     ):
         return float(course_rad), float(motion_ts)
     return (float(course_rad) + float(gyrz_rad_s) * (now - motion_ts)) % (2.0 * math.pi), now
@@ -537,7 +537,7 @@ def _est_gps_from_history(
         and freshed.course_rad is not None
         and freshed.motion_ts is not None
         and freshed.motion_ts < now
-        and now - freshed.motion_ts <= guidance.MOTION_DR_AGE
+        and now - freshed.motion_ts <= guidance.MOTION_HISTORY_AGE
     ):
         freshed.course_rad, freshed.motion_ts = _est_course_with_gyro_propagation(
             freshed.course_rad,
@@ -557,7 +557,7 @@ def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
             sample.health
             and sample.gyrz_rad_s is not None
             and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.GYRZ_DR_AGE
+            and 0.0 <= now - sample.ts <= guidance.GYRZ_HISTORY_AGE
             and now - sample.ts <= IMU_ESTIMATE_SEC
         )
     ]
@@ -579,7 +579,7 @@ def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
             sample.health
             and sample.gyrz_rad_s is not None
             and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.GYRZ_DR_AGE
+            and 0.0 <= now - sample.ts <= guidance.GYRZ_HISTORY_AGE
         ):
             return _ImuFromApp(**vars(sample))
     return _ImuFromApp()
@@ -594,7 +594,7 @@ def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp
             sample.health
             and sample.alt_m is not None
             and sample.ts is not None
-            and 0.0 <= now - sample.ts <= guidance.ALT_DR_AGE
+            and 0.0 <= now - sample.ts <= guidance.ALT_HISTORY_AGE
         )
     ]
     if not samples:
