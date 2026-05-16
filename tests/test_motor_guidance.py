@@ -109,7 +109,7 @@ class TestFillFresh(unittest.TestCase):
 class TestFillFreshed(unittest.TestCase):
     def test_freshed_gps_position_within_stale_max(self):
         inp = _fresh_l1_input()
-        age = guidance.POS_DR_AGE - 0.5
+        age = guidance.POS_EST_AGE - 0.5
         freshed_gps = _gps(ORIGIN_LAT + 0.01, ORIGIN_LON, age=age)
         guidance.FillFreshed(inp, freshed_gps, None, None, time.monotonic())
         self.assertEqual(inp.pos_quality, SensorQuality.FRESHED)
@@ -125,14 +125,14 @@ class TestFillFreshed(unittest.TestCase):
 
     def test_too_stale_gps_position_marks_stale(self):
         inp = _fresh_l1_input()
-        age = guidance.POS_DR_AGE + 0.5
+        age = guidance.POS_EST_AGE + 0.5
         freshed_gps = _gps(ORIGIN_LAT + 0.01, ORIGIN_LON, age=age)
         guidance.FillFreshed(inp, freshed_gps, None, None, time.monotonic())
         self.assertEqual(inp.pos_quality, SensorQuality.STALE)
 
     def test_freshed_imu_within_stale_max(self):
         inp = _fresh_l1_input()
-        age = guidance.GYRZ_DR_AGE - 0.1
+        age = guidance.GYRZ_EST_AGE - 0.1
         freshed_imu = _imu(gyrz_rad_s=0.5, age=age)
         guidance.FillFreshed(inp, None, freshed_imu, None, time.monotonic())
         self.assertEqual(inp.gyrz_quality, SensorQuality.FRESHED)
@@ -140,14 +140,14 @@ class TestFillFreshed(unittest.TestCase):
 
     def test_too_stale_imu_marks_stale(self):
         inp = _fresh_l1_input()
-        age = guidance.GYRZ_DR_AGE + 0.5
+        age = guidance.GYRZ_EST_AGE + 0.5
         freshed_imu = _imu(gyrz_rad_s=0.5, age=age)
         guidance.FillFreshed(inp, None, freshed_imu, None, time.monotonic())
         self.assertEqual(inp.gyrz_quality, SensorQuality.STALE)
 
     def test_freshed_baro_within_stale_max(self):
         inp = _fresh_l1_input()
-        age = guidance.ALT_DR_AGE - 0.5
+        age = guidance.ALT_EST_AGE - 0.5
         freshed_baro = _baro(alt_m=300.0, age=age)
         guidance.FillFreshed(inp, None, None, freshed_baro, time.monotonic())
         self.assertEqual(inp.alt_quality, SensorQuality.FRESHED)
@@ -374,7 +374,7 @@ class TestProduceL1Input(unittest.TestCase):
     def test_freshed_gps_falls_back_via_fill_freshed(self):
         now = time.monotonic()
         gps_stale = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, age=guidance.POS_FRESH_AGE + 0.5)
-        freshed_gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, age=guidance.POS_DR_AGE - 0.5)
+        freshed_gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, age=guidance.POS_EST_AGE - 0.5)
         l1_input, mode = guidance.ProduceL1Input(
             gps_stale, None, None, freshed_gps, None, None,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON, now,
