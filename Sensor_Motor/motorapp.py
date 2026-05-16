@@ -157,6 +157,9 @@ class _DeadReckoning:
     anchor_lat: Optional[float] = None   # 직전 GPS fix 위치
     anchor_lon: Optional[float] = None
     anchor_ts:  Optional[float] = None   # 직전 GPS fix 시각
+    course_rad: Optional[float] = None   # 직전 GPS/추정 motion
+    speed_mps:  Optional[float] = None
+    motion_ts:  Optional[float] = None
     valid:      bool = False
 
 
@@ -415,7 +418,7 @@ def _valid_gps_motion_samples(history, now: float):
     return samples
 
 
-def _position_regression_velocity(
+def _est_position_regression_velocity(
     pos_samples,
     origin_lat: Optional[float],
     origin_lon: Optional[float],
@@ -445,30 +448,7 @@ def _position_regression_velocity(
     return v_n, v_e
 
 
-def _fill_gps_short_hold(
-    freshed: _GpsFromApp,
-    pos_samples,
-    motion_samples,
-) -> _GpsFromApp:
-    if not freshed.pos_health and pos_samples:
-        sample = pos_samples[-1]
-        freshed.lat = sample.lat
-        freshed.lon = sample.lon
-        freshed.pos_ts = sample.pos_ts
-        freshed.rx_ts = sample.rx_ts
-        freshed.pos_health = 1
-    if not freshed.motion_health and motion_samples:
-        sample = motion_samples[-1]
-        freshed.course_rad = sample.course_rad
-        freshed.speed_mps = sample.speed_mps
-        freshed.motion_ts = sample.motion_ts
-        if freshed.rx_ts is None:
-            freshed.rx_ts = sample.rx_ts
-        freshed.motion_health = 1
-    return freshed
-
-
-def _course_with_gyro_propagation(
+def _est_course_with_gyro_propagation(
     course_rad: float,
     motion_ts: float,
     now: float,
@@ -484,7 +464,7 @@ def _course_with_gyro_propagation(
     return (float(course_rad) + float(gyrz_rad_s) * (now - motion_ts)) % (2.0 * math.pi), now
 
 
-def _freshed_gps_from_history(
+def _est_gps_from_history(
     history,
     now: Optional[float] = None,
     origin_lat: Optional[float] = None,
@@ -495,7 +475,7 @@ def _freshed_gps_from_history(
     freshed = _GpsFromApp()
     pos_samples = _valid_gps_position_samples(history, now)
     motion_samples = _valid_gps_motion_samples(history, now)
-    velocity = _position_regression_velocity(pos_samples, origin_lat, origin_lon, now)
+    velocity = _est_position_regression_velocity(pos_samples, origin_lat, origin_lon, now)
 
     if velocity is not None:
         latest_pos = pos_samples[-1]
@@ -518,7 +498,7 @@ def _freshed_gps_from_history(
     if not freshed.pos_health and pos_samples and motion_samples and origin_lat is not None and origin_lon is not None:
         latest_pos = pos_samples[-1]
         latest_motion = motion_samples[-1]
-        course, motion_ts = _course_with_gyro_propagation(
+        course, motion_ts = _est_course_with_gyro_propagation(
             latest_motion.course_rad,
             latest_motion.motion_ts,
             now,
@@ -544,8 +524,6 @@ def _freshed_gps_from_history(
         freshed.motion_ts = motion_ts
         freshed.motion_health = 1
 
-    _fill_gps_short_hold(freshed, pos_samples, motion_samples)
-
     if (
         freshed.motion_health
         and gyrz_rad_s is not None
@@ -555,7 +533,7 @@ def _freshed_gps_from_history(
         and freshed.motion_ts < now
         and now - freshed.motion_ts <= guidance.MOTION_DR_AGE
     ):
-        freshed.course_rad, freshed.motion_ts = _course_with_gyro_propagation(
+        freshed.course_rad, freshed.motion_ts = _est_course_with_gyro_propagation(
             freshed.course_rad,
             freshed.motion_ts,
             now,
@@ -564,7 +542,7 @@ def _freshed_gps_from_history(
     return freshed
 
 
-def _freshed_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
+def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
     now = time.monotonic() if now is None else now
     recent = [
         sample
@@ -601,7 +579,7 @@ def _freshed_imu_from_history(history, now: Optional[float] = None) -> _ImuFromA
     return _ImuFromApp()
 
 
-def _freshed_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp:
+def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp:
     now = time.monotonic() if now is None else now
     samples = [
         sample
@@ -644,11 +622,12 @@ def _freshed_baro_from_history(history, now: Optional[float] = None) -> _BaroFro
     )
 
 
-def _dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _DeadReckoning:
+def _est_dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _DeadReckoning:
     """Constant-velocity dead reckoning from last GPS fix.
 
     anchor 갱신: freshed_gps.pos_ts 가 기존 anchor_ts 보다 새로우면 앵커를 교체.
-    전파:        anchor로부터 freshed_gps.course_rad + speed_mps 로 now 시각까지 선형 외삽.
+    motion 갱신: freshed_gps.motion_ts 가 기존 motion_ts 보다 새로우면 course/speed를 저장.
+    전파:        anchor로부터 저장된 course_rad + speed_mps 로 now 시각까지 선형 외삽.
     모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
     """
     # anchor 교체
@@ -663,12 +642,33 @@ def _dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _D
         dr.anchor_ts  = freshed_gps.pos_ts
         dr.valid = True
 
+    if (
+        freshed_gps.motion_ts is not None
+        and freshed_gps.course_rad is not None
+        and freshed_gps.speed_mps is not None
+        and math.isfinite(float(freshed_gps.course_rad))
+        and math.isfinite(float(freshed_gps.speed_mps))
+        and (dr.motion_ts is None or freshed_gps.motion_ts > dr.motion_ts)
+    ):
+        dr.course_rad = freshed_gps.course_rad
+        dr.speed_mps = freshed_gps.speed_mps
+        dr.motion_ts = freshed_gps.motion_ts
+
     if not dr.valid or dr.anchor_ts is None:
         return dr
 
-    speed  = freshed_gps.speed_mps
-    course = freshed_gps.course_rad
+    if now - dr.anchor_ts > guidance.POS_DR_AGE:
+        dr.valid = False
+        return dr
+
+    speed  = dr.speed_mps
+    course = dr.course_rad
     if speed is None or course is None:
+        dr.lat = dr.anchor_lat
+        dr.lon = dr.anchor_lon
+        dr.ts  = now
+        return dr
+    if dr.motion_ts is not None and now - dr.motion_ts > guidance.MOTION_DR_AGE:
         dr.lat = dr.anchor_lat
         dr.lon = dr.anchor_lon
         dr.ts  = now
@@ -1289,19 +1289,20 @@ def ctrl_parafoil(main_queue=None) -> None:
                 snap = _cache_snapshot()
 
             # DR을 현재 시각으로 갱신 (lock 밖 — snap 은 이미 복사됨)
-            freshed_imu = _freshed_imu_from_history(snap.imu_history, now)
-            freshed_gps = _freshed_gps_from_history(
+            freshed_imu = _est_imu_from_history(snap.imu_history, now)
+            freshed_gps = _est_gps_from_history(
                 snap.gps_history,
                 now,
                 snap.start_lat,
                 snap.start_lon,
                 freshed_imu.gyrz_rad_s,
             )
-            freshed_baro = _freshed_baro_from_history(snap.baro_history, now)
-            _dead_reckon(snap.dr, freshed_gps, now)
+            freshed_baro = _est_baro_from_history(snap.baro_history, now)
+            _est_dead_reckon(snap.dr, freshed_gps, now)
 
             est = _make_estimated_sample(freshed_gps, freshed_imu, freshed_baro, now)
             with _UPDATE_LOCK:
+                _CACHE.dr = _DeadReckoning(**vars(snap.dr))
                 _CACHE.estimated_history.append(est)
 
             l1_input, mode = guidance.ProduceL1Input(
