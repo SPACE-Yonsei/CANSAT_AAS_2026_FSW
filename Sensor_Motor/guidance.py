@@ -66,7 +66,7 @@ def _project_position_from_origin(
 
 class SensorQuality(enum.Enum):
     FRESH   = "FRESH"
-    OLD     = "OLD"
+    FRESHED = "FRESHED"
     STALE   = "STALE"
 SENSOR_QUALITY = SensorQuality
 
@@ -96,8 +96,8 @@ class L1Input:
     target_lon: Optional[float] = None
     control_mode: Optional[ControlMode] = None
     sink_rate: Optional[float] = None
-    freefall: int = 1
-    tumble: int = 1
+    freefall: int = 0
+    tumble: int = 0
 L1_INPUT = L1Input()
 
 #have to add member
@@ -149,6 +149,7 @@ def FillFresh(
         and gps.lat is not None
         and gps.lon is not None
         and gps.pos_ts is not None
+        and getattr(gps, "pos_health", 1)
         and now - gps.pos_ts <= POS_FRESH_AGE
         and start_lat is not None
         and start_lon is not None
@@ -167,6 +168,7 @@ def FillFresh(
         and gps_course is not None
         and gps_speed is not None
         and gps.motion_ts is not None
+        and getattr(gps, "motion_health", 1)
         and now - gps.motion_ts <= MOTION_FRESH_AGE
     ):
         l1_input.course = gps_course
@@ -198,41 +200,42 @@ def FillFresh(
 
     return l1_input
 
-def FillOld(
+def FillFreshed(
     l1_input: L1Input,
-    old_gps,
-    old_imu,
-    old_baro,
+    freshed_gps,
+    freshed_imu,
+    freshed_baro,
     now: float,
     dr=None,
 ) -> L1Input:
-    """Fill non-fresh fields with recent last-known-good sensor values."""
-    old_gps_course = getattr(old_gps, "course", getattr(old_gps, "course_rad", None)) if old_gps is not None else None
-    old_gps_speed = getattr(old_gps, "speed", getattr(old_gps, "speed_mps", None)) if old_gps is not None else None
-    old_imu_gyrz = getattr(old_imu, "gyrz", getattr(old_imu, "gyrz_rad_s", None)) if old_imu is not None else None
-    old_baro_alt = getattr(old_baro, "alt", getattr(old_baro, "alt_m", None)) if old_baro is not None else None
+    """Fill non-fresh fields with history-derived freshed estimates."""
+    freshed_gps_course = getattr(freshed_gps, "course", getattr(freshed_gps, "course_rad", None)) if freshed_gps is not None else None
+    freshed_gps_speed = getattr(freshed_gps, "speed", getattr(freshed_gps, "speed_mps", None)) if freshed_gps is not None else None
+    freshed_imu_gyrz = getattr(freshed_imu, "gyrz", getattr(freshed_imu, "gyrz_rad_s", None)) if freshed_imu is not None else None
+    freshed_baro_alt = getattr(freshed_baro, "alt", getattr(freshed_baro, "alt_m", None)) if freshed_baro is not None else None
 
     if l1_input.pos_quality != SensorQuality.FRESH:
         origin_lat = getattr(l1_input, "origin_lat", None)
         origin_lon = getattr(l1_input, "origin_lon", None)
         pos_filled = False
 
-        # 1차: last_gps 로 시도
+        # 1차: history-derived GPS estimate.
         if (
-            old_gps is not None
-            and old_gps.lat is not None
-            and old_gps.lon is not None
-            and old_gps.pos_ts is not None
-            and 0.0 <= now - old_gps.pos_ts <= POS_STALE_MAX
+            freshed_gps is not None
+            and freshed_gps.lat is not None
+            and freshed_gps.lon is not None
+            and freshed_gps.pos_ts is not None
+            and getattr(freshed_gps, "pos_health", 1)
+            and 0.0 <= now - freshed_gps.pos_ts <= POS_STALE_MAX
             and origin_lat is not None
             and origin_lon is not None
         ):
             projected = _project_position_from_origin(
-                old_gps.lat, old_gps.lon, origin_lat, origin_lon
+                freshed_gps.lat, freshed_gps.lon, origin_lat, origin_lon
             )
             if projected is not None:
                 l1_input.pos_N, l1_input.pos_E = projected
-                l1_input.pos_quality = SensorQuality.OLD
+                l1_input.pos_quality = SensorQuality.FRESHED
                 pos_filled = True
 
         # 2차: dead reckoning 으로 fallback
@@ -248,7 +251,7 @@ def FillOld(
                 projected = _project_position_from_origin(dr_lat, dr_lon, origin_lat, origin_lon)
                 if projected is not None:
                     l1_input.pos_N, l1_input.pos_E = projected
-                    l1_input.pos_quality = SensorQuality.OLD
+                    l1_input.pos_quality = SensorQuality.FRESHED
                     pos_filled = True
 
         if not pos_filled:
@@ -256,16 +259,17 @@ def FillOld(
 
     if l1_input.motion_quality != SensorQuality.FRESH:
         if (
-            old_gps is not None
-            and old_gps_course is not None
-            and old_gps_speed is not None
-            and old_gps.motion_ts is not None
+            freshed_gps is not None
+            and freshed_gps_course is not None
+            and freshed_gps_speed is not None
+            and freshed_gps.motion_ts is not None
+            and getattr(freshed_gps, "motion_health", 1)
         ):
-            age = now - old_gps.motion_ts
+            age = now - freshed_gps.motion_ts
             if 0.0 <= age <= MOTION_STALE_MAX:
-                l1_input.course = old_gps_course
-                l1_input.ground_speed_mps = old_gps_speed
-                l1_input.motion_quality = SensorQuality.OLD
+                l1_input.course = freshed_gps_course
+                l1_input.ground_speed_mps = freshed_gps_speed
+                l1_input.motion_quality = SensorQuality.FRESHED
             else:
                 l1_input.motion_quality = SensorQuality.STALE
         else:
@@ -273,17 +277,17 @@ def FillOld(
 
     if l1_input.gyrz_quality != SensorQuality.FRESH:
         if (
-            old_imu is not None
-            and old_imu_gyrz is not None
-            and old_imu.ts is not None
-            and getattr(old_imu, "health", 1)
+            freshed_imu is not None
+            and freshed_imu_gyrz is not None
+            and freshed_imu.ts is not None
+            and getattr(freshed_imu, "health", 1)
         ):
-            age = now - old_imu.ts
+            age = now - freshed_imu.ts
             if 0.0 <= age <= GYRZ_STALE_MAX:
-                l1_input.gyrz         = old_imu_gyrz
-                l1_input.gyrz_quality = SensorQuality.OLD
-                l1_input.freefall     = getattr(old_imu, "freefall", 0)
-                l1_input.tumble       = getattr(old_imu, "tumble",   0)
+                l1_input.gyrz         = freshed_imu_gyrz
+                l1_input.gyrz_quality = SensorQuality.FRESHED
+                l1_input.freefall     = getattr(freshed_imu, "freefall", 0)
+                l1_input.tumble       = getattr(freshed_imu, "tumble",   0)
             else:
                 l1_input.gyrz_quality = SensorQuality.STALE
         else:
@@ -291,15 +295,15 @@ def FillOld(
 
     if l1_input.alt_quality != SensorQuality.FRESH:
         if (
-            old_baro is not None
-            and old_baro_alt is not None
-            and old_baro.ts is not None
-            and getattr(old_baro, "health", 1)
+            freshed_baro is not None
+            and freshed_baro_alt is not None
+            and freshed_baro.ts is not None
+            and getattr(freshed_baro, "health", 1)
         ):
-            age = now - old_baro.ts
+            age = now - freshed_baro.ts
             if 0.0 <= age <= ALT_STALE_MAX:
-                l1_input.alt         = old_baro_alt
-                l1_input.alt_quality = SensorQuality.OLD
+                l1_input.alt         = freshed_baro_alt
+                l1_input.alt_quality = SensorQuality.FRESHED
             else:
                 l1_input.alt_quality = SensorQuality.STALE
         else:
@@ -325,7 +329,7 @@ def DecideControlMode(l1_input: L1Input) -> ControlMode:
 
     closed_loop = (
         l1_input.gyrz is not None
-        and gyrz_quality in (SensorQuality.FRESH, SensorQuality.OLD)
+        and gyrz_quality in (SensorQuality.FRESH, SensorQuality.FRESHED)
     )
     active = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
 
@@ -343,9 +347,9 @@ def ProduceL1Input(
     gps,
     imu,
     baro,
-    old_gps,
-    old_imu,
-    old_baro,
+    freshed_gps,
+    freshed_imu,
+    freshed_baro,
     origin_lat: float,
     origin_lon: float,
     target_lat: float,
@@ -361,7 +365,7 @@ def ProduceL1Input(
     l1_input.target_lon = target_lon
 
     FillFresh(l1_input, gps, imu, baro, origin_lat, origin_lon, now)
-    FillOld(l1_input, old_gps, old_imu, old_baro, now, dr=dr)
+    FillFreshed(l1_input, freshed_gps, freshed_imu, freshed_baro, now, dr=dr)
     control_mode = DecideControlMode(l1_input)
     l1_input.control_mode = control_mode
     return (l1_input, control_mode)

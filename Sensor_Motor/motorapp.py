@@ -27,7 +27,7 @@ from . import control, guidance
 LOGGER = logging.getLogger(__name__)
 
 GPS_HISTORY_SEC = 10.0
-IMU_HISTORY_SEC = 5.0
+IMU_HISTORY_SEC = 2.0
 BARO_HISTORY_SEC = 10.0
 
 _CONTROL_LOG_LOCK = threading.Lock()
@@ -110,6 +110,8 @@ class _GpsFromApp:
     pos_ts: Optional[float] = None
     motion_ts: Optional[float] = None
     rx_ts: Optional[float] = None
+    pos_health: int = 0
+    motion_health: int = 0
 
 
 @dataclass
@@ -146,7 +148,6 @@ class _DeadReckoning:
 @dataclass
 class _Cache:
     latest_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
-    last_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
     gps_history: deque[_GpsFromApp] = field(
         default_factory=lambda: deque(
             maxlen=_history_len(float(config.GPS_RATE_HZ), GPS_HISTORY_SEC)
@@ -154,7 +155,6 @@ class _Cache:
     )
 
     latest_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
-    last_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
     imu_history: deque[_ImuFromApp] = field(
         default_factory=lambda: deque(
             maxlen=_history_len(float(config.IMU_RATE_HZ), IMU_HISTORY_SEC)
@@ -162,7 +162,6 @@ class _Cache:
     )
 
     latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
-    last_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
     baro_history: deque[_BaroFromApp] = field(
         default_factory=lambda: deque(
             maxlen=_history_len(float(config.BAROMETER_RATE_HZ), BARO_HISTORY_SEC)
@@ -254,30 +253,132 @@ def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
     )
 
 
-def _dead_reckon(dr: _DeadReckoning, last_gps: _GpsFromApp, now: float) -> _DeadReckoning:
+def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
+    return deque((sample_type(**vars(sample)) for sample in samples), maxlen=maxlen)
+
+
+def _gps_fresh_for_history(sample: _GpsFromApp, now: float) -> bool:
+    pos_fresh = (
+        sample.pos_health
+        and sample.lat is not None
+        and sample.lon is not None
+        and sample.pos_ts is not None
+        and 0.0 <= now - sample.pos_ts <= guidance.POS_FRESH_AGE
+    )
+    motion_fresh = (
+        sample.motion_health
+        and sample.course_rad is not None
+        and sample.speed_mps is not None
+        and sample.motion_ts is not None
+        and 0.0 <= now - sample.motion_ts <= guidance.MOTION_FRESH_AGE
+    )
+    return bool(pos_fresh or motion_fresh)
+
+
+def _imu_fresh_for_history(sample: _ImuFromApp, now: float) -> bool:
+    return bool(
+        sample.health
+        and sample.gyrz_rad_s is not None
+        and sample.ts is not None
+        and 0.0 <= now - sample.ts <= guidance.GYRZ_FRESH_AGE
+    )
+
+
+def _baro_fresh_for_history(sample: _BaroFromApp, now: float) -> bool:
+    return bool(
+        sample.health
+        and sample.alt_m is not None
+        and sample.ts is not None
+        and 0.0 <= now - sample.ts <= guidance.ALT_FRESH_AGE
+    )
+
+
+def _push_latest_gps_to_history(cache: _Cache, now: float) -> None:
+    if _gps_fresh_for_history(cache.latest_gps, now):
+        cache.gps_history.append(_GpsFromApp(**vars(cache.latest_gps)))
+
+
+def _push_latest_imu_to_history(cache: _Cache, now: float) -> None:
+    if _imu_fresh_for_history(cache.latest_imu, now):
+        cache.imu_history.append(_ImuFromApp(**vars(cache.latest_imu)))
+
+
+def _push_latest_baro_to_history(cache: _Cache, now: float) -> None:
+    if _baro_fresh_for_history(cache.latest_baro, now):
+        cache.baro_history.append(_BaroFromApp(**vars(cache.latest_baro)))
+
+
+def _freshed_gps_from_history(history) -> _GpsFromApp:
+    freshed = _GpsFromApp()
+    for sample in reversed(history):
+        if (
+            freshed.lat is None
+            and sample.pos_health
+            and sample.lat is not None
+            and sample.lon is not None
+            and sample.pos_ts is not None
+        ):
+            freshed.lat = sample.lat
+            freshed.lon = sample.lon
+            freshed.pos_ts = sample.pos_ts
+            freshed.rx_ts = sample.rx_ts
+            freshed.pos_health = 1
+        if (
+            freshed.course_rad is None
+            and sample.motion_health
+            and sample.course_rad is not None
+            and sample.speed_mps is not None
+            and sample.motion_ts is not None
+        ):
+            freshed.course_rad = sample.course_rad
+            freshed.speed_mps = sample.speed_mps
+            freshed.motion_ts = sample.motion_ts
+            if freshed.rx_ts is None:
+                freshed.rx_ts = sample.rx_ts
+            freshed.motion_health = 1
+        if freshed.pos_health and freshed.motion_health:
+            break
+    return freshed
+
+
+def _freshed_imu_from_history(history) -> _ImuFromApp:
+    for sample in reversed(history):
+        if sample.health and sample.gyrz_rad_s is not None and sample.ts is not None:
+            return _ImuFromApp(**vars(sample))
+    return _ImuFromApp()
+
+
+def _freshed_baro_from_history(history) -> _BaroFromApp:
+    for sample in reversed(history):
+        if sample.health and sample.alt_m is not None and sample.ts is not None:
+            return _BaroFromApp(**vars(sample))
+    return _BaroFromApp()
+
+
+def _dead_reckon(dr: _DeadReckoning, freshed_gps: _GpsFromApp, now: float) -> _DeadReckoning:
     """Constant-velocity dead reckoning from last GPS fix.
 
-    anchor 갱신: last_gps.pos_ts 가 기존 anchor_ts 보다 새로우면 앵커를 교체.
-    전파:        anchor로부터 last_gps.course_rad + speed_mps 로 now 시각까지 선형 외삽.
+    anchor 갱신: freshed_gps.pos_ts 가 기존 anchor_ts 보다 새로우면 앵커를 교체.
+    전파:        anchor로부터 freshed_gps.course_rad + speed_mps 로 now 시각까지 선형 외삽.
     모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
     """
     # anchor 교체
     if (
-        last_gps.pos_ts is not None
-        and last_gps.lat is not None
-        and last_gps.lon is not None
-        and (dr.anchor_ts is None or last_gps.pos_ts > dr.anchor_ts)
+        freshed_gps.pos_ts is not None
+        and freshed_gps.lat is not None
+        and freshed_gps.lon is not None
+        and (dr.anchor_ts is None or freshed_gps.pos_ts > dr.anchor_ts)
     ):
-        dr.anchor_lat = last_gps.lat
-        dr.anchor_lon = last_gps.lon
-        dr.anchor_ts  = last_gps.pos_ts
+        dr.anchor_lat = freshed_gps.lat
+        dr.anchor_lon = freshed_gps.lon
+        dr.anchor_ts  = freshed_gps.pos_ts
         dr.valid = True
 
     if not dr.valid or dr.anchor_ts is None:
         return dr
 
-    speed  = last_gps.speed_mps
-    course = last_gps.course_rad
+    speed  = freshed_gps.speed_mps
+    course = freshed_gps.course_rad
     if speed is None or course is None:
         dr.lat = dr.anchor_lat
         dr.lon = dr.anchor_lon
@@ -303,20 +404,17 @@ _L1_STATE = None
 
 def _cache_snapshot() -> _Cache:
     latest_gps  = _GpsFromApp(**vars(_CACHE.latest_gps))
-    last_gps    = _GpsFromApp(**vars(_CACHE.last_gps))
     latest_imu  = _ImuFromApp(**vars(_CACHE.latest_imu))
-    last_imu    = _ImuFromApp(**vars(_CACHE.last_imu))
     latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
-    last_baro   = _BaroFromApp(**vars(_CACHE.last_baro))
     dr          = _DeadReckoning(**vars(_CACHE.dr))
 
     return _Cache(
         latest_gps=latest_gps,
-        last_gps=last_gps,
+        gps_history=_copy_deque(_CACHE.gps_history, _GpsFromApp, _CACHE.gps_history.maxlen),
         latest_imu=latest_imu,
-        last_imu=last_imu,
+        imu_history=_copy_deque(_CACHE.imu_history, _ImuFromApp, _CACHE.imu_history.maxlen),
         latest_baro=latest_baro,
-        last_baro=last_baro,
+        baro_history=_copy_deque(_CACHE.baro_history, _BaroFromApp, _CACHE.baro_history.maxlen),
         dr=dr,
         target_lat=_CACHE.target_lat,
         target_lon=_CACHE.target_lon,
@@ -344,8 +442,10 @@ def handle_gps(data: str) -> None:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
-    pos_valid    = not math.isnan(lat) and not math.isnan(lon)
-    motion_valid = not math.isnan(course_deg)
+    with _UPDATE_LOCK:
+        start_lon = _CACHE.start_lon
+    pos_valid = _gps_position_sanity_reason(lat, lon, start_lon) is None
+    motion_valid = pos_valid and _gps_motion_sane(course_deg, speed_mps)
 
     course_rad = math.radians(course_deg) if motion_valid else float("nan")
     sample = _GpsFromApp(
@@ -356,20 +456,12 @@ def handle_gps(data: str) -> None:
         pos_ts=pos_ts if pos_valid else None,
         motion_ts=motion_ts if motion_valid else None,
         rx_ts=rx_ts,
+        pos_health=int(bool(pos_valid)),
+        motion_health=int(bool(motion_valid)),
     )
     with _UPDATE_LOCK:
+        _push_latest_gps_to_history(_CACHE, rx_ts)
         _CACHE.latest_gps = sample
-        _CACHE.gps_history.append(sample)
-        if pos_valid:
-            _CACHE.last_gps.lat = lat
-            _CACHE.last_gps.lon = lon
-            _CACHE.last_gps.pos_ts = pos_ts
-            _CACHE.last_gps.rx_ts = rx_ts
-        if motion_valid:
-            _CACHE.last_gps.course_rad = course_rad
-            _CACHE.last_gps.speed_mps = speed_mps
-            _CACHE.last_gps.motion_ts = motion_ts
-            _CACHE.last_gps.rx_ts = rx_ts
         if not _START_POINT_LOCKED and STATE >= 3 and pos_valid:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
@@ -402,10 +494,8 @@ def handle_imu(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
+        _push_latest_imu_to_history(_CACHE, rx_ts)
         _CACHE.latest_imu = imu
-        _CACHE.imu_history.append(imu)
-        if health:
-            _CACHE.last_imu = imu
 
 
 def handle_barometer(data: str) -> None:
@@ -433,10 +523,8 @@ def handle_barometer(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
+        _push_latest_baro_to_history(_CACHE, rx_ts)
         _CACHE.latest_baro = baro
-        _CACHE.baro_history.append(baro)
-        if health:
-            _CACHE.last_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -861,15 +949,18 @@ def ctrl_parafoil(main_queue=None) -> None:
                 snap = _cache_snapshot()
 
             # DR을 현재 시각으로 갱신 (lock 밖 — snap 은 이미 복사됨)
-            _dead_reckon(snap.dr, snap.last_gps, now)
+            freshed_gps = _freshed_gps_from_history(snap.gps_history)
+            freshed_imu = _freshed_imu_from_history(snap.imu_history)
+            freshed_baro = _freshed_baro_from_history(snap.baro_history)
+            _dead_reckon(snap.dr, freshed_gps, now)
 
             l1_input, mode = guidance.ProduceL1Input(
                 gps=snap.latest_gps,
                 imu=snap.latest_imu,
                 baro=snap.latest_baro,
-                old_gps=snap.last_gps,
-                old_imu=snap.last_imu,
-                old_baro=snap.last_baro,
+                freshed_gps=freshed_gps,
+                freshed_imu=freshed_imu,
+                freshed_baro=freshed_baro,
                 dr=snap.dr,
                 origin_lat=snap.start_lat,
                 origin_lon=snap.start_lon,
