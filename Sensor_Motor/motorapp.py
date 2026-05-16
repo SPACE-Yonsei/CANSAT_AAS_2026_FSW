@@ -792,7 +792,7 @@ def handle_imu(data: str) -> None:
         magz_uT=magz_uT,
         gyrx_rad_s=math.radians(gyrx_deg_s),
         gyry_rad_s=math.radians(gyry_deg_s),
-        gyrz_rad_s=math.radians(gyrz_deg_s),
+        gyrz_rad_s=math.radians(-gyrz_deg_s),  # IMU Z-up: gz+= CCW; negate to match nav convention (gz+ = CW = right turn)
         ts=sample_ts,
         rx_ts=rx_ts,
         freefall=freefall,

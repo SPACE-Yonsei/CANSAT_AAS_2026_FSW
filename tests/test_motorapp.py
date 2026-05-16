@@ -186,7 +186,7 @@ class TestHandleImu(unittest.TestCase):
     def test_valid_payload(self):
         motorapp.handle_imu(_imu_msg())
         imu = motorapp._CACHE.latest_imu
-        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(2.5))
+        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-2.5))  # negated: IMU gz+ = CCW
         self.assertTrue(imu.health)
 
     def test_valid_payload_preserves_all_imu_fields(self):
@@ -218,7 +218,7 @@ class TestHandleImu(unittest.TestCase):
         self.assertAlmostEqual(imu.magz_uT, 6.6)
         self.assertAlmostEqual(imu.gyrx_rad_s, math.radians(7.7))
         self.assertAlmostEqual(imu.gyry_rad_s, math.radians(8.8))
-        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(9.9))
+        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-9.9))  # negated: IMU gz+ = CCW
 
     def test_valid_payload_uses_sample_ts(self):
         motorapp.handle_imu(_imu_msg(ts=99.9))
@@ -238,7 +238,7 @@ class TestHandleImu(unittest.TestCase):
         self.assertEqual(len(motorapp._CACHE.imu_history), 0)
         motorapp.handle_imu(_imu_msg(gyrz=3.0, ts=t0 + 0.05))
         self.assertEqual(len(motorapp._CACHE.imu_history), 1)
-        self.assertAlmostEqual(motorapp._CACHE.imu_history[-1].gyrz_rad_s, math.radians(2.5))
+        self.assertAlmostEqual(motorapp._CACHE.imu_history[-1].gyrz_rad_s, math.radians(-2.5))  # negated
         self.assertAlmostEqual(motorapp._CACHE.imu_history[-1].yaw_rad, math.radians(45.0))
 
     def test_unhealthy_imu_skips_history(self):
@@ -579,7 +579,7 @@ class TestCacheSnapshot(unittest.TestCase):
     def test_snapshot_copies_latest_imu(self):
         motorapp.handle_imu(_imu_msg())
         snap = motorapp._cache_snapshot()
-        self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(2.5))
+        self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(-2.5))  # negated
 
     def test_snapshot_copies_latest_baro(self):
         motorapp.handle_barometer(_baro_msg(alt=333.0))

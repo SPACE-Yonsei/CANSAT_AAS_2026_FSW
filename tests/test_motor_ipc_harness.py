@@ -78,7 +78,7 @@ class TestMessageRouting(unittest.TestCase):
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu,
                   _imu_msg())
         self.assertAlmostEqual(
-            motorapp._CACHE.latest_imu.gyrz_rad_s, math.radians(2.5), places=5
+            motorapp._CACHE.latest_imu.gyrz_rad_s, math.radians(-2.5), places=5  # negated: IMU gz+ = CCW
         )
 
     def test_baro_message_updates_cache(self):
@@ -140,7 +140,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
     def test_snapshot_reflects_all_dispatched_data(self):
         snap = motorapp._cache_snapshot()
         self.assertAlmostEqual(snap.latest_gps.lat, 37.55)
-        self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(2.5), places=5)
+        self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(-2.5), places=5)  # negated
         self.assertAlmostEqual(snap.latest_baro.alt_m, 200.0)
         self.assertAlmostEqual(snap.target_lat, 37.56)
         self.assertAlmostEqual(snap.start_lat, 37.55)
