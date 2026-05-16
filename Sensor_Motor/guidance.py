@@ -51,7 +51,7 @@ L1_PERIOD_S        = 8.0
 L1_MIN_M           = 5.0
 V_MIN_MPS          = 2.0
 LAT_ACC_MAX        = 4.0    # m/s^2
-COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S)
+COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S)
 # GPS-derived position sanity: reject positions farther than this from origin.
 # Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
 _MAX_POS_RANGE_M   = 50_000.0   # 50 km
@@ -131,7 +131,7 @@ class FailReason(enum.Enum):
 @dataclass(frozen=True)
 class ControlPolicy:
     confidence_scale: float
-    yaw_rate_cmd_max_deg_s: float
+    angular_velocity_cmd_max_deg_s: float
     lat_acc_max_mps2: float
     delta_ff_max_deg: float
     delta_pid_max_deg: float
@@ -173,7 +173,7 @@ class L1Input:
 @dataclass
 class L1State:
     """Reserved state for future degraded/weak L1 command shaping."""
-    last_yaw_rate_cmd_rad_s: float = 0.0
+    last_angular_velocity_cmd_rad_s: float = 0.0
     last_update_ts: Optional[float] = None
 
 
@@ -182,7 +182,7 @@ def make_l1_state() -> L1State:
 
 
 def l1_reset(state: L1State) -> None:
-    state.last_yaw_rate_cmd_rad_s = 0.0
+    state.last_angular_velocity_cmd_rad_s = 0.0
     state.last_update_ts = None
 
 
@@ -190,7 +190,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if mode == ControlMode.NOMINAL_CLOSED_LOOP:
         return ControlPolicy(
             confidence_scale=config.MOTOR_NOMINAL_CLOSED_LOOP_CONFIDENCE_SCALE,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=config.MOTOR_NOMINAL_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
             delta_ff_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG,
@@ -201,7 +201,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if mode == ControlMode.NOMINAL_FEEDFORWARD:
         return ControlPolicy(
             confidence_scale=config.MOTOR_NOMINAL_FEEDFORWARD_CONFIDENCE_SCALE,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=config.MOTOR_NOMINAL_FEEDFORWARD_LAT_ACC_MAX_MPS2,
             delta_ff_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_PID_MAX_DEG,
@@ -212,7 +212,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if mode == ControlMode.DEGRADED_CLOSED_LOOP:
         return ControlPolicy(
             confidence_scale=config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=config.MOTOR_DEGRADED_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
             delta_ff_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG,
@@ -224,7 +224,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if mode == ControlMode.DEGRADED_FEEDFORWARD:
         return ControlPolicy(
             confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=config.MOTOR_DEGRADED_FEEDFORWARD_LAT_ACC_MAX_MPS2,
             delta_ff_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_PID_MAX_DEG,
@@ -236,7 +236,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if fail_reason == FailReason.TUMBLE_YAW_DOMINANT:
         return ControlPolicy(
             confidence_scale=0.0,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_TUMBLE_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_TUMBLE_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=0.0,
             delta_ff_max_deg=config.MOTOR_TUMBLE_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=0.0,
@@ -248,7 +248,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
     if fail_reason == FailReason.NO_MOTION:
         return ControlPolicy(
             confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
-            yaw_rate_cmd_max_deg_s=config.MOTOR_TARGET_BEARING_YAW_RATE_CMD_MAX_DEG_S,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_TARGET_BEARING_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
             lat_acc_max_mps2=0.0,
             delta_ff_max_deg=config.MOTOR_TARGET_BEARING_DELTA_FF_MAX_DEG,
             delta_pid_max_deg=0.0,
@@ -259,7 +259,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
         )
     return ControlPolicy(
         confidence_scale=0.0,
-        yaw_rate_cmd_max_deg_s=0.0,
+        angular_velocity_cmd_max_deg_s=0.0,
         lat_acc_max_mps2=0.0,
         delta_ff_max_deg=0.0,
         delta_pid_max_deg=0.0,
@@ -272,7 +272,7 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
 
 def _apply_policy(out: L1Output, policy: ControlPolicy) -> None:
     out.confidence_scale = policy.confidence_scale
-    out.yaw_rate_cmd_max_deg_s = policy.yaw_rate_cmd_max_deg_s
+    out.angular_velocity_cmd_max_deg_s = policy.angular_velocity_cmd_max_deg_s
     out.lat_acc_max_mps2 = policy.lat_acc_max_mps2
     out.delta_ff_max_deg = policy.delta_ff_max_deg
     out.delta_pid_max_deg = policy.delta_pid_max_deg
