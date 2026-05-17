@@ -62,14 +62,6 @@ class TestCommApp(unittest.TestCase):
         msg = q.get_nowait()
         self.assertTrue(msg.endswith("|REL,ON"))
 
-    def test_dispatch_mtr_routes_to_motor(self):
-        q = queue.Queue()
-        self.assertTrue(commapp._dispatch_command("CMD,1070,MTR,left", q))
-        msg = q.get_nowait()
-        self.assertIn(f"|{appargs.MotorAppArg.AppID}|", msg)
-        self.assertIn(f"|{appargs.CommAppArg.MID_RouteCmd_MTR}|", msg)
-        self.assertTrue(msg.endswith("|LEFT"))
-
     def test_dispatch_command_case_insensitive_token(self):
         q = queue.Queue()
         self.assertTrue(commapp._dispatch_command("CMD,1070,ss,3", q))
