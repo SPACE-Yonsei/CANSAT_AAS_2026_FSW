@@ -78,6 +78,8 @@ class ScenarioResult:
     delta_ff_deg: float
     delta_pid_deg: float
     delta_arm_deg: float
+    left_angle_deg: float
+    right_angle_deg: float
     left_pw: int
     right_pw: int
 
@@ -120,10 +122,18 @@ def _build_l1_input(params: ScenarioParams) -> tuple[L1Input, ControlMode]:
 
 
 def run_scenario(params: ScenarioParams) -> ScenarioResult:
-    """Run the full guidance + control pipeline for one scenario."""
+    """Run the full guidance + control pipeline for one scenario.
+
+    슬루 리미터는 이전 arm 위치에서 얼마나 이동했는지를 보기 때문에
+    첫 프레임만 실행하면 항상 neutral(80°)에서 10° 이동으로 제한된다.
+    "한 번 입력하면 한 프레임 완료" 원칙에 맞게:
+      1단계: guidance 출력으로 원하는 arm 각도를 구한다.
+      2단계: arm이 이미 그 위치에 있다고 가정하고 (슬루 상태 주입) 실제 프레임을 실행한다.
+    """
     target_lat, target_lon = _target_latlon(params.track_length_m)
     l1_input, mode = _build_l1_input(params)
     now = 0.0
+    gyrz_meas = math.radians(params.gyrz_deg_s)
 
     g_out = guidance.ProduceL1Output(
         l1_input, mode,
@@ -134,8 +144,16 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
 
     ctl = control.MakeCtrler()
     ctrl_in = control.ProduceCtrlInput(g_out, now)
+
+    # 1단계: 원하는 arm 각도 계산
+    cmd = control.ProduceCtrlOutput(ctl, ctrl_in, gyrz_meas, now)
+    _, _, left_des, right_des, _ = control.ConnectRoMo(cmd.delta_arm_deg)
+    ctl.prev_left_angle_deg = left_des
+    ctl.prev_right_angle_deg = right_des
+
+    # 2단계: arm이 원하는 위치에서 출발하는 정상 프레임
     cmd = control.ProduceCtrlOutput(
-        ctl, ctrl_in, math.radians(params.gyrz_deg_s), now
+        ctl, ctrl_in, gyrz_meas, now + 1.0 / 20.0
     )
 
     return ScenarioResult(
@@ -157,6 +175,8 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
         delta_ff_deg=cmd.delta_ff_deg,
         delta_pid_deg=cmd.delta_pid_deg,
         delta_arm_deg=cmd.delta_arm_deg,
+        left_angle_deg=cmd.left_angle_deg,
+        right_angle_deg=cmd.right_angle_deg,
         left_pw=cmd.left_pw,
         right_pw=cmd.right_pw,
     )
@@ -274,6 +294,8 @@ def print_single(r: ScenarioResult) -> None:
     print(f"    delta_ff          : {r.delta_ff_deg:+.2f} deg")
     print(f"    delta_pid         : {r.delta_pid_deg:+.2f} deg")
     print(f"    delta_arm         : {r.delta_arm_deg:+.2f} deg")
+    print(f"    left_angle        : {r.left_angle_deg:.2f} deg  (neutral=80°, range 0~160°)")
+    print(f"    right_angle       : {r.right_angle_deg:.2f} deg  (neutral=80°, range 0~160°)")
     print(f"    left_pw           : {r.left_pw} μs")
     print(f"    right_pw          : {r.right_pw} μs")
 
