@@ -1,7 +1,4 @@
-"""Guidance module: L1 guidance and motor output computation.
-
-Implements ArduPilot L1 navigation controller logic ported to Python.
-Reference: libraries/AP_L1_Control/AP_L1_Control.cpp :: update_waypoint()
+"""Guidance module: bearing guidance and motor output computation.
 
 Sign convention: commanded_angular_velocity > 0 = RIGHT turn, < 0 = LEFT turn.
 Units: _deg / _rad / _m / _ms / _mps suffixes throughout.
@@ -45,13 +42,6 @@ MOTION_STALE_MAX = MOTION_EST_AGE
 GYRZ_STALE_MAX   = GYRZ_EST_AGE
 ALT_STALE_MAX    = ALT_EST_AGE
 
-# ── L1 parameters ─────────────────────────────────────────────────────────────
-L1_DAMPING         = 0.75
-L1_PERIOD_S        = 8.0
-L1_MIN_M           = 5.0
-V_MIN_MPS          = 2.0
-LAT_ACC_MAX        = 4.0    # m/s^2
-COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S)
 # GPS-derived position sanity: reject positions farther than this from origin.
 # Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
 _MAX_POS_RANGE_M   = 50_000.0   # 50 km
@@ -139,8 +129,6 @@ class ControlPolicy:
     delta_total_max_deg: float
     max_arm_rate_deg_s: float
     pid_enabled: bool
-    l1_enabled: bool = True
-    l1_period_s: float = L1_PERIOD_S
 
 @dataclass
 class L1Input:
@@ -168,22 +156,6 @@ class L1Input:
     sink_rate: Optional[float] = None
     freefall: int = 0
     tumble: int = 0
-
-
-@dataclass
-class L1State:
-    """Reserved state for future degraded/weak L1 command shaping."""
-    last_angular_velocity_cmd_rad_s: float = 0.0
-    last_update_ts: Optional[float] = None
-
-
-def make_l1_state() -> L1State:
-    return L1State()
-
-
-def l1_reset(state: L1State) -> None:
-    state.last_angular_velocity_cmd_rad_s = 0.0
-    state.last_update_ts = None
 
 
 def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NONE) -> ControlPolicy:
@@ -219,7 +191,6 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
             delta_total_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
             max_arm_rate_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
             pid_enabled=True,
-            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE, 1.0e-6),
         )
     if mode == ControlMode.DEGRADED_FEEDFORWARD:
         return ControlPolicy(
@@ -231,7 +202,6 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
             delta_total_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
             max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
             pid_enabled=False,
-            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE, 1.0e-6),
         )
     if fail_reason == FailReason.TUMBLE_YAW_DOMINANT:
         return ControlPolicy(
@@ -243,7 +213,6 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
             delta_total_max_deg=config.MOTOR_TUMBLE_DELTA_TOTAL_MAX_DEG,
             max_arm_rate_deg_s=config.MOTOR_TUMBLE_MAX_ARM_RATE_DEG_S,
             pid_enabled=False,
-            l1_enabled=False,
         )
     if fail_reason == FailReason.NO_MOTION:
         return ControlPolicy(
@@ -255,7 +224,6 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
             delta_total_max_deg=config.MOTOR_TARGET_BEARING_DELTA_TOTAL_MAX_DEG,
             max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
             pid_enabled=False,
-            l1_enabled=False,
         )
     return ControlPolicy(
         confidence_scale=0.0,
@@ -266,7 +234,6 @@ def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NON
         delta_total_max_deg=0.0,
         max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
         pid_enabled=False,
-        l1_enabled=False,
     )
 
 
@@ -284,7 +251,6 @@ def _apply_policy(out: L1Output, policy: ControlPolicy) -> None:
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
 
-#have to add member
 @dataclass
 class L1Output:
     timestamp: float = 0.0
@@ -302,24 +268,16 @@ class L1Output:
     max_arm_rate_deg_s: float = 0.0
     pid_enabled: bool = False
     angular_velocity_cmd_rad_s: float = 0.0
-    lat_acc_cmd_mps2: float = 0.0
+    arm_delta_deg: float = 0.0
     ground_speed_mps: float = 0.0
-    L1_distance: float = 0.0
-    nu1: float = 0.0
-    nu2: float = 0.0
-    nu: float = 0.0
     crossTrack: float = 0.0
     alongTrack: float = 0.0
     pos_N: float = 0.0
     pos_E: float = 0.0
     target_N: float = 0.0
     target_E: float = 0.0
-    carrot_N: float = 0.0
-    carrot_E: float = 0.0
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
-    carrot_lat: Optional[float] = None
-    carrot_lon: Optional[float] = None
     current_heading_rad: float = 0.0
 
 
@@ -607,7 +565,6 @@ def ProduceL1Input(
     target_lat: float,
     target_lon: float,
     now: float,
-    l1_state=None,
     dr=None,
 ) -> tuple[L1Input, ControlMode]:
     l1_input = L1Input()
@@ -638,7 +595,6 @@ def ProduceL1Output(
     target_lat: float,
     target_lon: float,
     now: float,
-    l1_state=None,
 ) -> L1Output:
     l1_output = L1Output(timestamp=now)
     l1_output.reason = getattr(mode, "value", str(mode))
@@ -710,57 +666,35 @@ def ProduceL1Output(
         return l1_output
 
     target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
+
     path_len = math.hypot(target_N, target_E)
-    if path_len <= 1e-6:
-        l1_output.reason = config.FAIL_REASON_NO_POSITION
-        l1_output.fail_reason = FailReason.NO_POSITION.value
-        return l1_output
+    if path_len > 1e-6:
+        unit_N, unit_E = target_N / path_len, target_E / path_len
+        along = pos_N * unit_N + pos_E * unit_E
+        cross = unit_N * pos_E - unit_E * pos_N
+    else:
+        along, cross = 0.0, 0.0
 
-    speed_for_l1 = max(float(speed), V_MIN_MPS)
-    L1_distance = max((L1_DAMPING * policy.l1_period_s / math.pi) * speed_for_l1, L1_MIN_M)
-    unit_N = target_N / path_len
-    unit_E = target_E / path_len
-    along = pos_N * unit_N + pos_E * unit_E
-    cross = unit_N * pos_E - unit_E * pos_N
-    carrot_along = min(max(along + L1_distance, 0.0), path_len)
-    carrot_N = carrot_along * unit_N
-    carrot_E = carrot_along * unit_E
+    # Use IMU yaw as heading reference; fall back to GPS course when yaw is unavailable.
+    yaw = getattr(l1_input, "yaw", None)
+    heading_ref = float(yaw) if yaw is not None else float(course)
 
-    path_heading = math.atan2(unit_E, unit_N)
-    # nu1: turn angle caused by position error. It drives cross-track error
-    # back toward the path.
-    nu1 = math.atan2(-cross, max(L1_distance, 1e-6))
-    # nu2: turn angle caused by direction error. It aligns current course to
-    # the path heading.
-    nu2 = (path_heading - course + math.pi) % (2.0 * math.pi) - math.pi
-    nu = _wrap_pi(nu1 + nu2)
-    nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
-    K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
-    lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
-    lat_acc *= policy.confidence_scale
-    lat_acc = max(-policy.lat_acc_max_mps2, min(policy.lat_acc_max_mps2, lat_acc))
-    angular_velocity_rad_s = lat_acc / speed_for_l1
-    angular_velocity_max_rad_s = math.radians(policy.angular_velocity_cmd_max_deg_s)
-    angular_velocity_rad_s = max(-angular_velocity_max_rad_s, min(angular_velocity_max_rad_s, angular_velocity_rad_s))
+    bearing = math.atan2(target_E - float(pos_E), target_N - float(pos_N))
+    heading_error_deg = math.degrees(_wrap_pi(bearing - heading_ref))
+    arm_delta_deg = config.MOTOR_TARGET_BEARING_GAIN * policy.confidence_scale * heading_error_deg
+    arm_delta_deg = max(-policy.delta_total_max_deg, min(policy.delta_total_max_deg, arm_delta_deg))
 
     l1_output.nominal = True
     l1_output.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
     l1_output.control_valid = True
-    l1_output.angular_velocity_cmd_rad_s = angular_velocity_rad_s
-    l1_output.lat_acc_cmd_mps2 = lat_acc
+    l1_output.arm_delta_deg = arm_delta_deg
+    l1_output.angular_velocity_cmd_rad_s = math.radians(arm_delta_deg)
     l1_output.ground_speed_mps = float(speed)
-    l1_output.L1_distance = L1_distance
-    l1_output.nu1 = nu1
-    l1_output.nu2 = nu2
-    l1_output.nu = nu
     l1_output.crossTrack = cross
     l1_output.alongTrack = along
     l1_output.pos_N = pos_N
     l1_output.pos_E = pos_E
     l1_output.target_N = target_N
     l1_output.target_E = target_E
-    l1_output.carrot_N = carrot_N
-    l1_output.carrot_E = carrot_E
-    l1_output.carrot_lat, l1_output.carrot_lon = ne_to_latlon(carrot_N, carrot_E, origin_lat, origin_lon)
-    l1_output.current_heading_rad = course
+    l1_output.current_heading_rad = heading_ref
     return l1_output

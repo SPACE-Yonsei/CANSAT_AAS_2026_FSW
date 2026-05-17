@@ -269,21 +269,11 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "NO_POSITION")
 
-    def test_zero_path_length_returns_invalid_path(self):
-        inp = self._active_input()
-        out = guidance.ProduceL1Output(
-            inp, ControlMode.NOMINAL_CLOSED_LOOP,
-            ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic()
-        )
-        self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "NO_POSITION")
-
     def test_on_track_returns_active_finite_output(self):
         inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=0.0, speed=8.0)
         out = self._run(inp)
         self.assertTrue(out.nominal)
         self.assertTrue(math.isfinite(out.angular_velocity_cmd_rad_s))
-        self.assertTrue(math.isfinite(out.lat_acc_cmd_mps2))
 
     def test_left_of_path_commands_right_turn(self):
         """Vehicle west of northward path → crossTrack<0, angular_velocity>0 (right turn)."""
@@ -330,35 +320,10 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertGreater(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertLess(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
-    def test_nu1_is_position_driven_turn_angle(self):
-        """Right of northward path requires a negative nu1 left-turn correction."""
-        inp = self._active_input(pos_n=100.0, pos_e=50.0, course_deg=0.0, speed=8.0)
-        out = self._run(inp)
-        self.assertTrue(out.nominal)
-        self.assertGreater(out.crossTrack, 0.0)
-        self.assertLess(out.nu1, 0.0)
-        self.assertAlmostEqual(out.nu2, 0.0, places=6)
-        self.assertAlmostEqual(out.nu, out.nu1, places=6)
-
-    def test_nu2_is_direction_driven_turn_angle(self):
-        """On a northward path, a 15-deg right course error gives nu2=-15 deg."""
-        inp = self._active_input(pos_n=100.0, pos_e=0.0, course_deg=15.0, speed=8.0)
-        out = self._run(inp)
-        self.assertTrue(out.nominal)
-        self.assertAlmostEqual(out.crossTrack, 0.0, places=6)
-        self.assertAlmostEqual(out.nu1, 0.0, places=6)
-        self.assertAlmostEqual(out.nu2, math.radians(-15.0), places=6)
-        self.assertAlmostEqual(out.nu, out.nu2, places=6)
-
-    def test_course_rate_clamped_to_max(self):
+    def test_arm_delta_clamped_to_max(self):
         inp = self._active_input(pos_n=100.0, pos_e=-500.0, course_deg=90.0, speed=8.0)
         out = self._run(inp)
-        self.assertLessEqual(abs(out.angular_velocity_cmd_rad_s), guidance.COURSE_RATE_MAX + 1e-9)
-
-    def test_lat_acc_clamped_to_max(self):
-        inp = self._active_input(pos_n=100.0, pos_e=-500.0, course_deg=90.0, speed=8.0)
-        out = self._run(inp)
-        self.assertLessEqual(abs(out.lat_acc_cmd_mps2), guidance.LAT_ACC_MAX + 1e-9)
+        self.assertLessEqual(abs(out.arm_delta_deg), out.delta_total_max_deg + 1e-9)
 
     def test_degraded_mode_sets_degraded_flag(self):
         inp = self._active_input()

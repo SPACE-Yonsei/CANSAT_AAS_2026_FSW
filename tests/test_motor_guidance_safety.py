@@ -62,14 +62,6 @@ class TestGuidanceSafetyGates(unittest.TestCase):
         self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL")
 
-    def test_origin_equals_target_returns_invalid_path(self):
-        out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
-            ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
-        )
-        self.assertFalse(out.nominal)
-        self.assertEqual(out.reason, "NO_POSITION")
-
     def test_inactive_output_has_zero_angular_velocity(self):
         out = guidance.ProduceL1Output(
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
@@ -82,7 +74,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
             _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, None, None, time.monotonic(),
         )
-        self.assertAlmostEqual(out.lat_acc_cmd_mps2, 0.0)
+        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
 
     def test_no_origin_in_produce_l1_input_causes_fail(self):
         """Without origin, position cannot be computed → FAIL mode."""

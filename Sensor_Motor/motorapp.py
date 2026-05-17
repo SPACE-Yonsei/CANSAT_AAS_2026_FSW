@@ -728,7 +728,6 @@ def _make_estimated_sample(
 
 
 _CONTROLLER = None
-_L1_STATE = None
 
 def _cache_snapshot() -> _Cache:
     latest_gps  = _GpsFromApp(**vars(_CACHE.latest_gps))
@@ -955,7 +954,7 @@ def handle_target_coord(data: str) -> None:
 
 
 def handle_flight_state(data: str) -> None:
-    global STATE, _PREV_STATE, _START_POINT_LOCKED, _L1_STATE, _CONTROLLER
+    global STATE, _PREV_STATE, _START_POINT_LOCKED, _CONTROLLER
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError) as exc:
@@ -974,11 +973,6 @@ def handle_flight_state(data: str) -> None:
             _CACHE.start_lon = None
             _START_POINT_LOCKED = False
             prevstate.clear_start_point()
-            if _L1_STATE is not None and hasattr(guidance, "l1_reset"):
-                try:
-                    guidance.l1_reset(_L1_STATE)
-                except Exception:
-                    LOGGER.debug("Failed to reset L1 state", exc_info=True)
             do_ctrl_reset = True
         elif new_state in (3, 4):
             gps = _CACHE.latest_gps
@@ -1372,15 +1366,8 @@ def ctrl_parafoil(main_queue=None) -> None:
                            snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
-
             freshed_imu = _est_imu_from_history(snap.imu_history, now)
-            freshed_gps = _est_gps_from_history(
-                snap.gps_history,
-                now,
-                snap.start_lat,
-                snap.start_lon,
-                freshed_imu.gyrz_rad_s,
-            )
+            freshed_gps = _est_gps_from_history(snap.gps_history, now, snap.start_lat, snap.start_lon, freshed_imu.gyrz_rad_s)
             freshed_baro = _est_baro_from_history(snap.baro_history, now)
             _est_dead_reckon(snap.dr, snap.latest_gps, freshed_gps, now)
 
@@ -1402,7 +1389,6 @@ def ctrl_parafoil(main_queue=None) -> None:
                 target_lat=snap.target_lat,
                 target_lon=snap.target_lon,
                 now=now,
-                l1_state=_L1_STATE,
             )
             g_out = guidance.ProduceL1Output(
                 l1_input=l1_input,
@@ -1412,10 +1398,25 @@ def ctrl_parafoil(main_queue=None) -> None:
                 target_lat=snap.target_lat,
                 target_lon=snap.target_lon,
                 now=now,
-                l1_state=_L1_STATE,
             )
 
-            if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
+            if bool(getattr(g_out, "nominal", False)) or bool(getattr(g_out, "degraded", False)):
+                # Direct proportional arm control: heading_error → arm_delta → /2 per motor
+                left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(
+                    g_out.arm_delta_deg
+                )
+                cmd = control.CtrlOutput(timestamp=now)
+                cmd.left_pw = left_pw
+                cmd.right_pw = right_pw
+                cmd.left_angle_deg = left_angle
+                cmd.right_angle_deg = right_angle
+                cmd.delta_arm_deg = delta_arm
+                cmd.angular_velocity_cmd_deg_s = math.degrees(g_out.angular_velocity_cmd_rad_s)
+                cmd.valid = True
+                cmd.mode = getattr(g_out, "reason", config.MOTOR_REASON_ACTIVE)
+                cmd.fallback_mode = cmd.mode
+            elif bool(getattr(g_out, "control_valid", False)):
+                # FAIL mode with valid command (tumble counter-rotation, no-motion bearing)
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
                 angular_velocity_meas_deg_s = float("nan")
@@ -1485,7 +1486,7 @@ def dispatch(msg: str) -> None:
 
 def init() -> None:
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global MANUAL_STEER_MODE, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
+    global MANUAL_STEER_MODE, _START_POINT_LOCKED, _CONTROLLER
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
@@ -1508,12 +1509,6 @@ def init() -> None:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
-
-    if hasattr(guidance, "make_l1_state"):
-        try:
-            _L1_STATE = guidance.make_l1_state()
-        except Exception:
-            LOGGER.debug("Failed to create L1 state", exc_info=True)
 
     _CONTROLLER = control.MakeCtrler()
     PI = control.init_control()

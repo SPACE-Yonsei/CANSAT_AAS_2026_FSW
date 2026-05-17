@@ -268,17 +268,12 @@ def run_section_b() -> None:
         _row("입력 pos_E",  f"{sc['pos_E']:+.1f} m  {easting_note}")
         _row("입력 course", f"{math.degrees(sc['course_rad']):+.1f}°")
 
-        _sep("L1 Output")
+        _sep("Guidance Output")
         _row("nominal",         str(g_out.nominal))
-        _row("nu_deg",          f"{math.degrees(g_out.nu):+.3f}°")
-        _row("  nu1 (xtrack)",  f"{math.degrees(g_out.nu1):+.3f}°  crosstrack 기여")
-        _row("  nu2 (heading)", f"{math.degrees(g_out.nu2):+.3f}°  heading error 기여")
         _row("crossTrack_m",    f"{g_out.crossTrack:+.2f} m")
         _row("alongTrack_m",    f"{g_out.alongTrack:+.2f} m")
-        _row("L1_distance_m",   f"{g_out.L1_distance:.2f} m")
         _row("angular_velocity_cmd", f"{g_out.angular_velocity_cmd_rad_s:+.4f} rad/s  "
                                     f"({math.degrees(g_out.angular_velocity_cmd_rad_s):+.2f} deg/s)")
-        _row("lat_acc_cmd",     f"{g_out.lat_acc_cmd_mps2:+.4f} m/s²")
 
         _sep("Control Output")
         _row("delta_ff_deg",    f"{cmd.delta_ff_deg:+.3f}°  (K_FF × angular_velocity_cmd)")

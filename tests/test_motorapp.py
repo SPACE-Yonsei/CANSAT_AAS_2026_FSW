@@ -16,7 +16,6 @@ def _reset():
     motorapp._PREV_STATE = -1
     motorapp._START_POINT_LOCKED = False
     motorapp._CONTROLLER = None
-    motorapp._L1_STATE = None
     motorapp.PI = None
     motorapp._CACHE = _Cache()
 
