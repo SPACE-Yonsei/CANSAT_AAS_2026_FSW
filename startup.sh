@@ -1,27 +1,42 @@
+#!/bin/bash
 # This is the startup script
 # This script should be executed on startup
-# configure the path to contain the python code you want to run first
-# the path should be absolute
 
-# Example) python_path = /home/hyunlee/Desktop/flight_code/Python_Cansat_FSW
+# Resolve script location so it works regardless of user (pi, dietpi, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python_path="${python_path:-${SCRIPT_DIR}}"
 
-python_path="/home/pi/CANSAT_AAS_2026_FSW"
-venv_path="/home/pi/env/bin"
-
-if [ "${python_path}" == "not_configured" ]; then
-echo "Startup Script is not Configured! Please Edit the file"
-
+# Venv: prefer env var override, then common locations relative to home
+HOME_DIR="$(eval echo ~"${SUDO_USER:-${USER}}")"
+if [[ -n "${FSW_VENV_DIR:-}" ]]; then
+    venv_path="${FSW_VENV_DIR}/bin"
+elif [[ -d "${HOME_DIR}/env/bin" ]]; then
+    venv_path="${HOME_DIR}/env/bin"
+elif [[ -d "${SCRIPT_DIR}/venv/bin" ]]; then
+    venv_path="${SCRIPT_DIR}/venv/bin"
 else
+    venv_path=""
+fi
+
 echo "Starting pigpiod..."
-sudo pigpiod
+sudo pigpiod 2>/dev/null || true
 sleep 1
 
-echo "Cleaning up camera..."
-bash /home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh
+if [[ -f "/home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh" ]]; then
+    echo "Cleaning up camera..."
+    bash /home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh
+elif [[ -f "${python_path}/kill_camera.sh" ]]; then
+    echo "Cleaning up camera..."
+    bash "${python_path}/kill_camera.sh"
+fi
 
 echo "Path > ${python_path}"
-echo "venv > ${venv_path}/activate"
-. ${venv_path}/activate;
-cd ${python_path};python3 main.py
-
+if [[ -n "${venv_path}" ]]; then
+    echo "venv > ${venv_path}/activate"
+    . "${venv_path}/activate"
+else
+    echo "venv > (none found, using system python)"
 fi
+
+cd "${python_path}"
+exec python3 main.py

@@ -153,6 +153,8 @@ def imuapp_init() -> None:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
         _i2c_instance, _imu_instance = imu_driver.init_imu()
+    except KeyboardInterrupt:
+        raise
     except Exception as exc:
         logger.warning("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
         _i2c_instance, _imu_instance = None, None
@@ -168,6 +170,8 @@ def _try_reinit() -> None:
             _i2c_instance, _imu_instance = imu_driver.reinit_imu(_i2c_instance, _imu_instance)
         else:
             _i2c_instance, _imu_instance = imu_driver.init_imu()
+    except KeyboardInterrupt:
+        raise
     except Exception as exc:
         logger.warning("IMU: reinit failed (%s)", exc)
         _i2c_instance, _imu_instance = None, None
