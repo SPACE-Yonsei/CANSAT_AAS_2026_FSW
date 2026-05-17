@@ -545,6 +545,26 @@ def handle_barometer(data: str) -> None:
         _CACHE.latest_baro = baro
 
 
+def _auto_compute_bearing(target_lat: float, target_lon: float) -> None:
+    """시작 좌표 → 타겟 좌표 방위각을 계산해 _CACHE에 저장한다."""
+    start = prevstate.get_start_point()
+    if start is None:
+        LOGGER.info("Bearing auto-compute skipped: start point not locked")
+        return
+    slat, slon = start
+    slat_r = math.radians(slat)
+    tlat_r = math.radians(target_lat)
+    dlon_r = math.radians(target_lon - slon)
+    x = math.sin(dlon_r) * math.cos(tlat_r)
+    y = math.cos(slat_r) * math.sin(tlat_r) - math.sin(slat_r) * math.cos(tlat_r) * math.cos(dlon_r)
+    bearing_deg = math.degrees(math.atan2(x, y)) % 360.0
+    with _UPDATE_LOCK:
+        _CACHE.target_bearing_rad = math.radians(bearing_deg)
+    prevstate.update_bearing(bearing_deg)
+    LOGGER.info("Bearing auto-computed: %.2f deg (start=%.6f,%.6f target=%.6f,%.6f)",
+                bearing_deg, slat, slon, target_lat, target_lon)
+
+
 def handle_target_coord(data: str) -> None:
     """lat,lon"""
     fields = data.split(",")
@@ -564,6 +584,7 @@ def handle_target_coord(data: str) -> None:
         _CACHE.target_lat = lat
         _CACHE.target_lon = lon
     LOGGER.info("Target updated: %.6f, %.6f", lat, lon)
+    _auto_compute_bearing(lat, lon)
 
 
 def handle_bearing(data: str) -> None:
