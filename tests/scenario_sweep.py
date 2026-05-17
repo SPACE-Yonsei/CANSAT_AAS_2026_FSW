@@ -1,5 +1,5 @@
 """
-Offline mag-guidance scenario sweep — no hardware, no IPC required.
+Offline mag-guidance scenario sweep -- no hardware, no IPC required.
 
 GPS-free branch: directly calls mag_guidance.ProduceMagGuidance +
 control.ProduceCtrlOutput with synthetic IMU/baro values to map how
@@ -48,7 +48,7 @@ from Sensor_Motor.mag_guidance import (
     MODE_IMU_FAIL,
 )
 
-# ── Default parameters ─────────────────────────────────────────────────────────
+# -- Default parameters ---------------------------------------------------------
 _DEFAULT_TARGET_BEARING_DEG = 0.0    # 정북으로 타겟이 있다고 가정
 _DEFAULT_ALT_M              = 200.0
 _DEFAULT_SINK_RATE_MPS      = 3.0
@@ -56,12 +56,12 @@ _DEFAULT_AIRSPEED_MPS       = 8.0
 _MAG_CFG                    = MagGuidanceConfig()  # Kp=1.2, Kd=0.6, max=45 deg/s
 
 
-# ── Data structures ────────────────────────────────────────────────────────────
+# -- Data structures ------------------------------------------------------------
 @dataclass
 class ScenarioParams:
     """Defines one flight situation to evaluate."""
     heading_error_deg: float = 0.0
-    """current_yaw − target_bearing. 0 = aligned, +30 = 30° clockwise of target."""
+    """current_yaw - target_bearing. 0 = aligned, +30 = 30° clockwise of target."""
     gyrz_deg_s: float = 0.0
     """Current yaw rate (deg/s, CW = positive)."""
     alt_m: float = _DEFAULT_ALT_M
@@ -75,16 +75,16 @@ class ScenarioParams:
 
 @dataclass
 class ScenarioResult:
-    # ── inputs ──────────────────────────────────────────────────────────────
+    # -- inputs --------------------------------------------------------------
     heading_error_deg: float
     gyrz_deg_s: float
     alt_m: float
     target_bearing_deg: float
     current_yaw_deg: float
-    # ── guidance ─────────────────────────────────────────────────────────────
+    # -- guidance -------------------------------------------------------------
     mode: str
     angular_velocity_cmd_deg_s: float
-    # ── control ──────────────────────────────────────────────────────────────
+    # -- control --------------------------------------------------------------
     delta_ff_deg: float
     delta_pid_deg: float
     delta_arm_deg: float
@@ -112,7 +112,7 @@ class FlightResult:
     right_pw: int
 
 
-# ── Core single-scenario runner ────────────────────────────────────────────────
+# -- Core single-scenario runner ------------------------------------------------
 def run_scenario(params: ScenarioParams) -> ScenarioResult:
     now = 100.0  # fixed reference time
     yaw_deg = params.target_bearing_deg + params.heading_error_deg
@@ -165,7 +165,7 @@ def sweep(param_grid: list[ScenarioParams]) -> list[ScenarioResult]:
     return [run_scenario(p) for p in param_grid]
 
 
-# ── Preset sweeps ──────────────────────────────────────────────────────────────
+# -- Preset sweeps --------------------------------------------------------------
 def sweep_bearing_error(
     gyrz_deg_s: float = 0.0,
     alt_m: float = _DEFAULT_ALT_M,
@@ -173,7 +173,7 @@ def sweep_bearing_error(
     target_bearing_deg: float = _DEFAULT_TARGET_BEARING_DEG,
     **kw,
 ) -> list[ScenarioResult]:
-    """heading_error를 −180 ~ +180 범위로 스윕."""
+    """heading_error를 -180 ~ +180 범위로 스윕."""
     return sweep([
         ScenarioParams(
             heading_error_deg  = e,
@@ -214,7 +214,7 @@ def sweep_altitude(
     step_m: float = 20.0,
     **kw,
 ) -> list[ScenarioResult]:
-    """고도를 스윕 (제어 출력은 고도에 무관해야 함 — 검증용)."""
+    """고도를 스윕 (제어 출력은 고도에 무관해야 함 -- 검증용)."""
     return sweep([
         ScenarioParams(
             heading_error_deg = heading_error_deg,
@@ -226,7 +226,7 @@ def sweep_altitude(
     ])
 
 
-# ── Closed-loop trajectory simulation ─────────────────────────────────────────
+# -- Closed-loop trajectory simulation -----------------------------------------
 def simulate_flight(
     heading_error_deg: float = 30.0,
     alt_m: float = _DEFAULT_ALT_M,
@@ -244,13 +244,13 @@ def simulate_flight(
     """폐루프 방위각 수렴 + 낙하 위치 시뮬레이션.
 
     매 dt초마다:
-      1. mag_guidance 실행 → angular_velocity_cmd
+      1. mag_guidance 실행 -> angular_velocity_cmd
       2. heading += angular_velocity_cmd * dt  (+ 선택적 돌풍)
       3. 위치 = airspeed * heading 벡터 + 바람
       4. alt  -= sink_rate * dt
     cross_track: 타겟 방향 선(bearing line)에서 수직 편차
     along_track: 타겟 방향으로의 전진 거리
-    종료: alt ≤ 0 또는 max_steps
+    종료: alt <= 0 또는 max_steps
     """
     rng = random.Random(gust_seed)
     heading_deg = target_bearing_deg + heading_error_deg
@@ -330,7 +330,7 @@ def simulate_flight(
     return results
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# -- Helpers --------------------------------------------------------------------
 def _frange(start: float, stop: float, step: float) -> list[float]:
     vals, v = [], start
     while v <= stop + step * 1e-6:
@@ -339,7 +339,7 @@ def _frange(start: float, stop: float, step: float) -> list[float]:
     return vals
 
 
-# ── Output ────────────────────────────────────────────────────────────────────
+# -- Output --------------------------------------------------------------------
 def results_to_csv(results, out=None) -> None:
     if not results:
         return
@@ -368,7 +368,7 @@ _SEP = "-" * 90
 
 _ARM_LEGEND = (
     "arm-angle convention (control.ConnectRoMo):\n"
-    "  neutral=80 deg  |  range 0~160  |  delta>0 → RIGHT  delta<0 → LEFT\n"
+    "  neutral=80 deg  |  range 0~160  |  delta>0 -> RIGHT  delta<0 -> LEFT\n"
     "  RIGHT-turn: L-arm<80, R-arm>80  |  LEFT-turn: L-arm>80, R-arm<80\n"
     "  Lpw = LEFT_ZERO(2480) - L-arm*11.11   Rpw = RIGHT_ZERO(636) + R-arm*11.11"
 )
@@ -437,30 +437,32 @@ def print_single(r: ScenarioResult) -> None:
     print(f"    right_pw          : {r.right_pw} us")
 
 
-# ── CLI ────────────────────────────────────────────────────────────────────────
+# -- CLI ------------------------------------------------------------------------
 def _parse_args():
     root = argparse.ArgumentParser(
         description="Mag-guidance offline scenario sweep (GPS-free, no hardware)"
     )
     sub = root.add_subparsers(dest="mode", required=True)
 
-    # single ──────────────────────────────────────────────────────────────────
+    # single ------------------------------------------------------------------
     s = sub.add_parser("single", help="Run one scenario, print detailed output")
     s.add_argument("--heading-error", type=float, default=0.0,   metavar="DEG",
-                   help="current_yaw − target_bearing (deg)")
+                   help="current_yaw - target_bearing (deg)")
     s.add_argument("--gyrz",          type=float, default=0.0,   metavar="DEG_S")
     s.add_argument("--alt",           type=float, default=200.0, metavar="M")
     s.add_argument("--target-bearing",type=float, default=0.0,   metavar="DEG")
+    s.add_argument("--imu-health",    type=int,   default=1,     metavar="0|1")
+    s.add_argument("--baro-health",   type=int,   default=1,     metavar="0|1")
 
-    # bearing sweep ───────────────────────────────────────────────────────────
-    b = sub.add_parser("bearing", help="Sweep heading_error −180 → +180")
+    # bearing sweep -----------------------------------------------------------
+    b = sub.add_parser("bearing", help="Sweep heading_error -180 -> +180")
     b.add_argument("--gyrz",          type=float, default=0.0,  metavar="DEG_S")
     b.add_argument("--alt",           type=float, default=200.0,metavar="M")
     b.add_argument("--step",          type=float, default=5.0,  metavar="DEG")
     b.add_argument("--target-bearing",type=float, default=0.0,  metavar="DEG")
     b.add_argument("--out",           default=None, metavar="FILE")
 
-    # gyrz sweep ──────────────────────────────────────────────────────────────
+    # gyrz sweep --------------------------------------------------------------
     g = sub.add_parser("gyrz", help="Sweep yaw rate (damping effect)")
     g.add_argument("--heading-error", type=float, default=30.0, metavar="DEG")
     g.add_argument("--alt",           type=float, default=200.0,metavar="M")
@@ -469,7 +471,7 @@ def _parse_args():
     g.add_argument("--step",          type=float, default=2.0,  metavar="DEG_S")
     g.add_argument("--out",           default=None, metavar="FILE")
 
-    # altitude sweep ──────────────────────────────────────────────────────────
+    # altitude sweep ----------------------------------------------------------
     a = sub.add_parser("altitude", help="Sweep altitude (control should be independent)")
     a.add_argument("--heading-error", type=float, default=30.0, metavar="DEG")
     a.add_argument("--gyrz",          type=float, default=0.0,  metavar="DEG_S")
@@ -478,7 +480,7 @@ def _parse_args():
     a.add_argument("--step",          type=float, default=20.0, metavar="M")
     a.add_argument("--out",           default=None, metavar="FILE")
 
-    # closed-loop flight ──────────────────────────────────────────────────────
+    # closed-loop flight ------------------------------------------------------
     fl = sub.add_parser(
         "flight",
         help="폐루프 방위각 수렴 + 낙하 위치 시뮬레이션",
@@ -514,7 +516,7 @@ def _write_output(results, out_path: Optional[str]) -> None:
     if out_path:
         with open(out_path, "w", newline="") as f:
             results_to_csv(results, f)
-        print(f"Saved {len(results)} rows → {out_path}", file=sys.stderr)
+        print(f"Saved {len(results)} rows -> {out_path}", file=sys.stderr)
     else:
         results_to_csv(results)
 
@@ -528,6 +530,8 @@ def main() -> None:
             gyrz_deg_s         = args.gyrz,
             alt_m              = args.alt,
             target_bearing_deg = args.target_bearing,
+            imu_health         = args.imu_health,
+            baro_health        = args.baro_health,
         ))
         print_single(r)
 

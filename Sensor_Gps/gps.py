@@ -6,7 +6,14 @@ except Exception:
     fcntl = None
 from datetime import datetime
 
-I2C_BUS_NUM = 1
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+I2C_BUS_NUM = _env_int("GPS_I2C_BUS", _env_int("FSW_I2C_BUS", 1))
 GNSS_ADDR   = 0x42
 READ_SIZE   = 32
 
