@@ -275,6 +275,27 @@ def cmd_fac(option: str, main_queue) -> bool:
     )
 
 
+def cmd_mtr(option: str, main_queue) -> bool:
+    normalized = option.strip().upper()
+    aliases = {
+        "L": "LEFT",
+        "LEFT": "LEFT",
+        "N": "NEUTRAL",
+        "NEUTRAL": "NEUTRAL",
+        "R": "RIGHT",
+        "RIGHT": "RIGHT",
+    }
+    mode = aliases.get(normalized)
+    if mode is None:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_MTR,
+        mode,
+    )
+
 
 def cmd_ss(option: str, main_queue) -> bool:
     try:
@@ -624,6 +645,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_mec(option, main_queue)
     if cmd == "FAC":
         return cmd_fac(option, main_queue)
+    if cmd == "MTR":
+        return cmd_mtr(option, main_queue)
     if cmd == "SS":
         return cmd_ss(option, main_queue)
     if cmd == "RBT":

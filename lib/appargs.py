@@ -32,6 +32,7 @@ class CommAppArg:
     MID_RouteCmd_CAM = 1201106
     MID_RouteCmd_TC = 1201107
     MID_RouteCmd_SIMG = 1201108
+    MID_RouteCmd_MTR = 1201109
     MID_RouteCmd_FAC = 1201110
 
 

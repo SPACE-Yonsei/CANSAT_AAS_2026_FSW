@@ -14,9 +14,7 @@
       "Read(//c/logs/sensorlogs/run_20260510_201444/**)",
       "Bash(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_motor_guidance.py tests/test_motor_guidance_safety.py -q)",
       "PowerShell(.venv\\\\Scripts\\\\python.exe -m pytest tests/test_motor_guidance.py tests/test_motor_guidance_safety.py -q 2>&1)",
-      "Bash(C:\\\\Users\\\\bagj6\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe -m pip install pyserial -q)",
-      "Bash(Get-ChildItem -Path \"c:\\\\workspace\\\\CANSAT_AAS_2026_FSW\" -Filter \"*.py\" -Name)",
-      "Bash(Select-Object -First 20)"
+      "Bash(C:\\\\Users\\\\bagj6\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe -m pip install pyserial -q)"
     ]
   }
 }
