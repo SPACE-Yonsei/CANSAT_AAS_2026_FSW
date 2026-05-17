@@ -1,12 +1,7 @@
-"""Motor control package.
-
-Compatibility exports:
-- ``motor_guidance`` -> ``guidance``
-- ``motor_control``  -> ``control``
-"""
+"""Motor control package."""
 
 from . import control as motor_control
-from . import guidance as motor_guidance
+from . import mag_guidance as motor_guidance
 from . import motorapp
 
 __all__ = [

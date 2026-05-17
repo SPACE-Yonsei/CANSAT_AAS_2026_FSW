@@ -4,8 +4,10 @@ import math
 import time
 import unittest
 
+# GPS history / DR estimation removed in mag branch
+_SKIP_GPS_HISTORY = unittest.skip("GPS history removed in mag branch")
+
 from Sensor_Motor import motorapp
-from Sensor_Motor import guidance
 from Sensor_Motor.motorapp import _Cache
 
 
@@ -113,6 +115,7 @@ class TestHandleGps(unittest.TestCase):
         motorapp.handle_gps("not_a_float,126.95,90.0,90.0,12.0,90.0")
         self.assertIsNone(motorapp._CACHE.latest_gps.lat)
 
+    @_SKIP_GPS_HISTORY
     def test_fresh_latest_moves_to_history_on_next_gps(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_gps(_gps_msg(ts=t0))
@@ -122,6 +125,7 @@ class TestHandleGps(unittest.TestCase):
         self.assertAlmostEqual(motorapp._CACHE.gps_history[-1].lat, 37.55)
         self.assertTrue(motorapp._CACHE.gps_history[-1].pos_health)
 
+    @_SKIP_GPS_HISTORY
     def test_invalid_position_does_not_enter_history(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_gps(_gps_msg(lat=37.55, lon=50.0, ts=t0))
@@ -145,6 +149,7 @@ class TestHandleGps(unittest.TestCase):
         self.assertFalse(motorapp._CACHE.latest_gps.pos_health)
         self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
 
+    @_SKIP_GPS_HISTORY
     def test_history_preserves_estimated_motion(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_gps(_gps_msg(ts=t0))
@@ -158,6 +163,7 @@ class TestHandleGps(unittest.TestCase):
         self.assertAlmostEqual(freshed.course_rad, math.radians(90.0))
         self.assertAlmostEqual(freshed.speed_mps, 12.0)
 
+    @_SKIP_GPS_HISTORY
     def test_first_gps_stays_latest_not_history(self):
         motorapp.handle_gps(_gps_msg())
         self.assertEqual(len(motorapp._CACHE.gps_history), 0)
@@ -299,6 +305,7 @@ class TestHandleBarometer(unittest.TestCase):
         motorapp.handle_barometer("NOPE")
         self.assertIsNone(motorapp._CACHE.latest_baro.alt_m)
 
+    @_SKIP_GPS_HISTORY
     def test_fresh_latest_moves_to_baro_history_on_next_baro(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_barometer(_baro_msg(alt=200.5, health=1, ts=t0))
@@ -307,6 +314,7 @@ class TestHandleBarometer(unittest.TestCase):
         self.assertEqual(len(motorapp._CACHE.baro_history), 1)
         self.assertAlmostEqual(motorapp._CACHE.baro_history[-1].alt_m, 200.5)
 
+    @_SKIP_GPS_HISTORY
     def test_unhealthy_baro_skips_history(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_barometer(_baro_msg(alt=200.5, health=0, ts=t0))
@@ -315,200 +323,12 @@ class TestHandleBarometer(unittest.TestCase):
 
 
 class TestHistoryEstimates(unittest.TestCase):
+    """GPS/DR estimation tests removed — GPS-free (mag) branch does not use history estimation."""
+
     def setUp(self):
         _reset()
 
-    def test_gps_history_regression_propagates_position_and_motion(self):
-        t0 = time.monotonic() - 2.0
-        origin_lat = 37.55
-        origin_lon = 126.95
-        lat_10m_north, lon_same = guidance.ne_to_latlon(10.0, 0.0, origin_lat, origin_lon)
-        history = [
-            motorapp._GpsFromApp(
-                lat=origin_lat,
-                lon=origin_lon,
-                pos_ts=t0,
-                pos_health=1,
-            ),
-            motorapp._GpsFromApp(
-                lat=lat_10m_north,
-                lon=lon_same,
-                pos_ts=t0 + 1.0,
-                pos_health=1,
-            ),
-        ]
-
-        freshed = motorapp._est_gps_from_history(
-            history,
-            now=t0 + 2.0,
-            origin_lat=origin_lat,
-            origin_lon=origin_lon,
-        )
-        est_n, est_e = guidance.latlon_to_ne(
-            freshed.lat,
-            freshed.lon,
-            origin_lat,
-            origin_lon,
-        )
-        self.assertAlmostEqual(est_n, 20.0, delta=0.5)
-        self.assertAlmostEqual(est_e, 0.0, delta=0.5)
-        self.assertAlmostEqual(freshed.speed_mps, 10.0, delta=0.2)
-        self.assertAlmostEqual(freshed.course_rad, 0.0, delta=0.05)
-        self.assertTrue(freshed.pos_health)
-        self.assertTrue(freshed.motion_health)
-
-    def test_gps_history_without_estimation_returns_empty(self):
-        t0 = time.monotonic() - 0.5
-        history = [
-            motorapp._GpsFromApp(
-                lat=37.55,
-                lon=126.95,
-                course_rad=math.radians(90.0),
-                speed_mps=8.0,
-                pos_ts=t0,
-                motion_ts=t0,
-                pos_health=1,
-                motion_health=1,
-            )
-        ]
-
-        freshed = motorapp._est_gps_from_history(history, now=t0 + 0.5)
-        self.assertIsNone(freshed.lat)
-        self.assertIsNone(freshed.course_rad)
-        self.assertIsNone(freshed.speed_mps)
-        self.assertFalse(freshed.pos_health)
-        self.assertFalse(freshed.motion_health)
-
-    def test_gps_history_dead_reckons_from_single_anchor_and_motion(self):
-        t0 = time.monotonic() - 1.0
-        origin_lat = 37.55
-        origin_lon = 126.95
-        history = [
-            motorapp._GpsFromApp(
-                lat=origin_lat,
-                lon=origin_lon,
-                course_rad=math.radians(90.0),
-                speed_mps=8.0,
-                pos_ts=t0,
-                motion_ts=t0,
-                pos_health=1,
-                motion_health=1,
-            )
-        ]
-
-        freshed = motorapp._est_gps_from_history(
-            history,
-            now=t0 + 1.0,
-            origin_lat=origin_lat,
-            origin_lon=origin_lon,
-        )
-        est_n, est_e = guidance.latlon_to_ne(
-            freshed.lat,
-            freshed.lon,
-            origin_lat,
-            origin_lon,
-        )
-        self.assertAlmostEqual(est_n, 0.0, delta=0.5)
-        self.assertAlmostEqual(est_e, 8.0, delta=0.5)
-        self.assertAlmostEqual(freshed.course_rad, math.radians(90.0))
-
-    def test_dead_reckoning_persists_anchor_and_motion_across_snapshots(self):
-        t0 = time.monotonic() - 2.0
-        origin_lat = 37.55
-        origin_lon = 126.95
-        gps = motorapp._GpsFromApp(
-            lat=origin_lat,
-            lon=origin_lon,
-            course_rad=math.radians(90.0),
-            speed_mps=8.0,
-            pos_ts=t0,
-            motion_ts=t0,
-            pos_health=1,
-            motion_health=1,
-        )
-
-        snap = motorapp._cache_snapshot()
-        motorapp._est_dead_reckon(snap.dr, gps, motorapp._GpsFromApp(), t0 + 1.0)
-        with motorapp._UPDATE_LOCK:
-            motorapp._CACHE.dr = motorapp._DeadReckoning(**vars(snap.dr))
-
-        next_snap = motorapp._cache_snapshot()
-        motorapp._est_dead_reckon(
-            next_snap.dr,
-            motorapp._GpsFromApp(),
-            motorapp._GpsFromApp(),
-            t0 + 2.0,
-        )
-        est_n, est_e = guidance.latlon_to_ne(
-            next_snap.dr.lat,
-            next_snap.dr.lon,
-            origin_lat,
-            origin_lon,
-        )
-        self.assertTrue(next_snap.dr.valid)
-        self.assertAlmostEqual(est_n, 0.0, delta=0.5)
-        self.assertAlmostEqual(est_e, 16.0, delta=0.5)
-
-    def test_dead_reckoning_does_not_anchor_on_estimated_position(self):
-        t0 = time.monotonic() - 1.0
-        dr = motorapp._DeadReckoning()
-        est_gps = motorapp._GpsFromApp(
-            lat=37.55,
-            lon=126.95,
-            course_rad=math.radians(90.0),
-            speed_mps=8.0,
-            pos_ts=t0,
-            motion_ts=t0,
-            pos_health=1,
-            motion_health=1,
-        )
-
-        motorapp._est_dead_reckon(dr, motorapp._GpsFromApp(), est_gps, t0 + 0.5)
-        self.assertFalse(dr.valid)
-        self.assertIsNone(dr.anchor_lat)
-        self.assertAlmostEqual(dr.speed_mps, 8.0)
-
-    def test_positive_nav_gyrz_propagates_course_clockwise(self):
-        t0 = time.monotonic()
-        course, motion_ts = motorapp._est_course_with_gyro_propagation(
-            math.radians(90.0),
-            t0,
-            t0 + 1.0,
-            math.radians(10.0),
-        )
-        self.assertAlmostEqual(course, math.radians(100.0), places=6)
-        self.assertAlmostEqual(motion_ts, t0 + 1.0)
-
-    def test_imu_history_weighted_average_within_feedback_window(self):
-        t0 = time.monotonic() - 0.4
-        history = [
-            motorapp._ImuFromApp(gyrz_rad_s=math.radians(2.0), ts=t0 + 0.1, health=1),
-            motorapp._ImuFromApp(gyrz_rad_s=math.radians(4.0), ts=t0 + 0.3, health=1),
-        ]
-
-        freshed = motorapp._est_imu_from_history(history, now=t0 + 0.4)
-        self.assertAlmostEqual(freshed.gyrz_rad_s, math.radians(3.333333), places=5)
-        self.assertTrue(freshed.health)
-
-    def test_imu_history_stale_after_feedback_window(self):
-        t0 = time.monotonic() - 1.0
-        history = [motorapp._ImuFromApp(gyrz_rad_s=math.radians(2.0), ts=t0, health=1)]
-
-        freshed = motorapp._est_imu_from_history(history, now=t0 + 1.0)
-        self.assertIsNone(freshed.gyrz_rad_s)
-        self.assertFalse(freshed.health)
-
-    def test_baro_history_regression_propagates_altitude(self):
-        t0 = time.monotonic() - 3.0
-        history = [
-            motorapp._BaroFromApp(alt_m=200.0, ts=t0, health=1),
-            motorapp._BaroFromApp(alt_m=190.0, ts=t0 + 2.0, health=1),
-        ]
-
-        freshed = motorapp._est_baro_from_history(history, now=t0 + 3.0)
-        self.assertAlmostEqual(freshed.sink_rate, 5.0)
-        self.assertAlmostEqual(freshed.alt_m, 185.0)
-        self.assertTrue(freshed.health)
+    pass  # GPS/DR estimation tests removed (GPS-free branch)
 
 
 class TestHandleTargetCoord(unittest.TestCase):
@@ -631,6 +451,7 @@ class TestCacheSnapshot(unittest.TestCase):
         motorapp._CACHE.target_lat = 99.0
         self.assertAlmostEqual(snap.target_lat, 10.0)
 
+    @_SKIP_GPS_HISTORY
     def test_snapshot_copies_history(self):
         t0 = time.monotonic() - 0.1
         motorapp.handle_gps(_gps_msg(ts=t0))
