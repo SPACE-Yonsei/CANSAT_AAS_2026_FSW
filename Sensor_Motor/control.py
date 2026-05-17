@@ -66,17 +66,17 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 class ControlConfig:
     # Feedforward shaping
     ANGULAR_VELOCITY_CMD_MAX_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S
-    ANGULAR_VELOCITY_DEADBAND_DEG_S: float = 3.0       # below this, FF output is zero to avoid dithering
+    ANGULAR_VELOCITY_DEADBAND_DEG_S: float = 5.0       # below this, FF output is zero to avoid dithering
     DELTA_FF_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
-    DELTA_MIN_EFFECTIVE_DEG: float = 8.0       # minimum FF deflection above deadband
-    EXPO: float = 0.8                          # <1 gives finer control near center
+    DELTA_MIN_EFFECTIVE_DEG: float = 5.0       # minimum FF deflection above deadband
+    EXPO: float = 1.15                         # >1 softens small commands near center
 
     # PID
     ERROR_DEADBAND_DEG_S: float = 2.0          # suppress trim chatter for small errors
-    K_P: float = 0.35
-    K_I: float = 0.02
+    K_P: float = 0.25
+    K_I: float = 0.01
     K_D: float = 0.0
-    I_LIMIT_DEG: float = 25.0                  # anti-windup clamp on accumulated integral
+    I_LIMIT_DEG: float = 15.0                  # anti-windup clamp on accumulated integral
     DELTA_PID_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
 
     # Authority and slew
