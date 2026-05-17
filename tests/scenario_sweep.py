@@ -53,6 +53,9 @@ class ScenarioParams:
     control_mode_override: Optional[str] = None
     """Force a specific ControlMode string. None = auto-decide."""
     track_length_m: float = 1000.0
+    dr_sim: bool = False
+    """True = simulate dead-reckoning active: STALE pos_quality is treated as FRESHED
+    (mirrors motorapp FillFreshed upgrading GPS-STALE to FRESHED via DR position)."""
 
 
 @dataclass
@@ -91,6 +94,12 @@ def _build_l1_input(params: ScenarioParams) -> tuple[L1Input, ControlMode]:
     pq = SensorQuality[params.pos_quality]
     gq = SensorQuality[params.gyrz_quality]
 
+    # DR simulation: motorapp의 FillFreshed()는 GPS가 STALE일 때 DR 위치로
+    # pos_quality를 FRESHED로 승격시킨다. --dr-valid 플래그가 켜져 있으면
+    # 여기서 동일한 승격을 수행해 실제 비행의 DR 경로를 재현한다.
+    if params.dr_sim and pq == SensorQuality.STALE:
+        pq = SensorQuality.FRESHED
+
     l1 = L1Input(
         pos_N=params.along_track_ratio * params.track_length_m,
         pos_E=params.cross_track_m,
@@ -108,7 +117,7 @@ def _build_l1_input(params: ScenarioParams) -> tuple[L1Input, ControlMode]:
         origin_lon=_ORIGIN_LON,
         target_lat=target_lat,
         target_lon=target_lon,
-        dr_valid=False,
+        dr_valid=params.dr_sim,
         freefall=0,
         tumble=0,
     )
@@ -133,7 +142,7 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
     target_lat, target_lon = _target_latlon(params.track_length_m)
     l1_input, mode = _build_l1_input(params)
     now = 0.0
-    gyrz_meas = math.radians(params.gyrz_deg_s)
+    gyrz_meas = params.gyrz_deg_s
 
     g_out = guidance.ProduceL1Output(
         l1_input, mode,
@@ -247,6 +256,86 @@ def sweep_speed(
     ])
 
 
+def simulate_trajectory(
+    bearing_error_deg: float = 30.0,
+    cross_track_m: float = 0.0,
+    airspeed_mps: float = 8.0,
+    dt: float = 1.0,
+    track_length_m: float = 1000.0,
+    max_steps: int = 2000,
+    wind_n_mps: float = 0.0,
+    wind_e_mps: float = 0.0,
+    gust_sigma_mps: float = 0.0,
+    gust_seed: int = 42,
+    pos_quality: str = "FRESH",
+    gyrz_quality: str = "FRESH",
+    dr_sim: bool = False,
+) -> list[ScenarioResult]:
+    """항공기 운동학 + 바람 외란을 적용한 폐루프 궤적 시뮬레이션.
+
+    매 dt초마다:
+      1. 기체 heading + 바람벡터 → GPS course/groundspeed 계산
+      2. guidance+control 실행 → angular_velocity_cmd 획득
+      3. yaw rate로 heading 업데이트
+      4. 새 ground velocity로 pos_N/pos_E 이동
+
+    wind_n/e_mps: 정상 바람 (북/동 방향 m/s).
+    gust_sigma_mps: 매 스텝마다 N(0,σ)으로 두 축에 독립 추가되는 돌풍.
+    """
+    import random
+    rng = random.Random(gust_seed)
+
+    heading_rad = math.radians(bearing_error_deg)
+    pos_n = 0.0
+    pos_e = cross_track_m
+    results = []
+    prev_yaw_rate_rad_s = 0.0
+
+    for _ in range(max_steps):
+        along = pos_n / track_length_m
+        if along >= 0.99:
+            break
+
+        # 돌풍: 매 스텝 독립 Gaussian 노이즈
+        gust_n = rng.gauss(0.0, gust_sigma_mps) if gust_sigma_mps > 0.0 else 0.0
+        gust_e = rng.gauss(0.0, gust_sigma_mps) if gust_sigma_mps > 0.0 else 0.0
+
+        # 대기속도 벡터 (heading 방향) + 바람 → 지상 속도 벡터
+        vas_n = airspeed_mps * math.cos(heading_rad)
+        vas_e = airspeed_mps * math.sin(heading_rad)
+        gnd_n = vas_n + wind_n_mps + gust_n
+        gnd_e = vas_e + wind_e_mps + gust_e
+        ground_speed = math.hypot(gnd_n, gnd_e)
+        course_rad = math.atan2(gnd_e, gnd_n)  # GPS가 보는 course
+
+        params = ScenarioParams(
+            bearing_error_deg=math.degrees(course_rad),
+            cross_track_m=pos_e,
+            along_track_ratio=max(0.0, min(along, 0.999)),
+            ground_speed_mps=max(ground_speed, 0.1),
+            gyrz_deg_s=math.degrees(prev_yaw_rate_rad_s),
+            pos_quality=pos_quality,
+            gyrz_quality=gyrz_quality,
+            track_length_m=track_length_m,
+            dr_sim=dr_sim,
+        )
+        r = run_scenario(params)
+        results.append(r)
+
+        yaw_rate_rad_s = math.radians(r.angular_velocity_cmd_deg_s)
+        heading_rad += yaw_rate_rad_s * dt
+        heading_rad = (heading_rad + math.pi) % (2 * math.pi) - math.pi
+
+        # 다음 스텝 이동 (바람 포함)
+        nxt_n = airspeed_mps * math.cos(heading_rad) + wind_n_mps + gust_n
+        nxt_e = airspeed_mps * math.sin(heading_rad) + wind_e_mps + gust_e
+        pos_n += nxt_n * dt
+        pos_e += nxt_e * dt
+        prev_yaw_rate_rad_s = yaw_rate_rad_s
+
+    return results
+
+
 def _frange(start: float, stop: float, step: float) -> list[float]:
     vals, v = [], start
     while v <= stop + step * 1e-6:
@@ -272,6 +361,50 @@ def results_to_csv(results: list[ScenarioResult], out=None) -> None:
         w.writerow(row)
 
 
+_TABLE_HDR = (
+    f"{'t(s)':>5}  {'ratio':>5}  {'bear':>6}  {'xtrack':>8}  "
+    f"{'mode':<20}  {'nu':>6}  {'w/s':>6}  "
+    f"{'darm':>6}  {'L-arm':>6}  {'R-arm':>6}  {'Lpw':>5}  {'Rpw':>5}"
+)
+_TABLE_SEP = "-" * len(_TABLE_HDR)
+
+# arm angle convention from control.py ConnectRoMo():
+#   left_angle  = NEUTRAL(80) - delta/2   right_angle = NEUTRAL(80) + delta/2
+#   delta > 0 (right-turn): L-arm < 80, R-arm > 80
+#   delta < 0 (left-turn) : L-arm > 80, R-arm < 80
+_ARM_LEGEND = (
+    "arm-angle convention (control.ConnectRoMo):\n"
+    "  neutral = 80 deg  |  range 0 ~ 160 deg  |  delta = R-arm - L-arm  (= 2 * (R-arm - 80))\n"
+    "  RIGHT-turn (delta>0): L-arm < 80  R-arm > 80  |  L-arm decreases  R-arm increases\n"
+    "  LEFT-turn  (delta<0): L-arm > 80  R-arm < 80  |  L-arm increases  R-arm decreases\n"
+    "  PWM: Lpw = LEFT_ZERO(2480) - L-arm * 11.11   Rpw = RIGHT_ZERO(636) + R-arm * 11.11"
+)
+
+
+def print_table_row(r: ScenarioResult, t_s: float = 0.0) -> None:
+    mode_short = r.control_mode.replace("NOMINAL_", "N_").replace("DEGRADED_", "D_")
+    print(
+        f"{t_s:5.1f}  {r.along_track_ratio:5.2f}  {r.bearing_error_deg:+6.1f}  {r.cross_track_calc_m:+8.1f}  "
+        f"{mode_short:<20}  {r.nu_deg:+6.1f}  {r.angular_velocity_cmd_deg_s:+6.1f}  "
+        f"{r.delta_arm_deg:+6.1f}  {r.left_angle_deg:6.1f}  {r.right_angle_deg:6.1f}  "
+        f"{r.left_pw:5d}  {r.right_pw:5d}"
+    )
+
+
+def print_table(results: list[ScenarioResult], title: str = "", dt: float = 1.0) -> None:
+    if title:
+        print(f"\n{'-'*len(_TABLE_HDR)}")
+        print(title)
+        print(f"  col: t=elapsed(s)  ratio=along-track  bear=bearing-err(deg)  xtrack=cross-track(m)")
+        print(f"       w/s=ang-vel-cmd(deg/s)  darm=delta-arm(deg)  L/R-arm=servo-angle(deg)  Lpw/Rpw=servo-pw(us)")
+    print(_TABLE_HDR)
+    print(_TABLE_SEP)
+    for i, r in enumerate(results):
+        print_table_row(r, t_s=i * dt)
+    print(_TABLE_SEP)
+    print(_ARM_LEGEND)
+
+
 def print_single(r: ScenarioResult) -> None:
     print("=== Scenario Result ===")
     print("  [Input]")
@@ -288,16 +421,16 @@ def print_single(r: ScenarioResult) -> None:
     print(f"    nu                : {r.nu_deg:+.2f} deg")
     print(f"    cross_track_calc  : {r.cross_track_calc_m:+.2f} m")
     print(f"    L1_distance       : {r.L1_distance_m:.2f} m")
-    print(f"    lat_acc_cmd       : {r.lat_acc_cmd_mps2:+.4f} m/s²")
+    print(f"    lat_acc_cmd       : {r.lat_acc_cmd_mps2:+.4f} m/s^2")
     print(f"    angular_vel_cmd   : {r.angular_velocity_cmd_deg_s:+.2f} deg/s")
     print("  [Control Output]")
     print(f"    delta_ff          : {r.delta_ff_deg:+.2f} deg")
     print(f"    delta_pid         : {r.delta_pid_deg:+.2f} deg")
     print(f"    delta_arm         : {r.delta_arm_deg:+.2f} deg")
-    print(f"    left_angle        : {r.left_angle_deg:.2f} deg  (neutral=80°, range 0~160°)")
-    print(f"    right_angle       : {r.right_angle_deg:.2f} deg  (neutral=80°, range 0~160°)")
-    print(f"    left_pw           : {r.left_pw} μs")
-    print(f"    right_pw          : {r.right_pw} μs")
+    print(f"    left_angle        : {r.left_angle_deg:.2f} deg  (neutral=80 deg, range 0~160 deg)")
+    print(f"    right_angle       : {r.right_angle_deg:.2f} deg  (neutral=80 deg, range 0~160 deg)")
+    print(f"    left_pw           : {r.left_pw} us")
+    print(f"    right_pw          : {r.right_pw} us")
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -322,6 +455,8 @@ def _parse_args():
     s.add_argument("--gyrz",          type=float, default=0.0, metavar="DEG_S")
     s.add_argument("--mode-override", default=None)
     s.add_argument("--track-length",  type=float, default=1000.0, metavar="M")
+    s.add_argument("--dr-valid", action="store_true",
+                   help="GPS STALE 상태에서 DR이 위치를 복원하는 실제 비행 경로 시뮬레이션 (STALE→FRESHED)")
     _add_quality_args(s)
 
     # bearing ─────────────────────────────────────────────────────────────────
@@ -352,6 +487,38 @@ def _parse_args():
     sp.add_argument("--out",           default=None, metavar="FILE")
     _add_quality_args(sp)
 
+    # flight ──────────────────────────────────────────────────────────────────
+    fl = sub.add_parser(
+        "flight",
+        help="폐루프 궤적 시뮬레이션 (분리점→목표). 바람/돌풍 외란 지원.",
+    )
+    fl.add_argument("--bearing-error", type=float, default=30.0, metavar="DEG",
+                    help="초기 bearing 오차 (deg)")
+    fl.add_argument("--cross-track",   type=float, default=0.0,  metavar="M",
+                    help="초기 cross-track 오차 (m)")
+    fl.add_argument("--speed",         type=float, default=8.0,  metavar="MPS",
+                    help="대기속도 (m/s)")
+    fl.add_argument("--dt",            type=float, default=1.0,  metavar="SEC",
+                    help="시뮬레이션 타임스텝 (s, 기본 1s)")
+    fl.add_argument("--track-length",  type=float, default=1000.0, metavar="M")
+    fl.add_argument("--wind-n",        type=float, default=0.0,  metavar="MPS",
+                    help="정상 바람 북향 성분 (m/s, 양수=북)")
+    fl.add_argument("--wind-e",        type=float, default=0.0,  metavar="MPS",
+                    help="정상 바람 동향 성분 (m/s, 양수=동)")
+    fl.add_argument("--gust-sigma",    type=float, default=0.0,  metavar="MPS",
+                    help="돌풍 표준편차 (m/s). 매 스텝 N(0,σ) 노이즈 추가")
+    fl.add_argument("--gust-seed",     type=int,   default=42,   metavar="INT")
+    fl.add_argument(
+        "--multi",
+        nargs="*",
+        metavar="BEAR:XTRACK",
+        help="여러 초기조건을 순서대로 출력. 예: --multi 0:0 30:0 -30:100",
+    )
+    fl.add_argument("--out", default=None, metavar="FILE")
+    fl.add_argument("--dr-valid", action="store_true",
+                   help="GPS STALE 상태에서 DR이 위치를 복원하는 실제 비행 경로 시뮬레이션 (STALE→FRESHED)")
+    _add_quality_args(fl)
+
     return root.parse_args()
 
 
@@ -378,6 +545,7 @@ def main() -> None:
             gyrz_quality=args.gyrz_quality,
             control_mode_override=args.mode_override,
             track_length_m=args.track_length,
+            dr_sim=args.dr_valid,
         )
         print_single(run_scenario(params))
 
@@ -414,6 +582,57 @@ def main() -> None:
             gyrz_quality=args.gyrz_quality,
         )
         _write_output(results, args.out)
+
+    elif args.mode == "flight":
+        sim_kw = dict(
+            airspeed_mps=args.speed,
+            dt=args.dt,
+            track_length_m=args.track_length,
+            wind_n_mps=args.wind_n,
+            wind_e_mps=args.wind_e,
+            gust_sigma_mps=args.gust_sigma,
+            gust_seed=args.gust_seed,
+            pos_quality=args.pos_quality,
+            gyrz_quality=args.gyrz_quality,
+            dr_sim=args.dr_valid,
+        )
+        if args.multi is not None:
+            scenarios = args.multi if args.multi else ["0:0", "30:0", "30:100", "-30:-100"]
+            parsed = [(float(t.split(":")[0]), float(t.split(":")[1])) for t in scenarios]
+            if args.out:
+                all_results = []
+                for bear, xtrack in parsed:
+                    all_results.extend(simulate_trajectory(bear, xtrack, **sim_kw))
+                with open(args.out, "w", newline="") as f:
+                    results_to_csv(all_results, f)
+                print(f"Saved {len(all_results)} rows → {args.out}", file=sys.stderr)
+            else:
+                for bear, xtrack in parsed:
+                    results = simulate_trajectory(bear, xtrack, **sim_kw)
+                    wind_str = (f"  wind=({args.wind_n:+.1f}N,{args.wind_e:+.1f}E) m/s"
+                                f"  gust_sigma={args.gust_sigma} m/s") if (args.wind_n or args.wind_e or args.gust_sigma) else ""
+                    print_table(
+                        results,
+                        title=(f"bear0={bear:+.0f} deg  xtrack0={xtrack:+.0f} m"
+                               f"  airspeed={args.speed} m/s  dt={args.dt}s{wind_str}"),
+                        dt=args.dt,
+                    )
+        else:
+            results = simulate_trajectory(
+                bearing_error_deg=args.bearing_error,
+                cross_track_m=args.cross_track,
+                **sim_kw,
+            )
+            wind_str = (f"  wind=({args.wind_n:+.1f}N,{args.wind_e:+.1f}E) m/s"
+                        f"  gust_sigma={args.gust_sigma} m/s") if (args.wind_n or args.wind_e or args.gust_sigma) else ""
+            title = (f"bear0={args.bearing_error:+.0f} deg  xtrack0={args.cross_track:+.0f} m"
+                     f"  airspeed={args.speed} m/s  dt={args.dt}s{wind_str}")
+            if args.out:
+                with open(args.out, "w", newline="") as f:
+                    results_to_csv(results, f)
+                print(f"Saved {len(results)} rows → {args.out}", file=sys.stderr)
+            else:
+                print_table(results, title=title, dt=args.dt)
 
 
 if __name__ == "__main__":

@@ -47,7 +47,7 @@ ALT_STALE_MAX    = ALT_EST_AGE
 
 # ── L1 parameters ─────────────────────────────────────────────────────────────
 L1_DAMPING         = 0.75
-L1_PERIOD_S        = 8.0
+L1_PERIOD_S        = 12.0
 L1_MIN_M           = 5.0
 V_MIN_MPS          = 2.0
 LAT_ACC_MAX        = 4.0    # m/s^2
