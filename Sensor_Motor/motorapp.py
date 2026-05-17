@@ -581,6 +581,7 @@ def handle_bearing(data: str) -> None:
         return
     with _UPDATE_LOCK:
         _CACHE.target_bearing_rad = math.radians(bearing_deg)
+    prevstate.update_bearing(bearing_deg)
     LOGGER.info("Bearing set: %.2f deg (%.4f rad)", bearing_deg, math.radians(bearing_deg))
 
 
@@ -1102,6 +1103,12 @@ def init() -> None:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
+
+    saved_bearing = prevstate.get_bearing()
+    if math.isfinite(saved_bearing):
+        with _UPDATE_LOCK:
+            _CACHE.target_bearing_rad = math.radians(saved_bearing)
+        LOGGER.info("Bearing restored from prevstate: %.2f deg", saved_bearing)
 
     _CONTROLLER = control.MakeCtrler()
     PI = control.init_control()
