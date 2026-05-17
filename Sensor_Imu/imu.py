@@ -56,7 +56,7 @@ def _imu_read_rate_hz() -> float:
 
 REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", int(1_000_000.0 / _imu_read_rate_hz()), 10000, 1000000)
 READ_ATTEMPTS = _env_int("IMU_READ_ATTEMPTS", 4, 1, 12)
-BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "0").strip().lower() not in ("0", "false", "no", "")
+BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "1").strip().lower() not in ("0", "false", "no", "")
 BNO085_RST_PIN = os.environ.get("IMU_BNO085_RST_PIN", "D22")
 IMU_MOUNTED_ON_BOTTOM = os.environ.get("IMU_MOUNTED_ON_BOTTOM", "1").strip().lower() not in ("0", "false", "no", "")
 IMU_FORWARD_AXIS = os.environ.get("IMU_FORWARD_AXIS", "Y").strip().upper()
