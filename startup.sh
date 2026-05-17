@@ -39,4 +39,5 @@ else
 fi
 
 cd "${python_path}"
+export FSW_I2C_BUS=0
 exec python3 main.py
