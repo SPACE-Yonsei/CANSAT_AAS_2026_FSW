@@ -17,7 +17,8 @@
       "Bash(C:\\\\Users\\\\bagj6\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python314\\\\python.exe -m pip install pyserial -q)",
       "PowerShell(python tests/scenario_sweep.py flight --bearing-error 30 --cross-track 100 --speed 8 --wind-e 3 --gust-sigma 0 2>&1)",
       "PowerShell(python tests/scenario_sweep.py flight --bearing-error 30 --cross-track 100 --speed 8 --pos-quality STALE 2>&1)",
-      "PowerShell(python tests/scenario_sweep.py flight --bearing-error 30 --cross-track 100 --speed 8 --pos-quality FRESHED 2>&1)"
+      "PowerShell(python tests/scenario_sweep.py flight --bearing-error 30 --cross-track 100 --speed 8 --pos-quality FRESHED 2>&1)",
+      "PowerShell(python -m py_compile Sensor_Gps/gps.py)"
     ]
   }
 }
