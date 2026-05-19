@@ -80,7 +80,7 @@ _LAST_VALID = {
     "gyr": (0.0, 0.0, 0.0),
 }
 _MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
-_FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0}
+_FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0, "frozen": False}
 
 
 
@@ -381,6 +381,8 @@ def init_imu() -> tuple[Any, Any]:
 
 def read_sensor_data(bno) -> Any:
     """Return 12-tuple for `imuapp`, or False on soft failure."""
+    if _FREEZE_STATE.get("frozen"):
+        return False
     r2d = 180.0 / math.pi
     for _ in range(READ_ATTEMPTS):
         try:
@@ -411,8 +413,7 @@ def read_sensor_data(bno) -> Any:
                         _FREEZE_STATE["count"],
                         quat_key,
                     )
-                    _FREEZE_STATE["prev_quat"] = None
-                    _FREEZE_STATE["count"] = 0
+                    _FREEZE_STATE["frozen"] = True
                     return False
             else:
                 _FREEZE_STATE["prev_quat"] = quat_key
@@ -476,7 +477,7 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     for window in _ANGLE_WINDOWS.values():
         window.clear()
     _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
-    _FREEZE_STATE.update({"prev_quat": None, "count": 0})
+    _FREEZE_STATE.update({"prev_quat": None, "count": 0, "frozen": False})
     return init_imu()
 
 
