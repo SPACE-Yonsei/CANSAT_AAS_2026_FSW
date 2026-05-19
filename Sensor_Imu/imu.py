@@ -327,10 +327,8 @@ def _init_imu_once() -> tuple[Any, Any]:
     # Accel → gyro → mag, then fusion (Adafruit / Hillcrest bring-up order; gyro-first hung some Pi+I2C setups).
     # If rotation_vector fails (mag / EMI), fall back to game_rotation_vector.
     bno._fsw_use_game_quat = False  # type: ignore[attr-defined]
-    with i2c_bus.i2c_lock():
-        _enable_feature_retry(bno, BNO_REPORT_ACCELEROMETER, specific_config=ACCEL_SPECIFIC_CONFIG)
-    logger.info("IMU accel range: ±%dg (specific_config=%d)", ACCEL_RANGE_G, ACCEL_SPECIFIC_CONFIG)
     for feat in (
+        BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
         BNO_REPORT_MAGNETOMETER,
     ):
