@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 # GPIO map
-BURNWIRE_GPIO = 16
+BURNWIRE_GPIO = 21
 EGG_SOLENOID_GPIO = 6
 PARAFOIL_RIGHT_GPIO = 12
 PARAFOIL_LEFT_GPIO = 13
@@ -54,7 +54,7 @@ RELEASE_TARGET_RATIO = 0.8  # 80% max_alt: separation altitude target
 # Below this fraction of max_alt: start descent-rate history and the FORCE_90PCT_TIMEOUT timer.
 RELEASE_PREDICT_START_RATIO = 0.9
 RELEASE_HARD_TRIGGER_RATIO = 0.85  # hard fallback if prediction is not viable
-RELEASE_BURNWIRE_DELAY_SEC = 5.0
+RELEASE_BURNWIRE_DELAY_SEC = 10.0 # 기존 5초, 0519 ETD 때 10초로 늘림. 5초는 너무 짧아서 낙하산이 완전히 펴지기도 전에 타버리는 경우가 있었음.
 RELEASE_PREDICT_TIME_MIN_SEC = 0.0
 RELEASE_PREDICT_TIME_MAX_SEC = 5.0
 RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_TIMEOUT
