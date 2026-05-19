@@ -463,7 +463,9 @@ def read_sensor_data(bno) -> Any:
                 round(float(gy) * r2d, 4),
                 round(float(gz_deg_s), 4),
             )
-        except Exception:
+        except Exception as _exc:
+            if os.environ.get("BNO08X_DEBUG", "").strip() == "1":
+                logger.warning("IMU: read attempt exception: %s", _exc)
             time.sleep(0.002)
     return False
 
