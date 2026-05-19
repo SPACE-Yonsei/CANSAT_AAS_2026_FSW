@@ -56,11 +56,6 @@ def _imu_read_rate_hz() -> float:
 
 REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", int(1_000_000.0 / _imu_read_rate_hz()), 10000, 1000000)
 READ_ATTEMPTS = _env_int("IMU_READ_ATTEMPTS", 4, 1, 12)
-# BNO085 accelerometer range via SH-2 Set Feature specific_config bits[1:0]:
-#   0=±4g(default), 1=±2g, 2=±8g, 3=±16g
-_ACCEL_RANGE_TO_CONFIG: dict[int, int] = {4: 0, 2: 1, 8: 2, 16: 3}
-ACCEL_RANGE_G = _env_int("IMU_ACCEL_RANGE_G", 4, 2, 16)
-ACCEL_SPECIFIC_CONFIG: int = _ACCEL_RANGE_TO_CONFIG.get(ACCEL_RANGE_G, 0)
 BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "1").strip().lower() not in ("0", "false", "no", "")
 BNO085_RST_PIN = os.environ.get("IMU_BNO085_RST_PIN", "D22")
 IMU_MOUNTED_ON_BOTTOM = os.environ.get("IMU_MOUNTED_ON_BOTTOM", "1").strip().lower() not in ("0", "false", "no", "")
@@ -89,7 +84,7 @@ _FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0, "frozen": False}
 
 
 
-def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None, specific_config: int = 0) -> None:
+def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
     """BNO08x often needs a short settle + retries right after power-up (Blinka / Pi)."""
     if attempts is None:
         try:
@@ -103,11 +98,11 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
     for i in range(attempts):
         try:
             if os.environ.get("BNO08X_DEBUG", "").strip() == "1":
-                bno.enable_feature(feature_id, REPORT_INTERVAL_US, specific_config)
+                bno.enable_feature(feature_id, REPORT_INTERVAL_US)
             else:
                 with open(os.devnull, "w", encoding="utf-8") as devnull:
                     with redirect_stdout(devnull), redirect_stderr(devnull):
-                        bno.enable_feature(feature_id, REPORT_INTERVAL_US, specific_config)
+                        bno.enable_feature(feature_id, REPORT_INTERVAL_US)
             return
         except Exception as exc:
             last = exc
