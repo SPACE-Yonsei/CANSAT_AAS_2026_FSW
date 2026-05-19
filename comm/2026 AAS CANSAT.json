@@ -463,15 +463,15 @@
                     "fft": false,
                     "fftSamples": 256,
                     "fftSamplingRate": 100,
-                    "graph": true,
+                    "graph": false,
                     "index": 38,
                     "led": false,
                     "ledHigh": 1,
                     "log": false,
                     "max": 0,
                     "min": 0,
-                    "title": "Desired heading",
-                    "units": "deg",
+                    "title": "Left pulse",
+                    "units": "μs",
                     "value": "--.--",
                     "widget": ""
                 },
@@ -504,7 +504,7 @@
                     "log": false,
                     "max": 0,
                     "min": 0,
-                    "title": "Left pulse",
+                    "title": "Right pulse",
                     "units": "μs",
                     "value": "--.--",
                     "widget": ""
@@ -521,8 +521,8 @@
                     "log": false,
                     "max": 0,
                     "min": 0,
-                    "title": "Right pulse",
-                    "units": "μs",
+                    "title": "Guidance State",
+                    "units": "",
                     "value": "--.--",
                     "widget": ""
                 }
