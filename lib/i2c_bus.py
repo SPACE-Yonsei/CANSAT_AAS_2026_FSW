@@ -60,7 +60,7 @@ def get_i2c() -> Any:
     global _i2c
     if _i2c is not None:
         return _i2c
-    bus_raw = os.environ.get("FSW_I2C_BUS", "0").strip()
+    bus_raw = os.environ.get("FSW_I2C_BUS", "1").strip()
     if bus_raw:
         try:
             from adafruit_extended_bus import ExtendedI2C  # type: ignore
