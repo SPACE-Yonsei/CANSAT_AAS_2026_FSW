@@ -36,6 +36,7 @@ PREV_SOLENOID_DONE: int = 0
 PREV_START_LAT: float = 0.0
 PREV_START_LON: float = 0.0
 PREV_START_LOCKED: int = 0
+PREV_BEARING: float = float("nan")
 STATE_OVERRIDE: Optional[int] = None
 
 # Backward-compatible aliases (prefer PREV_* fields in new code)
@@ -168,6 +169,7 @@ def _serialize() -> Dict[str, Any]:
         "PREV_START_LAT": PREV_START_LAT,
         "PREV_START_LON": PREV_START_LON,
         "PREV_START_LOCKED": PREV_START_LOCKED,
+        "PREV_BEARING": PREV_BEARING if PREV_BEARING == PREV_BEARING else None,
     }
 
 
@@ -175,7 +177,7 @@ def _apply(payload: Dict[str, Any]) -> None:
     global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT
     global PREV_TARGET_LAT, PREV_TARGET_LON, PREV_PACKET_COUNT, PREV_ST_TIMEDELTA
     global PREV_YAW_OFFSET, PREV_MOTOR_ENABLED, PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
-    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED
+    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED, PREV_BEARING
 
     PREV_STATE = int(payload.get("PREV_STATE", 0))
     PREV_ALT_CAL = float(payload.get("PREV_ALT_CAL", 0.0))
@@ -191,6 +193,8 @@ def _apply(payload: Dict[str, Any]) -> None:
     PREV_START_LAT = float(payload.get("PREV_START_LAT", 0.0))
     PREV_START_LON = float(payload.get("PREV_START_LON", 0.0))
     PREV_START_LOCKED = 1 if int(payload.get("PREV_START_LOCKED", 0)) else 0
+    _raw_bearing = payload.get("PREV_BEARING", None)
+    PREV_BEARING = float(_raw_bearing) if _raw_bearing is not None else float("nan")
     _sync_legacy_aliases()
 
 
@@ -327,6 +331,15 @@ def get_yaw_offset() -> float:
     return PREV_YAW_OFFSET
 
 
+def update_bearing(bearing_deg: float) -> None:
+    _atomic_update({"PREV_BEARING": float(bearing_deg) if bearing_deg == bearing_deg else None})
+
+
+def get_bearing() -> float:
+    """Return persisted bearing in degrees, or NaN if not set."""
+    return PREV_BEARING
+
+
 def update_packet_count(count: int) -> None:
     _atomic_update({"PREV_PACKET_COUNT": int(count)})
 
@@ -340,7 +353,7 @@ def reset_prevstate() -> None:
     global PREV_STATE, PREV_ALT_CAL, PREV_MAX_ALT
     global PREV_TARGET_LAT, PREV_TARGET_LON, PREV_PACKET_COUNT, PREV_ST_TIMEDELTA
     global PREV_YAW_OFFSET, PREV_MOTOR_ENABLED, PREV_SOLENOID_COUNT, PREV_SOLENOID_DONE
-    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED
+    global PREV_START_LAT, PREV_START_LON, PREV_START_LOCKED, PREV_BEARING
 
     PREV_STATE = 0
     PREV_ALT_CAL = 0.0
@@ -356,6 +369,7 @@ def reset_prevstate() -> None:
     PREV_START_LAT = 0.0
     PREV_START_LON = 0.0
     PREV_START_LOCKED = 0
+    PREV_BEARING = float("nan")
     _sync_legacy_aliases()
     with _FileLock():
         _atomic_write(_serialize())

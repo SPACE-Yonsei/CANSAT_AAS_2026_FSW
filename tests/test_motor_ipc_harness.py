@@ -126,6 +126,7 @@ class TestMessageRouting(unittest.TestCase):
 class TestGuidanceAndActuatorIntegration(unittest.TestCase):
     def setUp(self):
         _reset()
+        # GPS dispatch kept for latest_gps/start_point locking; history no longer maintained
         _dispatch(appargs.GpsAppArg.AppID, appargs.GpsAppArg.MID_motor_gps,
                   _gps_msg())
         _dispatch(appargs.ImuAppArg.AppID, appargs.ImuAppArg.MID_motor_imu,
@@ -143,7 +144,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
         self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(-2.5), places=5)  # negated
         self.assertAlmostEqual(snap.latest_baro.alt_m, 200.0)
         self.assertAlmostEqual(snap.target_lat, 37.56)
-        self.assertAlmostEqual(snap.start_lat, 37.55)
+        self.assertAlmostEqual(snap.start_lat, 37.55)  # locked from GPS
 
     def test_neutral_command_outputs_to_servo(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
