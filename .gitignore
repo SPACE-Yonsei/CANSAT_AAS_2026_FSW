@@ -26,4 +26,7 @@ lib/prevstate.json.lock
 lib/prevstate.json.tmp
 sensorlogs/
 
-node_modules/
+node_modules/motorlogs/
+*.swp
+test.py
+test1.py
