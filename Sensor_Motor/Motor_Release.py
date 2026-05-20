@@ -135,3 +135,95 @@ def terminate_burnwire() -> None:
     except Exception as exc:
         logger.debug("Burnwire terminate error (safe to ignore): %s", exc)
     BURNWIRE_READY = False
+
+
+# ---------------------------------------------------------------------------
+# Standalone test entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(message)s")
+
+    parser = argparse.ArgumentParser(
+        description="activate_burnwire() 단독 검사 도구",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+예시:
+  python -m Sensor_Motor.Motor_Release              # 기본 설정으로 실행
+  python -m Sensor_Motor.Motor_Release --duration 1 # 1초 버닝
+  python -m Sensor_Motor.Motor_Release --dry-run    # 초기화만, 실제 동작 없음
+
+환경변수:
+  BURNWIRE_DURATION_SEC=2.0  번 지속시간 덮어쓰기 (--duration보다 낮은 우선순위)
+""",
+    )
+    parser.add_argument(
+        "--duration", type=float, default=None,
+        help="번 지속시간(초). 미설정 시 config 값 사용",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="GPIO 초기화 및 설정 확인만 수행, activate 호출 없음",
+    )
+    args = parser.parse_args()
+
+    if args.duration is not None:
+        BURNWIRE_DURATION_SEC = args.duration
+
+    # ── 설정 출력 ──────────────────────────────────────────────────────────
+    print("=" * 52)
+    print("  Motor_Release  burnwire 검사")
+    print("=" * 52)
+    print(f"  GPIO 핀           : {BURNWIRE_GPIO}")
+    print(f"  ACTIVATE 레벨     : {_RELEASE_ACTIVATE_LEVEL}  "
+          f"({'LOW=0=relay ON' if _RELEASE_ACTIVATE_LEVEL == 0 else 'HIGH=1=relay ON'})")
+    print(f"  DEACTIVATE 레벨   : {_RELEASE_DEACTIVATE_LEVEL}")
+    print(f"  번 지속시간       : {BURNWIRE_DURATION_SEC:.2f} s")
+    print(f"  모드              : {'DRY-RUN (activate 생략)' if args.dry_run else 'LIVE'}")
+    print("=" * 52)
+
+    # ── GPIO 초기화 + 상태 추적 ────────────────────────────────────────────
+    init_burnwire()
+    gpio = _load_gpio()
+    backend = "RPi.GPIO (실하드웨어)" if not isinstance(gpio, _DummyGPIO) else "_DummyGPIO (시뮬)"
+    print(f"  백엔드            : {backend}")
+
+    def _pin_state_str() -> str:
+        if isinstance(gpio, _DummyGPIO):
+            level = gpio.state.get(BURNWIRE_GPIO, "?")
+            label = "DEACTIVATE(safe)" if level == _RELEASE_DEACTIVATE_LEVEL else "ACTIVATE(LIVE!)"
+            return f"GPIO[{BURNWIRE_GPIO}]={level} → {label}"
+        return "(실 하드웨어: 멀티미터로 확인)"
+
+    print(f"  초기 상태         : {_pin_state_str()}")
+    print()
+
+    if args.dry_run:
+        print("[DRY-RUN] activate_burnwire() 호출 생략. 안전 상태 유지.")
+        terminate_burnwire()
+        sys.exit(0)
+
+    # ── 실행 ───────────────────────────────────────────────────────────────
+    print(f"[LIVE] {BURNWIRE_DURATION_SEC:.2f}초 후 자동 해제됩니다. Ctrl+C 로 중단 가능.")
+    print("       (중단해도 finally 블록이 DEACTIVATE 보장)")
+    print()
+    try:
+        activate_burnwire()
+    except KeyboardInterrupt:
+        print("\n[중단됨] KeyboardInterrupt — finally 가 relay를 안전하게 해제했는지 확인:")
+    finally:
+        print(f"  최종 상태         : {_pin_state_str()}")
+        safe = (
+            isinstance(gpio, _DummyGPIO)
+            and gpio.state.get(BURNWIRE_GPIO) == _RELEASE_DEACTIVATE_LEVEL
+        )
+        if isinstance(gpio, _DummyGPIO):
+            result = "PASS  relay = DEACTIVATE" if safe else "FAIL  relay = ACTIVATE (위험)"
+            print(f"  안전 검증         : {result}")
+        terminate_burnwire()
+        print("  종료 완료")
+
+
