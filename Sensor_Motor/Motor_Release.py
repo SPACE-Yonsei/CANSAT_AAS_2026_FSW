@@ -137,10 +137,16 @@ def terminate_burnwire() -> None:
     BURNWIRE_READY = False
 
 
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(message)s")
+    init_burnwire()
+    try:
+        print("번와이어 작동 시작")
+        activate_burnwire()
+        print("번와이어 작동 종료")
 
-    input("Press Enter to run activate_burnwire()...")
-    activate_burnwire()
+    except KeyboardInterrupt:
+        print("\n프로그램 종료 요청 (Ctrl+C)")
 
-
+    finally:
+        terminate_burnwire()
