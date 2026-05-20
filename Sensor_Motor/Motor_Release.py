@@ -14,7 +14,13 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 import time
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import config
 from Sensor_Motor.Motor_Release_Cal import get_burnwire_delay_sec
