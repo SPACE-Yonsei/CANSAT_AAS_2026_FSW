@@ -30,7 +30,6 @@ GYRX = 0.0
 GYRY = 0.0
 GYRZ = 0.0
 HEALTH = 1
-HEADING_MODE = "unknown"
 
 # Runtime control
 IMU_ERROR_COUNT = 0
@@ -63,12 +62,6 @@ _acc_norm_ema: Optional[float] = None
 _gyro_norm_ema: Optional[float] = None
 _startup_yaw_zeroed = False
 EMA_ALPHA = 0.9
-IMU_GAME_VECTOR_HEALTH_OK = os.environ.get("IMU_GAME_VECTOR_HEALTH_OK", "0").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
 
 # freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
 FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
@@ -100,10 +93,6 @@ def _wrap_deg(deg: float) -> float:
     return deg
 
 
-def _wrap_delta_deg(deg: float) -> float:
-    return (float(deg) + 180.0) % 360.0 - 180.0
-
-
 def _apply_yaw_offset(yaw: float) -> float:
     return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
 
@@ -112,28 +101,6 @@ def _ema(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
     if prev is None:
         return cur
     return alpha * cur + (1.0 - alpha) * prev
-
-
-def _ema_angle(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
-    cur = _wrap_deg(cur)
-    if prev is None:
-        return cur
-    return _wrap_deg(prev + alpha * _wrap_delta_deg(cur - prev))
-
-
-def _heading_mode_from_driver() -> str:
-    try:
-        from Sensor_Imu import imu as imu_driver  # type: ignore
-
-        return imu_driver.heading_mode()
-    except Exception:
-        return "unknown"
-
-
-def _heading_health(mode: str) -> int:
-    if mode == "game_rotation_vector" and not IMU_GAME_VECTOR_HEALTH_OK:
-        return 0
-    return 1
 
 
 def _calibrate_startup_yaw(raw_yaw: float) -> None:
@@ -194,7 +161,7 @@ def imuapp_init() -> None:
 
 
 def _try_reinit() -> None:
-    global _i2c_instance, _imu_instance, _last_reinit_ts, HEADING_MODE
+    global _i2c_instance, _imu_instance, _last_reinit_ts
     _last_reinit_ts = timebase.wall_now()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
@@ -203,7 +170,6 @@ def _try_reinit() -> None:
             _i2c_instance, _imu_instance = imu_driver.reinit_imu(_i2c_instance, _imu_instance)
         else:
             _i2c_instance, _imu_instance = imu_driver.init_imu()
-        HEADING_MODE = imu_driver.heading_mode()
     except KeyboardInterrupt:
         raise
     except Exception as exc:
@@ -237,7 +203,7 @@ def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _last_sample_mono_ts
     global _yaw_ema, _gyrz_ema, _acc_norm_ema, _gyro_norm_ema
-    global FREEFALL, TUMBLE, HEADING_MODE
+    global FREEFALL, TUMBLE
     import math as _math
     period = _imu_read_period_sec()
     while IMUAPP_RUNSTATUS:
@@ -261,9 +227,8 @@ def read_imu_data() -> None:
 
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
-        mode = _heading_mode_from_driver()
         _calibrate_startup_yaw(float(yaw))
-        _yaw_ema  = _ema_angle(_yaw_ema, _apply_yaw_offset(float(yaw)))
+        _yaw_ema  = _ema(_yaw_ema,  _apply_yaw_offset(float(yaw)))
         _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
 
         # freefall / tumble 판정 (EMA smoothing으로 단발 스파이크 방지)
@@ -283,11 +248,10 @@ def read_imu_data() -> None:
             GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(_gyrz_ema)
             FREEFALL = freefall_flag
             TUMBLE   = tumble_flag
-            HEADING_MODE = mode
             _last_sample_ts       = timebase.wall_now()
             _last_sample_mono_ts  = timebase.now()
 
-        HEALTH = _heading_health(mode)
+        HEALTH = 1
         time.sleep(period)
 
 

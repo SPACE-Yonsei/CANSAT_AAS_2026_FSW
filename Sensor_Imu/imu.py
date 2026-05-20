@@ -51,8 +51,7 @@ def _env_float(name: str, default: float, lo: float, hi: float) -> float:
 
 
 def _imu_read_rate_hz() -> float:
-    default_rate = float(getattr(config, "IMU_RATE_HZ", config.BAROMETER_RATE_HZ))
-    return _env_float("IMU_READ_RATE_HZ", default_rate, 0.1, 200.0)
+    return _env_float("IMU_READ_RATE_HZ", float(config.BAROMETER_RATE_HZ), 0.1, 200.0)
 
 
 REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", int(1_000_000.0 / _imu_read_rate_hz()), 10000, 1000000)
@@ -65,7 +64,7 @@ MAG_FILTER_ALPHA = _env_float("IMU_MAG_FILTER_ALPHA", 0.5, 0.0, 1.0)
 MAG_FIELD_MIN = _env_float("IMU_MAG_FIELD_MIN", 5.0, 0.0, 1000.0)
 MAG_FIELD_MAX = _env_float("IMU_MAG_FIELD_MAX", 150.0, 1.0, 2000.0)
 MAG_NORM_SPIKE_RATIO = _env_float("IMU_MAG_NORM_SPIKE_RATIO", 3.0, 1.1, 100.0)
-YAW_CORRECTION_GAIN = _env_float("IMU_YAW_CORRECTION_GAIN", 0.0, 0.0, 1.0)
+YAW_CORRECTION_GAIN = _env_float("IMU_YAW_CORRECTION_GAIN", 0.02, 0.0, 1.0)
 HAMPEL_WINDOW_SIZE = _env_int("IMU_HAMPEL_WINDOW_SIZE", 3, 3, 31)
 HAMPEL_THRESHOLD = _env_float("IMU_HAMPEL_THRESHOLD", 3.0, 0.1, 20.0)
 HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
@@ -77,12 +76,11 @@ FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 5, 3, 500)
 _ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
 _LAST_VALID = {
     "acc": (0.0, 0.0, 0.0),
-    "mag": None,
+    "mag": (0.0, 0.0, 0.0),
     "gyr": (0.0, 0.0, 0.0),
 }
 _MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
 _FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0, "frozen": False}
-_HEADING_MODE = "rotation_vector"
 
 
 
@@ -184,13 +182,13 @@ def _wrap_180(angle: float) -> float:
     return (float(angle) + 180.0) % 360.0 - 180.0
 
 
-def _hampel_angle(name: str, value: float, *, output_360: bool) -> float:
+def _hampel_angle(name: str, value: float) -> float:
     window = _ANGLE_WINDOWS[name]
     window.append(_wrap_360(value))
     if len(window) > HAMPEL_WINDOW_SIZE:
         window.pop(0)
     if len(window) < 3:
-        return _wrap_360(value) if output_360 else _wrap_180(value)
+        return _wrap_360(value)
 
     unwrapped = [window[0]]
     for item in window[1:]:
@@ -203,8 +201,7 @@ def _hampel_angle(name: str, value: float, *, output_360: bool) -> float:
     mad = deviations[n // 2] if n % 2 else (deviations[n // 2 - 1] + deviations[n // 2]) / 2.0
     threshold = HAMPEL_THRESHOLD * max(mad, HAMPEL_MIN_MAD)
     filtered = [median if abs(x - median) > threshold else x for x in unwrapped]
-    avg = sum(filtered) / len(filtered)
-    return _wrap_360(avg) if output_360 else _wrap_180(avg)
+    return _wrap_360(sum(filtered) / len(filtered))
 
 
 def _mag_norm_is_valid(norm: float) -> bool:
@@ -255,9 +252,7 @@ def _apply_yaw_convention(yaw_deg: float, gz_deg_s: float) -> tuple[float, float
     return _wrap_360(yaw), rate_sign * gz_deg_s
 
 
-def _apply_mag_yaw_correction(yaw_deg: float, mx: float, my: float, *, mag_valid: bool) -> float:
-    if not mag_valid or YAW_CORRECTION_GAIN <= 0.0:
-        return _wrap_360(yaw_deg)
+def _apply_mag_yaw_correction(yaw_deg: float, mx: float, my: float) -> float:
     try:
         mag_heading = math.degrees(math.atan2(my, mx))
         if IMU_MOUNTED_ON_BOTTOM:
@@ -272,7 +267,6 @@ def _apply_mag_yaw_correction(yaw_deg: float, mx: float, my: float, *, mag_valid
 
 
 def _init_imu_once() -> tuple[Any, Any]:
-    global _HEADING_MODE
     from adafruit_bno08x import (  # type: ignore
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GAME_ROTATION_VECTOR,
@@ -333,7 +327,6 @@ def _init_imu_once() -> tuple[Any, Any]:
     # Accel → gyro → mag, then fusion (Adafruit / Hillcrest bring-up order; gyro-first hung some Pi+I2C setups).
     # If rotation_vector fails (mag / EMI), fall back to game_rotation_vector.
     bno._fsw_use_game_quat = False  # type: ignore[attr-defined]
-    _HEADING_MODE = "rotation_vector"
     for feat in (
         BNO_REPORT_ACCELEROMETER,
         BNO_REPORT_GYROSCOPE,
@@ -351,7 +344,6 @@ def _init_imu_once() -> tuple[Any, Any]:
             )
             _enable_feature_retry(bno, BNO_REPORT_GAME_ROTATION_VECTOR)
             bno._fsw_use_game_quat = True  # type: ignore[attr-defined]
-            _HEADING_MODE = "game_rotation_vector"
 
     if BNO085_RST_USE:
         logger.info(
@@ -434,7 +426,6 @@ def read_sensor_data(bno) -> Any:
             else:
                 ax, ay, az = _LAST_VALID["acc"]
 
-            mag_valid = False
             if mag is not None and not any(v is None for v in mag):
                 raw_mx, raw_my, raw_mz = (float(mag[0]), float(mag[1]), float(mag[2]))
                 mag_norm = math.sqrt(raw_mx * raw_mx + raw_my * raw_my + raw_mz * raw_mz)
@@ -442,13 +433,10 @@ def read_sensor_data(bno) -> Any:
                     mx, my, mz = _filter_mag(raw_mx, raw_my, raw_mz)
                     _MAG_FILTER_STATE["norm"] = mag_norm
                     _LAST_VALID["mag"] = (mx, my, mz)
-                    mag_valid = True
                 else:
-                    last_mag = _LAST_VALID["mag"]
-                    mx, my, mz = last_mag if last_mag is not None else (0.0, 0.0, 0.0)
+                    mx, my, mz = _LAST_VALID["mag"]
             else:
-                last_mag = _LAST_VALID["mag"]
-                mx, my, mz = last_mag if last_mag is not None else (0.0, 0.0, 0.0)
+                mx, my, mz = _LAST_VALID["mag"]
 
             if gyr is not None and not any(v is None for v in gyr):
                 gx, gy, gz = (float(gyr[0]), float(gyr[1]), float(gyr[2]))
@@ -458,10 +446,10 @@ def read_sensor_data(bno) -> Any:
 
             gz_deg_s = float(gz) * r2d
             yaw, gz_deg_s = _apply_yaw_convention(yaw, gz_deg_s)
-            yaw = _apply_mag_yaw_correction(yaw, mx, my, mag_valid=mag_valid)
-            roll = _hampel_angle("roll", roll, output_360=False)
-            pitch = _hampel_angle("pitch", pitch, output_360=False)
-            yaw = _hampel_angle("yaw", yaw, output_360=True)
+            yaw = _apply_mag_yaw_correction(yaw, mx, my)
+            roll = _hampel_angle("roll", roll)
+            pitch = _hampel_angle("pitch", pitch)
+            yaw = _hampel_angle("yaw", yaw)
             return (
                 round(float(roll), 4),
                 round(float(pitch), 4),
@@ -491,11 +479,6 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
     _FREEZE_STATE.update({"prev_quat": None, "count": 0, "frozen": False})
     return init_imu()
-
-
-def heading_mode() -> str:
-    """Return the active BNO08x orientation report mode."""
-    return _HEADING_MODE
 
 
 def imu_terminate(_i2c: Any) -> None:
