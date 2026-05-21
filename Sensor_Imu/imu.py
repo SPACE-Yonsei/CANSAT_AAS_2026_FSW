@@ -76,6 +76,14 @@ FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 5, 3, 500)
 # freeze detection uses a larger window to avoid false positives on a stationary cansat.
 FREEZE_STATIC_GYRO_THRESHOLD = _env_float("IMU_FREEZE_STATIC_GYRO_THRESHOLD", 0.3, 0.0, 100.0)
 FREEZE_DETECT_SAMPLES_STATIC = _env_int("IMU_FREEZE_DETECT_SAMPLES_STATIC", 50, 5, 500)
+# I2C corruption filter: component values beyond these are physically impossible.
+# Acc default 100 m/s² ≈ 10g (raise via IMU_ACC_MAX_MPS2 for high-G launches).
+# Gyro default 35.0 rad/s ≈ BNO085 physical ±2000 dps limit.
+ACC_COMPONENT_MAX_MPS2 = _env_float("IMU_ACC_MAX_MPS2", 100.0, 10.0, 500.0)
+GYR_COMPONENT_MAX_RADS = _env_float("IMU_GYR_MAX_RADS", 35.0, 1.0, 200.0)
+# Rolling median window size for acc and gyro (valid-only samples).
+ACC_MEDIAN_WINDOW = _env_int("IMU_ACC_MEDIAN_WINDOW", 5, 1, 50)
+GYR_MEDIAN_WINDOW = _env_int("IMU_GYR_MEDIAN_WINDOW", 5, 1, 50)
 
 _ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
 _LAST_VALID = {
@@ -85,7 +93,26 @@ _LAST_VALID = {
 }
 _MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
 _FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0, "frozen": False}
+_ACC_WINDOW: list[tuple[float, float, float]] = []
+_GYR_WINDOW: list[tuple[float, float, float]] = []
 
+
+def _axis_median(window: list[tuple[float, float, float]]) -> tuple[float, float, float]:
+    """Per-axis sorted median of a sliding window of valid 3-tuples."""
+    n = len(window)
+    if n == 0:
+        return (0.0, 0.0, 0.0)
+    mid = n // 2
+    xs = sorted(w[0] for w in window)
+    ys = sorted(w[1] for w in window)
+    zs = sorted(w[2] for w in window)
+    if n % 2 == 1:
+        return xs[mid], ys[mid], zs[mid]
+    return (
+        (xs[mid - 1] + xs[mid]) / 2.0,
+        (ys[mid - 1] + ys[mid]) / 2.0,
+        (zs[mid - 1] + zs[mid]) / 2.0,
+    )
 
 
 def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = None) -> None:
@@ -444,10 +471,12 @@ def read_sensor_data(bno) -> Any:
             roll, pitch, yaw = _quat_to_euler_deg(float(qi), float(qj), float(qk), float(qr))
 
             if acc is not None and not any(v is None for v in acc):
-                ax, ay, az = (float(acc[0]), float(acc[1]), float(acc[2]))
-                _LAST_VALID["acc"] = (ax, ay, az)
-            else:
-                ax, ay, az = _LAST_VALID["acc"]
+                _ax, _ay, _az = float(acc[0]), float(acc[1]), float(acc[2])
+                if max(abs(_ax), abs(_ay), abs(_az)) <= ACC_COMPONENT_MAX_MPS2:
+                    _ACC_WINDOW.append((_ax, _ay, _az))
+                    if len(_ACC_WINDOW) > ACC_MEDIAN_WINDOW:
+                        _ACC_WINDOW.pop(0)
+            ax, ay, az = _axis_median(_ACC_WINDOW) if _ACC_WINDOW else _LAST_VALID["acc"]
 
             if mag is not None and not any(v is None for v in mag):
                 raw_mx, raw_my, raw_mz = (float(mag[0]), float(mag[1]), float(mag[2]))
@@ -462,10 +491,12 @@ def read_sensor_data(bno) -> Any:
                 mx, my, mz = _LAST_VALID["mag"]
 
             if gyr is not None and not any(v is None for v in gyr):
-                gx, gy, gz = (float(gyr[0]), float(gyr[1]), float(gyr[2]))
-                _LAST_VALID["gyr"] = (gx, gy, gz)
-            else:
-                gx, gy, gz = _LAST_VALID["gyr"]
+                _gx, _gy, _gz = float(gyr[0]), float(gyr[1]), float(gyr[2])
+                if max(abs(_gx), abs(_gy), abs(_gz)) <= GYR_COMPONENT_MAX_RADS:
+                    _GYR_WINDOW.append((_gx, _gy, _gz))
+                    if len(_GYR_WINDOW) > GYR_MEDIAN_WINDOW:
+                        _GYR_WINDOW.pop(0)
+            gx, gy, gz = _axis_median(_GYR_WINDOW) if _GYR_WINDOW else _LAST_VALID["gyr"]
 
             gz_deg_s = float(gz) * r2d
             yaw, gz_deg_s = _apply_yaw_convention(yaw, gz_deg_s)
@@ -499,6 +530,8 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     i2c_bus.reset_i2c()
     for window in _ANGLE_WINDOWS.values():
         window.clear()
+    _ACC_WINDOW.clear()
+    _GYR_WINDOW.clear()
     _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
     _FREEZE_STATE.update({"prev_quat": None, "count": 0, "frozen": False})
     return init_imu()
