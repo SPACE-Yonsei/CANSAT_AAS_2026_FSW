@@ -56,12 +56,9 @@ _last_reinit_ts = 0.0
 _imu_lock = threading.Lock()
 _imu_instance = None
 _i2c_instance = None
-_yaw_ema = None
-_gyrz_ema = None
 _acc_norm_ema: Optional[float] = None
 _gyro_norm_ema: Optional[float] = None
 _startup_yaw_zeroed = False
-EMA_ALPHA = 0.9
 
 # freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
 FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
@@ -97,7 +94,7 @@ def _apply_yaw_offset(yaw: float) -> float:
     return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
 
 
-def _ema(prev: Optional[float], cur: float, alpha: float = EMA_ALPHA) -> float:
+def _ema(prev: Optional[float], cur: float, alpha: float) -> float:
     if prev is None:
         return cur
     return alpha * cur + (1.0 - alpha) * prev
@@ -208,7 +205,7 @@ def _stale_watchdog_check() -> bool:
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _last_sample_mono_ts
-    global _yaw_ema, _gyrz_ema, _acc_norm_ema, _gyro_norm_ema
+    global _acc_norm_ema, _gyro_norm_ema
     global FREEFALL, TUMBLE
     import math as _math
     period = _imu_read_period_sec()
@@ -234,8 +231,6 @@ def read_imu_data() -> None:
         IMU_ERROR_COUNT = 0
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
         _calibrate_startup_yaw(float(yaw))
-        _yaw_ema  = _ema(_yaw_ema,  _apply_yaw_offset(float(yaw)))
-        _gyrz_ema = _ema(_gyrz_ema, float(gyrz))
 
         # freefall / tumble 판정 (EMA smoothing으로 단발 스파이크 방지)
         acc_norm_raw  = _math.sqrt(float(accx)**2 + float(accy)**2 + float(accz)**2)
@@ -248,10 +243,10 @@ def read_imu_data() -> None:
         with _imu_lock:
             ROLL = float(roll)
             PITCH = float(pitch)
-            YAW = float(_yaw_ema)
+            YAW = _apply_yaw_offset(float(yaw))
             ACCX, ACCY, ACCZ = float(accx), float(accy), float(accz)
             MAGX, MAGY, MAGZ = float(magx), float(magy), float(magz)
-            GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(_gyrz_ema)
+            GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(gyrz)
             FREEFALL = freefall_flag
             TUMBLE   = tumble_flag
             _last_sample_ts       = timebase.wall_now()
