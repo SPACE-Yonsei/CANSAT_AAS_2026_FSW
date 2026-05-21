@@ -72,10 +72,6 @@ HAMPEL_MIN_MAD = _env_float("IMU_HAMPEL_MIN_MAD", 2.0, 0.0, 180.0)
 # reads, treat the chip as hung and surface a soft failure so ``imuapp`` triggers reinit
 # (which pulses ``IMU_BNO085_RST_PIN`` when ``IMU_BNO085_RST_ENABLE=1``).
 FREEZE_DETECT_SAMPLES = _env_int("IMU_FREEZE_DETECT_SAMPLES", 5, 3, 500)
-# When gyro norm is below this threshold (rad/s) the device is considered static;
-# freeze detection uses a larger window to avoid false positives on a stationary cansat.
-FREEZE_STATIC_GYRO_THRESHOLD = _env_float("IMU_FREEZE_STATIC_GYRO_THRESHOLD", 0.3, 0.0, 100.0)
-FREEZE_DETECT_SAMPLES_STATIC = _env_int("IMU_FREEZE_DETECT_SAMPLES_STATIC", 50, 5, 500)
 
 _ANGLE_WINDOWS: dict[str, list[float]] = {"roll": [], "pitch": [], "yaw": []}
 _LAST_VALID = {
@@ -403,9 +399,6 @@ def read_sensor_data(bno) -> Any:
             if quat is None or any(v is None for v in quat):
                 raise RuntimeError("BNO08x quaternion unavailable")
             qi, qj, qk, qr = quat
-            # Reject physically impossible quaternion components (chip I2C corruption).
-            if not all(-1.05 <= float(v) <= 1.05 for v in (qi, qj, qk, qr)):
-                raise RuntimeError(f"BNO08x quaternion out of range: {quat}")
             quat_key = (
                 round(float(qi), 6),
                 round(float(qj), 6),
@@ -414,19 +407,7 @@ def read_sensor_data(bno) -> Any:
             )
             if quat_key == _FREEZE_STATE["prev_quat"]:
                 _FREEZE_STATE["count"] = int(_FREEZE_STATE["count"]) + 1
-                # Use a larger freeze window when the gyro is quiet: a stationary
-                # cansat legitimately outputs an unchanged rotation_vector due to
-                # BNO08x output quantization, which would otherwise be a false positive.
-                gyro_norm = 0.0
-                if gyr is not None and not any(v is None for v in gyr):
-                    gx_r, gy_r, gz_r = float(gyr[0]), float(gyr[1]), float(gyr[2])
-                    gyro_norm = math.sqrt(gx_r * gx_r + gy_r * gy_r + gz_r * gz_r)
-                threshold = (
-                    FREEZE_DETECT_SAMPLES
-                    if gyro_norm >= FREEZE_STATIC_GYRO_THRESHOLD
-                    else FREEZE_DETECT_SAMPLES_STATIC
-                )
-                if _FREEZE_STATE["count"] >= threshold:
+                if _FREEZE_STATE["count"] >= FREEZE_DETECT_SAMPLES:
                     logger.warning(
                         "IMU: quaternion frozen for %d reads (%s); requesting reinit",
                         _FREEZE_STATE["count"],

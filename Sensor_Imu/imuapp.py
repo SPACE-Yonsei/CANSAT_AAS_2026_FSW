@@ -161,7 +161,8 @@ def imuapp_init() -> None:
 
 
 def _try_reinit() -> None:
-    global _i2c_instance, _imu_instance, _last_reinit_ts, _last_sample_ts
+    global _i2c_instance, _imu_instance, _last_reinit_ts
+    _last_reinit_ts = timebase.wall_now()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -169,18 +170,11 @@ def _try_reinit() -> None:
             _i2c_instance, _imu_instance = imu_driver.reinit_imu(_i2c_instance, _imu_instance)
         else:
             _i2c_instance, _imu_instance = imu_driver.init_imu()
-        # Reset sample timestamp so the stale watchdog doesn't fire immediately
-        # after a long reinit (reinit duration can exceed IMU_REINIT_COOLDOWN_SEC).
-        _last_sample_ts = timebase.wall_now()
     except KeyboardInterrupt:
         raise
     except Exception as exc:
         logger.warning("IMU: reinit failed (%s)", exc)
         _i2c_instance, _imu_instance = None, None
-    finally:
-        # Measure cooldown from completion, not start, so a slow reinit doesn't
-        # cause the watchdog to re-fire the instant it returns.
-        _last_reinit_ts = timebase.wall_now()
 
 
 def _stale_watchdog_check() -> bool:
