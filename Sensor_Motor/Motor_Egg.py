@@ -63,7 +63,7 @@ _EGG_ACTIVATE_LEVEL = int(
 _EGG_DEACTIVATE_LEVEL = int(
     getattr(config, "EGG_RELAY_DEACTIVATE_LEVEL", config.RELAY_DEACTIVATE_LEVEL)
 )
-SOLENOID_REPEAT:  int   = int(os.environ.get("SOLENOID_REPEAT",  "3"))
+SOLENOID_REPEAT:  int   = int(os.environ.get("SOLENOID_REPEAT",  "2"))
 SOLENOID_ON_SEC:  float = float(os.environ.get("SOLENOID_ON_SEC",  "0.5"))
 SOLENOID_OFF_SEC: float = float(os.environ.get("SOLENOID_OFF_SEC", "0.5"))
 

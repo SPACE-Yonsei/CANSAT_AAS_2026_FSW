@@ -14,7 +14,13 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 import time
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 from lib import config
 from Sensor_Motor.Motor_Release_Cal import get_burnwire_delay_sec
@@ -135,3 +141,18 @@ def terminate_burnwire() -> None:
     except Exception as exc:
         logger.debug("Burnwire terminate error (safe to ignore): %s", exc)
     BURNWIRE_READY = False
+
+
+
+if __name__ == "__main__":
+    init_burnwire()
+    try:
+        print("번와이어 작동 시작")
+        activate_burnwire()
+        print("번와이어 작동 종료")
+
+    except KeyboardInterrupt:
+        print("\n프로그램 종료 요청 (Ctrl+C)")
+
+    finally:
+        terminate_burnwire()
