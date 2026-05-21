@@ -406,6 +406,10 @@ def read_sensor_data(bno) -> Any:
             # Reject physically impossible quaternion components (chip I2C corruption).
             if not all(-1.05 <= float(v) <= 1.05 for v in (qi, qj, qk, qr)):
                 raise RuntimeError(f"BNO08x quaternion out of range: {quat}")
+            qi_f, qj_f, qk_f, qr_f = float(qi), float(qj), float(qk), float(qr)
+            qnorm = math.sqrt(qi_f * qi_f + qj_f * qj_f + qk_f * qk_f + qr_f * qr_f)
+            if not (0.9 <= qnorm <= 1.1):
+                raise RuntimeError(f"BNO08x quaternion norm invalid: {qnorm:.4f} {quat}")
             quat_key = (
                 round(float(qi), 6),
                 round(float(qj), 6),
