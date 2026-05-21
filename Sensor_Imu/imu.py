@@ -51,7 +51,7 @@ def _env_float(name: str, default: float, lo: float, hi: float) -> float:
 
 
 def _imu_read_rate_hz() -> float:
-    return _env_float("IMU_READ_RATE_HZ", float(config.BAROMETER_RATE_HZ), 0.1, 200.0)
+    return _env_float("IMU_READ_RATE_HZ", float(config.IMU_RATE_HZ), 0.1, 200.0)
 
 
 REPORT_INTERVAL_US = _env_int("IMU_REPORT_INTERVAL_US", int(1_000_000.0 / _imu_read_rate_hz()), 10000, 1000000)
