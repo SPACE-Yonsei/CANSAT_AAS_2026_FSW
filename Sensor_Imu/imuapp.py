@@ -59,6 +59,9 @@ _i2c_instance = None
 _acc_norm_window: list[float] = []
 _gyro_norm_window: list[float] = []
 _startup_yaw_zeroed = False
+_startup_yaw_sample_count = 0
+# BNO08x heading estimate is unstable for ~1s after init; skip first N samples
+_STARTUP_YAW_WARMUP_SAMPLES: int = int(os.environ.get("IMU_YAW_WARMUP_SAMPLES", "10"))
 
 # freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
 FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
@@ -95,15 +98,25 @@ def _apply_yaw_offset(yaw: float) -> float:
 
 
 def _calibrate_startup_yaw(raw_yaw: float) -> None:
-    """Treat the first valid yaw after app start as 0 deg reference."""
-    global _startup_yaw_zeroed
+    """Treat the first stable yaw after app start as 0 deg reference.
+
+    Skips the first _STARTUP_YAW_WARMUP_SAMPLES samples because the BNO08x
+    heading estimate drifts ~1 deg during the first second of operation.
+    """
+    global _startup_yaw_zeroed, _startup_yaw_sample_count
     if _startup_yaw_zeroed:
+        return
+    _startup_yaw_sample_count += 1
+    if _startup_yaw_sample_count < _STARTUP_YAW_WARMUP_SAMPLES:
         return
     offset = _wrap_deg(-float(raw_yaw))
     prevstate.PREV_YAW_OFFSET = offset
     prevstate.YAW_OFFSET = offset
     _startup_yaw_zeroed = True
-    logger.info("IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg)", raw_yaw, offset)
+    logger.info(
+        "IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg, warmup=%d samples)",
+        raw_yaw, offset, _startup_yaw_sample_count,
+    )
 
 
 def command_handler(recv_msg: str) -> None:
@@ -137,9 +150,10 @@ def _read_sensor_sample():
 
 
 def imuapp_init() -> None:
-    global _i2c_instance, _imu_instance, _startup_yaw_zeroed
+    global _i2c_instance, _imu_instance, _startup_yaw_zeroed, _startup_yaw_sample_count
     prevstate.refresh_runtime_overrides()
     _startup_yaw_zeroed = False
+    _startup_yaw_sample_count = 0
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
