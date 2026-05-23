@@ -127,23 +127,39 @@ def handle_gps(data: str) -> None:
     except (ValueError, IndexError):
         return
 
-    has_motion_sample = (
-        math.isfinite(course_deg)
+    course_rad = (
+        math.radians(course_deg)
+        if math.isfinite(course_deg)
         and math.isfinite(speed_mps)
         and math.isfinite(motion_ts)
+        else None
     )
-
-    course_rad = math.radians(course_deg) if has_motion_sample else None
     sample = _GpsFromApp(
         lat=lat,
         lon=lon,
         course_rad=course_rad,
-        speed_mps=speed_mps if has_motion_sample else None,
+        speed_mps=(
+            speed_mps
+            if math.isfinite(course_deg)
+            and math.isfinite(speed_mps)
+            and math.isfinite(motion_ts)
+            else None
+        ),
         pos_ts=pos_ts,
-        motion_ts=motion_ts if has_motion_sample else None,
+        motion_ts=(
+            motion_ts
+            if math.isfinite(course_deg)
+            and math.isfinite(speed_mps)
+            and math.isfinite(motion_ts)
+            else None
+        ),
         rx_ts=rx_ts,
         pos_health=1,
-        motion_health=int(has_motion_sample),
+        motion_health=int(
+            math.isfinite(course_deg)
+            and math.isfinite(speed_mps)
+            and math.isfinite(motion_ts)
+        ),
     )
     with _UPDATE_LOCK:
         _CACHE.latest_gps = sample
