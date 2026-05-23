@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Optional
 
-from lib import appargs, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate
 from comm import uartserial, xbeereset
 
 
@@ -83,9 +83,6 @@ class TelemetryData:
 tlm_data = TelemetryData()
 TEAM_ID = "1070"
 
-# Last start/target lat/lon actually printed on the wire — repeats omit coords to shorten CSV.
-_TLM_DL_START: Optional[tuple[float, float]] = None
-_TLM_DL_TARGET: Optional[tuple[float, float]] = None
 
 # Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX).
 _comm_serial: Optional[object] = None
@@ -99,27 +96,6 @@ def set_cmdecho(cmd_str: str) -> None:
     """Record last uplink command keyword only (no payload) in cmd_echo."""
     tlm_data.cmd_echo = cmd_str.strip()
 
-
-def _reset_tlm_geo_dedupe() -> None:
-    global _TLM_DL_START, _TLM_DL_TARGET
-    _TLM_DL_START = None
-    _TLM_DL_TARGET = None
-
-
-def _fmt_latlon_pair_deduped(
-    lat: float,
-    lon: float,
-    last_sent: Optional[tuple[float, float]],
-    fmt: str,
-    eps: float = 1e-6,
-) -> tuple[str, str, Optional[tuple[float, float]]]:
-    """Emit lat/lon strings once per distinct pair; repeats -> empty fields."""
-    if not (math.isfinite(lat) and math.isfinite(lon)):
-        return "", "", last_sent
-    if last_sent is not None:
-        if abs(lat - last_sent[0]) <= eps and abs(lon - last_sent[1]) <= eps:
-            return "", "", last_sent
-    return format(lat, fmt), format(lon, fmt), (lat, lon)
 
 
 def get_current_time() -> str:
@@ -378,6 +354,26 @@ def cmd_cam(option: str, main_queue) -> bool:
     )
 
 
+def cmd_cmc(option: str, main_queue) -> bool:
+    aliases = {
+        "GPS":         config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_GUIDED":  config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_ONLY":    config.MOTOR_CTRL_MODE_GPS_ONLY,
+        "IMU":         config.MOTOR_CTRL_MODE_IMU_HEADING,
+        "IMU_HEADING": config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    mode = aliases.get(option.strip().upper())
+    if mode is None:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_CMC,
+        mode,
+    )
+
+
 def cmd_tc(option: str, main_queue) -> bool:
     parts = [x.strip() for x in option.split(",")]
     if len(parts) != 2:
@@ -468,7 +464,6 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.mode = fields[0]
             if fields[0].strip().upper() == "F":
                 _simp_tlm_alt_hold = None
-                _reset_tlm_geo_dedupe()
         elif mid == appargs.MotorAppArg.MID_comm_motor_diag and len(fields) >= 10:
             tlm_data.left_pulse = int(float(fields[0]))
             tlm_data.right_pulse = int(float(fields[1]))
@@ -538,15 +533,13 @@ def _fmt_opt_float(value: float, fmt: str) -> str:
 
 
 def _send_one_tlm_frame(serial_instance) -> None:
-    global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS, _TLM_DL_START, _TLM_DL_TARGET
+    global _TLM_SEND_FAIL_LOGGED, _LAST_TLM_FAIL_LOG_TS
     tlm_data.packet_count += 1
     prevstate.update_packet_count(tlm_data.packet_count)
-    s_lat_s, s_lon_s, _TLM_DL_START = _fmt_latlon_pair_deduped(
-        tlm_data.start_lat, tlm_data.start_lon, _TLM_DL_START, ".6f"
-    )
-    t_lat_s, t_lon_s, _TLM_DL_TARGET = _fmt_latlon_pair_deduped(
-        tlm_data.target_lat, tlm_data.target_lon, _TLM_DL_TARGET, ".6f"
-    )
+    s_lat_s = _fmt_opt_float(tlm_data.start_lat, '.6f')
+    s_lon_s = _fmt_opt_float(tlm_data.start_lon, '.6f')
+    t_lat_s = _fmt_opt_float(tlm_data.target_lat, '.6f')
+    t_lon_s = _fmt_opt_float(tlm_data.target_lon, '.6f')
     motor_enabled_s = ""
     try:
         me = int(tlm_data.motor_enabled)
@@ -655,6 +648,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_cam(option, main_queue)
     if cmd == "TC":
         return cmd_tc(option, main_queue)
+    if cmd == "CMC":
+        return cmd_cmc(option, main_queue)
     if cmd == "XRST":
         return cmd_xrst(option, main_queue)
     return False

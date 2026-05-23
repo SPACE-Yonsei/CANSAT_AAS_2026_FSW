@@ -34,6 +34,7 @@ class CommAppArg:
     MID_RouteCmd_SIMG = 1201108
     MID_RouteCmd_MTR = 1201109
     MID_RouteCmd_FAC = 1201110
+    MID_RouteCmd_CMC = 1201111  # Control Mode Command
 
 
 class BarometerAppArg:

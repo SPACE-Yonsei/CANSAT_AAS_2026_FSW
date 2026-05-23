@@ -11,6 +11,16 @@ PARAFOIL_LEFT_GPIO = 13
 # GNSS 7 Click RST (active low; pulse at GPS app startup unless GNSS_RESET_ENABLE=0)
 GNSS_RESET_GPIO = 26
 
+
+# ── 서보 암 기하학 / PWM 캘리브레이션 (control.py 사용) ──────────────────────
+ARM_MIN_DEG         = 0.0              # 암 최소 각도 (up-zero 프레임, 위쪽)
+ARM_MAX_DEG         = 160.0            # 암 최대 각도
+NEUTRAL_ARM_DEG     = 80.0             # 암 중립 각도
+LEFT_SERVO_ZERO_US  = 2480             # 왼쪽 서보 0도 PWM 펄스 (µs)
+RIGHT_SERVO_ZERO_US = 636              # 오른쪽 서보 0도 PWM 펄스 (µs)
+SERVO_PULSE_PER_DEG = 2000.0 / 180.0  # µs/deg 변환 계수
+
+
 # Egg drop (flight state 4): rangefinder reading must be in
 # [rough validity floor .. EGG_STATE_DISTANCE_TRIGGER_MM] to arm solenoid pulses.
 # Typical: trigger when distance to ground <= 2500 mm with TF-Luna.
@@ -113,6 +123,26 @@ MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG = 55.0
 MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S = 40.0
 
 
+# ── 가이던스 커맨드 타임아웃 (control.py 사용) ───────────────────────────────
+GUIDANCE_TIMEOUT_ATTENUATE_S = 0.5   # 이 이상 지연 시 커맨드 50% 감쇠
+GUIDANCE_TIMEOUT_FAIL_S      = 1.5   # 이 이상 지연 시 중립 복귀
+
+# ── 자이로 스파이크 / PID 적분 감쇠 (control.py 사용) ────────────────────────
+GYRO_SPIKE_LIMIT_DEG_S = 250.0   # 이 이상은 IMU 글리치로 판단, 샘플 폐기
+INTEGRAL_DECAY_RATE    = 0.95    # 자이로 없을 때 적분항 사이클당 감쇠율
+
+# ── ControlConfig 기본값 (control.py 사용) ───────────────────────────────────
+CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 5.0    # FF 명령 데드밴드
+CTRL_DELTA_MIN_EFFECTIVE_DEG         = 5.0    # FF 최소 유효 deflection
+CTRL_EXPO                            = 1.15   # FF 엑스포 커브 지수
+CTRL_ERROR_DEADBAND_DEG_S            = 2.0    # PID 에러 데드밴드
+CTRL_K_I                             = 0.01   # PID 적분 게인
+CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
+
+# ── 수동 조향 (motorapp.py 사용) ─────────────────────────────────────────────
+MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
+
+
 # ── New GNC control mode string constants ─────────────────────────────────────
 CONTROL_MODE_GPS_TRACKING_CLOSED = "GPS_TRACKING_CLOSED"
 CONTROL_MODE_GPS_TRACKING_OPEN   = "GPS_TRACKING_OPEN"
@@ -193,3 +223,18 @@ KP_DETUMBLE = 0.10
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
+
+# ── Motor control source mode ─────────────────────────────────────────────────
+# GPS_GUIDED  : GPS L1 가이던스 + 자이로 PID (기본값)
+# GPS_ONLY    : GPS L1 가이던스, 자이로 피드백 없음 (피드포워드 전용)
+# IMU_HEADING : IMU 자력계 방위각만으로 목표 헤딩 추종 (GPS 불필요)
+MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
+MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
+MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
+
+MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
+
+# IMU_HEADING 모드 전용 파라미터
+IMU_HEADING_TARGET_DEG    = 0.0   # 목표 자기 방위각 (0=북쪽)
+IMU_HEADING_KP            = 1.5   # 방위각 오차 → angular_velocity_cmd P 게인 [°/s per °]
+IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 최대값 [°/s]

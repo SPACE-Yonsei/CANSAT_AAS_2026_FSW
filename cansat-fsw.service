@@ -1,6 +1,7 @@
 [Unit]
 Description=CANSAT Flight Software
 After=network.target pigpiod.service
+Requires=pigpiod.service
 
 [Service]
 Type=simple

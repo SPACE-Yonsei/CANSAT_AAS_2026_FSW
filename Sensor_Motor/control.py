@@ -8,54 +8,50 @@ Both sum to at most DELTA_TOTAL_MAX_DEG. Arm angles are slew-rate limited before
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from lib import config, timebase
 
+logger = logging.getLogger(__name__)
 
-PARAFOIL_LEFT_MOTOR_PIN = config.PARAFOIL_LEFT_GPIO
+
+PARAFOIL_LEFT_MOTOR_PIN  = config.PARAFOIL_LEFT_GPIO
 PARAFOIL_RIGHT_MOTOR_PIN = config.PARAFOIL_RIGHT_GPIO
 
-# Arm geometry in the up-zero frame.
-ARM_MIN_DEG = 0.0
-ARM_MAX_DEG = 160.0
-ZERO_ARM_DEG = 0.0
-NEUTRAL_ARM_DEG = 80.0
+# 서보 암 기하학 — config.py 기준값 사용
+ARM_MIN_DEG     = config.ARM_MIN_DEG
+ARM_MAX_DEG     = config.ARM_MAX_DEG
+ZERO_ARM_DEG    = config.ARM_MIN_DEG        # 0도 = 암 위쪽 (up-zero 프레임)
+NEUTRAL_ARM_DEG = config.NEUTRAL_ARM_DEG
 DELTA_ARM_MAX_DEG = 2.0 * min(
     NEUTRAL_ARM_DEG - ARM_MIN_DEG,
     ARM_MAX_DEG - NEUTRAL_ARM_DEG,
 )
 
-# PWM mapping. Zero means the arm points up.
-LEFT_ZERO = 2480
-RIGHT_ZERO = 636
-PULSE_PER_DEG = 2000.0 / 180.0
+# PWM 매핑 — config.py 캘리브레이션 값 사용
+LEFT_ZERO     = config.LEFT_SERVO_ZERO_US
+RIGHT_ZERO    = config.RIGHT_SERVO_ZERO_US
+PULSE_PER_DEG = config.SERVO_PULSE_PER_DEG
 
-LEFT_NEUTRAL = int(LEFT_ZERO - NEUTRAL_ARM_DEG * PULSE_PER_DEG)
+LEFT_NEUTRAL  = int(LEFT_ZERO - NEUTRAL_ARM_DEG * PULSE_PER_DEG)
 RIGHT_NEUTRAL = int(RIGHT_ZERO + NEUTRAL_ARM_DEG * PULSE_PER_DEG)
 
-LEFT_ZERO_PULSE = int(LEFT_ZERO)
+LEFT_ZERO_PULSE  = int(LEFT_ZERO)
 RIGHT_ZERO_PULSE = int(RIGHT_ZERO)
 
-LEFT_MIN_PULSE = int(LEFT_ZERO - ARM_MAX_DEG * PULSE_PER_DEG)
-LEFT_MAX_PULSE = int(LEFT_ZERO - ARM_MIN_DEG * PULSE_PER_DEG)
+LEFT_MIN_PULSE  = int(LEFT_ZERO - ARM_MAX_DEG * PULSE_PER_DEG)
+LEFT_MAX_PULSE  = int(LEFT_ZERO - ARM_MIN_DEG * PULSE_PER_DEG)
 RIGHT_MIN_PULSE = int(RIGHT_ZERO + ARM_MIN_DEG * PULSE_PER_DEG)
 RIGHT_MAX_PULSE = int(RIGHT_ZERO + ARM_MAX_DEG * PULSE_PER_DEG)
 
-# Two-stage guidance timeout thresholds.
-# 0 … ATTENUATE: normal. ATTENUATE … FAIL: 50 % command. > FAIL: neutral.
-GUIDANCE_TIMEOUT_ATTENUATE_S = 0.5
-GUIDANCE_TIMEOUT_FAIL_S = 1.5
-
-# Gyro spike rejection threshold: beyond this the sample is discarded.
-GYRO_SPIKE_LIMIT_DEG_S = 250.0
-
-# Per-cycle integral decay factor when the gyro is unavailable.
-INTEGRAL_DECAY_RATE = 0.95
-
-V_MIN_MPS = 2.0
+# 가이던스 타임아웃 / 자이로 스파이크 / 적분 감쇠 — config.py
+GUIDANCE_TIMEOUT_ATTENUATE_S = config.GUIDANCE_TIMEOUT_ATTENUATE_S
+GUIDANCE_TIMEOUT_FAIL_S      = config.GUIDANCE_TIMEOUT_FAIL_S
+GYRO_SPIKE_LIMIT_DEG_S       = config.GYRO_SPIKE_LIMIT_DEG_S
+INTEGRAL_DECAY_RATE          = config.INTEGRAL_DECAY_RATE
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -64,24 +60,24 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 @dataclass
 class ControlConfig:
-    # Feedforward shaping
-    ANGULAR_VELOCITY_CMD_MAX_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S
-    ANGULAR_VELOCITY_DEADBAND_DEG_S: float = 5.0
-    DELTA_FF_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
-    DELTA_MIN_EFFECTIVE_DEG: float = 5.0
-    EXPO: float = 1.15
+    # FF 형상
+    ANGULAR_VELOCITY_CMD_MAX_DEG_S:  float = config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S
+    ANGULAR_VELOCITY_DEADBAND_DEG_S: float = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
+    DELTA_FF_MAX_DEG:                float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
+    DELTA_MIN_EFFECTIVE_DEG:         float = config.CTRL_DELTA_MIN_EFFECTIVE_DEG
+    EXPO:                            float = config.CTRL_EXPO
 
     # PID
-    ERROR_DEADBAND_DEG_S: float = 2.0
-    K_P: float = config.KP_GPS_CLOSED
-    K_I: float = 0.01
-    K_D: float = config.KD_YAW_RATE
-    I_LIMIT_DEG: float = 15.0
-    DELTA_PID_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
+    ERROR_DEADBAND_DEG_S: float = config.CTRL_ERROR_DEADBAND_DEG_S
+    K_P:                  float = config.KP_GPS_CLOSED
+    K_I:                  float = config.CTRL_K_I
+    K_D:                  float = config.KD_YAW_RATE
+    I_LIMIT_DEG:          float = config.CTRL_I_LIMIT_DEG
+    DELTA_PID_MAX_DEG:    float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
 
-    # Authority and slew
+    # 권한 / 슬루
     DELTA_TOTAL_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
-    MAX_ARM_RATE_DEG_S: float = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
+    MAX_ARM_RATE_DEG_S:  float = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
 
 
 @dataclass
@@ -389,9 +385,11 @@ def init_control():
         if pi.connected:
             pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_ZERO_PULSE)
             pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_ZERO_PULSE)
+            logger.info("pigpio connected; servos initialized to zero")
             return pi
-    except Exception:
-        pass
+        logger.warning("pigpio.pi() not connected; running without servo output")
+    except Exception as exc:
+        logger.warning("pigpio init failed (%s); running without servo output", exc)
     return None
 
 
