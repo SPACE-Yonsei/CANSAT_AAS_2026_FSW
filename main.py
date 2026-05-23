@@ -280,9 +280,6 @@ def terminate_FSW():
                 app_entry.process.kill()
         events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Terminating AppID {appID} complete")
 
-    events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"Manual termination! Resetting prev state file")
-    prevstate.reset_prevstate()
-    
     events.LogEvent(appargs.MainAppArg.AppName, events.EventType.info, f"All Termination Process complete, terminating FSW")
     
     # Shutdown logging system
