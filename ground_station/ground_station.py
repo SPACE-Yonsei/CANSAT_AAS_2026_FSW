@@ -567,7 +567,6 @@ class GroundStation(tk.Tk):
         self._egg_action_enabled_remote: bool | None = None
         self._battery_bar: ttk.Progressbar | None = None
         self._battery_pct_var = tk.StringVar(value="—")
-        self._battery_volt_var = tk.StringVar(value="—")
 
         self._build_ui()
         self._refresh_ports()
@@ -732,20 +731,15 @@ class GroundStation(tk.Tk):
         bat_box.grid(row=_bat_row, column=_bat_col, sticky="nsew", padx=6, pady=4)
         bat_box.columnconfigure(0, weight=1)
         bat_box.columnconfigure(1, weight=1)
-        ttk.Label(bat_box, text="Voltage", style="StatHdr.TLabel").grid(
+        ttk.Label(bat_box, text="Level", style="StatHdr.TLabel").grid(
             row=0, column=0, sticky="w", padx=6, pady=2
         )
-        ttk.Label(bat_box, textvariable=self._battery_volt_var, style="Stat.TLabel",
-                  width=10, anchor="e").grid(row=0, column=1, sticky="e", padx=6, pady=2)
-        ttk.Label(bat_box, text="Level", style="StatHdr.TLabel").grid(
-            row=1, column=0, sticky="w", padx=6, pady=2
-        )
         ttk.Label(bat_box, textvariable=self._battery_pct_var, style="Stat.TLabel",
-                  width=10, anchor="e").grid(row=1, column=1, sticky="e", padx=6, pady=2)
+                  width=10, anchor="e").grid(row=0, column=1, sticky="e", padx=6, pady=2)
         self._battery_bar = ttk.Progressbar(
             bat_box, orient="horizontal", mode="determinate", maximum=100
         )
-        self._battery_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6))
+        self._battery_bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6))
 
     def _build_map_and_motor(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
@@ -1632,12 +1626,10 @@ class GroundStation(tk.Tk):
         try:
             v = float(parsed.get("voltage_v", ""))
             pct = max(0.0, min(100.0, (v - 6.2) / (8.2 - 6.2) * 100.0))
-            self._battery_volt_var.set(f"{v:.3f} V")
             self._battery_pct_var.set(f"{pct:.0f} %")
             if self._battery_bar is not None:
                 self._battery_bar["value"] = pct
         except (TypeError, ValueError):
-            self._battery_volt_var.set("—")
             self._battery_pct_var.set("—")
             if self._battery_bar is not None:
                 self._battery_bar["value"] = 0
