@@ -108,7 +108,10 @@ GUIDANCE_TIMEOUT_ATTENUATE_S = 0.5   # 이 이상 지연 시 커맨드 50% 감�
 GUIDANCE_TIMEOUT_FAIL_S      = 1.5   # 이 이상 지연 시 중립 복귀
 
 # ── 자이로 스파이크 / PID 적분 감쇠 (control.py 사용) ────────────────────────
-GYRO_SPIKE_LIMIT_DEG_S = 250.0   # 이 이상은 IMU 글리치로 판단, 샘플 폐기
+# 250→1500: 자유낙하 로그에서 정상 spin이 1227 dps까지 도달 — 250으로 두면
+# DETUMBLING 모드의 PID 자체가 비활성화되어 제동 불가. spike(IMU glitch)는
+# 단발 노이즈이므로 BNO085 측정 범위(±2000 dps) 안쪽에서 마진 두고 1500.
+GYRO_SPIKE_LIMIT_DEG_S = 1500.0
 INTEGRAL_DECAY_RATE    = 0.95    # 자이로 없을 때 적분항 사이클당 감쇠율
 
 # ── ControlConfig 기본값 (control.py 사용) ───────────────────────────────────
@@ -137,7 +140,9 @@ DR_METHOD_ACC_DOUBLE_INTEGRATION = "ACC_DOUBLE_INTEGRATION"
 DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 
 # ── L1 homing guidance tuning ─────────────────────────────────────────────────
-L_GAIN_M  = 12.0
+# L_GAIN_M 12→10: 자유낙하 로그 V≈5-7 m/s 기준 응답시정수 L/(2V) ≈ 0.7-1s.
+# 작은 타겟 반경 5m 진입 시 응답성 강화.
+L_GAIN_M  = 10.0
 V_MIN_MPS = 0.5
 V_MAX_MPS = 15.0
 
@@ -149,13 +154,17 @@ BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터는 8회 miss 
 BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
 HISTORY_WINDOW_S  = 3.0
-SPEED_DECAY_TAU_S = 10.0
+# SPEED_DECAY_TAU_S 10→6: 파라포일 전개 후 정상속도 5-8 m/s에 ~1s 도달.
+# 10s 시정수는 DR 시 속도 과대추정 → 6s로 단축
+SPEED_DECAY_TAU_S = 6.0
 
 # ── Accelerometer-aided DR ────────────────────────────────────────────────────
 USE_ACC_DOUBLE_INTEGRATION = True
 ACC_AID_START_AGE_S        = 0.0
 ACC_AID_END_AGE_S          = 5.0
-ACC_LIMIT_MPS2             = 1.5
+# ACC_LIMIT_MPS2 1.5→2.0: 1.5는 정상 활공 acc 변동과 겹쳐 acc-blend 비활성.
+# 2.0으로 풀어 acc 보조 활성화 (LIMIT 초과는 spin/임팩트 시점이라 적절)
+ACC_LIMIT_MPS2             = 2.0
 ACC_BLEND_WEIGHT           = 0.2
 
 # ── DR confidence breakpoints ─────────────────────────────────────────────────
@@ -166,18 +175,22 @@ DR_CONF_AGE_3_S = 8.0
 TARGET_RADIUS_M = 5.0
 
 # ── Yaw rate limits per control mode (deg/s) ──────────────────────────────────
-GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 35.0
+# 35→40: 정상비행 spin 분포가 35 근처라 권한 약간 상향
+GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 40.0
 GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 25.0
 DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 20.0
-DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 12.0
+# 12→15: 12는 과도하게 보수적
+DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
 DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
 FAIL_YAW_RATE_LIMIT_DPS                = 0.0
 
 # ── Detumbling ────────────────────────────────────────────────────────────────
+# 120→150 entry: 정상 spin이 120 안에 다수, 진입 임계 약간 상향
+# 40→30 exit + 0.5→1.0 hold: 임계 근처 chattering 방지 (히스테리시스 강화)
 DETUMBLE_ENABLE             = True
-DETUMBLE_GYRZ_THRESHOLD_DPS = 120.0
-DETUMBLE_EXIT_THRESHOLD_DPS = 40.0
-DETUMBLE_EXIT_HOLD_S        = 0.5
+DETUMBLE_GYRZ_THRESHOLD_DPS = 150.0
+DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
+DETUMBLE_EXIT_HOLD_S        = 1.0
 
 # ── Sensor sign conventions ───────────────────────────────────────────────────
 # Body→NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).
@@ -192,7 +205,8 @@ ACC_Y_SIGN     = 1.0
 
 # ── Yaw-rate controller gains ─────────────────────────────────────────────────
 KFF_GPS_CLOSED = 0.0
-KP_GPS_CLOSED  = 0.25   # matches existing ControlConfig.K_P
+# 0.25→0.30: 파라포일 응답 지연 보상. 0.4 이상은 oscillation 위험으로 회피
+KP_GPS_CLOSED  = 0.30
 
 KFF_DR_CLOSED  = 0.0
 KP_DR_CLOSED   = 0.15
@@ -200,7 +214,9 @@ KP_DR_CLOSED   = 0.15
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-KP_DETUMBLE = 0.10
+# 0.10→0.20: 자유낙하 1227 dps spin을 0.10 KP로 제동 불가
+# (PID 권한 ±30°로 clamp되어 안전)
+KP_DETUMBLE = 0.20
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0

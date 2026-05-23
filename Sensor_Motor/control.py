@@ -73,22 +73,27 @@ def _clamp(v: float, lo: float, hi: float) -> float:
 @dataclass
 class ControlConfig:
     # Feedforward shaping
+    # DELTA_FF_MAX_DEG 80→160: ConnectRoMo가 ±160° 까지 매핑 가능 (left=0, right=160).
+    # 명령 포화 시 FF만으로 하드웨어 최대 권한 사용.
     ANGULAR_VELOCITY_CMD_MAX_DEG_S:  float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
     ANGULAR_VELOCITY_DEADBAND_DEG_S: float = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-    DELTA_FF_MAX_DEG:                float = 80.0
+    DELTA_FF_MAX_DEG:                float = 160.0
     DELTA_MIN_EFFECTIVE_DEG:         float = config.CTRL_DELTA_MIN_EFFECTIVE_DEG
     EXPO:                            float = config.CTRL_EXPO
 
     # PID
+    # DELTA_PID_MAX_DEG 25→30: 정상상태에서 트림 권한 약간 확장
     ERROR_DEADBAND_DEG_S: float = config.CTRL_ERROR_DEADBAND_DEG_S
     K_P:                  float = config.KP_GPS_CLOSED
     K_I:                  float = config.CTRL_K_I
     K_D:                  float = config.KD_YAW_RATE
     I_LIMIT_DEG:          float = config.CTRL_I_LIMIT_DEG
-    DELTA_PID_MAX_DEG:    float = 25.0
+    DELTA_PID_MAX_DEG:    float = 30.0
 
     # Total authority + slew
-    DELTA_TOTAL_MAX_DEG: float = 100.0
+    # DELTA_TOTAL_MAX_DEG 100→160: 하드웨어 최대(DELTA_ARM_MAX_DEG=160)와 일치.
+    # FF+PID 합이 160°에 도달하면 left/right arm이 0°/160° 극값에 도달.
+    DELTA_TOTAL_MAX_DEG: float = 160.0
     MAX_ARM_RATE_DEG_S:  float = 60.0
 
 
