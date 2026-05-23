@@ -148,3 +148,80 @@ MOTOR_TARGET_BEARING_GAIN = 1.0
 MOTOR_TARGET_BEARING_ANGULAR_VELOCITY_CMD_MAX_DEG_S = 18.0
 MOTOR_TARGET_BEARING_DELTA_FF_MAX_DEG = 45.0
 MOTOR_TARGET_BEARING_DELTA_TOTAL_MAX_DEG = 55.0
+
+
+# ── New GNC control mode string constants ─────────────────────────────────────
+CONTROL_MODE_GPS_TRACKING_CLOSED = "GPS_TRACKING_CLOSED"
+CONTROL_MODE_GPS_TRACKING_OPEN   = "GPS_TRACKING_OPEN"
+CONTROL_MODE_DR_TRACKING_CLOSED  = "DR_TRACKING_CLOSED"
+CONTROL_MODE_DR_TRACKING_OPEN    = "DR_TRACKING_OPEN"
+CONTROL_MODE_DETUMBLING          = "DETUMBLING"
+
+# Dead-reckoning method string constants
+DR_METHOD_NONE                   = "NONE"
+DR_METHOD_GYRO_INTEGRATION       = "GYRO_INTEGRATION"
+DR_METHOD_ACC_DOUBLE_INTEGRATION = "ACC_DOUBLE_INTEGRATION"
+DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
+
+# ── L1 homing guidance tuning ─────────────────────────────────────────────────
+L_GAIN_M  = 12.0
+V_MIN_MPS = 0.5
+V_MAX_MPS = 15.0
+
+# ── Sensor freshness thresholds ───────────────────────────────────────────────
+GPS_CONTROL_FRESH_MAX_AGE_S = 1.0
+GPS_CORRECTION_MAX_AGE_S    = 2.0
+IMU_FRESH_MAX_AGE_S         = 0.8
+BARO_FRESH_MAX_AGE_S        = 0.8
+
+HISTORY_WINDOW_S  = 8.0
+SPEED_DECAY_TAU_S = 10.0
+
+# ── Accelerometer-aided DR ────────────────────────────────────────────────────
+USE_ACC_DOUBLE_INTEGRATION = True
+ACC_AID_START_AGE_S        = 0.0
+ACC_AID_END_AGE_S          = 5.0
+ACC_LIMIT_MPS2             = 1.5
+ACC_BLEND_WEIGHT           = 0.2
+
+# ── DR confidence breakpoints ─────────────────────────────────────────────────
+DR_CONF_AGE_1_S = 2.0
+DR_CONF_AGE_2_S = 5.0
+DR_CONF_AGE_3_S = 8.0
+
+TARGET_RADIUS_M = 5.0
+
+# ── Yaw rate limits per control mode (deg/s) ──────────────────────────────────
+GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 35.0
+GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 25.0
+DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 20.0
+DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 12.0
+DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
+FAIL_YAW_RATE_LIMIT_DPS                = 0.0
+
+# ── Detumbling ────────────────────────────────────────────────────────────────
+DETUMBLE_ENABLE             = True
+DETUMBLE_GYRZ_THRESHOLD_DPS = 120.0
+DETUMBLE_EXIT_THRESHOLD_DPS = 40.0
+DETUMBLE_EXIT_HOLD_S        = 0.5
+
+# ── Sensor sign conventions ───────────────────────────────────────────────────
+GYRZ_SIGN      = 1.0
+MOTOR_CMD_SIGN = 1.0
+ACC_X_SIGN     = 1.0
+ACC_Y_SIGN     = 1.0
+
+# ── Yaw-rate controller gains ─────────────────────────────────────────────────
+KFF_GPS_CLOSED = 0.0
+KP_GPS_CLOSED  = 0.25   # matches existing ControlConfig.K_P
+
+KFF_DR_CLOSED  = 0.0
+KP_DR_CLOSED   = 0.15
+
+KFF_GPS_OPEN = 0.10
+KFF_DR_OPEN  = 0.05
+
+KP_DETUMBLE = 0.10
+
+KI_YAW_RATE = 0.0
+KD_YAW_RATE = 0.0

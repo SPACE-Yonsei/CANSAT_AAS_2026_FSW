@@ -82,11 +82,25 @@ class SensorQuality(enum.Enum):
     STALE = config.SENSOR_QUALITY_STALE
 
 class ControlMode(enum.Enum):
+    # Legacy values (kept for backward compatibility)
     NOMINAL_CLOSED_LOOP  = config.CONTROL_MODE_NOMINAL_CLOSED_LOOP
     NOMINAL_FEEDFORWARD  = config.CONTROL_MODE_NOMINAL_FEEDFORWARD
     DEGRADED_CLOSED_LOOP = config.CONTROL_MODE_DEGRADED_CLOSED_LOOP
     DEGRADED_FEEDFORWARD = config.CONTROL_MODE_DEGRADED_FEEDFORWARD
     FAIL                 = config.CONTROL_MODE_FAIL
+    # New homing-architecture modes
+    GPS_TRACKING_CLOSED = config.CONTROL_MODE_GPS_TRACKING_CLOSED
+    GPS_TRACKING_OPEN   = config.CONTROL_MODE_GPS_TRACKING_OPEN
+    DR_TRACKING_CLOSED  = config.CONTROL_MODE_DR_TRACKING_CLOSED
+    DR_TRACKING_OPEN    = config.CONTROL_MODE_DR_TRACKING_OPEN
+    DETUMBLING          = config.CONTROL_MODE_DETUMBLING
+
+
+class DRMethod(enum.Enum):
+    NONE                  = config.DR_METHOD_NONE
+    GYRO_INTEGRATION      = config.DR_METHOD_GYRO_INTEGRATION
+    ACC_DOUBLE_INTEGRATION = config.DR_METHOD_ACC_DOUBLE_INTEGRATION
+    GYRO_ACC_BLEND        = config.DR_METHOD_GYRO_ACC_BLEND
 
 
 class FailReason(enum.Enum):
@@ -98,6 +112,48 @@ class FailReason(enum.Enum):
     NO_POSITION = config.FAIL_REASON_NO_POSITION
     NO_MOTION = config.FAIL_REASON_NO_MOTION
     SENSOR_BLACKOUT = config.FAIL_REASON_SENSOR_BLACKOUT
+
+
+@dataclass
+class FreshResult:
+    """Per-iteration sensor freshness snapshot tied to a single 'now' timestamp."""
+    point_fresh: bool = False
+    velocity_fresh: bool = False
+    gyrz_fresh: bool = False
+    baro_fresh: bool = False
+    point_age_s: float = math.inf
+    velocity_age_s: float = math.inf
+    gyrz_age_s: float = math.inf
+    baro_age_s: float = math.inf
+
+
+@dataclass
+class GuidanceState:
+    """Persistent guidance state maintained across control-loop iterations."""
+    # Origin — set once after release_state == 3, never changed after that
+    origin_lat: Optional[float] = None
+    origin_lon: Optional[float] = None
+    origin_set: bool = False
+    # Target — raw lat/lon stored on receipt; E/N computed after origin is known
+    target_lat: Optional[float] = None
+    target_lon: Optional[float] = None
+    target_N: Optional[float] = None
+    target_E: Optional[float] = None
+    target_ready: bool = False
+    # Last fresh GPS snapshot used as DR initial condition
+    last_fresh_pos_N: Optional[float] = None
+    last_fresh_pos_E: Optional[float] = None
+    last_fresh_pos_ts: Optional[float] = None
+    last_fresh_course: Optional[float] = None
+    last_fresh_speed_mps: Optional[float] = None
+    last_fresh_motion_ts: Optional[float] = None
+    # DR integrated state
+    dr_pos_N: Optional[float] = None
+    dr_pos_E: Optional[float] = None
+    dr_course: Optional[float] = None
+    dr_speed_mps: Optional[float] = None
+    dr_method: str = config.DR_METHOD_NONE
+    dr_confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -137,6 +193,14 @@ class L1Input:
     sink_rate: Optional[float] = None
     freefall: int = 0
     tumble: int = 0
+    # Guidance confidence [0..1]
+    confidence: float = 0.0
+    # DR state carried into the guidance computation
+    dr_method: str = config.DR_METHOD_NONE
+    dr_pos_N: Optional[float] = None
+    dr_pos_E: Optional[float] = None
+    dr_course: Optional[float] = None
+    dr_speed_mps: Optional[float] = None
 
 
 def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NONE) -> ControlPolicy:
@@ -242,6 +306,88 @@ def _is_fresh(timestamp: Optional[float], now: float, max_age: float) -> bool:
     age_s = timebase.age(now, timestamp)
     return math.isfinite(age_s) and 0.0 <= age_s <= float(max_age)
 
+
+# ── Public helpers ─────────────────────────────────────────────────────────────
+
+def wrap_pi(angle_rad: float) -> float:
+    return _wrap_pi(float(angle_rad))
+
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(float(lo), min(float(hi), float(x)))
+
+
+def safe_isfinite(x) -> bool:
+    try:
+        return math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
+def deg2rad(x: float) -> float:
+    return math.radians(float(x))
+
+
+def rad2deg(x: float) -> float:
+    return math.degrees(float(x))
+
+
+def sign(x: float) -> float:
+    return 1.0 if float(x) >= 0.0 else -1.0
+
+
+def angle_blend(a: float, b: float, weight_b: float) -> float:
+    """Interpolate between two angles [rad] with given weight on b."""
+    return _wrap_pi(float(a) + float(weight_b) * _wrap_pi(float(b) - float(a)))
+
+
+def saturated_sin(nu: float) -> float:
+    """sign(nu) * sin(min(|nu|, π/2)) — prevents cmd reversal for large heading errors."""
+    nu_f = float(nu)
+    s = 1.0 if nu_f >= 0.0 else -1.0
+    return s * math.sin(min(abs(nu_f), math.pi / 2.0))
+
+
+def compute_dr_confidence(dr_age: float) -> float:
+    """Piecewise-linear DR confidence based on time since last fresh GPS."""
+    age = float(dr_age)
+    if age < config.DR_CONF_AGE_1_S:
+        return 1.0
+    if age < config.DR_CONF_AGE_2_S:
+        return 0.7
+    if age < config.DR_CONF_AGE_3_S:
+        return 0.4
+    return 0.0
+
+
+def choose_yaw_rate_limit(control_mode, dr_method=None) -> float:
+    """Return yaw-rate authority limit [deg/s] for the given mode and DR method."""
+    mode_val = getattr(control_mode, "value", str(control_mode))
+    dm_val = (
+        getattr(dr_method, "value", str(dr_method))
+        if dr_method is not None
+        else config.DR_METHOD_NONE
+    )
+    if mode_val == config.CONTROL_MODE_GPS_TRACKING_CLOSED:
+        return config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    if mode_val == config.CONTROL_MODE_GPS_TRACKING_OPEN:
+        return config.GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
+    if mode_val in (config.CONTROL_MODE_DR_TRACKING_CLOSED, config.CONTROL_MODE_DR_TRACKING_OPEN):
+        base = (
+            config.DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+            if mode_val == config.CONTROL_MODE_DR_TRACKING_CLOSED
+            else config.DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
+        )
+        if dm_val == config.DR_METHOD_GYRO_ACC_BLEND:
+            return base * 0.85
+        if dm_val == config.DR_METHOD_ACC_DOUBLE_INTEGRATION:
+            return base * 0.70
+        return base
+    if mode_val == config.CONTROL_MODE_DETUMBLING:
+        return config.DETUMBLING_YAW_RATE_LIMIT_DPS
+    return config.FAIL_YAW_RATE_LIMIT_DPS
+
+
 #have to add member
 @dataclass
 class L1Output:
@@ -279,6 +425,10 @@ class L1Output:
     carrot_lat: Optional[float] = None
     carrot_lon: Optional[float] = None
     current_heading_rad: float = 0.0
+    # New homing-architecture fields
+    yaw_rate_limit_dps: float = 0.0
+    dr_confidence: float = 0.0
+    dr_method: str = config.DR_METHOD_NONE
 
 
 def FillFresh(
