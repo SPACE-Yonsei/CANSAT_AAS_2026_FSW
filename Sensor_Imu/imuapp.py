@@ -59,6 +59,10 @@ _i2c_instance = None
 _acc_norm_window: list[float] = []
 _gyro_norm_window: list[float] = []
 _startup_yaw_zeroed = False
+_imuapp_start_time: float = 0.0
+# Seconds after imuapp_init() before the first yaw is used as the zero reference.
+# Override with IMU_YAW_ZERO_DELAY_SEC env var.
+_STARTUP_YAW_ZERO_DELAY_S: float = float(os.environ.get("IMU_YAW_ZERO_DELAY_SEC", "15.0"))
 
 # freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
 FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
@@ -95,15 +99,21 @@ def _apply_yaw_offset(yaw: float) -> float:
 
 
 def _calibrate_startup_yaw(raw_yaw: float) -> None:
-    """Treat the first valid yaw after app start as 0 deg reference."""
+    """Zero yaw _STARTUP_YAW_ZERO_DELAY_S seconds after imuapp_init()."""
     global _startup_yaw_zeroed
     if _startup_yaw_zeroed:
+        return
+    elapsed = time.time() - _imuapp_start_time
+    if elapsed < _STARTUP_YAW_ZERO_DELAY_S:
         return
     offset = _wrap_deg(-float(raw_yaw))
     prevstate.PREV_YAW_OFFSET = offset
     prevstate.YAW_OFFSET = offset
     _startup_yaw_zeroed = True
-    logger.info("IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg)", raw_yaw, offset)
+    logger.info(
+        "IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg, elapsed=%.1fs)",
+        raw_yaw, offset, elapsed,
+    )
 
 
 def command_handler(recv_msg: str) -> None:
@@ -137,9 +147,10 @@ def _read_sensor_sample():
 
 
 def imuapp_init() -> None:
-    global _i2c_instance, _imu_instance, _startup_yaw_zeroed
+    global _i2c_instance, _imu_instance, _startup_yaw_zeroed, _imuapp_start_time
     prevstate.refresh_runtime_overrides()
     _startup_yaw_zeroed = False
+    _imuapp_start_time = time.time()
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 

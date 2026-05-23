@@ -75,14 +75,33 @@ RELEASE_PREDICT_TIME_MAX_SEC = 5.0
 RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_TIMEOUT
 
 
-# ── 수동 조향 방향 string constants ────────────────────────────────────────────
-MOTOR_MANUAL_NEUTRAL = "NEUTRAL"
-MOTOR_MANUAL_LEFT    = "LEFT"
-MOTOR_MANUAL_RIGHT   = "RIGHT"
+# Motor guidance/control string constants
+SENSOR_QUALITY_FRESH = "FRESH"
+SENSOR_QUALITY_STALE = "STALE"
 
-# ── 제어 비활성 이유 string constants ──────────────────────────────────────────
+CONTROL_MODE_FAIL = "FAIL"
+
+MOTOR_REASON_INIT = "INIT"
+MOTOR_REASON_IDLE = "IDLE"
+MOTOR_REASON_LANDED = "LANDED"
 MOTOR_REASON_GUIDANCE_INACTIVE = "GUIDANCE_INACTIVE"
-MOTOR_REASON_DISABLED          = "DISABLED"
+MOTOR_REASON_DISABLED = "DISABLED"
+MOTOR_REASON_ACTIVE = "ACTIVE"
+MOTOR_REASON_DEGRADED = "DEGRADED"
+MOTOR_REASON_MANUAL_PREFIX = "MANUAL_"
+MOTOR_MANUAL_LEFT = "LEFT"
+MOTOR_MANUAL_NEUTRAL = "NEUTRAL"
+MOTOR_MANUAL_RIGHT = "RIGHT"
+
+CTRL_MODE_NEUTRAL = "NEUTRAL"
+CTRL_MODE_CLOSED_LOOP = "CLOSED_LOOP"
+CTRL_MODE_FEEDFORWARD_ONLY = "FEEDFORWARD_ONLY"
+CTRL_MODE_GUIDANCE_TIMEOUT = "GUIDANCE_TIMEOUT"
+
+CTRL_FALLBACK_NONE = "NONE"
+CTRL_FALLBACK_GUIDANCE_TIMEOUT = "GUIDANCE_TIMEOUT"
+CTRL_FALLBACK_GUIDANCE_ATTENUATED = "GUIDANCE_ATTENUATED"
+CTRL_FALLBACK_GYRO_SPIKE = "GYRO_SPIKE"
 
 # ── 가이던스 커맨드 타임아웃 (control.py 사용) ───────────────────────────────
 GUIDANCE_TIMEOUT_ATTENUATE_S = 0.5   # 이 이상 지연 시 커맨드 50% 감쇠
@@ -103,7 +122,8 @@ CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 # ── 수동 조향 (motorapp.py 사용) ─────────────────────────────────────────────
 MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
 
-# ── GNC control mode string constants ─────────────────────────────────────
+
+# ── New GNC control mode string constants ─────────────────────────────────────
 CONTROL_MODE_GPS_TRACKING_CLOSED = "GPS_TRACKING_CLOSED"
 CONTROL_MODE_GPS_TRACKING_OPEN   = "GPS_TRACKING_OPEN"
 CONTROL_MODE_DR_TRACKING_CLOSED  = "DR_TRACKING_CLOSED"
@@ -123,8 +143,10 @@ V_MAX_MPS = 15.0
 
 # ── Sensor freshness thresholds ───────────────────────────────────────────────
 GPS_FRESH_MAX_AGE_S         = 2.0
+GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias
 IMU_FRESH_MAX_AGE_S         = 0.8
 BARO_FRESH_MAX_AGE_S        = 0.8
+BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
 HISTORY_WINDOW_S  = 3.0
 SPEED_DECAY_TAU_S = 10.0

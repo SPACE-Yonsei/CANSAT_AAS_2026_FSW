@@ -383,7 +383,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 appargs.GpsAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.GpsAppArg.MID_comm_gga,
-                f"{GPS_TIME},{GPS_ALT},{GPS_LAT},{GPS_LON},{GPS_SATS}"
+                f"{GPS_TIME},{GPS_ALT},{GPS_LAT if GPS_LAT is not None else 0.0},{GPS_LON if GPS_LON is not None else 0.0},{GPS_SATS}"
             )
             if status == False:
                 events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.error, "Error When sending GPS Tlm Message")

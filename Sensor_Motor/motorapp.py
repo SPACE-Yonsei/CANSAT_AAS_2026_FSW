@@ -198,8 +198,15 @@ def handle_imu(data: str) -> None:
         sample_ts  = float(fields[12])
         freefall   = int(float(fields[13]))
         tumble     = int(float(fields[14]))
+        # field[15]: imuapp이 전송하는 HEALTH 플래그 (0=하드웨어 이상, 1=정상)
+        # health=0이면 캐시를 갱신하지 않아 타임스탬프 노후화로 자연스럽게 stale 처리
+        imu_health = int(float(fields[15])) if len(fields) >= 16 else 1
         rx_ts = timebase.now()
     except (ValueError, IndexError):
+        return
+
+    if not imu_health:
+        # 하드웨어 이상 신호: 구 타임스탬프가 유지되도록 캐시 미갱신
         return
 
     lin_ax, lin_ay, lin_az = _compute_linear_acc(
