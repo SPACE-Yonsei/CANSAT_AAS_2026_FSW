@@ -426,9 +426,9 @@ def handle_mtr(data: str) -> None:
         MANUAL_STEER_MODE = mode
 
 
-def handle_ctrlmode(data: str) -> None:
+def handle_cmc(data: str) -> None:
     global MOTOR_CTRL_MODE
-    mode = data.strip().upper()
+    mode = str(data or "").strip().upper()
     valid = {
         config.MOTOR_CTRL_MODE_GPS_GUIDED,
         config.MOTOR_CTRL_MODE_GPS_ONLY,
@@ -437,6 +437,7 @@ def handle_ctrlmode(data: str) -> None:
     if mode in valid:
         with _UPDATE_LOCK:
             MOTOR_CTRL_MODE = mode
+            config.MOTOR_CTRL_MODE = mode
 
 
 def handle_fac(data: str) -> None:
@@ -659,7 +660,7 @@ def dispatch(msg: str) -> None:
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_CMC:
-        handle_ctrlmode(unpacked.data)
+        handle_cmc(unpacked.data)
 
 
 def init() -> None:
