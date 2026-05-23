@@ -229,8 +229,7 @@ def handle_barometer(data: str) -> None:
             return
         alt_m     = float(fields[0].strip())
         sample_ts = float(fields[1])
-        sink_s    = fields[2].strip()
-        sink_rate = None if sink_s == "nan" else float(sink_s)
+        sink_rate = None if fields[2].strip() == "nan" else float(fields[2].strip())
         rx_ts = timebase.now()
     except (ValueError, IndexError):
         return
