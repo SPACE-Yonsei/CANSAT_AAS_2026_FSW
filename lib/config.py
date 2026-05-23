@@ -254,3 +254,13 @@ KP_DETUMBLE = 0.10
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
+
+# ── Motor control source mode ─────────────────────────────────────────────────
+# "GPS_GUIDED" : GPS L1 가이던스 + 자이로 PID (기존 경로)
+# "IMU_HEADING": IMU 자력계 방위각만으로 목표 헤딩 추종 (GPS 불필요)
+MOTOR_CTRL_MODE = "GPS_GUIDED"
+
+# IMU_HEADING 모드 전용 파라미터
+IMU_HEADING_TARGET_DEG    = 0.0   # 목표 자기 방위각 (0=북쪽)
+IMU_HEADING_KP            = 1.5   # 방위각 오차 → angular_velocity_cmd P 게인 [°/s per °]
+IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 최대값 [°/s]

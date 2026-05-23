@@ -10,12 +10,15 @@ into guidance instead of reading guidance/control globals.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import math
 import threading
 import time
 from typing import Optional
 
-from lib import appargs, config, msgstructure, prevstate, timebase
+from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
+
+logger = logging.getLogger(__name__)
 
 from . import control, guidance
 
@@ -447,6 +450,10 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str,
     )
 
 
+def _wrap180(deg: float) -> float:
+    return (deg + 180.0) % 360.0 - 180.0
+
+
 def ctrl_parafoil(main_queue=None) -> None:
     """Parafoil control loop."""
     global _CONTROLLER
@@ -467,6 +474,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 idle_out = guidance.L1Output(
                     timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_IDLE
                 )
+                sensorlog.log_motor_ctrl(idle_cmd)
                 _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE,
                            snap.start_lat, snap.start_lon)
                 time.sleep(period)
@@ -479,6 +487,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 landed_out = guidance.L1Output(
                     timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_LANDED
                 )
+                sensorlog.log_motor_ctrl(landed_cmd)
                 _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED,
                            snap.start_lat, snap.start_lon)
                 time.sleep(period)
@@ -498,53 +507,99 @@ def ctrl_parafoil(main_queue=None) -> None:
                 )
                 if PI is not None:
                     control.ProducePulse(PI, manual_cmd)
+                sensorlog.log_motor_ctrl(manual_cmd)
                 _send_diag(main_queue, manual_cmd, manual_out, manual_cmd.mode,
                            snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
-            l1_input, mode = guidance.ProduceL1Input(
-                gps=snap.latest_gps,
-                imu=snap.latest_imu,
-                baro=snap.latest_baro,
-                origin_lat=snap.start_lat,
-                origin_lon=snap.start_lon,
-                target_lat=snap.target_lat,
-                target_lon=snap.target_lon,
-                now=now,
-            )
-            g_out = guidance.ProduceL1Output(
-                l1_input=l1_input,
-                mode=mode,
-                origin_lat=snap.start_lat,
-                origin_lon=snap.start_lon,
-                target_lat=snap.target_lat,
-                target_lon=snap.target_lon,
-                now=now,
-            )
-
-            if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
+            if config.MOTOR_CTRL_MODE == "IMU_HEADING":
+                imu = snap.latest_imu
+                imu_valid = (
+                    imu is not None
+                    and imu.yaw_rad is not None
+                    and imu.ts is not None
+                    and (now - imu.ts) <= config.IMU_FRESH_MAX_AGE_S
+                )
+                if imu_valid:
+                    heading_err = _wrap180(config.IMU_HEADING_TARGET_DEG - math.degrees(imu.yaw_rad))
+                    ang_vel_cmd = max(
+                        -config.IMU_HEADING_MAX_CMD_DEG_S,
+                        min(config.IMU_HEADING_MAX_CMD_DEG_S,
+                            config.IMU_HEADING_KP * heading_err),
+                    )
+                    ctrl_in = control.CtrlInput(
+                        angular_velocity_cmd_deg_s=ang_vel_cmd,
+                        valid=True,
+                        timestamp=now,
+                        pid_enabled=True,
+                    )
+                    g_out = guidance.L1Output(
+                        timestamp=now, nominal=True, degraded=False,
+                        control_valid=True, reason=config.MOTOR_REASON_ACTIVE,
+                    )
+                else:
+                    ctrl_in = control.CtrlInput(valid=False, timestamp=now)
+                    g_out = guidance.L1Output(
+                        timestamp=now, nominal=False, degraded=False,
+                        control_valid=False, reason=config.MOTOR_REASON_GUIDANCE_INACTIVE,
+                    )
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
                 angular_velocity_meas_deg_s = float("nan")
                 if (
-                    getattr(l1_input, "gyrz", None) is not None
-                    and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
-                    == guidance.SensorQuality.FRESH
+                    imu_valid
+                    and imu.gyrz_rad_s is not None
+                    and abs(math.degrees(imu.gyrz_rad_s)) <= config.GYRO_SPIKE_LIMIT_DEG_S
                 ):
-                    angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
+                    angular_velocity_meas_deg_s = math.degrees(imu.gyrz_rad_s)
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(
-                        _CONTROLLER,
-                        control.ProduceCtrlInput(g_out, now),
-                        angular_velocity_meas_deg_s,
-                        now,
+                        _CONTROLLER, ctrl_in, angular_velocity_meas_deg_s, now
                     )
-            else:
-                cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
+            else:  # GPS_GUIDED
+                l1_input, mode = guidance.ProduceL1Input(
+                    gps=snap.latest_gps,
+                    imu=snap.latest_imu,
+                    baro=snap.latest_baro,
+                    origin_lat=snap.start_lat,
+                    origin_lon=snap.start_lon,
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                    now=now,
+                )
+                g_out = guidance.ProduceL1Output(
+                    l1_input=l1_input,
+                    mode=mode,
+                    origin_lat=snap.start_lat,
+                    origin_lon=snap.start_lon,
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                    now=now,
+                )
+                if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
+                    if _CONTROLLER is None:
+                        _CONTROLLER = control.MakeCtrler()
+                    angular_velocity_meas_deg_s = float("nan")
+                    if (
+                        getattr(l1_input, "gyrz", None) is not None
+                        and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
+                        == guidance.SensorQuality.FRESH
+                    ):
+                        angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
+                    with _CTRL_LOCK:
+                        cmd = control.ProduceCtrlOutput(
+                            _CONTROLLER,
+                            control.ProduceCtrlInput(g_out, now),
+                            angular_velocity_meas_deg_s,
+                            now,
+                        )
+                else:
+                    cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
 
             if PI is not None:
                 control.ProducePulse(PI, cmd)
+            sensorlog.log_motor_ctrl(cmd)
             diag_state = (
                 config.MOTOR_REASON_DEGRADED
                 if bool(getattr(g_out, "control_valid", False)) and bool(getattr(g_out, "degraded", False))
@@ -554,6 +609,7 @@ def ctrl_parafoil(main_queue=None) -> None:
             _send_diag(main_queue, cmd, g_out, diag_state, snap.start_lat, snap.start_lon)
 
         except Exception:
+            logger.exception("ctrl_parafoil: unhandled exception; writing zero PWM")
             if PI is not None:
                 control.WriteZero(PI)
         time.sleep(period)

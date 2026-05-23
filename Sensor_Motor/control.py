@@ -8,11 +8,14 @@ Both sum to at most DELTA_TOTAL_MAX_DEG. Arm angles are slew-rate limited before
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from lib import config, timebase
+
+logger = logging.getLogger(__name__)
 
 
 PARAFOIL_LEFT_MOTOR_PIN  = config.PARAFOIL_LEFT_GPIO
@@ -382,9 +385,11 @@ def init_control():
         if pi.connected:
             pi.set_servo_pulsewidth(PARAFOIL_LEFT_MOTOR_PIN, LEFT_ZERO_PULSE)
             pi.set_servo_pulsewidth(PARAFOIL_RIGHT_MOTOR_PIN, RIGHT_ZERO_PULSE)
+            logger.info("pigpio connected; servos initialized to zero")
             return pi
-    except Exception:
-        pass
+        logger.warning("pigpio.pi() not connected; running without servo output")
+    except Exception as exc:
+        logger.warning("pigpio init failed (%s); running without servo output", exc)
     return None
 
 

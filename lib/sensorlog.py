@@ -234,6 +234,53 @@ def log_distance_raw(range_mm: float) -> None:
         pass
 
 
+_MOTOR_CTRL_HEADER = [
+    "timestamp",
+    "mode",
+    "fallback_mode",
+    "left_pw",
+    "right_pw",
+    "left_angle_deg",
+    "right_angle_deg",
+    "delta_ff_deg",
+    "delta_pid_deg",
+    "delta_arm_deg",
+    "angular_velocity_cmd_deg_s",
+    "angular_velocity_meas_deg_s",
+    "guidance_command_age_s",
+    "saturated",
+    "sensor_valid",
+]
+
+
+def log_motor_ctrl(cmd) -> None:
+    """One parafoil control cycle output before PWM is written to servos."""
+    try:
+        w = _get_raw_writer("motor_ctrl", _MOTOR_CTRL_HEADER)
+        if w is None:
+            return
+        w.writerow([
+            datetime.now().isoformat(timespec="milliseconds"),
+            getattr(cmd, "mode", ""),
+            getattr(cmd, "fallback_mode", ""),
+            getattr(cmd, "left_pw", ""),
+            getattr(cmd, "right_pw", ""),
+            getattr(cmd, "left_angle_deg", ""),
+            getattr(cmd, "right_angle_deg", ""),
+            getattr(cmd, "delta_ff_deg", ""),
+            getattr(cmd, "delta_pid_deg", ""),
+            getattr(cmd, "delta_arm_deg", ""),
+            getattr(cmd, "angular_velocity_cmd_deg_s", ""),
+            getattr(cmd, "angular_velocity_meas_deg_s", ""),
+            getattr(cmd, "guidance_command_age_s", ""),
+            int(bool(getattr(cmd, "saturated", False))),
+            int(bool(getattr(cmd, "sensor_valid", False))),
+        ])
+        _flush_raw("motor_ctrl")
+    except Exception:
+        pass
+
+
 def log_electro_raw(voltage_v: float, current_a: float, power_w: float) -> None:
     """INA228 sample before median smoothing."""
     try:
