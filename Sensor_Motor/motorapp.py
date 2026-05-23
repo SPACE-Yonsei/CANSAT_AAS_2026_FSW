@@ -528,23 +528,61 @@ def ctrl_parafoil(main_queue=None) -> None:
             with _UPDATE_LOCK:
                 _motor_enabled = MOTOR_ENABLED
                 _state = STATE
+                _manual_steer = MANUAL_STEER_MODE
+                _ctrl_mode = MOTOR_CTRL_MODE
                 snap = _cache_snapshot()
 
             if not _motor_enabled or _state < 3:
                 if PI is not None:
                     control.WriteZero(PI)
+                idle_cmd = control.WriteNeutral(now, config.MOTOR_REASON_IDLE)
+                idle_out = guidance.L1Output(
+                    timestamp=now, nominal=False, reason=config.MOTOR_REASON_IDLE
+                )
+                sensorlog.log_motor_ctrl(idle_cmd)
+                _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE,
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
             if _state == 5:
                 if PI is not None:
                     control.WriteOff(PI)
+                landed_cmd = control.WriteNeutral(now, config.MOTOR_REASON_LANDED)
+                landed_out = guidance.L1Output(
+                    timestamp=now, nominal=False, reason=config.MOTOR_REASON_LANDED
+                )
+                sensorlog.log_motor_ctrl(landed_cmd)
+                _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED,
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
+            if _manual_steer != config.MOTOR_MANUAL_NEUTRAL:
+                manual_cmd = _manual_steer_command(now, _manual_steer)
+                manual_out = guidance.L1Output(
+                    timestamp=now,
+                    nominal=False,
+                    reason=manual_cmd.mode,
+                    control_valid=bool(manual_cmd.valid),
+                    angular_velocity_cmd_rad_s=math.radians(manual_cmd.angular_velocity_cmd_deg_s),
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                )
+                if PI is not None:
+                    control.ProducePulse(PI, manual_cmd)
+                sensorlog.log_motor_ctrl(manual_cmd)
+                _send_diag(main_queue, manual_cmd, manual_out, manual_cmd.mode,
+                           snap.start_lat, snap.start_lon)
+                time.sleep(period)
+                continue
             fresh = guidance.decidefresh(
+                snap.latest_gps, snap.latest_imu, snap.latest_baro,
+                _GUIDANCE_STATE, now,
             )
             l1_input = guidance.produceL1input(
+                fresh, snap.latest_gps, snap.latest_imu,
+                _GUIDANCE_STATE, STATE, now,
             )
 
             # Persist origin on first cycle it becomes available (Task 3)
@@ -557,8 +595,25 @@ def ctrl_parafoil(main_queue=None) -> None:
             g_out = guidance.produceL1output(l1_input)
             g_out.timestamp = now
 
+            if g_out.control_valid:
+                if _CONTROLLER is None:
+                    _CONTROLLER = control.MakeCtrler()
+                # Provide gyrz only for CLOSED-loop modes (pid_enabled=True)
+                angular_velocity_meas_deg_s = float("nan")
+                if (
+                    getattr(g_out, "pid_enabled", False)
+                    and fresh.imu_gyrz_fresh
+                    and snap.latest_imu.gyrz_rad_s is not None
+                ):
+                    angular_velocity_meas_deg_s = math.degrees(
+                        float(config.GYRZ_SIGN) * float(snap.latest_imu.gyrz_rad_s)
+                    )
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(
+                        _CONTROLLER,
+                        control.ProduceCtrlInput(g_out, now),
+                        angular_velocity_meas_deg_s,
+                        now,
                     )
             else:
                 cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
