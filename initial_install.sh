@@ -60,6 +60,13 @@ if ! grep -q "i2c_arm_baudrate" "${CONFIG_TXT}"; then
     echo "dtparam=i2c_arm_baudrate=100000" >> "${CONFIG_TXT}"
 fi
 
+# Disable Bluetooth so PL011 (ttyAMA0) is freed for XBee / GNSS / TF-Luna.
+# Without this, enable_uart=1 only exposes the mini-UART (ttyS0) which is
+# clock-coupled to the CPU and produces baud errors at higher speeds.
+if ! grep -q "disable-bt" "${CONFIG_TXT}"; then
+    echo "dtoverlay=disable-bt" >> "${CONFIG_TXT}"
+fi
+
 echo "    done (reboot required for hardware changes to take effect)"
 
 # ---------------------------------------------------------------------------

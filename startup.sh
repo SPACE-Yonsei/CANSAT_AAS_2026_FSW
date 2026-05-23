@@ -18,18 +18,6 @@ else
     venv_path=""
 fi
 
-echo "Starting pigpiod..."
-sudo pigpiod 2>/dev/null || true
-sleep 1
-
-if [[ -f "/home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh" ]]; then
-    echo "Cleaning up camera..."
-    bash /home/pi/CANSAT_AAS_2026_FSW/kill_camera.sh
-elif [[ -f "${python_path}/kill_camera.sh" ]]; then
-    echo "Cleaning up camera..."
-    bash "${python_path}/kill_camera.sh"
-fi
-
 echo "Path > ${python_path}"
 if [[ -n "${venv_path}" ]]; then
     echo "venv > ${venv_path}/activate"
@@ -39,5 +27,5 @@ else
 fi
 
 cd "${python_path}"
-export FSW_I2C_BUS=0
+export FSW_I2C_BUS=1
 exec python3 main.py
