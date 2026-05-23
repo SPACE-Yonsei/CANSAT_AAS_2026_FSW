@@ -169,12 +169,12 @@ def handle_gps(data: str) -> None:
 def handle_imu(data: str) -> None:
     """Parse IMU payload and update cache.
 
-    Current payload:
-      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble
+    Current payload (16 fields):
+      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health
     """
     fields = data.split(",")
     try:
-        if len(fields) != 15:
+        if len(fields) < 15:
             return
         roll_deg   = float(fields[0])
         pitch_deg  = float(fields[1])
