@@ -8,7 +8,8 @@ Units: _deg / _rad / _m / _ms / _mps suffixes throughout.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 import enum
 import math
 from typing import Optional
@@ -117,14 +118,83 @@ class FailReason(enum.Enum):
 @dataclass
 class FreshResult:
     """Per-iteration sensor freshness snapshot tied to a single 'now' timestamp."""
+    # POINT
     point_fresh: bool = False
-    velocity_fresh: bool = False
-    gyrz_fresh: bool = False
-    baro_fresh: bool = False
+    point_correction_usable: bool = False
     point_age_s: float = math.inf
+    # VELOCITY
+    velocity_fresh: bool = False
+    velocity_correction_usable: bool = False
     velocity_age_s: float = math.inf
-    gyrz_age_s: float = math.inf
+    # IMU overall
+    imu_fresh: bool = False
+    imu_age_s: float = math.inf
+    # IMU per-component (same timestamp, validity per channel)
+    imu_gyrz_fresh: bool = False
+    imu_yaw_fresh: bool = False
+    imu_acc_fresh: bool = False
+    imu_linear_acc_fresh: bool = False
+    # BAROMETER
+    barometer_fresh: bool = False
     baro_age_s: float = math.inf
+    # ── backward-compat aliases ────────────────────────────────────────────────
+    gyrz_fresh: bool = False   # == imu_gyrz_fresh
+    gyrz_age_s: float = math.inf
+    baro_fresh: bool = False   # == barometer_fresh
+
+
+@dataclass
+class PointSample:
+    lat: float
+    lon: float
+    point_E: float    # math.nan when origin not set at append time
+    point_N: float    # math.nan when origin not set at append time
+    timestamp: float
+    valid: bool = True
+
+
+@dataclass
+class VelocitySample:
+    course: float     # rad
+    speed: float      # m/s
+    timestamp: float
+    valid: bool = True
+
+
+@dataclass
+class ImuSample:
+    roll: float       # rad
+    pitch: float      # rad
+    yaw: float        # rad
+    acc_x: float      # m/s²
+    acc_y: float      # m/s²
+    acc_z: float      # m/s²
+    gyr_x: float      # rad/s
+    gyr_y: float      # rad/s
+    gyr_z: float      # rad/s
+    mag_x: float      # µT
+    mag_y: float      # µT
+    mag_z: float      # µT
+    timestamp: float
+    lin_acc_x: Optional[float] = None
+    lin_acc_y: Optional[float] = None
+    lin_acc_z: Optional[float] = None
+    quat_w: Optional[float] = None
+    quat_x: Optional[float] = None
+    quat_y: Optional[float] = None
+    quat_z: Optional[float] = None
+    gyrz_valid: bool = True
+    yaw_valid: bool = True
+    acc_valid: bool = True
+    lin_acc_valid: bool = False
+
+
+@dataclass
+class BarometerSample:
+    altitude: float   # m
+    timestamp: float
+    pressure: Optional[float] = None
+    valid: bool = True
 
 
 @dataclass
@@ -133,7 +203,7 @@ class GuidanceState:
     # Origin — set once after release_state == 3, never changed after that
     origin_lat: Optional[float] = None
     origin_lon: Optional[float] = None
-    origin_set: bool = False
+    origin_ready: bool = False
     # Target — raw lat/lon stored on receipt; E/N computed after origin is known
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
@@ -154,6 +224,11 @@ class GuidanceState:
     dr_speed_mps: Optional[float] = None
     dr_method: str = config.DR_METHOD_NONE
     dr_confidence: float = 0.0
+    # 8-second history queues (timestamp-pruned deques, no maxlen)
+    point_history: deque = field(default_factory=deque)
+    velocity_history: deque = field(default_factory=deque)
+    imu_history: deque = field(default_factory=deque)
+    baro_history: deque = field(default_factory=deque)
 
 
 @dataclass(frozen=True)
@@ -168,6 +243,7 @@ class ControlPolicy:
     pid_enabled: bool
     l1_enabled: bool = True
     l1_period_s: float = L1_PERIOD_S
+
 
 @dataclass
 class L1Input:
@@ -202,102 +278,6 @@ class L1Input:
     dr_course: Optional[float] = None
     dr_speed_mps: Optional[float] = None
 
-
-def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NONE) -> ControlPolicy:
-    if mode == ControlMode.NOMINAL_CLOSED_LOOP:
-        return ControlPolicy(
-            confidence_scale=config.MOTOR_NOMINAL_CLOSED_LOOP_CONFIDENCE_SCALE,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=config.MOTOR_NOMINAL_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
-            delta_ff_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG,
-            delta_total_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
-            pid_enabled=True,
-        )
-    if mode == ControlMode.NOMINAL_FEEDFORWARD:
-        return ControlPolicy(
-            confidence_scale=config.MOTOR_NOMINAL_FEEDFORWARD_CONFIDENCE_SCALE,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=config.MOTOR_NOMINAL_FEEDFORWARD_LAT_ACC_MAX_MPS2,
-            delta_ff_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_PID_MAX_DEG,
-            delta_total_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
-            pid_enabled=False,
-        )
-    if mode == ControlMode.DEGRADED_CLOSED_LOOP:
-        return ControlPolicy(
-            confidence_scale=config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=config.MOTOR_DEGRADED_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
-            delta_ff_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG,
-            delta_total_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
-            pid_enabled=True,
-            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE, 1.0e-6),
-        )
-    if mode == ControlMode.DEGRADED_FEEDFORWARD:
-        return ControlPolicy(
-            confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=config.MOTOR_DEGRADED_FEEDFORWARD_LAT_ACC_MAX_MPS2,
-            delta_ff_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_PID_MAX_DEG,
-            delta_total_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
-            pid_enabled=False,
-            l1_period_s=L1_PERIOD_S / max(config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE, 1.0e-6),
-        )
-    if fail_reason == FailReason.TUMBLE_YAW_DOMINANT:
-        return ControlPolicy(
-            confidence_scale=0.0,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_TUMBLE_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=0.0,
-            delta_ff_max_deg=config.MOTOR_TUMBLE_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=0.0,
-            delta_total_max_deg=config.MOTOR_TUMBLE_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_TUMBLE_MAX_ARM_RATE_DEG_S,
-            pid_enabled=False,
-            l1_enabled=False,
-        )
-    if fail_reason == FailReason.NO_MOTION:
-        return ControlPolicy(
-            confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
-            angular_velocity_cmd_max_deg_s=config.MOTOR_TARGET_BEARING_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-            lat_acc_max_mps2=0.0,
-            delta_ff_max_deg=config.MOTOR_TARGET_BEARING_DELTA_FF_MAX_DEG,
-            delta_pid_max_deg=0.0,
-            delta_total_max_deg=config.MOTOR_TARGET_BEARING_DELTA_TOTAL_MAX_DEG,
-            max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
-            pid_enabled=False,
-            l1_enabled=False,
-        )
-    return ControlPolicy(
-        confidence_scale=0.0,
-        angular_velocity_cmd_max_deg_s=0.0,
-        lat_acc_max_mps2=0.0,
-        delta_ff_max_deg=0.0,
-        delta_pid_max_deg=0.0,
-        delta_total_max_deg=0.0,
-        max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
-        pid_enabled=False,
-        l1_enabled=False,
-    )
-
-
-def _apply_policy(out: L1Output, policy: ControlPolicy) -> None:
-    out.confidence_scale = policy.confidence_scale
-    out.angular_velocity_cmd_max_deg_s = policy.angular_velocity_cmd_max_deg_s
-    out.lat_acc_max_mps2 = policy.lat_acc_max_mps2
-    out.delta_ff_max_deg = policy.delta_ff_max_deg
-    out.delta_pid_max_deg = policy.delta_pid_max_deg
-    out.delta_total_max_deg = policy.delta_total_max_deg
-    out.max_arm_rate_deg_s = policy.max_arm_rate_deg_s
-    out.pid_enabled = policy.pid_enabled
-
-
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
 
@@ -307,7 +287,39 @@ def _is_fresh(timestamp: Optional[float], now: float, max_age: float) -> bool:
     return math.isfinite(age_s) and 0.0 <= age_s <= float(max_age)
 
 
+def _try_float(v) -> Optional[float]:
+    """Return float(v) if finite, else None. Absorbs None / TypeError / ValueError."""
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        return f if math.isfinite(f) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_attr(obj, *names):
+    """Return the first non-None attribute from obj among names."""
+    for n in names:
+        v = getattr(obj, n, None)
+        if v is not None:
+            return v
+    return None
+
+
 # ── Public helpers ─────────────────────────────────────────────────────────────
+
+def append_history(history: deque, sample) -> None:
+    """Append a sample to a history deque."""
+    history.append(sample)
+
+
+def prune_history(history: deque, now: float, window_s: float) -> None:
+    """Remove samples older than window_s from the left end of history."""
+    cutoff = float(now) - float(window_s)
+    while history and history[0].timestamp < cutoff:
+        history.popleft()
+
 
 def wrap_pi(angle_rad: float) -> float:
     return _wrap_pi(float(angle_rad))
@@ -322,18 +334,6 @@ def safe_isfinite(x) -> bool:
         return math.isfinite(float(x))
     except (TypeError, ValueError):
         return False
-
-
-def deg2rad(x: float) -> float:
-    return math.radians(float(x))
-
-
-def rad2deg(x: float) -> float:
-    return math.degrees(float(x))
-
-
-def sign(x: float) -> float:
-    return 1.0 if float(x) >= 0.0 else -1.0
 
 
 def angle_blend(a: float, b: float, weight_b: float) -> float:
@@ -504,6 +504,154 @@ def FillFresh(
 
     return l1_input
 
+
+def decidefresh(
+    gps,
+    imu,
+    baro,
+    state: GuidanceState,
+    now: float,
+) -> FreshResult:
+    """Update history queues and compute per-sensor freshness flags.
+
+    Does NOT decide control mode or compute yaw_rate_cmd.
+    Stale samples are kept in history for HISTORY_WINDOW_S seconds.
+    """
+    result = FreshResult()
+    _nan = math.nan
+
+    # ── GPS POINT ──────────────────────────────────────────────────────────────
+    gps_pos_ts = getattr(gps, "pos_ts", None) if gps is not None else None
+    lat_f = _try_float(getattr(gps, "lat", None)) if gps is not None else None
+    lon_f = _try_float(getattr(gps, "lon", None)) if gps is not None else None
+
+    if gps_pos_ts is not None and lat_f is not None and lon_f is not None:
+        if state.origin_ready and state.origin_lat is not None and state.origin_lon is not None:
+            try:
+                pt_N, pt_E = latlon_to_ne(lat_f, lon_f, state.origin_lat, state.origin_lon)
+                if not (math.isfinite(pt_N) and math.isfinite(pt_E)):
+                    pt_N = pt_E = _nan
+            except Exception:
+                pt_N = pt_E = _nan
+        else:
+            pt_N = pt_E = _nan
+        append_history(
+            state.point_history,
+            PointSample(
+                lat=lat_f, lon=lon_f,
+                point_E=pt_E, point_N=pt_N,
+                timestamp=float(gps_pos_ts),
+                valid=bool(getattr(gps, "pos_health", True)),
+            ),
+        )
+
+    prune_history(state.point_history, now, config.HISTORY_WINDOW_S)
+
+    if state.point_history:
+        latest = state.point_history[-1]
+        age = max(0.0, now - latest.timestamp)
+        result.point_age_s = age
+        result.point_fresh = age <= config.GPS_CONTROL_FRESH_MAX_AGE_S and latest.valid
+        result.point_correction_usable = age <= config.GPS_CORRECTION_MAX_AGE_S and latest.valid
+        if result.point_fresh and math.isfinite(latest.point_N) and math.isfinite(latest.point_E):
+            state.last_fresh_pos_N  = latest.point_N
+            state.last_fresh_pos_E  = latest.point_E
+            state.last_fresh_pos_ts = latest.timestamp
+
+    # ── GPS VELOCITY ───────────────────────────────────────────────────────────
+    gps_motion_ts = getattr(gps, "motion_ts", None) if gps is not None else None
+    course_f = _try_float(_first_attr(gps, "course_rad", "course")) if gps is not None else None
+    speed_f  = _try_float(_first_attr(gps, "speed_mps",  "speed"))  if gps is not None else None
+
+    if gps_motion_ts is not None and course_f is not None and speed_f is not None:
+        append_history(
+            state.velocity_history,
+            VelocitySample(
+                course=course_f, speed=speed_f,
+                timestamp=float(gps_motion_ts),
+                valid=bool(getattr(gps, "motion_health", True)),
+            ),
+        )
+
+    prune_history(state.velocity_history, now, config.HISTORY_WINDOW_S)
+
+    if state.velocity_history:
+        latest = state.velocity_history[-1]
+        age = max(0.0, now - latest.timestamp)
+        result.velocity_age_s = age
+        result.velocity_fresh = age <= config.GPS_CONTROL_FRESH_MAX_AGE_S and latest.valid
+        result.velocity_correction_usable = age <= config.GPS_CORRECTION_MAX_AGE_S and latest.valid
+        if result.velocity_fresh:
+            state.last_fresh_course    = latest.course
+            state.last_fresh_speed_mps = latest.speed
+            state.last_fresh_motion_ts = latest.timestamp
+
+    # ── IMU ────────────────────────────────────────────────────────────────────
+    imu_ts = getattr(imu, "ts", None) if imu is not None else None
+
+    if imu_ts is not None and imu is not None:
+        roll  = _try_float(_first_attr(imu, "roll_rad",  "roll"))
+        pitch = _try_float(_first_attr(imu, "pitch_rad", "pitch"))
+        yaw   = _try_float(_first_attr(imu, "yaw_rad",   "yaw"))
+        ax    = _try_float(_first_attr(imu, "accx_mps2", "acc_x"))
+        ay    = _try_float(_first_attr(imu, "accy_mps2", "acc_y"))
+        az    = _try_float(_first_attr(imu, "accz_mps2", "acc_z"))
+        gx    = _try_float(_first_attr(imu, "gyrx_rad_s", "gyrx"))
+        gy    = _try_float(_first_attr(imu, "gyry_rad_s", "gyry"))
+        gz    = _try_float(_first_attr(imu, "gyrz_rad_s", "gyrz"))
+        mx    = _try_float(_first_attr(imu, "magx_uT", "mag_x"))
+        my    = _try_float(_first_attr(imu, "magy_uT", "mag_y"))
+        mz    = _try_float(_first_attr(imu, "magz_uT", "mag_z"))
+        def _f(v): return v if v is not None else _nan
+        append_history(
+            state.imu_history,
+            ImuSample(
+                roll=_f(roll), pitch=_f(pitch), yaw=_f(yaw),
+                acc_x=_f(ax), acc_y=_f(ay), acc_z=_f(az),
+                gyr_x=_f(gx), gyr_y=_f(gy), gyr_z=_f(gz),
+                mag_x=_f(mx), mag_y=_f(my), mag_z=_f(mz),
+                timestamp=float(imu_ts),
+                gyrz_valid=gz is not None,
+                yaw_valid=yaw is not None,
+                acc_valid=(ax is not None and ay is not None and az is not None),
+                lin_acc_valid=False,
+            ),
+        )
+
+    prune_history(state.imu_history, now, config.HISTORY_WINDOW_S)
+
+    if state.imu_history:
+        latest = state.imu_history[-1]
+        age = max(0.0, now - latest.timestamp)
+        result.imu_age_s         = age
+        result.imu_fresh         = age <= config.IMU_FRESH_MAX_AGE_S
+        result.imu_gyrz_fresh    = result.imu_fresh and latest.gyrz_valid
+        result.imu_yaw_fresh     = result.imu_fresh and latest.yaw_valid
+        result.imu_acc_fresh     = result.imu_fresh and latest.acc_valid
+        result.imu_linear_acc_fresh = result.imu_fresh and latest.lin_acc_valid
+        result.gyrz_fresh        = result.imu_gyrz_fresh   # backward compat
+        result.gyrz_age_s        = age                     # backward compat
+
+    # ── BAROMETER ──────────────────────────────────────────────────────────────
+    baro_ts  = getattr(baro, "ts",    None) if baro is not None else None
+    alt_f    = _try_float(_first_attr(baro, "alt_m", "alt")) if baro is not None else None
+
+    if baro_ts is not None and alt_f is not None:
+        append_history(
+            state.baro_history,
+            BarometerSample(altitude=alt_f, timestamp=float(baro_ts)),
+        )
+
+    prune_history(state.baro_history, now, config.HISTORY_WINDOW_S)
+
+    if state.baro_history:
+        latest = state.baro_history[-1]
+        age = max(0.0, now - latest.timestamp)
+        result.baro_age_s      = age
+        result.barometer_fresh = age <= config.BARO_FRESH_MAX_AGE_S and latest.valid
+        result.baro_fresh      = result.barometer_fresh   # backward compat
+
+    return result
 
 
 def _body_fail_reason(l1_input: L1Input) -> FailReason:
