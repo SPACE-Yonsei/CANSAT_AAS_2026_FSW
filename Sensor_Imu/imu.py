@@ -60,7 +60,7 @@ BNO085_RST_USE = os.environ.get("IMU_BNO085_RST_ENABLE", "1").strip().lower() no
 BNO085_RST_PIN = os.environ.get("IMU_BNO085_RST_PIN", "D22")
 IMU_MOUNTED_ON_BOTTOM = os.environ.get("IMU_MOUNTED_ON_BOTTOM", "1").strip().lower() not in ("0", "false", "no", "")
 IMU_FORWARD_AXIS = os.environ.get("IMU_FORWARD_AXIS", "Y").strip().upper()
-MAG_FILTER_ALPHA = _env_float("IMU_MAG_FILTER_ALPHA", 0.5, 0.0, 1.0)
+MAG_MEAN_WINDOW = _env_int("IMU_MAG_MEAN_WINDOW", 5, 1, 50)
 MAG_FIELD_MIN = _env_float("IMU_MAG_FIELD_MIN", 5.0, 0.0, 1000.0)
 MAG_FIELD_MAX = _env_float("IMU_MAG_FIELD_MAX", 150.0, 1.0, 2000.0)
 MAG_NORM_SPIKE_RATIO = _env_float("IMU_MAG_NORM_SPIKE_RATIO", 3.0, 1.1, 100.0)
@@ -80,7 +80,7 @@ FREEZE_DETECT_SAMPLES_STATIC = _env_int("IMU_FREEZE_DETECT_SAMPLES_STATIC", 50, 
 # Acc default 100 m/s² ≈ 10g (raise via IMU_ACC_MAX_MPS2 for high-G launches).
 # Gyro default 35.0 rad/s ≈ BNO085 physical ±2000 dps limit.
 ACC_COMPONENT_MAX_MPS2 = _env_float("IMU_ACC_MAX_MPS2", 100.0, 10.0, 500.0)
-GYR_COMPONENT_MAX_RADS = _env_float("IMU_GYR_MAX_RADS", 35.0, 1.0, 200.0)
+GYR_COMPONENT_MAX_RADS = _env_float("IMU_GYR_MAX_RADS", math.radians(250.0), 0.5, 200.0)  # 250 deg/s = control.py GYRO_SPIKE_LIMIT_DEG_S와 통일
 # Rolling median window size for acc and gyro (valid-only samples).
 ACC_MEDIAN_WINDOW = _env_int("IMU_ACC_MEDIAN_WINDOW", 5, 1, 50)
 GYR_MEDIAN_WINDOW = _env_int("IMU_GYR_MEDIAN_WINDOW", 5, 1, 50)
@@ -91,7 +91,8 @@ _LAST_VALID = {
     "mag": (0.0, 0.0, 0.0),
     "gyr": (0.0, 0.0, 0.0),
 }
-_MAG_FILTER_STATE = {"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None}
+_MAG_WINDOW: list[tuple[float, float, float]] = []
+_MAG_LAST_NORM: Optional[float] = None
 _FREEZE_STATE: dict[str, Any] = {"prev_quat": None, "count": 0, "frozen": False}
 _ACC_WINDOW: list[tuple[float, float, float]] = []
 _GYR_WINDOW: list[tuple[float, float, float]] = []
@@ -238,7 +239,7 @@ def _hampel_angle(name: str, value: float) -> float:
 def _mag_norm_is_valid(norm: float) -> bool:
     if not (MAG_FIELD_MIN <= norm <= MAG_FIELD_MAX):
         return False
-    prev = _MAG_FILTER_STATE.get("norm")
+    prev = _MAG_LAST_NORM
     if prev is not None and float(prev) > 0.0:
         prev_f = float(prev)
         if norm > prev_f * MAG_NORM_SPIKE_RATIO or norm < prev_f / MAG_NORM_SPIKE_RATIO:
@@ -247,14 +248,15 @@ def _mag_norm_is_valid(norm: float) -> bool:
 
 
 def _filter_mag(mx: float, my: float, mz: float) -> tuple[float, float, float]:
-    if not _MAG_FILTER_STATE["init"]:
-        _MAG_FILTER_STATE.update({"x": mx, "y": my, "z": mz, "init": True})
-        return mx, my, mz
-    a = MAG_FILTER_ALPHA
-    _MAG_FILTER_STATE["x"] = a * mx + (1.0 - a) * float(_MAG_FILTER_STATE["x"])
-    _MAG_FILTER_STATE["y"] = a * my + (1.0 - a) * float(_MAG_FILTER_STATE["y"])
-    _MAG_FILTER_STATE["z"] = a * mz + (1.0 - a) * float(_MAG_FILTER_STATE["z"])
-    return float(_MAG_FILTER_STATE["x"]), float(_MAG_FILTER_STATE["y"]), float(_MAG_FILTER_STATE["z"])
+    _MAG_WINDOW.append((mx, my, mz))
+    if len(_MAG_WINDOW) > MAG_MEAN_WINDOW:
+        _MAG_WINDOW.pop(0)
+    n = len(_MAG_WINDOW)
+    return (
+        sum(w[0] for w in _MAG_WINDOW) / n,
+        sum(w[1] for w in _MAG_WINDOW) / n,
+        sum(w[2] for w in _MAG_WINDOW) / n,
+    )
 
 
 def _env_axis_sign(name: str, default: float) -> float:
@@ -412,6 +414,7 @@ def init_imu() -> tuple[Any, Any]:
 
 def read_sensor_data(bno) -> Any:
     """Return 12-tuple for `imuapp`, or False on soft failure."""
+    global _MAG_LAST_NORM
     if _FREEZE_STATE.get("frozen"):
         return False
     r2d = 180.0 / math.pi
@@ -483,7 +486,7 @@ def read_sensor_data(bno) -> Any:
                 mag_norm = math.sqrt(raw_mx * raw_mx + raw_my * raw_my + raw_mz * raw_mz)
                 if _mag_norm_is_valid(mag_norm):
                     mx, my, mz = _filter_mag(raw_mx, raw_my, raw_mz)
-                    _MAG_FILTER_STATE["norm"] = mag_norm
+                    _MAG_LAST_NORM = mag_norm
                     _LAST_VALID["mag"] = (mx, my, mz)
                 else:
                     mx, my, mz = _LAST_VALID["mag"]
@@ -527,12 +530,14 @@ def read_sensor_data(bno) -> Any:
 
 def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     """Drop the cached bus so ``init_imu`` opens a fresh handle (``deinit`` alone left a dead singleton)."""
+    global _MAG_LAST_NORM
     i2c_bus.reset_i2c()
     for window in _ANGLE_WINDOWS.values():
         window.clear()
     _ACC_WINDOW.clear()
     _GYR_WINDOW.clear()
-    _MAG_FILTER_STATE.update({"x": 0.0, "y": 0.0, "z": 0.0, "init": False, "norm": None})
+    _MAG_WINDOW.clear()
+    _MAG_LAST_NORM = None
     _FREEZE_STATE.update({"prev_quat": None, "count": 0, "frozen": False})
     return init_imu()
 
@@ -620,7 +625,7 @@ if __name__ == "__main__":
     print(
         f"IMU: config report_interval_us={REPORT_INTERVAL_US} "
         f"yaw_sign={_yaw_sign():+.0f} mounted_bottom={IMU_MOUNTED_ON_BOTTOM} "
-        f"forward_axis={IMU_FORWARD_AXIS} mag_alpha={MAG_FILTER_ALPHA:.2f}",
+        f"forward_axis={IMU_FORWARD_AXIS} mag_window={MAG_MEAN_WINDOW}",
         flush=True,
     )
     _print_sample_header()
