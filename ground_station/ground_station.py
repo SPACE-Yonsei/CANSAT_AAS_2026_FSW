@@ -567,6 +567,8 @@ class GroundStation(tk.Tk):
         self._egg_action_enabled_remote: bool | None = None
         self._battery_bar: ttk.Progressbar | None = None
         self._battery_pct_var = tk.StringVar(value="—")
+        self._dist_graph_canvas: tk.Canvas | None = None
+        self._dist_to_target_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
 
         self._build_ui()
@@ -722,25 +724,30 @@ class GroundStation(tk.Tk):
                     width=vw,
                     anchor="e",
                 ).grid(row=i, column=1, sticky="e", padx=6, pady=2)
+            if title == "Distance / Echo":
+                n = len(fields)
+                ttk.Label(box, text="Battery", style="StatHdr.TLabel").grid(
+                    row=n, column=0, sticky="w", padx=6, pady=2
+                )
+                ttk.Label(box, textvariable=self._battery_pct_var, style="Stat.TLabel",
+                          width=10, anchor="e").grid(row=n, column=1, sticky="e", padx=6, pady=2)
+                self._battery_bar = ttk.Progressbar(
+                    box, orient="horizontal", mode="determinate", maximum=100
+                )
+                self._battery_bar.grid(row=n + 1, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6))
 
         for r in range((len(groups) + 1) // 2):
             wrap.rowconfigure(r, weight=1)
 
-        # Battery panel (10th box) — row 4, col 1
-        _bat_row, _bat_col = divmod(len(groups), 2)
-        bat_box = ttk.LabelFrame(wrap, text="Battery")
-        bat_box.grid(row=_bat_row, column=_bat_col, sticky="nsew", padx=6, pady=4)
-        bat_box.columnconfigure(0, weight=1)
-        bat_box.columnconfigure(1, weight=1)
-        ttk.Label(bat_box, text="Level", style="StatHdr.TLabel").grid(
-            row=0, column=0, sticky="w", padx=6, pady=2
-        )
-        ttk.Label(bat_box, textvariable=self._battery_pct_var, style="Stat.TLabel",
-                  width=10, anchor="e").grid(row=0, column=1, sticky="e", padx=6, pady=2)
-        self._battery_bar = ttk.Progressbar(
-            bat_box, orient="horizontal", mode="determinate", maximum=100
-        )
-        self._battery_bar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=6, pady=(4, 6))
+        # Distance-to-target graph (10th box) — row 4, col 1
+        _dist_row, _dist_col = divmod(len(groups), 2)
+        dist_box = ttk.LabelFrame(wrap, text="Distance to Target (m)")
+        dist_box.grid(row=_dist_row, column=_dist_col, sticky="nsew", padx=6, pady=4)
+        dist_box.columnconfigure(0, weight=1)
+        dist_box.rowconfigure(0, weight=1)
+        self._dist_graph_canvas = tk.Canvas(dist_box, background="#111827", highlightthickness=0)
+        self._dist_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self._dist_graph_canvas.bind("<Configure>", lambda _e: self._draw_dist_graph())
 
     def _build_map_and_motor(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
@@ -1655,6 +1662,19 @@ class GroundStation(tk.Tk):
             self._battery_pct_var.set("—")
             if self._battery_bar is not None:
                 self._battery_bar["value"] = 0
+        dist_m: float | None = None
+        if (
+            self._held_current_latlon is not None
+            and self._held_target_latlon is not None
+            and _is_meaningful_target_latlon(
+                self._held_target_latlon[0], self._held_target_latlon[1]
+            )
+        ):
+            dist_m = _haversine_m(
+                self._held_current_latlon[0], self._held_current_latlon[1],
+                self._held_target_latlon[0], self._held_target_latlon[1],
+            )
+        self._update_dist_graph(dist_m)
         now_ts = host_ts if host_ts is not None else time.time()
         fb_status = self._fallback_estimator.update(parsed, now_ts)
         self._fallback_var.set(
@@ -1674,6 +1694,79 @@ class GroundStation(tk.Tk):
             return
         self._map_dirty = False
         self._draw_map()
+
+    _DIST_GRAPH_MAX_HISTORY = 120
+
+    def _update_dist_graph(self, dist_m: float | None) -> None:
+        if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
+            self._dist_to_target_history.append(dist_m)
+            if len(self._dist_to_target_history) > self._DIST_GRAPH_MAX_HISTORY:
+                self._dist_to_target_history = (
+                    self._dist_to_target_history[-self._DIST_GRAPH_MAX_HISTORY :]
+                )
+        self._draw_dist_graph()
+
+    def _draw_dist_graph(self) -> None:
+        c = self._dist_graph_canvas
+        if c is None:
+            return
+        c.delete("all")
+        w = max(10, c.winfo_width())
+        h = max(10, c.winfo_height())
+        hist = self._dist_to_target_history
+        if len(hist) < 2:
+            c.create_text(
+                w / 2, h / 2,
+                text="GPS + 목표 좌표 수신 대기 중…",
+                fill="#94a3b8",
+                font=_MAP_FONT_SMALL,
+            )
+            return
+        max_d = max(hist)
+        min_d = min(hist)
+        span = (max_d - min_d) or 1.0
+        pad_l, pad_r, pad_t, pad_b = 40, 6, 4, 16
+        pw = max(10, w - pad_l - pad_r)
+        ph = max(10, h - pad_t - pad_b)
+        c.create_rectangle(pad_l, pad_t, w - pad_r, h - pad_b,
+                           fill="#111827", outline="#334155")
+        n = len(hist)
+        pts: list[float] = []
+        for i, d in enumerate(hist):
+            x = pad_l + (i / (n - 1)) * pw
+            y = pad_t + ph - ((d - min_d) / span) * ph
+            pts.extend([x, y])
+        if len(pts) >= 4:
+            c.create_line(*pts, fill="#38bdf8", width=2, smooth=False)
+        latest = hist[-1]
+        c.create_text(
+            w - pad_r - 2, pad_t + 2,
+            text=f"{latest:.1f} m",
+            fill="#f1f5f9",
+            font=_MAP_FONT_SMALL,
+            anchor="ne",
+        )
+        c.create_text(
+            pad_l - 2, pad_t,
+            text=f"{max_d:.0f}",
+            fill="#94a3b8",
+            font=_MAP_FONT_SMALL,
+            anchor="e",
+        )
+        c.create_text(
+            pad_l - 2, h - pad_b,
+            text=f"{min_d:.0f}",
+            fill="#94a3b8",
+            font=_MAP_FONT_SMALL,
+            anchor="e",
+        )
+        c.create_text(
+            w / 2, h - 2,
+            text="← history",
+            fill="#64748b",
+            font=_MAP_FONT_SMALL,
+            anchor="s",
+        )
 
     def _draw_map(self) -> None:
         c = self._map_canvas
