@@ -51,7 +51,6 @@ class _ImuFromApp:
     rx_ts: Optional[float] = None
     freefall: int = 0   # 1=자유낙하 중, 0=정상
     tumble:   int = 0   # 1=텀블링 중,  0=안정
-    health:   int = 0   # 1=하드웨어 정상
 
 
 @dataclass
@@ -60,7 +59,6 @@ class _BaroFromApp:
     sink_rate: Optional[float] = None
     ts:        Optional[float] = None
     rx_ts:     Optional[float] = None
-    health:    int = 0  # 1=하드웨어 정상
 
 
 @dataclass
@@ -93,7 +91,6 @@ _MANUAL_STEER_DELTA_DEG = 60.0
 
 
 _CONTROLLER = None
-_L1_STATE = None
 
 def _cache_snapshot() -> _Cache:
     return _Cache(
@@ -173,14 +170,11 @@ def handle_imu(data: str) -> None:
     """Parse IMU payload and update cache.
 
     Current payload:
-      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health
-
-    Legacy sensor-log payload:
-      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,health,sample_ts
+      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble
     """
     fields = data.split(",")
     try:
-        if len(fields) not in (14, 16):
+        if len(fields) != 15:
             return
         roll_deg   = float(fields[0])
         pitch_deg  = float(fields[1])
@@ -194,16 +188,9 @@ def handle_imu(data: str) -> None:
         gyrx_deg_s = float(fields[9])
         gyry_deg_s = float(fields[10])
         gyrz_deg_s = float(fields[11])
-        if len(fields) == 16:
-            sample_ts  = float(fields[12])
-            freefall   = int(float(fields[13]))
-            tumble     = int(float(fields[14]))
-            health     = int(float(fields[15]))
-        else:
-            health     = int(float(fields[12]))
-            sample_ts  = float(fields[13])
-            freefall   = 0
-            tumble     = 0
+        sample_ts  = float(fields[12])
+        freefall   = int(float(fields[13]))
+        tumble     = int(float(fields[14]))
         rx_ts = timebase.now()
     except (ValueError, IndexError):
         return
@@ -225,7 +212,6 @@ def handle_imu(data: str) -> None:
         rx_ts=rx_ts,
         freefall=freefall,
         tumble=tumble,
-        health=health,
     )
     with _UPDATE_LOCK:
         _CACHE.latest_imu = imu
@@ -235,25 +221,16 @@ def handle_barometer(data: str) -> None:
     """Parse barometer payload and update cache.
 
     Current payload:
-      alt_m,sample_ts,sink_rate,health
-
-    Legacy sensor-log payload:
-      alt_m,health,sample_ts
+      alt_m,sample_ts,sink_rate
     """
     fields = data.split(",")
     try:
-        if len(fields) not in (3, 4):
+        if len(fields) != 3:
             return
         alt_m     = float(fields[0].strip())
-        if len(fields) == 4:
-            sample_ts = float(fields[1])
-            sink_s    = fields[2].strip()
-            sink_rate = None if sink_s == "nan" else float(sink_s)
-            health    = int(float(fields[3]))
-        else:
-            health    = int(float(fields[1]))
-            sample_ts = float(fields[2])
-            sink_rate = None
+        sample_ts = float(fields[1])
+        sink_s    = fields[2].strip()
+        sink_rate = None if sink_s == "nan" else float(sink_s)
         rx_ts = timebase.now()
     except (ValueError, IndexError):
         return
@@ -263,7 +240,6 @@ def handle_barometer(data: str) -> None:
         sink_rate=sink_rate,
         ts=sample_ts,
         rx_ts=rx_ts,
-        health=health,
     )
     with _UPDATE_LOCK:
         _CACHE.latest_baro = baro
@@ -287,7 +263,7 @@ def handle_target_coord(data: str) -> None:
 
 
 def handle_flight_state(data: str) -> None:
-    global STATE, _PREV_STATE, _START_POINT_LOCKED, _L1_STATE, _CONTROLLER
+    global STATE, _PREV_STATE, _START_POINT_LOCKED, _CONTROLLER
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -304,11 +280,6 @@ def handle_flight_state(data: str) -> None:
             _CACHE.start_lon = None
             _START_POINT_LOCKED = False
             prevstate.clear_start_point()
-            if _L1_STATE is not None and hasattr(guidance, "l1_reset"):
-                try:
-                    guidance.l1_reset(_L1_STATE)
-                except Exception:
-                    pass
             do_ctrl_reset = True
         elif new_state in (3, 4):
             gps = _CACHE.latest_gps
@@ -544,7 +515,6 @@ def ctrl_parafoil(main_queue=None) -> None:
                 target_lat=snap.target_lat,
                 target_lon=snap.target_lon,
                 now=now,
-                l1_state=_L1_STATE,
             )
             g_out = guidance.ProduceL1Output(
                 l1_input=l1_input,
@@ -554,7 +524,6 @@ def ctrl_parafoil(main_queue=None) -> None:
                 target_lat=snap.target_lat,
                 target_lon=snap.target_lon,
                 now=now,
-                l1_state=_L1_STATE,
             )
 
             if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
@@ -625,7 +594,7 @@ def dispatch(msg: str) -> None:
 
 def init() -> None:
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global MANUAL_STEER_MODE, _START_POINT_LOCKED, _CONTROLLER, _L1_STATE
+    global MANUAL_STEER_MODE, _START_POINT_LOCKED, _CONTROLLER
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
@@ -648,12 +617,6 @@ def init() -> None:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
-
-    if hasattr(guidance, "make_l1_state"):
-        try:
-            _L1_STATE = guidance.make_l1_state()
-        except Exception:
-            pass
 
     _CONTROLLER = control.MakeCtrler()
     PI = control.init_control()

@@ -12,24 +12,23 @@ ORIGIN_LAT = 37.55
 ORIGIN_LON = 126.95
 
 
-def _gps(lat, lon, course_rad=0.0, speed=8.0, pos_health=True, motion_health=True, age=0.0):
+def _gps(lat, lon, course_rad=0.0, speed=8.0, age=0.0):
     ts = time.monotonic() - age
     return SimpleNamespace(
         lat=lat, lon=lon,
         course_rad=course_rad, speed_mps=speed,
-        pos_health=pos_health, motion_health=motion_health,
         pos_ts=ts, motion_ts=ts,
     )
 
 
-def _imu(gyrz_rad_s=0.1, health=True, age=0.0):
+def _imu(gyrz_rad_s=0.1, age=0.0):
     ts = time.monotonic() - age
-    return SimpleNamespace(gyrz_rad_s=gyrz_rad_s, ts=ts, health=health)
+    return SimpleNamespace(gyrz_rad_s=gyrz_rad_s, ts=ts)
 
 
-def _baro(alt_m=100.0, health=True, age=0.0):
+def _baro(alt_m=100.0, age=0.0):
     ts = time.monotonic() - age
-    return SimpleNamespace(alt_m=alt_m, ts=ts, health=health)
+    return SimpleNamespace(alt_m=alt_m, ts=ts)
 
 
 def _fresh_l1_input():
@@ -75,10 +74,10 @@ class TestFillFresh(unittest.TestCase):
         self.assertEqual(inp.gyrz_quality, SensorQuality.FRESH)
         self.assertAlmostEqual(inp.gyrz, 0.3)
 
-    def test_unhealthy_imu_skips_gyrz(self):
+    def test_future_imu_timestamp_skips_gyrz(self):
         inp = _fresh_l1_input()
-        imu = _imu(gyrz_rad_s=0.3, health=False)
         now = time.monotonic()
+        imu = SimpleNamespace(gyrz_rad_s=0.3, ts=now + 0.01)
         guidance.FillFresh(inp, None, imu, None, ORIGIN_LAT, ORIGIN_LON, now)
         self.assertNotEqual(inp.gyrz_quality, SensorQuality.FRESH)
 
@@ -302,11 +301,11 @@ class TestProduceL1Output(unittest.TestCase):
 
 class TestProduceL1Input(unittest.TestCase):
     def test_all_fresh_sensors_gives_active_closed_loop(self):
-        now = time.monotonic()
         gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON + 0.001,
                    course_rad=math.radians(45.0), speed=8.0, age=0.0)
         imu = _imu(gyrz_rad_s=0.05, age=0.0)
         baro = _baro(alt_m=200.0, age=0.0)
+        now = time.monotonic()
         l1_input, mode = guidance.ProduceL1Input(
             gps, imu, baro,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON + 0.01, now,
@@ -317,8 +316,8 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertEqual(l1_input.gyrz_quality, SensorQuality.FRESH)
 
     def test_no_imu_gives_active_feedforward(self):
-        now = time.monotonic()
         gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, course_rad=0.0, speed=8.0, age=0.0)
+        now = time.monotonic()
         l1_input, mode = guidance.ProduceL1Input(
             gps, None, None,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON, now,
@@ -326,8 +325,8 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertEqual(mode, ControlMode.NOMINAL_FEEDFORWARD)
 
     def test_no_origin_gives_fail(self):
-        now = time.monotonic()
         gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, speed=8.0, age=0.0)
+        now = time.monotonic()
         l1_input, mode = guidance.ProduceL1Input(
             gps, None, None,
             None, None, ORIGIN_LAT + 0.01, ORIGIN_LON, now,
@@ -335,8 +334,8 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertEqual(mode, ControlMode.FAIL)
 
     def test_stale_gps_gives_fail(self):
-        now = time.monotonic()
         gps = _gps(ORIGIN_LAT + 0.001, ORIGIN_LON, age=guidance.POS_FRESH_AGE + 0.5)
+        now = time.monotonic()
         l1_input, mode = guidance.ProduceL1Input(
             gps, None, None,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT + 0.01, ORIGIN_LON, now,

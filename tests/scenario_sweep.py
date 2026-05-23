@@ -148,7 +148,7 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
         l1_input, mode,
         _ORIGIN_LAT, _ORIGIN_LON,
         target_lat, target_lon,
-        now, l1_state=None,
+        now,
     )
 
     ctl = control.MakeCtrler()

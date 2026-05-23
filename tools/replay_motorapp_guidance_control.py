@@ -314,7 +314,6 @@ def _make_imu(sample: Sample, now: float) -> motorapp._ImuFromApp:
         rx_ts=now,
         freefall=0,
         tumble=0,
-        health=int(ok),
     )
 
 
@@ -324,7 +323,6 @@ def _make_baro(sample: Sample, now: float) -> motorapp._BaroFromApp:
         sink_rate=sample.sink_rate_mps,
         ts=now if sample.baro_ok else None,
         rx_ts=now,
-        health=int(sample.baro_ok),
     )
 
 
@@ -349,7 +347,6 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
         return {"name": name, "rows": 0}, []
     cache = motorapp._Cache()
     ctl = control.MakeCtrler()
-    l1_state = guidance.make_l1_state()
     rows: list[dict] = []
     pending = list(samples)
     idx = 0
@@ -391,28 +388,15 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
             continue
 
         snap = _copy_cache(cache)
-        freshed_imu = motorapp._est_imu_from_history(snap.imu_history, now)
-        freshed_gps = motorapp._est_gps_from_history(
-            snap.gps_history, now, snap.start_lat, snap.start_lon, freshed_imu.gyrz_rad_s
-        )
-        freshed_baro = motorapp._est_baro_from_history(snap.baro_history, now)
-        motorapp._est_dead_reckon(snap.dr, snap.latest_gps, freshed_gps, now)
-        cache.dr = motorapp._DeadReckoning(**vars(snap.dr))
-
         l1_input, mode = guidance.ProduceL1Input(
             gps=snap.latest_gps,
             imu=snap.latest_imu,
             baro=snap.latest_baro,
-            freshed_gps=freshed_gps,
-            freshed_imu=freshed_imu,
-            freshed_baro=freshed_baro,
-            dr=snap.dr,
             origin_lat=snap.start_lat,
             origin_lon=snap.start_lon,
             target_lat=snap.target_lat,
             target_lon=snap.target_lon,
             now=now,
-            l1_state=l1_state,
         )
         g_out = guidance.ProduceL1Output(
             l1_input=l1_input,
@@ -422,7 +406,6 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
             target_lat=snap.target_lat,
             target_lon=snap.target_lon,
             now=now,
-            l1_state=l1_state,
         )
         if g_out.control_valid:
             meas = float("nan")

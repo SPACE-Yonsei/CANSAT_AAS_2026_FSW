@@ -16,7 +16,6 @@ def _reset():
     motorapp._PREV_STATE = -1
     motorapp._START_POINT_LOCKED = False
     motorapp._CONTROLLER = None
-    motorapp._L1_STATE = None
     motorapp.PI = None
     motorapp._CACHE = _Cache()
 
@@ -44,19 +43,18 @@ def _imu_msg(
     gyrx=0.0,
     gyry=0.0,
     gyrz=2.5,
-    health=1,
     ts=None,
 ):
     ts = time.monotonic() if ts is None else ts
     return (
         f"{roll},{pitch},{yaw},{accx},{accy},{accz},"
-        f"{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{ts:.4f},0,0,{health}"
+        f"{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{ts:.4f},0,0"
     )
 
 
-def _baro_msg(alt=200.5, health=1, sink=1.2, ts=None):
+def _baro_msg(alt=200.5, sink=1.2, ts=None):
     ts = time.monotonic() if ts is None else ts
-    return f"{alt},{ts:.4f},{sink},{health}"
+    return f"{alt},{ts:.4f},{sink}"
 
 
 class TestHandleMec(unittest.TestCase):
@@ -137,18 +135,13 @@ class TestHandleImu(unittest.TestCase):
         motorapp.handle_imu(_imu_msg())
         imu = motorapp._CACHE.latest_imu
         self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-2.5))  # negated: IMU gz+ = CCW
-        self.assertTrue(imu.health)
 
-    def test_legacy_14_field_payload(self):
+    def test_legacy_14_field_payload_is_rejected(self):
         motorapp.handle_imu(
             "1,2,45,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,2.5,1,77.7"
         )
         imu = motorapp._CACHE.latest_imu
-        self.assertAlmostEqual(imu.gyrz_rad_s, math.radians(-2.5))
-        self.assertAlmostEqual(imu.ts, 77.7)
-        self.assertEqual(imu.freefall, 0)
-        self.assertEqual(imu.tumble, 0)
-        self.assertTrue(imu.health)
+        self.assertIsNone(imu.gyrz_rad_s)
 
     def test_valid_payload_preserves_all_imu_fields(self):
         motorapp.handle_imu(
@@ -200,22 +193,20 @@ class TestHandleBarometer(unittest.TestCase):
     def test_valid_payload(self):
         motorapp.handle_barometer(_baro_msg(alt=150.0))
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 150.0)
-        self.assertTrue(motorapp._CACHE.latest_baro.health)
 
-    def test_legacy_3_field_payload(self):
-        motorapp.handle_barometer("150.0,1,77.7")
+    def test_valid_payload_with_nan_sink(self):
+        motorapp.handle_barometer("150.0,77.7,nan")
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 150.0)
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.ts, 77.7)
         self.assertIsNone(motorapp._CACHE.latest_baro.sink_rate)
-        self.assertTrue(motorapp._CACHE.latest_baro.health)
 
-    def test_alt_and_health(self):
-        motorapp.handle_barometer(_baro_msg(alt=200.5, health=1))
+    def test_alt_and_sink(self):
+        motorapp.handle_barometer(_baro_msg(alt=200.5, sink=1.2))
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 200.5)
-        self.assertTrue(motorapp._CACHE.latest_baro.health)
+        self.assertAlmostEqual(motorapp._CACHE.latest_baro.sink_rate, 1.2)
 
-    def test_alt_health_and_ts(self):
-        motorapp.handle_barometer(_baro_msg(alt=200.5, health=1, ts=77.7))
+    def test_alt_and_ts(self):
+        motorapp.handle_barometer(_baro_msg(alt=200.5, ts=77.7))
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.alt_m, 200.5)
         self.assertAlmostEqual(motorapp._CACHE.latest_baro.ts, 77.7, places=3)
 

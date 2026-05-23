@@ -108,7 +108,6 @@ class MockIMU:
     ts: Optional[float] = None
     freefall: int = 0   # 1=자유낙하, 0=정상
     tumble:   int = 0   # 1=텀블링,  0=안정
-    health:   int = 1
 
 
 @dataclass
@@ -116,7 +115,6 @@ class MockBaro:
     alt: Optional[float] = None        # m AGL
     ts: Optional[float] = None
     sink_rate: Optional[float] = None
-    health:    int = 1
 
 
 # ===========================================================================
@@ -187,9 +185,6 @@ def main() -> None:
 
     # ── FSW objects ─────────────────────────────────────────────────────────
     ctrler   = MakeCtrler(CTRL_CFG)
-    prev_gps  = None
-    prev_imu  = None
-    prev_baro = None
 
     # ── UDP socket ──────────────────────────────────────────────────────────
     sock = None if batch_mode else socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -276,7 +271,6 @@ def main() -> None:
             # ── Call real guidance.py ────────────────────────────────────
             l1_input, mode = ProduceL1Input(
                 gps, imu, baro,
-                prev_gps, prev_imu, prev_baro,
                 ORIGIN_LAT, ORIGIN_LON,
                 TARGET_LAT, TARGET_LON,
                 now,
@@ -305,7 +299,6 @@ def main() -> None:
             sim_pos_E   += gnd_vel_E * dt
             sim_alt     -= DESCENT_RATE_MPS * dt
 
-            prev_gps, prev_imu, prev_baro = gps, imu, baro
 
             # ── Build and send UDP payload ───────────────────────────────
             payload = {

@@ -211,13 +211,14 @@ def send_barometer_data(main_queue) -> None:
             f"{alt},{health}",
         )
         sink_str = f"{sink_rate:.4f}" if sink_rate is not None else "nan"
-        msgstructure.send_msg(
-            main_queue,
-            appargs.BarometerAppArg.AppID,
-            appargs.MotorAppArg.AppID,
-            appargs.BarometerAppArg.MID_motor_alt,
-            f"{alt:.4f},{sample_mono_ts:.4f},{sink_str},{health}",
-        )
+        if health:
+            msgstructure.send_msg(
+                main_queue,
+                appargs.BarometerAppArg.AppID,
+                appargs.MotorAppArg.AppID,
+                appargs.BarometerAppArg.MID_motor_alt,
+                f"{alt:.4f},{sample_mono_ts:.4f},{sink_str}",
+            )
         tick += 1
         if tick >= comm_tick_interval:
             tick = 0

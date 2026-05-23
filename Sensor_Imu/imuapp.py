@@ -275,15 +275,16 @@ def send_imu_data(main_queue) -> None:
             tumble   = TUMBLE
             sample_mono_ts = _last_sample_mono_ts
 
-        # health 포함해서 항상 전송 — motorapp/guidance가 health 값으로 판단
-        # freefall(1=자유낙하), tumble(1=텀블링)은 값으로 전달
-        msgstructure.send_msg(
-            main_queue,
-            appargs.ImuAppArg.AppID,
-            appargs.MotorAppArg.AppID,
-            appargs.ImuAppArg.MID_motor_imu,
-            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)}",
-        )
+        # Motor receives only samples accepted by this app; freshness is checked
+        # downstream from the original sample timestamp.
+        if int(HEALTH):
+            msgstructure.send_msg(
+                main_queue,
+                appargs.ImuAppArg.AppID,
+                appargs.MotorAppArg.AppID,
+                appargs.ImuAppArg.MID_motor_imu,
+                f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble}",
+            )
         tick += 1
         if tick >= 10:
             tick = 0

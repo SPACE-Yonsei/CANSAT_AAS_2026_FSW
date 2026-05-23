@@ -28,9 +28,6 @@ L1_MIN_M           = 5.0
 V_MIN_MPS          = 2.0
 LAT_ACC_MAX        = 4.0    # m/s^2
 COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S)
-# GPS-derived position sanity: reject positions farther than this from origin.
-# Catches cases where GPS lon is near zero while origin is at ~126 °E (≈ 11 000 km error).
-_MAX_POS_RANGE_M   = 50_000.0   # 50 km
 EARTH_RADIUS_M     = 6_371_000.0
 
 
@@ -142,22 +139,6 @@ class L1Input:
     tumble: int = 0
 
 
-@dataclass
-class L1State:
-    """Reserved state for future degraded/weak L1 command shaping."""
-    last_angular_velocity_cmd_rad_s: float = 0.0
-    last_update_ts: Optional[float] = None
-
-
-def make_l1_state() -> L1State:
-    return L1State()
-
-
-def l1_reset(state: L1State) -> None:
-    state.last_angular_velocity_cmd_rad_s = 0.0
-    state.last_update_ts = None
-
-
 def _policy_for_mode(mode: ControlMode, fail_reason: FailReason = FailReason.NONE) -> ControlPolicy:
     if mode == ControlMode.NOMINAL_CLOSED_LOOP:
         return ControlPolicy(
@@ -256,6 +237,11 @@ def _apply_policy(out: L1Output, policy: ControlPolicy) -> None:
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
 
+
+def _is_fresh(timestamp: Optional[float], now: float, max_age: float) -> bool:
+    age_s = timebase.age(now, timestamp)
+    return math.isfinite(age_s) and 0.0 <= age_s <= float(max_age)
+
 #have to add member
 @dataclass
 class L1Output:
@@ -318,13 +304,11 @@ def FillFresh(
         and gps.lat is not None
         and gps.lon is not None
         and gps.pos_ts is not None
-        and timebase.valid_age(gps.pos_ts, now, POS_FRESH_AGE)
+        and _is_fresh(gps.pos_ts, now, POS_FRESH_AGE)
         and start_lat is not None
         and start_lon is not None
     ):
-        projected = project_from_origin(
-            gps.lat, gps.lon, start_lat, start_lon, max_range_m=_MAX_POS_RANGE_M
-        )
+        projected = project_from_origin(gps.lat, gps.lon, start_lat, start_lon)
         if projected is None:
             l1_input.pos_N = None
             l1_input.pos_E = None
@@ -338,7 +322,7 @@ def FillFresh(
         and gps_course is not None
         and gps_speed is not None
         and gps.motion_ts is not None
-        and timebase.valid_age(gps.motion_ts, now, MOTION_FRESH_AGE)
+        and _is_fresh(gps.motion_ts, now, MOTION_FRESH_AGE)
     ):
         l1_input.course = gps_course
         l1_input.ground_speed_mps = gps_speed
@@ -348,8 +332,7 @@ def FillFresh(
         imu is not None
         and imu_gyrz is not None
         and imu.ts is not None
-        and getattr(imu, "health", 1)
-        and timebase.valid_age(imu.ts, now, GYRZ_FRESH_AGE)
+        and _is_fresh(imu.ts, now, GYRZ_FRESH_AGE)
     ):
         l1_input.yaw = imu_yaw
         l1_input.gyrx = imu_gyrx
@@ -363,8 +346,7 @@ def FillFresh(
         baro is not None
         and baro_alt is not None
         and baro.ts is not None
-        and getattr(baro, "health", 1)
-        and timebase.valid_age(baro.ts, now, ALT_FRESH_AGE)
+        and _is_fresh(baro.ts, now, ALT_FRESH_AGE)
     ):
         l1_input.alt         = baro_alt
         l1_input.alt_quality = SensorQuality.FRESH
@@ -442,7 +424,6 @@ def ProduceL1Input(
     target_lat: float,
     target_lon: float,
     now: float,
-    l1_state=None,
 ) -> tuple[L1Input, ControlMode]:
     l1_input = L1Input()
     l1_input.origin_lat = origin_lat
@@ -463,7 +444,6 @@ def ProduceL1Output(
     target_lat: float,
     target_lon: float,
     now: float,
-    l1_state=None,
 ) -> L1Output:
     l1_output = L1Output(timestamp=now)
     l1_output.reason = getattr(mode, "value", str(mode))

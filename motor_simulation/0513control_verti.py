@@ -50,7 +50,6 @@ class MockGPS:
 class MockIMU:
     gyrz_rad_s: Optional[float]
     ts: Optional[float]
-    health: bool = True
 
 
 @dataclass
@@ -109,7 +108,6 @@ def build_imu(case: SimulationCase, now: float) -> MockIMU:
     return MockIMU(
         gyrz_rad_s=math.radians(case.gyrz_deg_s),
         ts=now,
-        health=True,
     )
 
 
@@ -141,9 +139,6 @@ def run_single_case(case: SimulationCase) -> SimulationResult:
         gps=gps,
         imu=imu,
         baro=None,
-        old_gps=None,
-        old_imu=None,
-        old_baro=None,
         origin_lat=DEFAULT_ORIGIN_LAT,
         origin_lon=DEFAULT_ORIGIN_LON,
         target_lat=target_lat,

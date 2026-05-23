@@ -36,14 +36,14 @@ def _gps_msg(lat=37.55, lon=126.95, course=90.0, speed=10.0, ts=None):
     return f"{lat},{lon},{ts:.4f},{course},{speed},{ts:.4f}"
 
 
-def _imu_msg(gyrz=2.5, health=1, ts=None):
+def _imu_msg(gyrz=2.5, ts=None):
     ts = time.monotonic() if ts is None else ts
-    return f"1.0,2.0,45.0,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,{gyrz},{ts:.4f},0,0,{health}"
+    return f"1.0,2.0,45.0,0.1,0.2,0.3,0.4,0.5,0.6,0.0,0.0,{gyrz},{ts:.4f},0,0"
 
 
-def _baro_msg(alt=200.0, health=1, sink=1.0, ts=None):
+def _baro_msg(alt=200.0, sink=1.0, ts=None):
     ts = time.monotonic() if ts is None else ts
-    return f"{alt},{ts:.4f},{sink},{health}"
+    return f"{alt},{ts:.4f},{sink}"
 
 
 def _reset() -> None:
@@ -54,7 +54,6 @@ def _reset() -> None:
     motorapp._PREV_STATE = -1
     motorapp._START_POINT_LOCKED = False
     motorapp._CONTROLLER = None
-    motorapp._L1_STATE = None
     motorapp.PI = None
     motorapp._CACHE = _Cache()
 

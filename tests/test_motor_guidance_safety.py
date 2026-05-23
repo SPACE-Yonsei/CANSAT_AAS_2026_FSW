@@ -91,11 +91,10 @@ class TestGuidanceSafetyGates(unittest.TestCase):
         gps = SimpleNamespace(
             lat=ORIGIN_LAT + 0.001, lon=ORIGIN_LON + 0.001,
             course_rad=0.0, speed_mps=8.0,
-            pos_health=True, motion_health=True,
             pos_ts=now, motion_ts=now,
         )
-        imu = SimpleNamespace(gyrz_rad_s=0.1, ts=now, health=True)
-        baro = SimpleNamespace(alt_m=100.0, ts=now, health=True)
+        imu = SimpleNamespace(gyrz_rad_s=0.1, ts=now)
+        baro = SimpleNamespace(alt_m=100.0, ts=now)
         _, mode = guidance.ProduceL1Input(
             gps, imu, baro,
             None, None, TARGET_LAT, TARGET_LON, now,
