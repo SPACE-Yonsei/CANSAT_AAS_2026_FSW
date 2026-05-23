@@ -90,16 +90,6 @@ class TestHandleGps(unittest.TestCase):
         self.assertTrue(gps.pos_health)
         self.assertTrue(gps.motion_health)
 
-    def test_legacy_7_field_gps_payload_updates_cache(self):
-        motorapp.handle_gps("37.55,126.95,0.4,90.0,1,12,A")
-        gps = motorapp._CACHE.latest_gps
-        self.assertAlmostEqual(gps.lat, 37.55)
-        self.assertAlmostEqual(gps.lon, 126.95)
-        self.assertAlmostEqual(gps.course_rad, math.radians(90.0))
-        self.assertAlmostEqual(gps.speed_mps, 0.4)
-        self.assertTrue(gps.pos_health)
-        self.assertTrue(gps.motion_health)
-
     def test_valid_payload_uses_position_ts(self):
         motorapp.handle_gps(_gps_msg(ts=100.5))
         gps = motorapp._CACHE.latest_gps

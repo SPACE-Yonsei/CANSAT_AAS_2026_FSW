@@ -307,50 +307,6 @@ def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
     )
 
 
-def _is_binary_health_field(value: str) -> bool:
-    try:
-        parsed = float(str(value).strip())
-    except (TypeError, ValueError):
-        return False
-    return parsed in (0.0, 1.0)
-
-
-def _gps_payload_looks_legacy(fields) -> bool:
-    """Detect old lat,lon,course_deg,speed_mps,pos_health,motion_health payloads."""
-    if len(fields) != 6:
-        return False
-    if not (_is_binary_health_field(fields[4]) and _is_binary_health_field(fields[5])):
-        return False
-    try:
-        course_deg = float(fields[2])
-        speed_mps = float(fields[3])
-    except (TypeError, ValueError):
-        return False
-    return math.isfinite(course_deg) and math.isfinite(speed_mps) and 0.0 <= course_deg < 360.0
-
-
-def _gps_payload_looks_legacy_fidelity(fields) -> bool:
-    """Detect old lat,lon,speed_mps,course_deg,fix_quality,sats,rmc_status payloads."""
-    if len(fields) != 7:
-        return False
-    try:
-        speed_mps = float(fields[2])
-        course_deg = float(fields[3])
-        fix_quality = int(float(fields[4]))
-        sats = int(float(fields[5]))
-    except (TypeError, ValueError):
-        return False
-    rmc_status = str(fields[6]).strip().upper()
-    return (
-        math.isfinite(speed_mps)
-        and math.isfinite(course_deg)
-        and 0.0 <= course_deg < 360.0
-        and fix_quality >= 0
-        and sats >= 0
-        and rmc_status in {"A", "V"}
-    )
-
-
 def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
     return deque((sample_type(**vars(sample)) for sample in samples), maxlen=maxlen)
 
@@ -758,53 +714,28 @@ def handle_gps(data: str) -> None:
     """Parse GPS payload and update cache.
 
     Current gpsapp payload is lat,lon,pos_ts,course_deg,spd_mps,motion_ts.
-    Legacy harnesses may still send lat,lon,course_deg,spd_mps,pos_health,motion_health.
-    Older sensor logs may send lat,lon,spd_mps,course_deg,fix_quality,sats,rmc_status.
     """
     global _START_POINT_LOCKED
     fields = data.split(",")
-    if len(fields) not in (6, 7):
-        LOGGER.warning("GNSS parse: expected 6 or 7 fields | raw=%r", data)
+    if len(fields) != 6:
+        LOGGER.warning("GNSS parse: expected 6 fields | raw=%r", data)
         return
     try:
         lat       = float(fields[0])
         lon       = float(fields[1])
         rx_ts = timebase.now()
-        if _gps_payload_looks_legacy(fields):
-            course_deg = float(fields[2])
-            speed_mps = float(fields[3])
-            pos_ts = rx_ts
-            motion_ts = rx_ts
-            payload_pos_health = bool(int(float(fields[4])))
-            payload_motion_health = bool(int(float(fields[5])))
-        elif _gps_payload_looks_legacy_fidelity(fields):
-            speed_mps = float(fields[2])
-            course_deg = float(fields[3])
-            fix_quality = int(float(fields[4]))
-            sats = int(float(fields[5]))
-            rmc_status = str(fields[6]).strip().upper()
-            pos_ts = rx_ts
-            motion_ts = rx_ts
-            payload_pos_health = (
-                fix_quality >= 1
-                and sats >= int(getattr(config, "GPS_MIN_SATS", 4))
-            )
-            payload_motion_health = rmc_status == "A"
-        else:
-            pos_ts = float(fields[2])
-            course_deg = float(fields[3])   # nan when motion invalid
-            speed_mps = float(fields[4])    # nan when motion invalid
-            motion_ts = float(fields[5])    # nan when motion invalid
-            payload_pos_health = True
-            payload_motion_health = True
+        pos_ts = float(fields[2])
+        course_deg = float(fields[3])   # nan when motion invalid
+        speed_mps = float(fields[4])    # nan when motion invalid
+        motion_ts = float(fields[5])    # nan when motion invalid
     except (ValueError, IndexError) as exc:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
     with _UPDATE_LOCK:
         start_lon = _CACHE.start_lon
-    pos_valid = payload_pos_health and _gps_position_sanity_reason(lat, lon, start_lon) is None
-    motion_valid = payload_motion_health and pos_valid and _gps_motion_sane(course_deg, speed_mps)
+    pos_valid = _gps_position_sanity_reason(lat, lon, start_lon) is None
+    motion_valid = pos_valid and _gps_motion_sane(course_deg, speed_mps)
 
     course_rad = math.radians(course_deg) if motion_valid else float("nan")
     sample = _GpsFromApp(
