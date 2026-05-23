@@ -521,95 +521,94 @@ def _sync_origin_to_prevstate() -> bool:
     return True
 
 
-def ctrl_parafoil(main_queue=None) -> None:
-    """Parafoil control loop.
+def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
+    """One iteration of the ctrl_parafoil loop. Pulled out for testability.
 
-    Per-cycle pipeline:
-        snapshot _CACHE  (under _UPDATE_LOCK)
-        gates: motor enabled / state >= 3 / state != landed / manual override
-        guidance.decidefresh -> produceL1input -> produceL1output
-        sync origin to _CACHE + prevstate on first lock
-        control.ProduceCtrlInput -> ProduceCtrlOutput
-        control.ProducePulse / sensorlog / diag
-        sleep(max(0, period - elapsed))  ← rate compensated
+    Returns the CtrlOutput emitted this cycle (or None if a gate short-circuited
+    without producing a command). Side effects: PWM, logs, diag telemetry.
     """
     global _ORIGIN_SAVED
-    period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
-    while MOTORAPP_RUNSTATUS:
-        cycle_start = time.monotonic()
-        now = timebase.now()
-        try:
-            with _UPDATE_LOCK:
-                motor_enabled = MOTOR_ENABLED
-                state         = STATE
-                manual_mode   = MANUAL_STEER_MODE
-                snap          = _cache_snapshot()
+    try:
+        with _UPDATE_LOCK:
+            motor_enabled = MOTOR_ENABLED
+            state         = STATE
+            manual_mode   = MANUAL_STEER_MODE
+            snap          = _cache_snapshot()
 
-            # ── Gate 1: motor disabled or pre-deploy → zero PWM ───────────────
-            if not motor_enabled or state < 3:
-                if PI is not None:
-                    control.WriteZero(PI)
-                _sleep_for_period(cycle_start, period)
-                continue
+        # ── Gate 1: motor disabled or pre-deploy → zero PWM ───────────────────
+        if not motor_enabled or state < 3:
+            if PI is not None:
+                control.WriteZero(PI)
+            return None
 
-            # ── Gate 2: landed → cut PWM ──────────────────────────────────────
-            if state == 5:
-                if PI is not None:
-                    control.WriteOff(PI)
-                _sleep_for_period(cycle_start, period)
-                continue
+        # ── Gate 2: landed → cut PWM ──────────────────────────────────────────
+        if state == 5:
+            if PI is not None:
+                control.WriteOff(PI)
+            return None
 
-            # ── Gate 3: manual steer override ─────────────────────────────────
-            if manual_mode != config.MOTOR_MANUAL_NEUTRAL:
-                cmd = _manual_steer_command(now, manual_mode)
-                if PI is not None:
-                    control.ProducePulse(PI, cmd)
-                sensorlog.log_motor_ctrl(cmd)
-                _send_diag(main_queue, cmd,
-                           guidance.L1Output(timestamp=now, reason=cmd.mode),
-                           cmd.mode, snap)
-                _sleep_for_period(cycle_start, period)
-                continue
-
-            # ── Guidance pipeline ─────────────────────────────────────────────
-            fresh    = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
-                                             snap.latest_baro, _GUIDANCE_STATE, now)
-            l1_input = guidance.produceL1input(fresh, snap.latest_gps, snap.latest_imu,
-                                                _GUIDANCE_STATE, state, now)
-
-            # Sync origin to cache + prevstate exactly once
-            if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
-                _ORIGIN_SAVED = True
-
-            g_out = guidance.produceL1output(l1_input)
-            g_out.timestamp = now
-
-            # ── Control ───────────────────────────────────────────────────────
-            if g_out.control_valid:
-                measured_dps = _measured_yaw_rate_dps(g_out, fresh, snap.latest_imu)
-                ctrl_in = control.ProduceCtrlInput(g_out, now)
-                with _CTRL_LOCK:
-                    cmd = control.ProduceCtrlOutput(
-                        _CONTROLLER, ctrl_in, measured_dps, now,
-                    )
-            else:
-                cmd = control.WriteNeutral(now, g_out.reason
-                    or config.MOTOR_REASON_GUIDANCE_INACTIVE)
-
+        # ── Gate 3: manual steer override ─────────────────────────────────────
+        if manual_mode != config.MOTOR_MANUAL_NEUTRAL:
+            cmd = _manual_steer_command(now, manual_mode)
             if PI is not None:
                 control.ProducePulse(PI, cmd)
             sensorlog.log_motor_ctrl(cmd)
-            diag_state = g_out.reason or (
-                config.MOTOR_REASON_DISABLED if not g_out.control_valid
-                else config.MOTOR_REASON_GUIDANCE_INACTIVE
-            )
-            _send_diag(main_queue, cmd, g_out, diag_state, snap)
+            _send_diag(main_queue, cmd,
+                       guidance.L1Output(timestamp=now, reason=cmd.mode),
+                       cmd.mode, snap)
+            return cmd
 
-        except Exception:
-            logger.exception("ctrl_parafoil: unhandled exception; writing zero PWM")
-            if PI is not None:
-                control.WriteZero(PI)
+        # ── Guidance pipeline ─────────────────────────────────────────────────
+        fresh    = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
+                                         snap.latest_baro, _GUIDANCE_STATE, now)
+        l1_input = guidance.produceL1input(fresh, snap.latest_gps, snap.latest_imu,
+                                            _GUIDANCE_STATE, state, now)
 
+        # Sync origin to cache + prevstate exactly once
+        if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
+            _ORIGIN_SAVED = True
+
+        g_out = guidance.produceL1output(l1_input)
+        g_out.timestamp = now
+
+        # ── Control ───────────────────────────────────────────────────────────
+        if g_out.control_valid:
+            measured_dps = _measured_yaw_rate_dps(g_out, fresh, snap.latest_imu)
+            ctrl_in = control.ProduceCtrlInput(g_out, now)
+            with _CTRL_LOCK:
+                cmd = control.ProduceCtrlOutput(
+                    _CONTROLLER, ctrl_in, measured_dps, now,
+                )
+        else:
+            cmd = control.WriteNeutral(now, g_out.reason
+                or config.MOTOR_REASON_GUIDANCE_INACTIVE)
+
+        if PI is not None:
+            control.ProducePulse(PI, cmd)
+        sensorlog.log_motor_ctrl(cmd)
+        diag_state = g_out.reason or (
+            config.MOTOR_REASON_DISABLED if not g_out.control_valid
+            else config.MOTOR_REASON_GUIDANCE_INACTIVE
+        )
+        _send_diag(main_queue, cmd, g_out, diag_state, snap)
+        return cmd
+
+    except Exception:
+        logger.exception("ctrl_parafoil: unhandled exception; writing zero PWM")
+        if PI is not None:
+            control.WriteZero(PI)
+        return None
+
+
+def ctrl_parafoil(main_queue=None) -> None:
+    """Parafoil control loop. Delegates per-cycle work to _ctrl_cycle.
+
+    Loop rate compensated: sleep duration = period − cycle compute time.
+    """
+    period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
+    while MOTORAPP_RUNSTATUS:
+        cycle_start = time.monotonic()
+        _ctrl_cycle(main_queue, timebase.now())
         _sleep_for_period(cycle_start, period)
 
 
