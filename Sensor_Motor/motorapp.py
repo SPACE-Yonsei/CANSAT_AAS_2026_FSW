@@ -268,7 +268,10 @@ def handle_barometer(data: str) -> None:
 
 
 def handle_target_coord(data: str) -> None:
-    """Target lat,lon — single source of truth is _GUIDANCE_STATE."""
+    """Target lat,lon — single source of truth is _GUIDANCE_STATE.
+
+    Rejects out-of-range coords and the (0,0) sentinel (matches init()).
+    """
     fields = data.split(",")
     if len(fields) != 2:
         return
@@ -279,6 +282,8 @@ def handle_target_coord(data: str) -> None:
         return
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return
+    if abs(lat) < 1e-9 and abs(lon) < 1e-9:
+        return   # (0,0) sentinel — not a real target
     with _UPDATE_LOCK:
         _CACHE.target_lat = lat   # mirror for diag/back-compat snapshot
         _CACHE.target_lon = lon

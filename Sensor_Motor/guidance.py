@@ -646,14 +646,22 @@ def convert_target_to_local_en_if_possible(state: GuidanceState) -> None:
 
 
 def reset_guidance_state_for_flight(state: GuidanceState) -> None:
-    """Reset flight nav state. Target lat/lon preserved; origin cleared."""
+    """Reset flight nav state. Target lat/lon preserved; everything else cleared.
+
+    target_E/N + target_ready are reset because they are origin-relative; the
+    next cycle re-projects them once a new origin is acquired.
+    """
+    nan = float("nan")
     state.origin_lat   = 0.0
     state.origin_lon   = 0.0
     state.origin_ready = False
     state.gps_history.clear()
     state.imu_history.clear()
     state.baro_history.clear()
-    nan = float("nan")
+    # Target lat/lon preserved; EN projection and ready flag invalidated.
+    state.target_E = nan
+    state.target_N = nan
+    state.target_ready = False
     state.nav_E = nan; state.nav_N = nan; state.nav_course = nan
     state.nav_V = nan; state.nav_vE = nan; state.nav_vN = nan
     state.nav_confidence = 0.0; state.nav_dr_age = 0.0
@@ -665,8 +673,6 @@ def reset_guidance_state_for_flight(state: GuidanceState) -> None:
     state.gyro_integral_since_dropout = 0.0
     state.last_dr_update_time = nan
     state.detumble_exit_start = nan
-    if state.target_lat or state.target_lon:
-        state.target_ready = False
 
 
 # ── produceL1input ────────────────────────────────────────────────────────────
