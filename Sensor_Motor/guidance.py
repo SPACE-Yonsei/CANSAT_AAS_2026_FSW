@@ -515,30 +515,25 @@ def ProduceL1Output(
         return l1_output
 
     target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
-    path_len = math.hypot(target_N, target_E)
-    if path_len <= 1e-6:
+    rel_N = target_N - float(pos_N)
+    rel_E = target_E - float(pos_E)
+    target_range = math.hypot(rel_N, rel_E)
+    if target_range <= 1e-6:
         l1_output.reason = config.FAIL_REASON_NO_POSITION
         l1_output.fail_reason = FailReason.NO_POSITION.value
         return l1_output
 
     speed_for_l1 = max(float(speed), V_MIN_MPS)
     L1_distance = max((L1_DAMPING * policy.l1_period_s / math.pi) * speed_for_l1, L1_MIN_M)
-    unit_N = target_N / path_len
-    unit_E = target_E / path_len
-    along = pos_N * unit_N + pos_E * unit_E
-    cross = unit_N * pos_E - unit_E * pos_N
-    carrot_along = min(max(along + L1_distance, 0.0), path_len)
-    carrot_N = carrot_along * unit_N
-    carrot_E = carrot_along * unit_E
+    # Fixed-target homing: the target itself is the carrot for the entire flight.
+    # The period-based L1 distance remains only as the controller gain scale.
+    carrot_N = target_N
+    carrot_E = target_E
 
-    path_heading = math.atan2(unit_E, unit_N)
-    # nu1: turn angle caused by position error. It drives cross-track error
-    # back toward the path.
-    nu1 = math.atan2(-cross, max(L1_distance, 1e-6))
-    # nu2: turn angle caused by direction error. It aligns current course to
-    # the path heading.
-    nu2 = (path_heading - course + math.pi) % (2.0 * math.pi) - math.pi
-    nu = _wrap_pi(nu1 + nu2)
+    target_bearing = math.atan2(rel_E, rel_N)
+    nu1 = 0.0
+    nu2 = _wrap_pi(target_bearing - float(course))
+    nu = nu2
     nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
     K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
     lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
@@ -558,8 +553,8 @@ def ProduceL1Output(
     l1_output.nu1 = nu1
     l1_output.nu2 = nu2
     l1_output.nu = nu
-    l1_output.crossTrack = cross
-    l1_output.alongTrack = along
+    l1_output.crossTrack = 0.0
+    l1_output.alongTrack = target_range
     l1_output.pos_N = pos_N
     l1_output.pos_E = pos_E
     l1_output.target_N = target_N

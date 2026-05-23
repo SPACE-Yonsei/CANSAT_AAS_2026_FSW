@@ -62,9 +62,9 @@ class TestGuidanceSafetyGates(unittest.TestCase):
         self.assertFalse(out.nominal)
         self.assertEqual(out.reason, "FAIL")
 
-    def test_origin_equals_target_returns_invalid_path(self):
+    def test_current_position_at_target_returns_invalid_path(self):
         out = guidance.ProduceL1Output(
-            _active_input(), ControlMode.NOMINAL_CLOSED_LOOP,
+            _active_input(pos_n=0.0, pos_e=0.0), ControlMode.NOMINAL_CLOSED_LOOP,
             ORIGIN_LAT, ORIGIN_LON, ORIGIN_LAT, ORIGIN_LON, time.monotonic(),
         )
         self.assertFalse(out.nominal)
