@@ -144,8 +144,8 @@ V_MAX_MPS = 15.0
 # ── Sensor freshness thresholds ───────────────────────────────────────────────
 GPS_FRESH_MAX_AGE_S         = 2.0
 GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias
-IMU_FRESH_MAX_AGE_S         = 0.8
-BARO_FRESH_MAX_AGE_S        = 0.8
+IMU_FRESH_MAX_AGE_S         = 1.5   # 0.8→1.5: reinit(~2s) 도중 0.8s 만에 stale 판정되어 CLOSED→OPEN 강제전환 방지
+BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터는 8회 miss 만에 stale — GPS 기준과 통일
 BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
 HISTORY_WINDOW_S  = 3.0

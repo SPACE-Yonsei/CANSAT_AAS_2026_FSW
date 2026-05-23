@@ -164,6 +164,7 @@ def imuapp_init() -> None:
 
 def _try_reinit() -> None:
     global _i2c_instance, _imu_instance, _last_reinit_ts, _last_sample_ts
+    global _last_sample_mono_ts  # reinit 완료 후 monotonic ts도 갱신해야 motorapp 쪽 stale 판정을 막을 수 있음
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
@@ -174,6 +175,10 @@ def _try_reinit() -> None:
         # Reset sample timestamp so the stale watchdog doesn't fire immediately
         # after a long reinit (reinit duration can exceed IMU_REINIT_COOLDOWN_SEC).
         _last_sample_ts = timebase.wall_now()
+        # monotonic ts도 현재 시각으로 갱신:
+        # 갱신하지 않으면 send_imu_data가 reinit 전 구 timestamp를 계속 전송하여
+        # motorapp decidefresh가 IMU_FRESH_MAX_AGE_S 초과 직후 stale 판정을 내린다.
+        _last_sample_mono_ts = timebase.now()
     except KeyboardInterrupt:
         raise
     except Exception as exc:
