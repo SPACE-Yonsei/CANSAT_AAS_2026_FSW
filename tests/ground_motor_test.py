@@ -204,10 +204,10 @@ def run_section_a() -> None:
 def _make_l1_input(pos_N: float, pos_E: float, course_rad: float) -> guidance.L1Input:
     """하드코딩된 상태로 L1Input 생성. 모든 품질 FRESH 강제."""
     inp = guidance.L1Input()
-    inp.pos_N = pos_N
-    inp.pos_E = pos_E
+    inp.N = pos_N
+    inp.E = pos_E
     inp.course = course_rad
-    inp.ground_speed_mps = GROUND_SPEED_MPS
+    inp.V = GROUND_SPEED_MPS
     inp.gyrz = GYRZ_RAD_S
     inp.alt = ALT_M
     inp.pos_quality    = guidance.SensorQuality.FRESH

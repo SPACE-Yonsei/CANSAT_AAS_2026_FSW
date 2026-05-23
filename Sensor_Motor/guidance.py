@@ -237,12 +237,7 @@ class GuidanceState:
 
 @dataclass
 class L1Input:
-    """Unified navigation state passed from produceL1input → produceL1output.
-
-    Field naming follows the spec convention (E/N/V) as primary.
-    Legacy names (pos_E/pos_N/ground_speed_mps) are kept as backward-compat
-    properties so existing callers continue to work unchanged.
-    """
+    """Unified navigation state passed from produceL1input → produceL1output."""
     valid: bool = False
     reason: str = ""
     control_mode: Optional[ControlMode] = None
@@ -271,31 +266,6 @@ class L1Input:
     imu_age: float = math.inf
     barometer_age: float = math.inf
     dr_age: float = 0.0
-
-    # ── Backward-compat properties (read/write via E/N/V) ─────────────────────
-    @property
-    def pos_E(self) -> Optional[float]:
-        return self.E
-
-    @pos_E.setter
-    def pos_E(self, v: Optional[float]) -> None:
-        self.E = v
-
-    @property
-    def pos_N(self) -> Optional[float]:
-        return self.N
-
-    @pos_N.setter
-    def pos_N(self, v: Optional[float]) -> None:
-        self.N = v
-
-    @property
-    def ground_speed_mps(self) -> Optional[float]:
-        return self.V
-
-    @ground_speed_mps.setter
-    def ground_speed_mps(self, v: Optional[float]) -> None:
-        self.V = v
 
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
@@ -1209,12 +1179,12 @@ def produceL1output(l1input: L1Input) -> L1Output:
         return out
 
     # ── Validate nav state ────────────────────────────────────────────────────
-    pos_E = l1input.pos_E
-    pos_N = l1input.pos_N
+    pos_E = l1input.E
+    pos_N = l1input.N
     tgt_E = l1input.target_E
     tgt_N = l1input.target_N
     course = l1input.course
-    V_raw = l1input.ground_speed_mps
+    V_raw = l1input.V
 
     if None in (pos_E, pos_N, tgt_E, tgt_N, course, V_raw):
         out.reason = "FAIL_NO_NAV_STATE"

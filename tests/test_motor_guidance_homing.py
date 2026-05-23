@@ -131,10 +131,10 @@ class TestGpsTrackingClosed(unittest.TestCase):
         fresh = decidefresh(gps, imu, None, state, now)
         l1 = produceL1input(fresh, gps, imu, state, 3, now)
         self.assertTrue(l1.valid)
-        self.assertIsNotNone(l1.pos_N)
-        self.assertIsNotNone(l1.pos_E)
+        self.assertIsNotNone(l1.N)
+        self.assertIsNotNone(l1.E)
         self.assertIsNotNone(l1.course)
-        self.assertAlmostEqual(l1.ground_speed_mps, 7.0)
+        self.assertAlmostEqual(l1.V, 7.0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -339,10 +339,10 @@ class TestProduceL1Output(unittest.TestCase):
         inp = guidance.L1Input()
         inp.valid = True
         inp.control_mode = mode
-        inp.pos_E = pos_E
-        inp.pos_N = pos_N
+        inp.E = pos_E
+        inp.N = pos_N
         inp.course = math.radians(course_deg)
-        inp.ground_speed_mps = speed
+        inp.V = speed
         inp.target_E = target_E
         inp.target_N = target_N
         inp.confidence = 1.0
@@ -462,10 +462,10 @@ class TestMotorOutput(unittest.TestCase):
         inp = guidance.L1Input()
         inp.valid = True
         inp.control_mode = mode
-        inp.pos_E = 0.0
-        inp.pos_N = 0.0
+        inp.E = 0.0
+        inp.N = 0.0
         inp.course = 0.0
-        inp.ground_speed_mps = 8.0
+        inp.V = 8.0
         inp.target_E = 0.0
         inp.target_N = 900.0
         inp.confidence = 1.0
@@ -529,10 +529,10 @@ class TestMotorOutput(unittest.TestCase):
         inp = guidance.L1Input()
         inp.valid = True
         inp.control_mode = ControlMode.GPS_TRACKING_CLOSED
-        inp.pos_E = 0.0
-        inp.pos_N = 0.0
+        inp.E = 0.0
+        inp.N = 0.0
         inp.course = 0.0  # north
-        inp.ground_speed_mps = 20.0  # fast → large yaw_rate
+        inp.V = 20.0  # fast → large yaw_rate
         inp.target_E = 900.0  # east → 90 deg nu
         inp.target_N = 0.0
         inp.confidence = 1.0
@@ -649,14 +649,10 @@ class TestSpec17_1_GpsTrackingClosed(unittest.TestCase):
         self.assertEqual(l1.control_mode, ControlMode.GPS_TRACKING_CLOSED)
         self.assertEqual(l1.dr_method, config.DR_METHOD_NONE)
         self.assertAlmostEqual(l1.confidence, 1.0)
-        # Spec-primary aliases populated
+        # Spec-primary fields populated
         self.assertIsNotNone(l1.E)
         self.assertIsNotNone(l1.N)
         self.assertIsNotNone(l1.V)
-        # Backward-compat aliases identical
-        self.assertEqual(l1.E, l1.pos_E)
-        self.assertEqual(l1.N, l1.pos_N)
-        self.assertEqual(l1.V, l1.ground_speed_mps)
 
 
 class TestSpec17_2_GpsTrackingOpen(unittest.TestCase):
