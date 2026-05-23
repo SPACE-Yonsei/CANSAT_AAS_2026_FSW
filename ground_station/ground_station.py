@@ -1697,8 +1697,11 @@ class GroundStation(tk.Tk):
 
     _DIST_GRAPH_MAX_HISTORY = 120
 
+    _DIST_GRAPH_MAX_DISPLAY_M = 200.0
+
     def _update_dist_graph(self, dist_m: float | None) -> None:
         if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
+            dist_m = min(dist_m, self._DIST_GRAPH_MAX_DISPLAY_M)
             self._dist_to_target_history.append(dist_m)
             if len(self._dist_to_target_history) > self._DIST_GRAPH_MAX_HISTORY:
                 self._dist_to_target_history = (
@@ -1722,9 +1725,9 @@ class GroundStation(tk.Tk):
                 font=_MAP_FONT_SMALL,
             )
             return
-        max_d = max(hist)
-        min_d = min(hist)
-        span = (max_d - min_d) or 1.0
+        scale_max = self._DIST_GRAPH_MAX_DISPLAY_M
+        scale_min = 0.0
+        span = scale_max - scale_min
         pad_l, pad_r, pad_t, pad_b = 40, 6, 4, 16
         pw = max(10, w - pad_l - pad_r)
         ph = max(10, h - pad_t - pad_b)
@@ -1734,7 +1737,7 @@ class GroundStation(tk.Tk):
         pts: list[float] = []
         for i, d in enumerate(hist):
             x = pad_l + (i / (n - 1)) * pw
-            y = pad_t + ph - ((d - min_d) / span) * ph
+            y = pad_t + ph - ((d - scale_min) / span) * ph
             pts.extend([x, y])
         if len(pts) >= 4:
             c.create_line(*pts, fill="#38bdf8", width=2, smooth=False)
@@ -1748,14 +1751,14 @@ class GroundStation(tk.Tk):
         )
         c.create_text(
             pad_l - 2, pad_t,
-            text=f"{max_d:.0f}",
+            text=f"{scale_max:.0f}",
             fill="#94a3b8",
             font=_MAP_FONT_SMALL,
             anchor="e",
         )
         c.create_text(
             pad_l - 2, h - pad_b,
-            text=f"{min_d:.0f}",
+            text=f"{scale_min:.0f}",
             fill="#94a3b8",
             font=_MAP_FONT_SMALL,
             anchor="e",
