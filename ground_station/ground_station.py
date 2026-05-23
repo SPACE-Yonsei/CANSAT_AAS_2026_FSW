@@ -498,6 +498,8 @@ class SerialWorker(threading.Thread):
 
     def run(self) -> None:
         buf = bytearray()
+        marker = f"${TEAM_ID},".encode()
+        marker_str = f"${TEAM_ID},"
         while not self._stop.is_set():
             try:
                 chunk = self._ser.read(256)
@@ -507,13 +509,37 @@ class SerialWorker(threading.Thread):
             if not chunk:
                 continue
             buf.extend(chunk)
+            # 1) \n 기준으로 완성된 라인 추출
             while True:
                 nl = buf.find(b"\n")
                 if nl < 0:
                     break
                 raw = bytes(buf[:nl])
                 del buf[: nl + 1]
-                line = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()
+                text = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()
+                if not text:
+                    continue
+                # 2) 한 라인에 패킷이 여러 개 붙어 있으면 ($1070, 기준) 재분리
+                if marker_str in text:
+                    pieces = text.split(marker_str)
+                    for i, piece in enumerate(pieces):
+                        piece = piece.strip()
+                        if not piece:
+                            continue
+                        self._rx.put((marker_str + piece) if i > 0 else piece)
+                else:
+                    self._rx.put(text)
+            # 3) \n 없이 버퍼에 패킷이 2개 이상 쌓인 경우 강제 추출
+            while True:
+                first = buf.find(marker)
+                if first < 0:
+                    break
+                second = buf.find(marker, first + len(marker))
+                if second < 0:
+                    break
+                raw = bytes(buf[first:second])
+                del buf[:second]
+                line = raw.decode("utf-8", errors="ignore").strip()
                 if line:
                     self._rx.put(line)
 
@@ -569,6 +595,8 @@ class GroundStation(tk.Tk):
         self._battery_pct_var = tk.StringVar(value="—")
         self._dist_graph_canvas: tk.Canvas | None = None
         self._dist_to_target_history: list[float] = []
+        self._alt_graph_canvas: tk.Canvas | None = None
+        self._alt_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
 
         self._build_ui()
@@ -748,6 +776,17 @@ class GroundStation(tk.Tk):
         self._dist_graph_canvas = tk.Canvas(dist_box, background="#111827", highlightthickness=0)
         self._dist_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         self._dist_graph_canvas.bind("<Configure>", lambda _e: self._draw_dist_graph())
+
+        # Altitude graph (11th box) — row 5, col 0 (0 ~ 200 m 고정)
+        _alt_row = _dist_row + 1
+        wrap.rowconfigure(_alt_row, weight=1)
+        alt_box = ttk.LabelFrame(wrap, text="Altitude (m) — 0 ~ 200 m")
+        alt_box.grid(row=_alt_row, column=0, sticky="nsew", padx=6, pady=4)
+        alt_box.columnconfigure(0, weight=1)
+        alt_box.rowconfigure(0, weight=1)
+        self._alt_graph_canvas = tk.Canvas(alt_box, background="#111827", highlightthickness=0)
+        self._alt_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self._alt_graph_canvas.bind("<Configure>", lambda _e: self._draw_alt_graph())
 
     def _build_map_and_motor(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
@@ -1701,7 +1740,6 @@ class GroundStation(tk.Tk):
 
     def _update_dist_graph(self, dist_m: float | None) -> None:
         if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
-            dist_m = min(dist_m, self._DIST_GRAPH_MAX_DISPLAY_M)
             self._dist_to_target_history.append(dist_m)
             if len(self._dist_to_target_history) > self._DIST_GRAPH_MAX_HISTORY:
                 self._dist_to_target_history = (
@@ -1737,7 +1775,7 @@ class GroundStation(tk.Tk):
         pts: list[float] = []
         for i, d in enumerate(hist):
             x = pad_l + (i / (n - 1)) * pw
-            y = pad_t + ph - ((d - scale_min) / span) * ph
+            y = pad_t + ph - ((min(d, scale_max) - scale_min) / span) * ph
             pts.extend([x, y])
         if len(pts) >= 4:
             c.create_line(*pts, fill="#38bdf8", width=2, smooth=False)
@@ -1872,17 +1910,18 @@ class GroundStation(tk.Tk):
             gy = pt + (ph * i / n_grid)
             c.create_line(pl, gy, pr, gy, fill=_MAP_GRID, width=1, dash=(3, 5))
 
-        # Axis ticks: longitude along bottom, latitude along left
+        # Axis ticks: East offset (m) along bottom, North offset (m) along left
         n_ticks = 5
         for i in range(n_ticks + 1):
             t = i / n_ticks
             px = pl + pw * t
             lon_v = inv_lon(px)
+            east_m = (lon_v - ref_lon) * meter_per_lon
             c.create_line(px, pb, px, pb + 5, fill=_MAP_TICK, width=2)
             c.create_text(
                 px,
                 pb + 8,
-                text=f"{lon_v:.{dec}f}°",
+                text=f"{east_m:+.0f}m",
                 fill=_MAP_TICK,
                 font=_MAP_FONT_TICK,
                 anchor="n",
@@ -1892,11 +1931,12 @@ class GroundStation(tk.Tk):
             t = i / n_ticks
             py = pb - ph * t
             lat_v = inv_lat(py)
+            north_m = (lat_v - ref_lat) * 111320.0
             c.create_line(pl - 5, py, pl, py, fill=_MAP_TICK, width=2)
             c.create_text(
                 pl - 8,
                 py,
-                text=f"{lat_v:.{dec}f}°",
+                text=f"{north_m:+.0f}m",
                 fill=_MAP_TICK,
                 font=_MAP_FONT_TICK,
                 anchor="e",
@@ -1905,7 +1945,7 @@ class GroundStation(tk.Tk):
         c.create_text(
             (pl + pr) / 2.0,
             h - 6,
-            text="Longitude (°)  —  east →",
+            text="East offset (m)  →",
             fill=_MAP_AXIS_LABEL,
             font=_MAP_FONT_AXIS,
             anchor="s",
@@ -1913,7 +1953,7 @@ class GroundStation(tk.Tk):
         c.create_text(
             8,
             (pt + pb) / 2.0,
-            text="Latitude (°)",
+            text="North (m)",
             fill=_MAP_AXIS_LABEL,
             font=_MAP_FONT_AXIS,
             anchor="center",
@@ -1938,9 +1978,9 @@ class GroundStation(tk.Tk):
         else:
             _ref_lbl = "centroid"
         scale_txt = (
-            f"ref {_ref_lbl}  E±{half_e:.0f}m  N±{half_n:.0f}m"
-            f"  scale×{self._map_user_scale:.2f}"
-            f"  (max ±{int(_MAP_REF_MAX_HALF_M / 1000)}km)"
+            f"ref {_ref_lbl} ({ref_lat:.5f}°, {ref_lon:.5f}°)"
+            f"  E±{half_e:.0f}m  N±{half_n:.0f}m"
+            f"  ×{self._map_user_scale:.2f}"
         )
         c.create_text(pl + 4, pt + 4, text=scale_txt, anchor="nw", fill=_MAP_AXIS_LABEL, font=_MAP_FONT_SMALL)
 
