@@ -14,10 +14,11 @@ def _reset():
     motorapp.MOTOR_ENABLED = True
     motorapp.STATE = 0
     motorapp._PREV_STATE = -1
-    motorapp._START_POINT_LOCKED = False
+    motorapp._ORIGIN_SAVED = False
     motorapp._CONTROLLER = None
     motorapp.PI = None
     motorapp._CACHE = _Cache()
+    motorapp._GUIDANCE_STATE = guidance.GuidanceState()
 
 
 def _gps_msg(lat=37.55, lon=126.95, course=90.0, speed=12.0, pos=True, motion=True, ts=None):
@@ -107,8 +108,9 @@ class TestHandleGps(unittest.TestCase):
         self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
         self.assertIsNone(motorapp._CACHE.latest_gps.course_rad)
 
-class TestHandleGpsStartPointLocking(unittest.TestCase):
-    """Tests for the start-point locking path in handle_gps (STATE >= 3)."""
+class TestHandleGpsDoesNotLockOrigin(unittest.TestCase):
+    """handle_gps must NOT set origin/start point — that path now lives in
+    guidance.produceL1input via the ctrl_parafoil loop."""
 
     def setUp(self):
         _reset()
@@ -116,15 +118,17 @@ class TestHandleGpsStartPointLocking(unittest.TestCase):
     def test_state_less_than_3_does_not_lock(self):
         motorapp.STATE = 2
         motorapp.handle_gps(_gps_msg())
-        self.assertFalse(motorapp._START_POINT_LOCKED)
         self.assertIsNone(motorapp._CACHE.start_lat)
+        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
 
-    def test_state3_healthy_gps_locks_start_point(self):
+    def test_state3_handle_gps_alone_does_not_set_origin(self):
         motorapp.STATE = 3
         motorapp.handle_gps(_gps_msg())
-        self.assertTrue(motorapp._START_POINT_LOCKED)
-        self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
-        self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
+        # handle_gps only updates the cache; origin acquisition is deferred.
+        self.assertIsNone(motorapp._CACHE.start_lat)
+        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
+        # Cache itself was updated
+        self.assertAlmostEqual(motorapp._CACHE.latest_gps.lat, 37.55)
 
 
 class TestHandleImu(unittest.TestCase):
@@ -264,30 +268,30 @@ class TestHandleFlightState(unittest.TestCase):
         motorapp.handle_flight_state("4")
         self.assertEqual(motorapp._PREV_STATE, 2)
 
-    def test_below_3_clears_start_point(self):
+    def test_below_3_clears_start_point_and_resets_origin(self):
         motorapp._CACHE.start_lat = 37.55
         motorapp._CACHE.start_lon = 126.95
-        motorapp._START_POINT_LOCKED = True
+        motorapp._ORIGIN_SAVED = True
+        motorapp._GUIDANCE_STATE.origin_lat = 37.55
+        motorapp._GUIDANCE_STATE.origin_lon = 126.95
+        motorapp._GUIDANCE_STATE.origin_ready = True
         motorapp.STATE = 3
         motorapp.handle_flight_state("2")
         self.assertIsNone(motorapp._CACHE.start_lat)
-        self.assertFalse(motorapp._START_POINT_LOCKED)
+        self.assertFalse(motorapp._ORIGIN_SAVED)
+        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
 
-    def test_state3_with_healthy_gps_locks_start_point(self):
+    def test_state3_does_not_lock_immediately(self):
+        """Origin lock is now performed inside the ctrl_parafoil pipeline
+        (guidance.produceL1input), not in handle_flight_state."""
         motorapp._CACHE.latest_gps.lat = 37.55
         motorapp._CACHE.latest_gps.lon = 126.95
         motorapp._CACHE.latest_gps.pos_ts = time.monotonic()
         motorapp._CACHE.latest_gps.pos_health = True
         motorapp.handle_flight_state("3")
-        self.assertTrue(motorapp._START_POINT_LOCKED)
-        self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
-        self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
-
-    def test_state3_without_healthy_gps_skips_start_lock(self):
-        motorapp._CACHE.latest_gps.lat = None
-        motorapp._CACHE.latest_gps.pos_health = False
-        motorapp.handle_flight_state("3")
-        self.assertFalse(motorapp._START_POINT_LOCKED)
+        # handle_flight_state no longer copies start point on entry to state 3
+        self.assertIsNone(motorapp._CACHE.start_lat)
+        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
 
 
 class TestCacheSnapshot(unittest.TestCase):

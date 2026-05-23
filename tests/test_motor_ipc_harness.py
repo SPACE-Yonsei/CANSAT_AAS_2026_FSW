@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 from lib import appargs
-from Sensor_Motor import motorapp, control
+from Sensor_Motor import motorapp, control, guidance
 from Sensor_Motor.motorapp import _Cache
 
 
@@ -52,10 +52,11 @@ def _reset() -> None:
     motorapp.MANUAL_STEER_MODE = "NEUTRAL"
     motorapp.STATE = 0
     motorapp._PREV_STATE = -1
-    motorapp._START_POINT_LOCKED = False
+    motorapp._ORIGIN_SAVED = False
     motorapp._CONTROLLER = None
     motorapp.PI = None
     motorapp._CACHE = _Cache()
+    motorapp._GUIDANCE_STATE = guidance.GuidanceState()
 
 
 class TestMessageRouting(unittest.TestCase):
@@ -90,14 +91,15 @@ class TestMessageRouting(unittest.TestCase):
         self.assertAlmostEqual(motorapp._CACHE.target_lat, 37.56)
         self.assertAlmostEqual(motorapp._CACHE.target_lon, 126.96)
 
-    def test_state3_with_healthy_gps_locks_start_point(self):
+    def test_state3_alone_does_not_set_origin(self):
+        """Origin lock now happens only inside ctrl_parafoil's guidance call,
+        not as a side effect of handle_gps or handle_flight_state."""
         _dispatch(appargs.GpsAppArg.AppID, appargs.GpsAppArg.MID_motor_gps,
                   _gps_msg())
         _dispatch(appargs.FlightlogicAppArg.AppID,
                   appargs.FlightlogicAppArg.MID_motor_state, "3")
-        self.assertTrue(motorapp._START_POINT_LOCKED)
-        self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
-        self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
+        self.assertIsNone(motorapp._CACHE.start_lat)
+        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
 
     def test_mec_off_disables_motor(self):
         _dispatch(appargs.CommAppArg.AppID, appargs.CommAppArg.MID_RouteCmd_MEC, "OFF")
@@ -142,7 +144,10 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
         self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(-2.5), places=5)  # negated
         self.assertAlmostEqual(snap.latest_baro.alt_m, 200.0)
         self.assertAlmostEqual(snap.target_lat, 37.56)
-        self.assertAlmostEqual(snap.start_lat, 37.55)
+        # start_lat stays None until the ctrl_parafoil loop runs and triggers
+        # the origin-sync one-shot (guidance pipeline sets _GUIDANCE_STATE.origin
+        # → _CACHE.start_*); the dispatch-only setup never runs that loop.
+        self.assertIsNone(snap.start_lat)
 
     def test_neutral_command_outputs_to_servo(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):
