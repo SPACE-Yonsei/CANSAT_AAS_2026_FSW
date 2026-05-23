@@ -15,7 +15,6 @@ class FlightlogicAppArg:
     MID_motor_state = 1101902
     MID_motor_burnwire = 1101903
     MID_motor_EggDrop = 1101904
-    MID_motor_bearing = 1101905   # start→target magnetic bearing (deg, 0=N, CW+)
 
     MID_comm_state = 1101201
     MID_comm_sim = 1101202
