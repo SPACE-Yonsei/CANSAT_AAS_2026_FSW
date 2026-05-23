@@ -275,18 +275,15 @@ def send_imu_data(main_queue) -> None:
             tumble   = TUMBLE
             sample_mono_ts = _last_sample_mono_ts
 
-        # Motor receives only samples accepted by this app; freshness is checked
-        # downstream from the original sample timestamp.
-        if int(HEALTH):
-            msgstructure.send_msg(
-                main_queue,
-                appargs.ImuAppArg.AppID,
-                appargs.MotorAppArg.AppID,
-                appargs.ImuAppArg.MID_motor_imu,
-                f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble}",
-            )
+        msgstructure.send_msg(
+            main_queue,
+            appargs.ImuAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.ImuAppArg.MID_motor_imu,
+            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)}",
+        )
         tick += 1
-        if tick >= 10:
+        if tick >= 20:
             tick = 0
             msgstructure.send_msg(
                 main_queue,
@@ -295,7 +292,7 @@ def send_imu_data(main_queue) -> None:
                 appargs.ImuAppArg.MID_comm_euler,
                 f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz}",
             )
-        time.sleep(0.1)
+        time.sleep(0.05)
 
 
 def imuapp_terminate() -> None:

@@ -454,40 +454,38 @@ def ctrl_parafoil(main_queue=None) -> None:
     while MOTORAPP_RUNSTATUS:
         now = timebase.now()
         try:
-            if not MOTOR_ENABLED or STATE < 3:
+            with _UPDATE_LOCK:
+                _motor_enabled = MOTOR_ENABLED
+                _state = STATE
+                _manual_steer = MANUAL_STEER_MODE
+                snap = _cache_snapshot()
+
+            if not _motor_enabled or _state < 3:
                 if PI is not None:
                     control.WriteZero(PI)
                 idle_cmd = control.WriteNeutral(now, config.MOTOR_REASON_IDLE)
                 idle_out = guidance.L1Output(
                     timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_IDLE
                 )
-                with _UPDATE_LOCK:
-                    idle_snap = _cache_snapshot()
                 _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE,
-                           idle_snap.start_lat, idle_snap.start_lon)
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
-            if STATE == 5:
+            if _state == 5:
                 if PI is not None:
                     control.WriteOff(PI)
                 landed_cmd = control.WriteNeutral(now, config.MOTOR_REASON_LANDED)
                 landed_out = guidance.L1Output(
                     timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_LANDED
                 )
-                with _UPDATE_LOCK:
-                    landed_snap = _cache_snapshot()
                 _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED,
-                           landed_snap.start_lat, landed_snap.start_lon)
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
-            with _UPDATE_LOCK:
-                snap = _cache_snapshot()
-
-            # DR을 현재 시각으로 갱신 (lock 밖 - snap 은 이미 복사됨)
-            if MANUAL_STEER_MODE != config.MOTOR_MANUAL_NEUTRAL:
-                manual_cmd = _manual_steer_command(now, MANUAL_STEER_MODE)
+            if _manual_steer != config.MOTOR_MANUAL_NEUTRAL:
+                manual_cmd = _manual_steer_command(now, _manual_steer)
                 manual_out = guidance.L1Output(
                     timestamp=now,
                     nominal=False,
