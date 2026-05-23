@@ -596,59 +596,32 @@ def ctrl_parafoil(main_queue=None) -> None:
             g_out.timestamp = now
 
             if g_out.control_valid:
+                if _CONTROLLER is None:
+                    _CONTROLLER = control.MakeCtrler()
+                # Provide gyrz only for CLOSED-loop modes (pid_enabled=True)
+                angular_velocity_meas_deg_s = float("nan")
+                if (
                     getattr(g_out, "pid_enabled", False)
                     and fresh.imu_gyrz_fresh
-                    and snap.latest_imu.gyrz_rad_s is not None):
+                    and snap.latest_imu.gyrz_rad_s is not None
+                ):
                     angular_velocity_meas_deg_s = math.degrees(
                         float(config.GYRZ_SIGN) * float(snap.latest_imu.gyrz_rad_s)
                     )
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(
-                        _CONTROLLER, ctrl_in, angular_velocity_meas_deg_s, now
+                        _CONTROLLER,
+                        control.ProduceCtrlInput(g_out, now),
+                        angular_velocity_meas_deg_s,
+                        now,
                     )
-            else:  # GPS_GUIDED or GPS_ONLY
-                l1_input, mode = guidance.ProduceL1Input(
-                    gps=snap.latest_gps,
-                    imu=snap.latest_imu,
-                    baro=snap.latest_baro,
-                    origin_lat=snap.start_lat,
-                    origin_lon=snap.start_lon,
-                    target_lat=snap.target_lat,
-                    target_lon=snap.target_lon,
-                    now=now,
-                )
-                g_out = guidance.ProduceL1Output(
-                    l1_input=l1_input,
-                    mode=mode,
-                    origin_lat=snap.start_lat,
-                    origin_lon=snap.start_lon,
-                    target_lat=snap.target_lat,
-                    target_lon=snap.target_lon,
-                    now=now,
-                )
-                if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
-                    if _CONTROLLER is None:
-                        _CONTROLLER = control.MakeCtrler()
-                    angular_velocity_meas_deg_s = float("nan")
-                    if _ctrl_mode != config.MOTOR_CTRL_MODE_GPS_ONLY and (
-                        getattr(l1_input, "gyrz", None) is not None
-                        and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
-                        == guidance.SensorQuality.FRESH
-                    ):
-                        angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
-                    with _CTRL_LOCK:
-                        cmd = control.ProduceCtrlOutput(
-                            _CONTROLLER,
-                            control.ProduceCtrlInput(g_out, now),
-                            angular_velocity_meas_deg_s,
-                            now,
-                        )
-                else:
-                    cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
+            else:
+                cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
 
             if PI is not None:
                 control.ProducePulse(PI, cmd)
-\            diag_state = g_out.reason if g_out.control_valid else (g_out.reason or config.MOTOR_REASON_DISABLED)
+            sensorlog.log_motor_ctrl(cmd)
+            diag_state = g_out.reason if g_out.control_valid else (g_out.reason or config.MOTOR_REASON_DISABLED)
             _send_diag(main_queue, cmd, g_out, diag_state, snap.start_lat, snap.start_lon)
 
         except Exception:
