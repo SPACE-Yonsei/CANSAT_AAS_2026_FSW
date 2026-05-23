@@ -595,8 +595,6 @@ class GroundStation(tk.Tk):
         self._battery_pct_var = tk.StringVar(value="—")
         self._dist_graph_canvas: tk.Canvas | None = None
         self._dist_to_target_history: list[float] = []
-        self._alt_graph_canvas: tk.Canvas | None = None
-        self._alt_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
 
         self._build_ui()
@@ -777,16 +775,6 @@ class GroundStation(tk.Tk):
         self._dist_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         self._dist_graph_canvas.bind("<Configure>", lambda _e: self._draw_dist_graph())
 
-        # Altitude graph (11th box) — row 5, col 0 (0 ~ 200 m 고정)
-        _alt_row = _dist_row + 1
-        wrap.rowconfigure(_alt_row, weight=1)
-        alt_box = ttk.LabelFrame(wrap, text="Altitude (m) — 0 ~ 200 m")
-        alt_box.grid(row=_alt_row, column=0, sticky="nsew", padx=6, pady=4)
-        alt_box.columnconfigure(0, weight=1)
-        alt_box.rowconfigure(0, weight=1)
-        self._alt_graph_canvas = tk.Canvas(alt_box, background="#111827", highlightthickness=0)
-        self._alt_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
-        self._alt_graph_canvas.bind("<Configure>", lambda _e: self._draw_alt_graph())
 
     def _build_map_and_motor(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
