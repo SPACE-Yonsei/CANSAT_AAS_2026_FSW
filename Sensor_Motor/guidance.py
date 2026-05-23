@@ -89,14 +89,16 @@ class DRMethod(enum.Enum):
 
 @dataclass
 class FreshResult:
-    """Per-iteration sensor freshness snapshot tied to a single 'now' timestamp."""
-    # POINT
+    """Per-iteration sensor freshness snapshot tied to a single 'now' timestamp.
+
+    decidefresh() populates this each cycle.  Nothing here decides control mode
+    or computes yaw_rate_cmd — that is done downstream.
+    """
+    # POINT (GPS lat/lon → local EN)
     point_fresh: bool = False
-    point_correction_usable: bool = False
     point_age_s: float = math.inf
-    # VELOCITY
+    # VELOCITY (GPS course + speed)
     velocity_fresh: bool = False
-    velocity_correction_usable: bool = False
     velocity_age_s: float = math.inf
     # IMU overall
     imu_fresh: bool = False
@@ -235,19 +237,65 @@ class GuidanceState:
 
 @dataclass
 class L1Input:
+    """Unified navigation state passed from produceL1input → produceL1output.
+
+    Field naming follows the spec convention (E/N/V) as primary.
+    Legacy names (pos_E/pos_N/ground_speed_mps) are kept as backward-compat
+    properties so existing callers continue to work unchanged.
+    """
     valid: bool = False
     reason: str = ""
     control_mode: Optional[ControlMode] = None
     dr_method: str = config.DR_METHOD_NONE
     confidence: float = 0.0
-    pos_N: Optional[float] = None
-    pos_E: Optional[float] = None
-    course: Optional[float] = None
-    ground_speed_mps: Optional[float] = None
-    target_N: Optional[float] = None
+
+    # ── Spec-primary nav state ─────────────────────────────────────────────────
+    E: Optional[float] = None        # East position [m] in local EN frame
+    N: Optional[float] = None        # North position [m] in local EN frame
+    vE: Optional[float] = None       # East velocity [m/s]
+    vN: Optional[float] = None       # North velocity [m/s]
+    V: Optional[float] = None        # Horizontal speed [m/s]
+    course: Optional[float] = None   # Course angle [rad], 0=N, +CW
+    origin_E: float = 0.0            # Always 0 (origin is local-EN reference)
+    origin_N: float = 0.0            # Always 0
+
+    # ── Target ────────────────────────────────────────────────────────────────
     target_E: Optional[float] = None
-    target_lat: Optional[float] = None   # for diag
-    target_lon: Optional[float] = None   # for diag
+    target_N: Optional[float] = None
+    target_lat: Optional[float] = None   # for diag / telemetry
+    target_lon: Optional[float] = None   # for diag / telemetry
+
+    # ── Sensor ages [s] ───────────────────────────────────────────────────────
+    point_age: float = math.inf
+    velocity_age: float = math.inf
+    imu_age: float = math.inf
+    barometer_age: float = math.inf
+    dr_age: float = 0.0
+
+    # ── Backward-compat properties (read/write via E/N/V) ─────────────────────
+    @property
+    def pos_E(self) -> Optional[float]:
+        return self.E
+
+    @pos_E.setter
+    def pos_E(self, v: Optional[float]) -> None:
+        self.E = v
+
+    @property
+    def pos_N(self) -> Optional[float]:
+        return self.N
+
+    @pos_N.setter
+    def pos_N(self, v: Optional[float]) -> None:
+        self.N = v
+
+    @property
+    def ground_speed_mps(self) -> Optional[float]:
+        return self.V
+
+    @ground_speed_mps.setter
+    def ground_speed_mps(self, v: Optional[float]) -> None:
+        self.V = v
 
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
@@ -356,22 +404,38 @@ def choose_yaw_rate_limit(control_mode, dr_method=None) -> float:
 
 @dataclass
 class L1Output:
+    """Result of produceL1output — consumed by motorapp → control pipeline.
+
+    Spec-primary fields: target_bearing, nu, distance_to_target, yaw_rate_cmd.
+    Legacy fields (angular_velocity_cmd_rad_s, nu2, etc.) are kept for
+    backward compatibility with control.py / motorapp.py / telemetry.
+    """
     timestamp: float = 0.0
     nominal: bool = False
     control_valid: bool = False
     reason: str = config.MOTOR_REASON_INIT
+
+    # ── Spec-primary output ────────────────────────────────────────────────────
+    target_bearing: float = 0.0         # atan2(dE, dN) [rad]
+    nu: float = 0.0                     # target_bearing - course [rad]
+    distance_to_target: float = 0.0     # |target - pos| [m]
+    yaw_rate_cmd: float = 0.0           # final yaw-rate command [rad/s]
+
+    # ── Control authority limits (set by _homing_fill_ctrl_params) ────────────
     angular_velocity_cmd_max_deg_s: float = 0.0
     delta_ff_max_deg: float = 0.0
     delta_pid_max_deg: float = 0.0
     delta_total_max_deg: float = 0.0
     max_arm_rate_deg_s: float = 0.0
     pid_enabled: bool = False
-    angular_velocity_cmd_rad_s: float = 0.0
+
+    # ── Backward-compat / telemetry fields ────────────────────────────────────
+    angular_velocity_cmd_rad_s: float = 0.0  # == yaw_rate_cmd (kept for control.py)
     ground_speed_mps: float = 0.0
-    nu2: float = 0.0
-    angle_to_turn: float = 0.0
+    nu2: float = 0.0              # == nu (legacy alias)
+    angle_to_turn: float = 0.0   # == nu (legacy alias)
     crossTrack: float = 0.0
-    alongTrack: float = 0.0
+    alongTrack: float = 0.0      # == distance_to_target
     pos_N: float = 0.0
     pos_E: float = 0.0
     target_N: float = 0.0
@@ -383,7 +447,6 @@ class L1Output:
     carrot_lat: Optional[float] = None
     carrot_lon: Optional[float] = None
     current_heading_rad: float = 0.0
-    # Homing-architecture fields
     yaw_rate_limit_dps: float = 0.0
     dr_confidence: float = 0.0
     dr_method: str = config.DR_METHOD_NONE
@@ -436,8 +499,7 @@ def decidefresh(
         latest = state.point_history[-1]
         age = max(0.0, now - latest.timestamp)
         result.point_age_s = age
-        result.point_fresh = age <= config.GPS_CONTROL_FRESH_MAX_AGE_S and latest.valid
-        result.point_correction_usable = age <= config.GPS_CORRECTION_MAX_AGE_S and latest.valid
+        result.point_fresh = age <= config.GPS_FRESH_MAX_AGE_S and latest.valid
         if result.point_fresh and math.isfinite(latest.point_N) and math.isfinite(latest.point_E):
             state.last_fresh_pos_N  = latest.point_N
             state.last_fresh_pos_E  = latest.point_E
@@ -464,8 +526,7 @@ def decidefresh(
         latest = state.velocity_history[-1]
         age = max(0.0, now - latest.timestamp)
         result.velocity_age_s = age
-        result.velocity_fresh = age <= config.GPS_CONTROL_FRESH_MAX_AGE_S and latest.valid
-        result.velocity_correction_usable = age <= config.GPS_CORRECTION_MAX_AGE_S and latest.valid
+        result.velocity_fresh = age <= config.GPS_FRESH_MAX_AGE_S and latest.valid
         if result.velocity_fresh:
             state.last_fresh_course    = latest.course
             state.last_fresh_speed_mps = latest.speed
@@ -1001,14 +1062,24 @@ def produceL1input(
         out.control_mode = ControlMode.DETUMBLING
         out.dr_method = config.DR_METHOD_NONE
         out.confidence = 1.0
-        out.pos_N = state.nav_N
-        out.pos_E = state.nav_E
+        # Spec-primary fields
+        out.E = state.nav_E
+        out.N = state.nav_N
+        out.V = state.nav_V
+        out.vE = state.nav_vE
+        out.vN = state.nav_vN
         out.course = state.nav_course
-        out.ground_speed_mps = state.nav_V
-        out.target_N = state.target_N
+        out.origin_E = 0.0
+        out.origin_N = 0.0
         out.target_E = state.target_E
+        out.target_N = state.target_N
         out.target_lat = state.target_lat
         out.target_lon = state.target_lon
+        out.point_age = fresh.point_age_s
+        out.velocity_age = fresh.velocity_age_s
+        out.imu_age = fresh.imu_age_s
+        out.barometer_age = fresh.baro_age_s
+        out.dr_age = state.nav_dr_age
         return out
 
     # ── GPS TRACKING ─────────────────────────────────────────────────────────
@@ -1060,14 +1131,31 @@ def produceL1input(
     out.control_mode = mode
     out.dr_method = state.nav_dr_method
     out.confidence = state.nav_confidence
-    out.pos_N = state.nav_N
-    out.pos_E = state.nav_E
+
+    # Spec-primary nav state (E/N/V/vE/vN)
+    out.E = state.nav_E
+    out.N = state.nav_N
+    out.V = state.nav_V
+    out.vE = state.nav_vE
+    out.vN = state.nav_vN
     out.course = state.nav_course
-    out.ground_speed_mps = state.nav_V
-    out.target_N = state.target_N
+
+    # Origin is always the local-EN reference point → (0, 0)
+    out.origin_E = 0.0
+    out.origin_N = 0.0
+
+    # Target
     out.target_E = state.target_E
+    out.target_N = state.target_N
     out.target_lat = state.target_lat
     out.target_lon = state.target_lon
+
+    # Sensor ages from the most recent FreshResult
+    out.point_age = fresh.point_age_s
+    out.velocity_age = fresh.velocity_age_s
+    out.imu_age = fresh.imu_age_s
+    out.barometer_age = fresh.baro_age_s
+    out.dr_age = state.nav_dr_age
 
     return out
 
@@ -1097,12 +1185,17 @@ def produceL1output(l1input: L1Input) -> L1Output:
         out.control_valid = False
         return out
 
-    # ── DETUMBLING: cmd=0, PID counters the yaw rate ──────────────────────────
+    # ── DETUMBLING: yaw_rate_cmd=0, PID counters the spin ────────────────────
     if mode_val == config.CONTROL_MODE_DETUMBLING or mode == ControlMode.DETUMBLING:
         out.reason = config.CONTROL_MODE_DETUMBLING
         out.control_valid = True
         out.nominal = True
-        out.angular_velocity_cmd_rad_s = 0.0
+        # Spec §10: yaw_rate_cmd = 0; yaw_rate_error = 0 - gyrz is handled by PID
+        out.yaw_rate_cmd = 0.0
+        out.angular_velocity_cmd_rad_s = 0.0   # backward compat
+        out.nu = 0.0
+        out.target_bearing = 0.0
+        out.distance_to_target = 0.0
         out.pid_enabled = True
         out.angular_velocity_cmd_max_deg_s = 0.0
         out.delta_ff_max_deg = 0.0
@@ -1139,7 +1232,12 @@ def produceL1output(l1input: L1Input) -> L1Output:
         out.reason = "TARGET_REACHED"
         out.control_valid = True
         out.nominal = True
-        out.angular_velocity_cmd_rad_s = 0.0
+        out.yaw_rate_cmd = 0.0
+        out.angular_velocity_cmd_rad_s = 0.0   # backward compat
+        out.nu = 0.0
+        out.target_bearing = _wrap_pi(math.atan2(dE, dN))
+        out.distance_to_target = distance
+        out.alongTrack = distance
         out.pos_N = float(pos_N)
         out.pos_E = float(pos_E)
         out.target_N = float(tgt_N)
@@ -1166,17 +1264,27 @@ def produceL1output(l1input: L1Input) -> L1Output:
     out.reason = mode_val
     out.control_valid = True
     out.nominal = True
-    out.angular_velocity_cmd_rad_s = yaw_rate_cmd
+
+    # ── Spec-primary output fields ──────────────────────────────────────────
+    out.target_bearing = target_bearing           # atan2(dE,dN) [rad]
+    out.nu = nu                                   # target_bearing - course [rad]
+    out.distance_to_target = distance             # [m]
+    out.yaw_rate_cmd = yaw_rate_cmd               # [rad/s]
+
+    # ── Backward-compat / telemetry ─────────────────────────────────────────
+    out.angular_velocity_cmd_rad_s = yaw_rate_cmd  # control.py reads this
+    out.nu2 = nu
+    out.angle_to_turn = nu
+    out.alongTrack = distance
+    out.crossTrack = 0.0
     out.ground_speed_mps = float(V_raw)
     out.pos_N = float(pos_N)
     out.pos_E = float(pos_E)
     out.target_N = float(tgt_N)
     out.target_E = float(tgt_E)
-    out.carrot_N = float(tgt_N)
+    out.carrot_N = float(tgt_N)   # target itself is carrot (no path projection)
     out.carrot_E = float(tgt_E)
     out.current_heading_rad = float(course)
-    out.nu2 = nu
-    out.angle_to_turn = nu
     out.yaw_rate_limit_dps = yaw_rate_limit_dps
     out.dr_confidence = float(l1input.confidence)
     out.dr_method = str(l1input.dr_method)
