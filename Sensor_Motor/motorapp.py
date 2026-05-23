@@ -84,6 +84,7 @@ MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
 MANUAL_STEER_MODE: str = config.MOTOR_MANUAL_NEUTRAL
+MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE
 STATE: int = 0
 PI = None
 
@@ -422,6 +423,19 @@ def handle_mtr(data: str) -> None:
         MANUAL_STEER_MODE = mode
 
 
+def handle_cmc(data: str) -> None:
+    global MOTOR_CTRL_MODE
+    mode = str(data or "").strip().upper()
+    valid = {
+        config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        config.MOTOR_CTRL_MODE_GPS_ONLY,
+        config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    if mode in valid:
+        MOTOR_CTRL_MODE = mode
+        config.MOTOR_CTRL_MODE = mode
+
+
 def handle_fac(data: str) -> None:
     global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
     raw = data.strip().upper().replace(" ", "")
@@ -634,6 +648,8 @@ def dispatch(msg: str) -> None:
         handle_mtr(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_CMC:
+        handle_cmc(unpacked.data)
 
 
 def init() -> None:

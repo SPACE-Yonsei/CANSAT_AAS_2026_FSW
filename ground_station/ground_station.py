@@ -567,6 +567,7 @@ class GroundStation(tk.Tk):
         self._egg_action_enabled_remote: bool | None = None
         self._battery_bar: ttk.Progressbar | None = None
         self._battery_pct_var = tk.StringVar(value="—")
+        self._motor_ctrl_mode_idx: int = 0
 
         self._build_ui()
         self._refresh_ports()
@@ -886,6 +887,16 @@ class GroundStation(tk.Tk):
             anchor="w",
         ).pack(side=tk.LEFT, padx=6)
         self._set_force_action_ui(None, None)
+
+        ttk.Separator(force_box, orient="vertical").pack(side=tk.LEFT, fill="y", padx=(10, 8))
+        ttk.Label(force_box, text="Ctrl mode:").pack(side=tk.LEFT)
+        self._cmc_btn = ttk.Button(
+            force_box,
+            text=self._CMC_MODES[0],
+            width=14,
+            command=self._cycle_motor_ctrl_mode,
+        )
+        self._cmc_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         steer_box = ttk.Frame(cmd_box)
         steer_box.grid(row=3, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 6))
@@ -1452,6 +1463,17 @@ class GroundStation(tk.Tk):
             self._force_state_var.set(
                 f"R:{'ON' if self._release_action_enabled_remote else 'OFF' if self._release_action_enabled_remote is False else '--'} E:{'ON' if next_enabled else 'OFF'} (pending)"
             )
+
+    _CMC_MODES = ("GPS_GUIDED", "GPS_ONLY", "IMU_HEADING")
+
+    def _cycle_motor_ctrl_mode(self) -> None:
+        if self._ser is None:
+            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
+            return
+        self._motor_ctrl_mode_idx = (self._motor_ctrl_mode_idx + 1) % len(self._CMC_MODES)
+        mode = self._CMC_MODES[self._motor_ctrl_mode_idx]
+        if self._send_body(f"CMC,{mode}"):
+            self._cmc_btn.configure(text=mode)
 
     def _send_motor_steer(self, direction: str) -> None:
         if self._ser is None:
