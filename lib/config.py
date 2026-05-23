@@ -75,9 +75,14 @@ RELEASE_PREDICT_TIME_MAX_SEC = 5.0
 RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_TIMEOUT
 
 
-# Motor guidance/control string constants
-SENSOR_QUALITY_FRESH = "FRESH"
-SENSOR_QUALITY_STALE = "STALE"
+# ── 수동 조향 방향 string constants ────────────────────────────────────────────
+MOTOR_MANUAL_NEUTRAL = "NEUTRAL"
+MOTOR_MANUAL_LEFT    = "LEFT"
+MOTOR_MANUAL_RIGHT   = "RIGHT"
+
+# ── 제어 비활성 이유 string constants ──────────────────────────────────────────
+MOTOR_REASON_GUIDANCE_INACTIVE = "GUIDANCE_INACTIVE"
+MOTOR_REASON_DISABLED          = "DISABLED"
 
 # ── 가이던스 커맨드 타임아웃 (control.py 사용) ───────────────────────────────
 GUIDANCE_TIMEOUT_ATTENUATE_S = 0.5   # 이 이상 지연 시 커맨드 50% 감쇠
@@ -121,7 +126,7 @@ GPS_FRESH_MAX_AGE_S         = 2.0
 IMU_FRESH_MAX_AGE_S         = 0.8
 BARO_FRESH_MAX_AGE_S        = 0.8
 
-HISTORY_WINDOW_S  = 8.0
+HISTORY_WINDOW_S  = 3.0
 SPEED_DECAY_TAU_S = 10.0
 
 # ── Accelerometer-aided DR ────────────────────────────────────────────────────
