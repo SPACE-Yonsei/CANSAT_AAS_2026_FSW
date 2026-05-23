@@ -56,15 +56,15 @@ _last_reinit_ts = 0.0
 _imu_lock = threading.Lock()
 _imu_instance = None
 _i2c_instance = None
-_acc_norm_ema: Optional[float] = None
-_gyro_norm_ema: Optional[float] = None
+_acc_norm_window: list[float] = []
+_gyro_norm_window: list[float] = []
 _startup_yaw_zeroed = False
 
 # freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
 FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
 TUMBLE_GYRO_NORM_THRESHOLD_DEGS  = float(os.environ.get("TUMBLE_GYRO_NORM_DEGS",  "200.0"))
-ACC_NORM_EMA_ALPHA  = 0.3  # 빠른 반응 (freefall 감지)
-GYRO_NORM_EMA_ALPHA = 0.3
+ACC_NORM_WINDOW_SIZE  = 5
+GYRO_NORM_WINDOW_SIZE = 5
 
 # freefall / tumble 상태 (send 스레드가 읽음)
 FREEFALL = 0  # 1=자유낙하 중, 0=정상(중력 있음)
@@ -92,12 +92,6 @@ def _wrap_deg(deg: float) -> float:
 
 def _apply_yaw_offset(yaw: float) -> float:
     return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
-
-
-def _ema(prev: Optional[float], cur: float, alpha: float = ACC_NORM_EMA_ALPHA) -> float:
-    if prev is None:
-        return cur
-    return alpha * cur + (1.0 - alpha) * prev
 
 
 def _calibrate_startup_yaw(raw_yaw: float) -> None:
@@ -153,7 +147,7 @@ def imuapp_init() -> None:
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        logger.warning("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
+        logger.debug("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
         _i2c_instance, _imu_instance = None, None
 
 
@@ -172,7 +166,7 @@ def _try_reinit() -> None:
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        logger.warning("IMU: reinit failed (%s)", exc)
+        logger.debug("IMU: reinit failed (%s)", exc)
         _i2c_instance, _imu_instance = None, None
     finally:
         # Measure cooldown from completion, not start, so a slow reinit doesn't
@@ -193,7 +187,7 @@ def _stale_watchdog_check() -> bool:
         return False
     if (now - _last_reinit_ts) <= IMU_REINIT_COOLDOWN_SEC:
         return False
-    logger.warning(
+    logger.debug(
         "IMU stale watchdog: %.2fs without fresh sample; forcing reinit "
         "(HW RST pulse if IMU_BNO085_RST_ENABLE=1)",
         now - _last_sample_ts,
@@ -205,7 +199,7 @@ def _stale_watchdog_check() -> bool:
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _last_sample_mono_ts
-    global _acc_norm_ema, _gyro_norm_ema
+    global _acc_norm_window, _gyro_norm_window
     global FREEFALL, TUMBLE
     import math as _math
     period = _imu_read_period_sec()
@@ -232,13 +226,19 @@ def read_imu_data() -> None:
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
         _calibrate_startup_yaw(float(yaw))
 
-        # freefall / tumble 판정 (EMA smoothing으로 단발 스파이크 방지)
+        # freefall / tumble 판정 (이동평균으로 단발 스파이크 방지)
         acc_norm_raw  = _math.sqrt(float(accx)**2 + float(accy)**2 + float(accz)**2)
         gyro_norm_raw = _math.sqrt(float(gyrx)**2 + float(gyry)**2 + float(gyrz)**2)
-        _acc_norm_ema  = _ema(_acc_norm_ema,  acc_norm_raw,  ACC_NORM_EMA_ALPHA)
-        _gyro_norm_ema = _ema(_gyro_norm_ema, gyro_norm_raw, GYRO_NORM_EMA_ALPHA)
-        freefall_flag = 1 if _acc_norm_ema  <  FREEFALL_ACC_NORM_THRESHOLD_MPS2 else 0
-        tumble_flag   = 1 if _gyro_norm_ema >= TUMBLE_GYRO_NORM_THRESHOLD_DEGS  else 0
+        _acc_norm_window.append(acc_norm_raw)
+        if len(_acc_norm_window) > ACC_NORM_WINDOW_SIZE:
+            _acc_norm_window.pop(0)
+        _gyro_norm_window.append(gyro_norm_raw)
+        if len(_gyro_norm_window) > GYRO_NORM_WINDOW_SIZE:
+            _gyro_norm_window.pop(0)
+        acc_norm_avg  = sum(_acc_norm_window)  / len(_acc_norm_window)
+        gyro_norm_avg = sum(_gyro_norm_window) / len(_gyro_norm_window)
+        freefall_flag = 1 if acc_norm_avg  <  FREEFALL_ACC_NORM_THRESHOLD_MPS2 else 0
+        tumble_flag   = 1 if gyro_norm_avg >= TUMBLE_GYRO_NORM_THRESHOLD_DEGS  else 0
 
         with _imu_lock:
             ROLL = float(roll)

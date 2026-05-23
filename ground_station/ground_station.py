@@ -867,14 +867,14 @@ class GroundStation(tk.Tk):
         ttk.Label(force_box, text="Force action:").pack(side=tk.LEFT)
         self._force_release_btn = ttk.Button(
             force_box,
-            text="Release OFF",
+            text="Rel(20) OFF",
             width=12,
             command=self._toggle_release_action,
         )
         self._force_release_btn.pack(side=tk.LEFT, padx=(8, 4))
         self._force_egg_btn = ttk.Button(
             force_box,
-            text="Egg OFF",
+            text="Egg(6) OFF",
             width=10,
             command=self._toggle_egg_action,
         )
@@ -1399,16 +1399,16 @@ class GroundStation(tk.Tk):
     ) -> None:
         self._force_release_btn.configure(
             text=(
-                "Release ON" if release_enabled is True
-                else "Release OFF" if release_enabled is False
-                else "Release --"
+                "Rel(20) ON" if release_enabled is True
+                else "Rel(20) OFF" if release_enabled is False
+                else "Rel(20) --"
             )
         )
         self._force_egg_btn.configure(
             text=(
-                "Egg ON" if egg_enabled is True
-                else "Egg OFF" if egg_enabled is False
-                else "Egg --"
+                "Egg(6) ON" if egg_enabled is True
+                else "Egg(6) OFF" if egg_enabled is False
+                else "Egg(6) --"
             )
         )
         r_txt = "ON" if release_enabled is True else "OFF" if release_enabled is False else "--"
