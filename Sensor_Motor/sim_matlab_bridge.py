@@ -318,7 +318,7 @@ def main() -> None:
                 # L1 guidance outputs
                 "angular_velocity_cmd_rad_s": round(l1_out.angular_velocity_cmd_rad_s, 5),
                 "lat_acc_cmd_mps2":   round(l1_out.lat_acc_cmd_mps2,   5),
-                "nu":          round(l1_out.nu,          5),
+                "nu":          round(l1_out.angle_to_turn,          5),
                 "nu1":         round(l1_out.nu1,         5),
                 "nu2":         round(l1_out.nu2,         5),
                 "crossTrack":  round(l1_out.crossTrack,  3),

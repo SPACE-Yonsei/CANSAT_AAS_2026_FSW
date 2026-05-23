@@ -252,7 +252,7 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertAlmostEqual(out.crossTrack, 0.0, places=6)
         self.assertAlmostEqual(out.nu1, 0.0, places=6)
         self.assertLess(out.nu2, 0.0)
-        self.assertAlmostEqual(out.nu, out.nu2, places=6)
+        self.assertAlmostEqual(out.angle_to_turn, out.nu2, places=6)
 
     def test_nu2_is_target_bearing_minus_course(self):
         """On a northward path, a 15-deg right course error gives nu2=-15 deg."""
@@ -262,7 +262,7 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertAlmostEqual(out.crossTrack, 0.0, places=6)
         self.assertAlmostEqual(out.nu1, 0.0, places=6)
         self.assertAlmostEqual(out.nu2, math.radians(-15.0), places=6)
-        self.assertAlmostEqual(out.nu, out.nu2, places=6)
+        self.assertAlmostEqual(out.angle_to_turn, out.nu2, places=6)
 
     def test_fixed_target_is_the_carrot_point(self):
         inp = self._active_input(pos_n=100.0, pos_e=-50.0, course_deg=0.0, speed=8.0)

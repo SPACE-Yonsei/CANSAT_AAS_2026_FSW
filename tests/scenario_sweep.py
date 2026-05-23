@@ -176,7 +176,7 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
         track_length_m=params.track_length_m,
         control_mode=g_out.reason,
         fail_reason=g_out.fail_reason,
-        nu_deg=math.degrees(g_out.nu),
+        nu_deg=math.degrees(g_out.angle_to_turn),
         cross_track_calc_m=g_out.crossTrack,
         L1_distance_m=g_out.L1_distance,
         lat_acc_cmd_mps2=g_out.lat_acc_cmd_mps2,

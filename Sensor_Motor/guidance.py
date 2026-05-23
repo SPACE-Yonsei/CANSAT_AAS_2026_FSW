@@ -265,7 +265,7 @@ class L1Output:
     L1_distance: float = 0.0
     nu1: float = 0.0
     nu2: float = 0.0
-    nu: float = 0.0
+    angle_to_turn: float = 0.0
     crossTrack: float = 0.0
     alongTrack: float = 0.0
     pos_N: float = 0.0
@@ -552,7 +552,7 @@ def ProduceL1Output(
     l1_output.L1_distance = L1_distance
     l1_output.nu1 = nu1
     l1_output.nu2 = nu2
-    l1_output.nu = nu
+    l1_output.angle_to_turn = nu
     l1_output.crossTrack = 0.0
     l1_output.alongTrack = target_range
     l1_output.pos_N = pos_N

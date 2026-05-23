@@ -270,7 +270,7 @@ def run_section_b() -> None:
 
         _sep("L1 Output")
         _row("nominal",         str(g_out.nominal))
-        _row("nu_deg",          f"{math.degrees(g_out.nu):+.3f}°")
+        _row("nu_deg",          f"{math.degrees(g_out.angle_to_turn):+.3f}°")
         _row("  nu1 (xtrack)",  f"{math.degrees(g_out.nu1):+.3f}°  crosstrack 기여")
         _row("  nu2 (heading)", f"{math.degrees(g_out.nu2):+.3f}°  heading error 기여")
         _row("crossTrack_m",    f"{g_out.crossTrack:+.2f} m")
