@@ -81,6 +81,7 @@ MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
 MANUAL_STEER_MODE: str = config.MOTOR_MANUAL_NEUTRAL
+MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE
 STATE: int = 0
 PI = None
 
@@ -376,6 +377,19 @@ def handle_mtr(data: str) -> None:
         MANUAL_STEER_MODE = mode
 
 
+def handle_ctrlmode(data: str) -> None:
+    global MOTOR_CTRL_MODE
+    mode = data.strip().upper()
+    valid = {
+        config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        config.MOTOR_CTRL_MODE_GPS_ONLY,
+        config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    if mode in valid:
+        with _UPDATE_LOCK:
+            MOTOR_CTRL_MODE = mode
+
+
 def handle_fac(data: str) -> None:
     global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
     raw = data.strip().upper().replace(" ", "")
@@ -465,6 +479,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 _motor_enabled = MOTOR_ENABLED
                 _state = STATE
                 _manual_steer = MANUAL_STEER_MODE
+                _ctrl_mode = MOTOR_CTRL_MODE
                 snap = _cache_snapshot()
 
             if not _motor_enabled or _state < 3:
@@ -513,7 +528,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 time.sleep(period)
                 continue
 
-            if config.MOTOR_CTRL_MODE == "IMU_HEADING":
+            if _ctrl_mode == config.MOTOR_CTRL_MODE_IMU_HEADING:
                 imu = snap.latest_imu
                 imu_valid = (
                     imu is not None
@@ -557,7 +572,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                     cmd = control.ProduceCtrlOutput(
                         _CONTROLLER, ctrl_in, angular_velocity_meas_deg_s, now
                     )
-            else:  # GPS_GUIDED
+            else:  # GPS_GUIDED or GPS_ONLY
                 l1_input, mode = guidance.ProduceL1Input(
                     gps=snap.latest_gps,
                     imu=snap.latest_imu,
@@ -581,7 +596,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                     if _CONTROLLER is None:
                         _CONTROLLER = control.MakeCtrler()
                     angular_velocity_meas_deg_s = float("nan")
-                    if (
+                    if _ctrl_mode != config.MOTOR_CTRL_MODE_GPS_ONLY and (
                         getattr(l1_input, "gyrz", None) is not None
                         and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
                         == guidance.SensorQuality.FRESH
@@ -643,6 +658,8 @@ def dispatch(msg: str) -> None:
         handle_mtr(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_CMC:
+        handle_ctrlmode(unpacked.data)
 
 
 def init() -> None:

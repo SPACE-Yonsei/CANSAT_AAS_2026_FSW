@@ -256,9 +256,14 @@ KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
 
 # ── Motor control source mode ─────────────────────────────────────────────────
-# "GPS_GUIDED" : GPS L1 가이던스 + 자이로 PID (기존 경로)
-# "IMU_HEADING": IMU 자력계 방위각만으로 목표 헤딩 추종 (GPS 불필요)
-MOTOR_CTRL_MODE = "GPS_GUIDED"
+# GPS_GUIDED  : GPS L1 가이던스 + 자이로 PID (기본값)
+# GPS_ONLY    : GPS L1 가이던스, 자이로 피드백 없음 (피드포워드 전용)
+# IMU_HEADING : IMU 자력계 방위각만으로 목표 헤딩 추종 (GPS 불필요)
+MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
+MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
+MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
+
+MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
 
 # IMU_HEADING 모드 전용 파라미터
 IMU_HEADING_TARGET_DEG    = 0.0   # 목표 자기 방위각 (0=북쪽)

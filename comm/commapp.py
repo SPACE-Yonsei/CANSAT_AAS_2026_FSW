@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Optional
 
-from lib import appargs, msgstructure, prevstate
+from lib import appargs, config, msgstructure, prevstate
 from comm import uartserial, xbeereset
 
 
@@ -354,6 +354,26 @@ def cmd_cam(option: str, main_queue) -> bool:
     )
 
 
+def cmd_cmc(option: str, main_queue) -> bool:
+    aliases = {
+        "GPS":         config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_GUIDED":  config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_ONLY":    config.MOTOR_CTRL_MODE_GPS_ONLY,
+        "IMU":         config.MOTOR_CTRL_MODE_IMU_HEADING,
+        "IMU_HEADING": config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    mode = aliases.get(option.strip().upper())
+    if mode is None:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_CMC,
+        mode,
+    )
+
+
 def cmd_tc(option: str, main_queue) -> bool:
     parts = [x.strip() for x in option.split(",")]
     if len(parts) != 2:
@@ -628,6 +648,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_cam(option, main_queue)
     if cmd == "TC":
         return cmd_tc(option, main_queue)
+    if cmd == "CMC":
+        return cmd_cmc(option, main_queue)
     if cmd == "XRST":
         return cmd_xrst(option, main_queue)
     return False

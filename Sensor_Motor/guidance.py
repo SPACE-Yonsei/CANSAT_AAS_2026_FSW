@@ -734,6 +734,100 @@ def ProduceL1Input(
     l1_input.fail_reason = fail_reason
     return (l1_input, control_mode)
 
+
+def _policy_for_mode(mode: ControlMode, fail_reason: FailReason) -> ControlPolicy:
+    if mode in (ControlMode.NOMINAL_CLOSED_LOOP, ControlMode.GPS_TRACKING_CLOSED):
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_NOMINAL_CLOSED_LOOP_CONFIDENCE_SCALE,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_NOMINAL_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
+            pid_enabled=True,
+        )
+    if mode in (ControlMode.NOMINAL_FEEDFORWARD, ControlMode.GPS_TRACKING_OPEN):
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_NOMINAL_FEEDFORWARD_CONFIDENCE_SCALE,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_NOMINAL_FEEDFORWARD_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_NOMINAL_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_NOMINAL_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+        )
+    if mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DR_TRACKING_CLOSED):
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_DEGRADED_CLOSED_LOOP_CONFIDENCE_SCALE,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_DEGRADED_CLOSED_LOOP_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
+            pid_enabled=True,
+        )
+    if mode in (ControlMode.DEGRADED_FEEDFORWARD, ControlMode.DR_TRACKING_OPEN):
+        return ControlPolicy(
+            confidence_scale=config.MOTOR_DEGRADED_FEEDFORWARD_CONFIDENCE_SCALE,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=config.MOTOR_DEGRADED_FEEDFORWARD_LAT_ACC_MAX_MPS2,
+            delta_ff_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_PID_MAX_DEG,
+            delta_total_max_deg=config.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+        )
+    if mode == ControlMode.DETUMBLING or (
+        mode == ControlMode.FAIL and fail_reason == FailReason.TUMBLE_YAW_DOMINANT
+    ):
+        return ControlPolicy(
+            confidence_scale=1.0,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_TUMBLE_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=LAT_ACC_MAX,
+            delta_ff_max_deg=config.MOTOR_TUMBLE_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=0.0,
+            delta_total_max_deg=config.MOTOR_TUMBLE_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_TUMBLE_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+        )
+    if mode == ControlMode.FAIL and fail_reason == FailReason.NO_MOTION:
+        return ControlPolicy(
+            confidence_scale=1.0,
+            angular_velocity_cmd_max_deg_s=config.MOTOR_TARGET_BEARING_ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+            lat_acc_max_mps2=LAT_ACC_MAX,
+            delta_ff_max_deg=config.MOTOR_TARGET_BEARING_DELTA_FF_MAX_DEG,
+            delta_pid_max_deg=0.0,
+            delta_total_max_deg=config.MOTOR_TARGET_BEARING_DELTA_TOTAL_MAX_DEG,
+            max_arm_rate_deg_s=config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S,
+            pid_enabled=False,
+        )
+    # 나머지 FAIL (FREEFALL, ROLLPITCH 등) + 알 수 없는 모드: 안전 중립
+    return ControlPolicy(
+        confidence_scale=0.0,
+        angular_velocity_cmd_max_deg_s=0.0,
+        lat_acc_max_mps2=0.0,
+        delta_ff_max_deg=0.0,
+        delta_pid_max_deg=0.0,
+        delta_total_max_deg=0.0,
+        max_arm_rate_deg_s=0.0,
+        pid_enabled=False,
+    )
+
+
+def _apply_policy(l1_output: L1Output, policy: ControlPolicy) -> None:
+    l1_output.confidence_scale = policy.confidence_scale
+    l1_output.angular_velocity_cmd_max_deg_s = policy.angular_velocity_cmd_max_deg_s
+    l1_output.lat_acc_max_mps2 = policy.lat_acc_max_mps2
+    l1_output.delta_ff_max_deg = policy.delta_ff_max_deg
+    l1_output.delta_pid_max_deg = policy.delta_pid_max_deg
+    l1_output.delta_total_max_deg = policy.delta_total_max_deg
+    l1_output.max_arm_rate_deg_s = policy.max_arm_rate_deg_s
+    l1_output.pid_enabled = policy.pid_enabled
+
+
 def ProduceL1Output(
     l1_input: L1Input,
     mode: ControlMode,
