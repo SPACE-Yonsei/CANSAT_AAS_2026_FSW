@@ -50,6 +50,10 @@ def _is_finite(value: float) -> bool:
         return False
 
 
+def _optional_float(value):
+    return float(value) if _is_finite(value) else None
+
+
 def _lon_in_expected_area(lon: float) -> bool:
     try:
         center = float(config.GPS_EXPECTED_LON_CENTER_DEG)
@@ -242,6 +246,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
     send_counter = 0
     last_valid_gps_ts = 0.0
+    last_valid_rmc_ts = 0.0
 
     while GPSAPP_RUNSTATUS:
         sim_sample = None
@@ -260,8 +265,9 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             GPS_SATS = max(int(getattr(config, "GPS_MIN_SATS", 4)), 4)
             GPS_FIX_QUALITY = 1
             GPS_RMC_STATUS = "A"
-            last_valid_gps_ts = timebase.wall_now()
-            rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts, 1.0]  # [10]=hdop=1.0 (sim)
+            last_valid_gps_ts = timebase.now()
+            last_valid_rmc_ts = last_valid_gps_ts
+            rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts, 1.0, last_valid_rmc_ts]  # [10]=hdop=1.0 (sim)
         else:
             # Check if gps_instance is valid
             if gps_instance is None:
@@ -277,25 +283,29 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
         # 데이터가 유효할 때만 변수를 업데이트한다 (None이거나 유효하지 않으면 이전 값 유지)
         # gps.py 반환:
-        # [time, alt, lat, lon, sats, fix_quality, rmc_status, speed_ms, course, gga_sample_ts]
+        # [time, alt, lat, lon, sats, fix_quality, rmc_status, speed_ms, course, gga_sample_ts, hdop, rmc_sample_ts]
         if rcv_data and len(rcv_data) >= 5:
             try:
                 GPS_TIME = rcv_data[0]
-                GPS_ALT  = float(rcv_data[1])
-                GPS_LAT  = float(rcv_data[2])
-                GPS_LON  = float(rcv_data[3])
+                GPS_ALT  = _optional_float(rcv_data[1]) or 0.0
+                GPS_LAT  = _optional_float(rcv_data[2])
+                GPS_LON  = _optional_float(rcv_data[3])
                 GPS_SATS = int(rcv_data[4])
                 GPS_FIX_QUALITY = int(rcv_data[5]) if len(rcv_data) > 5 else 0
                 GPS_RMC_STATUS = str(rcv_data[6]).strip() if len(rcv_data) > 6 else "V"
-                GPS_SPEED_MS = float(rcv_data[7]) if len(rcv_data) > 7 else 0.0
-                GPS_COURSE = float(rcv_data[8]) if len(rcv_data) > 8 else 0.0
+                GPS_SPEED_MS = _optional_float(rcv_data[7]) if len(rcv_data) > 7 else None
+                GPS_COURSE = _optional_float(rcv_data[8]) if len(rcv_data) > 8 else None
                 # Use driver-side GGA sample timestamp for stale accounting.
                 # This prevents cache re-reads from resetting the stale timeout.
                 if len(rcv_data) > 9 and _is_finite(rcv_data[9]) and float(rcv_data[9]) > 0.0:
                     last_valid_gps_ts = float(rcv_data[9])
                 else:
-                    # Backward compatibility for older gps.py payloads.
-                    last_valid_gps_ts = timebase.wall_now()
+                    last_valid_gps_ts = 0.0
+
+                if len(rcv_data) > 11 and _is_finite(rcv_data[11]) and float(rcv_data[11]) > 0.0:
+                    last_valid_rmc_ts = float(rcv_data[11])
+                else:
+                    last_valid_rmc_ts = 0.0
                 # Print GPS data for debugging (disabled)
                 # print(f"GPS: Time={GPS_TIME}, Lat={GPS_LAT:.6f}, Lon={GPS_LON:.6f}, Alt={GPS_ALT:.2f}, Sats={GPS_SATS}, FixQuality={GPS_FIX_QUALITY}")
                 # sys.stdout.flush()
@@ -313,16 +323,17 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         else:
             # GPS 데이터가 없을 때 (None 또는 형식 불일치) - 이전 값 유지
             # 단, 오래된 값은 stale로 간주해 초기값으로 리셋한다.
-            if last_valid_gps_ts > 0 and (timebase.wall_now() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
-                GPS_LAT = 0.0
-                GPS_LON = 0.0
+            if last_valid_gps_ts <= 0 or (timebase.now() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
+                GPS_LAT = None
+                GPS_LON = None
                 GPS_ALT = 0.0
                 GPS_TIME = "00:00:00"
                 GPS_SATS = 0
                 GPS_FIX_QUALITY = 0
                 GPS_RMC_STATUS = "V"
-                GPS_SPEED_MS = 0.0
-                GPS_COURSE = 0.0
+                GPS_SPEED_MS = None
+                GPS_COURSE = None
+                last_valid_rmc_ts = 0.0
 
         # gps->motor: pos_health 통과 시에만 전송 (fidelity gate)
         # 포맷: lat,lon,pos_ts,course_deg,spd_mps,motion_ts
@@ -332,8 +343,10 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             now_mono = timebase.now()
             hdop = float(rcv_data[10]) if len(rcv_data) > 10 and _is_finite(rcv_data[10]) else float('inf')
 
-            pos_health = _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
-            motion_health = _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
+            pos_fresh = timebase.valid_age(last_valid_gps_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
+            motion_fresh = timebase.valid_age(last_valid_rmc_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
+            pos_health = pos_fresh and _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
+            motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
 
             if pos_health:
                 global _prev_valid_lat, _prev_valid_lon, _prev_valid_ts
@@ -341,10 +354,10 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 _prev_valid_lon = GPS_LON
                 _prev_valid_ts  = now_mono
 
-                pts   = f"{now_mono:.4f}"
+                pts   = f"{last_valid_gps_ts:.4f}"
                 crs_s = f"{GPS_COURSE:.4f}"   if motion_health else "nan"
                 spd_s = f"{GPS_SPEED_MS:.4f}" if motion_health else "nan"
-                mts   = f"{now_mono:.4f}"     if motion_health else "nan"
+                mts   = f"{last_valid_rmc_ts:.4f}" if motion_health else "nan"
 
                 msgstructure.send_msg(
                     Main_Queue,
