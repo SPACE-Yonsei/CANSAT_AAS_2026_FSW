@@ -184,14 +184,17 @@ def cmd_simg(option: str, main_queue) -> bool:
         lon = float(parts[1])
         float(parts[2])
         float(parts[3])
-        if len(parts) == 5:
-            float(parts[4])
+        alt = float(parts[4]) if len(parts) == 5 else None
     except ValueError:
         return False
     if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
         return False
     if lat == 0.0 and lon == 0.0:
         return False
+    tlm_data.gps_lat = lat
+    tlm_data.gps_lon = lon
+    if alt is not None:
+        tlm_data.gps_alt = alt
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,

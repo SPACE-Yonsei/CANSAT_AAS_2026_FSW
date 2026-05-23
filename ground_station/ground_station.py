@@ -498,6 +498,8 @@ class SerialWorker(threading.Thread):
 
     def run(self) -> None:
         buf = bytearray()
+        marker = f"${TEAM_ID},".encode()
+        marker_str = f"${TEAM_ID},"
         while not self._stop.is_set():
             try:
                 chunk = self._ser.read(256)
@@ -507,13 +509,37 @@ class SerialWorker(threading.Thread):
             if not chunk:
                 continue
             buf.extend(chunk)
+            # 1) \n 기준으로 완성된 라인 추출
             while True:
                 nl = buf.find(b"\n")
                 if nl < 0:
                     break
                 raw = bytes(buf[:nl])
                 del buf[: nl + 1]
-                line = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()
+                text = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()
+                if not text:
+                    continue
+                # 2) 한 라인에 패킷이 여러 개 붙어 있으면 ($1070, 기준) 재분리
+                if marker_str in text:
+                    pieces = text.split(marker_str)
+                    for i, piece in enumerate(pieces):
+                        piece = piece.strip()
+                        if not piece:
+                            continue
+                        self._rx.put((marker_str + piece) if i > 0 else piece)
+                else:
+                    self._rx.put(text)
+            # 3) \n 없이 버퍼에 패킷이 2개 이상 쌓인 경우 강제 추출
+            while True:
+                first = buf.find(marker)
+                if first < 0:
+                    break
+                second = buf.find(marker, first + len(marker))
+                if second < 0:
+                    break
+                raw = bytes(buf[first:second])
+                del buf[:second]
+                line = raw.decode("utf-8", errors="ignore").strip()
                 if line:
                     self._rx.put(line)
 
