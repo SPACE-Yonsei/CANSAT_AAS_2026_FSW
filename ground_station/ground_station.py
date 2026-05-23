@@ -1697,8 +1697,11 @@ class GroundStation(tk.Tk):
 
     _DIST_GRAPH_MAX_HISTORY = 120
 
+    _DIST_GRAPH_MAX_DISPLAY_M = 200.0
+
     def _update_dist_graph(self, dist_m: float | None) -> None:
         if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
+            dist_m = min(dist_m, self._DIST_GRAPH_MAX_DISPLAY_M)
             self._dist_to_target_history.append(dist_m)
             if len(self._dist_to_target_history) > self._DIST_GRAPH_MAX_HISTORY:
                 self._dist_to_target_history = (
