@@ -55,9 +55,9 @@ _ensure_entry "dtparam=i2c1" "on"
 _ensure_entry "enable_uart" "1"
 _ensure_entry "camera_auto_detect" "1"
 
-# I2C baudrate: 100kHz is safe for multi-device bus
+# I2C baudrate: 400kHz (fast-mode) for INA228/BNO08x/etc.
 if ! grep -q "i2c_arm_baudrate" "${CONFIG_TXT}"; then
-    echo "dtparam=i2c_arm_baudrate=100000" >> "${CONFIG_TXT}"
+    echo "dtparam=i2c_arm_baudrate=400000" >> "${CONFIG_TXT}"
 fi
 
 # Disable Bluetooth so PL011 (ttyAMA0) is freed for XBee / GNSS / TF-Luna.

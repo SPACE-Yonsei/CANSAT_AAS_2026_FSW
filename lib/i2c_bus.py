@@ -66,8 +66,8 @@ def get_i2c() -> Any:
             from adafruit_extended_bus import ExtendedI2C  # type: ignore
 
             bus_id = int(bus_raw, 0)
-            _i2c = ExtendedI2C(bus_id)
-            logger.info("I2C: ExtendedI2C(%s) -> /dev/i2c-%s", bus_raw, bus_id)
+            _i2c = ExtendedI2C(bus_id, frequency=400_000)
+            logger.info("I2C: ExtendedI2C(%s) -> /dev/i2c-%s @ 400kHz", bus_raw, bus_id)
             return _i2c
         except Exception as exc:
             logger.warning(
@@ -80,11 +80,11 @@ def get_i2c() -> Any:
     import board  # type: ignore
 
     try:
-        _i2c = board.I2C()
-    except Exception:
         import busio  # type: ignore
 
-        _i2c = busio.I2C(board.SCL, board.SDA)
+        _i2c = busio.I2C(board.SCL, board.SDA, frequency=400_000)
+    except Exception:
+        _i2c = board.I2C()
     return _i2c
 
 

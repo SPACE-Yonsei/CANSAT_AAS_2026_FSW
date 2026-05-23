@@ -177,3 +177,9 @@ def distanceapp_main(main_queue, main_pipe) -> None:
                 command_handler(main_pipe.recv())
     except KeyboardInterrupt:
         pass
+    if _dist_hw:
+        try:
+            from Sensor_Distance import distance as dist_driver
+            dist_driver.terminate_tfluna(_dist_hw)
+        except Exception:
+            pass
