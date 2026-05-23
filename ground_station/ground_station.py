@@ -141,7 +141,7 @@ _MAP_START_TARGET_PAD_FACTOR = 1.22
 _MAP_TRAIL_MAX_SEGMENT_M = 25_000.0
 # User zoom: <1 zooms in (smaller half-extent), >1 zooms out. Clamped in handlers.
 _MAP_ZOOM_MIN_SCALE = 0.35
-_MAP_ZOOM_MAX_SCALE = 5.0
+_MAP_ZOOM_MAX_SCALE = 200.0
 _MAP_ZOOM_STEP = 1.18
 # Target at (0,0) is treated as unset — do not center map on null island.
 _MAP_NULL_LAT_TOL = 1.0e-4

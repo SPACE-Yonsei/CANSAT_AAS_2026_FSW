@@ -86,6 +86,7 @@ MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
 MANUAL_STEER_MODE: str = config.MOTOR_MANUAL_NEUTRAL
+MOTOR_CTRL_MODE:   str = config.MOTOR_CTRL_MODE
 STATE: int = 0
 PI = None
 
@@ -396,11 +397,7 @@ def handle_mtr(data: str) -> None:
 
 
 def handle_cmc(data: str) -> None:
-    """CMC handler kept for IPC compatibility.
-
-    Mode-switching (GPS_GUIDED / GPS_ONLY / IMU_HEADING) is not implemented
-    in the rebuilt guidance/control pipeline; the handler is a no-op acceptor.
-    """
+    global MOTOR_CTRL_MODE
     mode = str(data or "").strip().upper()
     valid = {
         config.MOTOR_CTRL_MODE_GPS_GUIDED,
@@ -410,7 +407,8 @@ def handle_cmc(data: str) -> None:
     if mode not in valid:
         logger.debug("CMC: rejected unknown mode %r", mode)
         return
-    logger.info("CMC: %s (advisory; runtime mode unchanged)", mode)
+    MOTOR_CTRL_MODE = mode
+    logger.info("CMC: switched to %s", mode)
 
 
 def handle_fac(data: str) -> None:
@@ -459,8 +457,15 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str, snap: _Cache) -> None:
         _fmt_num(snap.target_lon, 6),
         _fmt_num(carrot_lat,      6),
         _fmt_num(carrot_lon,      6),
-        _fmt_num(math.degrees(g_out.current_heading_rad)
-                 if math.isfinite(g_out.current_heading_rad) else float("nan"), 2),
+        _fmt_num(math.degrees(
+            snap.latest_imu.yaw_rad
+            if (MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING
+                and snap.latest_imu.yaw_rad is not None
+                and math.isfinite(snap.latest_imu.yaw_rad))
+            else g_out.current_heading_rad
+            if math.isfinite(g_out.current_heading_rad)
+            else float("nan")
+        ), 2),
         diag_state,
         str(int(bool(MOTOR_ENABLED))),
         str(int(bool(RELEASE_ACTION_ENABLED and EGG_ACTION_ENABLED))),
