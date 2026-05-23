@@ -94,7 +94,7 @@ def _apply_yaw_offset(yaw: float) -> float:
     return _wrap_deg(float(yaw) + prevstate.YAW_OFFSET)
 
 
-def _ema(prev: Optional[float], cur: float, alpha: float) -> float:
+def _ema(prev: Optional[float], cur: float, alpha: float = ACC_NORM_EMA_ALPHA) -> float:
     if prev is None:
         return cur
     return alpha * cur + (1.0 - alpha) * prev
