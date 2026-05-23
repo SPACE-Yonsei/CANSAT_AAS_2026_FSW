@@ -10,12 +10,15 @@ into guidance instead of reading guidance/control globals.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import math
 import threading
 import time
 from typing import Optional
 
-from lib import appargs, config, msgstructure, prevstate, timebase
+from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
+
+logger = logging.getLogger(__name__)
 
 from . import control, guidance
 
@@ -84,6 +87,7 @@ MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
 MANUAL_STEER_MODE: str = config.MOTOR_MANUAL_NEUTRAL
+MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE
 STATE: int = 0
 PI = None
 
@@ -94,7 +98,7 @@ _PREV_STATE = -1
 _START_POINT_LOCKED = False
 _GUIDANCE_STATE = guidance.GuidanceState()
 
-_MANUAL_STEER_DELTA_DEG = 60.0
+_MANUAL_STEER_DELTA_DEG = config.MANUAL_STEER_DELTA_DEG
 
 
 _CONTROLLER = None
@@ -204,12 +208,12 @@ def _compute_linear_acc(
 def handle_imu(data: str) -> None:
     """Parse IMU payload and update cache.
 
-    Current payload:
-      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble
+    Current payload (16 fields):
+      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health
     """
     fields = data.split(",")
     try:
-        if len(fields) != 15:
+        if len(fields) < 15:
             return
         roll_deg   = float(fields[0])
         pitch_deg  = float(fields[1])
@@ -422,6 +426,19 @@ def handle_mtr(data: str) -> None:
         MANUAL_STEER_MODE = mode
 
 
+def handle_ctrlmode(data: str) -> None:
+    global MOTOR_CTRL_MODE
+    mode = data.strip().upper()
+    valid = {
+        config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        config.MOTOR_CTRL_MODE_GPS_ONLY,
+        config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    if mode in valid:
+        with _UPDATE_LOCK:
+            MOTOR_CTRL_MODE = mode
+
+
 def handle_fac(data: str) -> None:
     global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
     raw = data.strip().upper().replace(" ", "")
@@ -496,6 +513,10 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str,
     )
 
 
+def _wrap180(deg: float) -> float:
+    return (deg + 180.0) % 360.0 - 180.0
+
+
 def ctrl_parafoil(main_queue=None) -> None:
     """Parafoil control loop."""
     global _CONTROLLER, _ORIGIN_SAVED
@@ -503,40 +524,41 @@ def ctrl_parafoil(main_queue=None) -> None:
     while MOTORAPP_RUNSTATUS:
         now = timebase.now()
         try:
-            if not MOTOR_ENABLED or STATE < 3:
+            with _UPDATE_LOCK:
+                _motor_enabled = MOTOR_ENABLED
+                _state = STATE
+                _manual_steer = MANUAL_STEER_MODE
+                _ctrl_mode = MOTOR_CTRL_MODE
+                snap = _cache_snapshot()
+
+            if not _motor_enabled or _state < 3:
                 if PI is not None:
                     control.WriteZero(PI)
                 idle_cmd = control.WriteNeutral(now, config.MOTOR_REASON_IDLE)
                 idle_out = guidance.L1Output(
                     timestamp=now, nominal=False, reason=config.MOTOR_REASON_IDLE
                 )
-                with _UPDATE_LOCK:
-                    idle_snap = _cache_snapshot()
+                sensorlog.log_motor_ctrl(idle_cmd)
                 _send_diag(main_queue, idle_cmd, idle_out, config.MOTOR_REASON_IDLE,
-                           idle_snap.start_lat, idle_snap.start_lon)
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
-            if STATE == 5:
+            if _state == 5:
                 if PI is not None:
                     control.WriteOff(PI)
                 landed_cmd = control.WriteNeutral(now, config.MOTOR_REASON_LANDED)
                 landed_out = guidance.L1Output(
                     timestamp=now, nominal=False, reason=config.MOTOR_REASON_LANDED
                 )
-                with _UPDATE_LOCK:
-                    landed_snap = _cache_snapshot()
+                sensorlog.log_motor_ctrl(landed_cmd)
                 _send_diag(main_queue, landed_cmd, landed_out, config.MOTOR_REASON_LANDED,
-                           landed_snap.start_lat, landed_snap.start_lon)
+                           snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
 
-            with _UPDATE_LOCK:
-                snap = _cache_snapshot()
-
-            # DR을 현재 시각으로 갱신 (lock 밖 - snap 은 이미 복사됨)
-            if MANUAL_STEER_MODE != config.MOTOR_MANUAL_NEUTRAL:
-                manual_cmd = _manual_steer_command(now, MANUAL_STEER_MODE)
+            if _manual_steer != config.MOTOR_MANUAL_NEUTRAL:
+                manual_cmd = _manual_steer_command(now, _manual_steer)
                 manual_out = guidance.L1Output(
                     timestamp=now,
                     nominal=False,
@@ -548,11 +570,11 @@ def ctrl_parafoil(main_queue=None) -> None:
                 )
                 if PI is not None:
                     control.ProducePulse(PI, manual_cmd)
+                sensorlog.log_motor_ctrl(manual_cmd)
                 _send_diag(main_queue, manual_cmd, manual_out, manual_cmd.mode,
                            snap.start_lat, snap.start_lon)
                 time.sleep(period)
                 continue
-
             fresh = guidance.decidefresh(
                 snap.latest_gps, snap.latest_imu, snap.latest_baro,
                 _GUIDANCE_STATE, now,
@@ -573,34 +595,63 @@ def ctrl_parafoil(main_queue=None) -> None:
             g_out.timestamp = now
 
             if g_out.control_valid:
-                if _CONTROLLER is None:
-                    _CONTROLLER = control.MakeCtrler()
-                # Provide gyrz only for CLOSED-loop modes (pid_enabled=True)
-                angular_velocity_meas_deg_s = float("nan")
-                if (
                     getattr(g_out, "pid_enabled", False)
                     and fresh.imu_gyrz_fresh
-                    and snap.latest_imu.gyrz_rad_s is not None
-                ):
+                    and snap.latest_imu.gyrz_rad_s is not None):
                     angular_velocity_meas_deg_s = math.degrees(
                         float(config.GYRZ_SIGN) * float(snap.latest_imu.gyrz_rad_s)
                     )
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(
-                        _CONTROLLER,
-                        control.ProduceCtrlInput(g_out, now),
-                        angular_velocity_meas_deg_s,
-                        now,
+                        _CONTROLLER, ctrl_in, angular_velocity_meas_deg_s, now
                     )
-            else:
-                cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
+            else:  # GPS_GUIDED or GPS_ONLY
+                l1_input, mode = guidance.ProduceL1Input(
+                    gps=snap.latest_gps,
+                    imu=snap.latest_imu,
+                    baro=snap.latest_baro,
+                    origin_lat=snap.start_lat,
+                    origin_lon=snap.start_lon,
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                    now=now,
+                )
+                g_out = guidance.ProduceL1Output(
+                    l1_input=l1_input,
+                    mode=mode,
+                    origin_lat=snap.start_lat,
+                    origin_lon=snap.start_lon,
+                    target_lat=snap.target_lat,
+                    target_lon=snap.target_lon,
+                    now=now,
+                )
+                if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
+                    if _CONTROLLER is None:
+                        _CONTROLLER = control.MakeCtrler()
+                    angular_velocity_meas_deg_s = float("nan")
+                    if _ctrl_mode != config.MOTOR_CTRL_MODE_GPS_ONLY and (
+                        getattr(l1_input, "gyrz", None) is not None
+                        and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
+                        == guidance.SensorQuality.FRESH
+                    ):
+                        angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
+                    with _CTRL_LOCK:
+                        cmd = control.ProduceCtrlOutput(
+                            _CONTROLLER,
+                            control.ProduceCtrlInput(g_out, now),
+                            angular_velocity_meas_deg_s,
+                            now,
+                        )
+                else:
+                    cmd = control.WriteNeutral(now, getattr(g_out, "reason", config.MOTOR_REASON_GUIDANCE_INACTIVE))
 
             if PI is not None:
                 control.ProducePulse(PI, cmd)
-            diag_state = g_out.reason if g_out.control_valid else (g_out.reason or config.MOTOR_REASON_DISABLED)
+\            diag_state = g_out.reason if g_out.control_valid else (g_out.reason or config.MOTOR_REASON_DISABLED)
             _send_diag(main_queue, cmd, g_out, diag_state, snap.start_lat, snap.start_lon)
 
         except Exception:
+            logger.exception("ctrl_parafoil: unhandled exception; writing zero PWM")
             if PI is not None:
                 control.WriteZero(PI)
         time.sleep(period)
@@ -634,6 +685,8 @@ def dispatch(msg: str) -> None:
         handle_mtr(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_CMC:
+        handle_ctrlmode(unpacked.data)
 
 
 def init() -> None:
