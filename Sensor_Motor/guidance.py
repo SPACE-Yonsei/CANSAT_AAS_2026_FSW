@@ -391,12 +391,12 @@ class L1Output:
     distance_to_target: float = 0.0     # |target - pos| [m]
     yaw_rate_cmd: float = 0.0           # final yaw-rate command [rad/s]
 
-    # ── Control authority limits (set by _homing_fill_ctrl_params) ────────────
-    angular_velocity_cmd_max_deg_s: float = 0.0
-    delta_ff_max_deg: float = 0.0
-    delta_pid_max_deg: float = 0.0
-    delta_total_max_deg: float = 0.0
-    max_arm_rate_deg_s: float = 0.0
+    # ── Control overrides. None means control.ControlConfig owns the limit. ───
+    angular_velocity_cmd_max_deg_s: Optional[float] = None
+    delta_ff_max_deg: Optional[float] = None
+    delta_pid_max_deg: Optional[float] = None
+    delta_total_max_deg: Optional[float] = None
+    max_arm_rate_deg_s: Optional[float] = None
     pid_enabled: bool = False
 
     # ── Backward-compat / telemetry fields ────────────────────────────────────
@@ -1168,10 +1168,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
         out.distance_to_target = 0.0
         out.pid_enabled = True
         out.angular_velocity_cmd_max_deg_s = 0.0
-        out.delta_ff_max_deg = 0.0
-        out.delta_pid_max_deg = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
-        out.delta_total_max_deg = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
-        out.max_arm_rate_deg_s = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
         out.yaw_rate_limit_dps = config.DETUMBLING_YAW_RATE_LIMIT_DPS
         out.dr_confidence = l1input.confidence
         out.dr_method = l1input.dr_method
@@ -1264,43 +1260,23 @@ def produceL1output(l1input: L1Input) -> L1Output:
 
 
 def _homing_fill_ctrl_params(out: L1Output, mode_val: str, dr_method: str) -> None:
-    """Set motor control authority limits on L1Output by mode."""
+    """Set only guidance-owned control flags; motor authority lives in control.py."""
     c = config
     if mode_val == c.CONTROL_MODE_GPS_TRACKING_CLOSED:
         out.pid_enabled = True
         out.angular_velocity_cmd_max_deg_s = c.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
-        out.delta_ff_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
-        out.delta_pid_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
-        out.delta_total_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
-        out.max_arm_rate_deg_s = c.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
     elif mode_val == c.CONTROL_MODE_GPS_TRACKING_OPEN:
         out.pid_enabled = False
         out.angular_velocity_cmd_max_deg_s = c.GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
-        out.delta_ff_max_deg = c.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG
-        out.delta_pid_max_deg = 0.0
-        out.delta_total_max_deg = c.MOTOR_NOMINAL_FEEDFORWARD_DELTA_TOTAL_MAX_DEG
-        out.max_arm_rate_deg_s = c.MOTOR_NOMINAL_FEEDFORWARD_MAX_ARM_RATE_DEG_S
     elif mode_val == c.CONTROL_MODE_DR_TRACKING_CLOSED:
         out.pid_enabled = True
         out.angular_velocity_cmd_max_deg_s = c.DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
-        out.delta_ff_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG
-        out.delta_pid_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG
-        out.delta_total_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
-        out.max_arm_rate_deg_s = c.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
     elif mode_val == c.CONTROL_MODE_DR_TRACKING_OPEN:
         out.pid_enabled = False
         out.angular_velocity_cmd_max_deg_s = c.DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
-        out.delta_ff_max_deg = c.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG
-        out.delta_pid_max_deg = 0.0
-        out.delta_total_max_deg = c.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG
-        out.max_arm_rate_deg_s = c.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S
     else:
         out.pid_enabled = False
         out.angular_velocity_cmd_max_deg_s = 0.0
-        out.delta_ff_max_deg = 0.0
-        out.delta_pid_max_deg = 0.0
-        out.delta_total_max_deg = 0.0
-        out.max_arm_rate_deg_s = 0.0
 
 
 def reset_guidance_state_for_flight(state: GuidanceState) -> None:

@@ -61,9 +61,9 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 @dataclass
 class ControlConfig:
     # FF 형상
-    ANGULAR_VELOCITY_CMD_MAX_DEG_S:  float = config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S
+    ANGULAR_VELOCITY_CMD_MAX_DEG_S:  float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
     ANGULAR_VELOCITY_DEADBAND_DEG_S: float = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-    DELTA_FF_MAX_DEG:                float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
+    DELTA_FF_MAX_DEG:                float = 80.0
     DELTA_MIN_EFFECTIVE_DEG:         float = config.CTRL_DELTA_MIN_EFFECTIVE_DEG
     EXPO:                            float = config.CTRL_EXPO
 
@@ -73,11 +73,11 @@ class ControlConfig:
     K_I:                  float = config.CTRL_K_I
     K_D:                  float = config.KD_YAW_RATE
     I_LIMIT_DEG:          float = config.CTRL_I_LIMIT_DEG
-    DELTA_PID_MAX_DEG:    float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
+    DELTA_PID_MAX_DEG:    float = 25.0
 
     # 권한 / 슬루
-    DELTA_TOTAL_MAX_DEG: float = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
-    MAX_ARM_RATE_DEG_S:  float = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
+    DELTA_TOTAL_MAX_DEG: float = 100.0
+    MAX_ARM_RATE_DEG_S:  float = 60.0
 
 
 @dataclass
