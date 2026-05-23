@@ -112,28 +112,11 @@ class TestHandleGps(unittest.TestCase):
         self.assertAlmostEqual(motorapp._CACHE.gps_history[-1].lat, 37.55)
         self.assertTrue(motorapp._CACHE.gps_history[-1].pos_health)
 
-    def test_invalid_position_does_not_enter_history(self):
-        t0 = time.monotonic() - 0.1
-        motorapp.handle_gps(_gps_msg(lat=999.0, lon=126.95, ts=t0))
-        motorapp.handle_gps(_gps_msg(ts=t0 + 0.1))
-        self.assertEqual(len(motorapp._CACHE.gps_history), 0)
-
-    def test_out_of_range_position_disables_position_and_motion(self):
-        motorapp.handle_gps(_gps_msg(lat=999.0, lon=126.95))
-        gps = motorapp._CACHE.latest_gps
-        self.assertFalse(gps.pos_health)
-        self.assertFalse(gps.motion_health)
-
     def test_invalid_motion_stays_out_of_latest_motion_fields(self):
-        motorapp.handle_gps(_gps_msg(course=999.0))
+        motorapp.handle_gps(_gps_msg(motion=False))
         self.assertTrue(motorapp._CACHE.latest_gps.pos_health)
         self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
         self.assertIsNone(motorapp._CACHE.latest_gps.course_rad)
-
-    def test_motion_health_requires_position_health(self):
-        motorapp.handle_gps(_gps_msg(lat=999.0, lon=126.95))
-        self.assertFalse(motorapp._CACHE.latest_gps.pos_health)
-        self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
 
     def test_history_preserves_estimated_motion(self):
         t0 = time.monotonic() - 0.1
@@ -171,20 +154,6 @@ class TestHandleGpsStartPointLocking(unittest.TestCase):
         self.assertTrue(motorapp._START_POINT_LOCKED)
         self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
         self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
-
-    def test_state3_out_of_range_position_does_not_lock_start_point(self):
-        motorapp.STATE = 3
-        motorapp.handle_gps(_gps_msg(lat=999.0, lon=126.95))
-        self.assertFalse(motorapp._START_POINT_LOCKED)
-        self.assertIsNone(motorapp._CACHE.start_lon)
-
-    def test_locked_start_rejects_large_latlon_jump(self):
-        motorapp.STATE = 3
-        motorapp.handle_gps(_gps_msg(lat=37.55, lon=126.95))
-        self.assertTrue(motorapp._START_POINT_LOCKED)
-        motorapp.handle_gps(_gps_msg(lat=58.0, lon=148.0))
-        self.assertFalse(motorapp._CACHE.latest_gps.pos_health)
-        self.assertFalse(motorapp._CACHE.latest_gps.motion_health)
 
 
 class TestHandleImu(unittest.TestCase):

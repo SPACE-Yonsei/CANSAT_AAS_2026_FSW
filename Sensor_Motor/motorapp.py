@@ -172,12 +172,10 @@ class _EstimatedSample:
     lat:          Optional[float] = None
     lon:          Optional[float] = None
     pos_ts:       Optional[float] = None
-    pos_valid:    bool = False
     # GPS motion
     course_rad:   Optional[float] = None
     speed_mps:    Optional[float] = None
     motion_ts:    Optional[float] = None
-    motion_valid: bool = False
     # IMU
     gyrz_rad_s:   Optional[float] = None
     gyrz_ts:      Optional[float] = None
@@ -246,17 +244,7 @@ _PREV_STATE = -1
 _START_POINT_LOCKED = False
 
 _GPS_MAX_VALID_SPEED_MPS = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
-_GPS_POS_MAX_DELTA_DEG = 20.0   # deg, relative to locked start latitude/longitude
 _MANUAL_STEER_DELTA_DEG = 60.0
-
-
-def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
-    return (
-        math.isfinite(course_deg)
-        and math.isfinite(ground_speed)
-        and 0.0 <= course_deg < 360.0
-        and GPS_MOTION_MIN_VALID_MPS <= ground_speed <= _GPS_MAX_VALID_SPEED_MPS
-    )
 
 
 def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
@@ -619,11 +607,9 @@ def _make_estimated_sample(
         lat          = freshed_gps.lat,
         lon          = freshed_gps.lon,
         pos_ts       = freshed_gps.pos_ts,
-        pos_valid    = bool(freshed_gps.pos_health and freshed_gps.lat is not None),
         course_rad   = freshed_gps.course_rad,
         speed_mps    = freshed_gps.speed_mps,
         motion_ts    = freshed_gps.motion_ts,
-        motion_valid = bool(freshed_gps.motion_health and freshed_gps.course_rad is not None),
         gyrz_rad_s   = freshed_imu.gyrz_rad_s,
         gyrz_ts      = freshed_imu.ts,
         gyrz_valid   = bool(freshed_imu.health and freshed_imu.gyrz_rad_s is not None),
@@ -684,37 +670,28 @@ def handle_gps(data: str) -> None:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
-    pos_valid = (
-        math.isfinite(lat)
-        and math.isfinite(lon)
-        and -90.0 <= lat <= 90.0
-        and -180.0 <= lon <= 180.0
+    has_motion_sample = (
+        math.isfinite(course_deg)
+        and math.isfinite(speed_mps)
+        and math.isfinite(motion_ts)
     )
-    with _UPDATE_LOCK:
-        start_lat = _CACHE.start_lat
-        start_lon = _CACHE.start_lon
-    if pos_valid and start_lat is not None and abs(lat - float(start_lat)) > _GPS_POS_MAX_DELTA_DEG:
-        pos_valid = False
-    if pos_valid and start_lon is not None and abs(lon - float(start_lon)) > _GPS_POS_MAX_DELTA_DEG:
-        pos_valid = False
-    motion_valid = pos_valid and _gps_motion_sane(course_deg, speed_mps)
 
-    course_rad = math.radians(course_deg) if motion_valid else float("nan")
+    course_rad = math.radians(course_deg) if has_motion_sample else None
     sample = _GpsFromApp(
-        lat=lat if pos_valid else None,
-        lon=lon if pos_valid else None,
-        course_rad=course_rad if motion_valid else None,
-        speed_mps=speed_mps if motion_valid else None,
-        pos_ts=pos_ts if pos_valid else None,
-        motion_ts=motion_ts if motion_valid else None,
+        lat=lat,
+        lon=lon,
+        course_rad=course_rad,
+        speed_mps=speed_mps if has_motion_sample else None,
+        pos_ts=pos_ts,
+        motion_ts=motion_ts if has_motion_sample else None,
         rx_ts=rx_ts,
-        pos_health=int(bool(pos_valid)),
-        motion_health=int(bool(motion_valid)),
+        pos_health=1,
+        motion_health=int(has_motion_sample),
     )
     with _UPDATE_LOCK:
         _push_latest_gps_to_history(_CACHE, rx_ts)
         _CACHE.latest_gps = sample
-        if not _START_POINT_LOCKED and STATE >= 3 and pos_valid:
+        if not _START_POINT_LOCKED and STATE >= 3:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True

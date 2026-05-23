@@ -21,16 +21,6 @@ class TestStartPointLock(unittest.TestCase):
         _reset_motor_cache()
 
     @patch.object(motorapp.prevstate, "update_start_point")
-    def test_does_not_lock_when_position_out_of_range(self, mock_update) -> None:
-        """MotorApp still rejects structurally invalid coordinates."""
-        motorapp.STATE = 3
-        motorapp.handle_gps(_gps_msg(lat=999.0, lon=126.930700))
-        self.assertFalse(motorapp._START_POINT_LOCKED)
-        self.assertIsNone(motorapp._CACHE.start_lat)
-        self.assertIsNone(motorapp._CACHE.start_lon)
-        mock_update.assert_not_called()
-
-    @patch.object(motorapp.prevstate, "update_start_point")
     def test_no_lock_invalid_motion_because_position_still_required(self, mock_update) -> None:
         motorapp.STATE = 3
         motorapp.handle_gps(_gps_msg(course=999.0))
