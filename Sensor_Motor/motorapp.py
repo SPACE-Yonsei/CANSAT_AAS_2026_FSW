@@ -10,7 +10,6 @@ into guidance instead of reading guidance/control globals.
 from __future__ import annotations
 
 import csv
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
@@ -25,14 +24,6 @@ from lib import appargs, config, msgstructure, prevstate, timebase
 from . import control, guidance
 
 LOGGER = logging.getLogger(__name__)
-
-GPS_HISTORY_SEC = 10.0
-IMU_HISTORY_SEC = 2.0
-BARO_HISTORY_SEC = 10.0
-GPS_REGRESSION_SEC = 3.0
-GPS_MOTION_MIN_VALID_MPS = 0.3
-IMU_ESTIMATE_SEC = 0.50
-BARO_REGRESSION_SEC = 3.0
 
 _CONTROL_LOG_LOCK = threading.Lock()
 _CONTROL_LOG_FP = None
@@ -103,10 +94,6 @@ _CONTROL_LOG_HEADER = [
 ]
 
 
-def _history_len(rate_hz: float, seconds: float) -> int:
-    return max(1, int(math.ceil(max(0.1, rate_hz) * seconds)))
-
-
 @dataclass
 class _GpsFromApp:
     lat: Optional[float] = None
@@ -151,82 +138,15 @@ class _BaroFromApp:
 
 
 @dataclass
-class _DeadReckoning:
-    """GPS stale 구간의 추정 위치 (constant-velocity propagation)."""
-    lat:        Optional[float] = None
-    lon:        Optional[float] = None
-    ts:         Optional[float] = None   # 이 추정값이 계산된 시각 (monotonic)
-    anchor_lat: Optional[float] = None   # 직전 GPS fix 위치
-    anchor_lon: Optional[float] = None
-    anchor_ts:  Optional[float] = None   # 직전 GPS fix 시각
-    course_rad: Optional[float] = None   # 직전 GPS/추정 motion
-    speed_mps:  Optional[float] = None
-    motion_ts:  Optional[float] = None
-    valid:      bool = False
-
-
-@dataclass
-class _EstimatedSample:
-    """한 제어 주기에서 history 기반으로 산출된 추정 센서값."""
-    # GPS position
-    lat:          Optional[float] = None
-    lon:          Optional[float] = None
-    pos_ts:       Optional[float] = None
-    # GPS motion
-    course_rad:   Optional[float] = None
-    speed_mps:    Optional[float] = None
-    motion_ts:    Optional[float] = None
-    # IMU
-    gyrz_rad_s:   Optional[float] = None
-    gyrz_ts:      Optional[float] = None
-    gyrz_valid:   bool = False
-    # Baro
-    alt_m:        Optional[float] = None
-    sink_rate:    Optional[float] = None
-    alt_ts:       Optional[float] = None
-    alt_valid:    bool = False
-    # 이 샘플이 산출된 제어 주기 시각
-    ts:           Optional[float] = None
-
-
-@dataclass
 class _Cache:
-    latest_gps: _GpsFromApp = field(default_factory=_GpsFromApp)
-    gps_history: deque[_GpsFromApp] = field(
-        default_factory=lambda: deque(
-            maxlen=_history_len(float(config.GPS_RATE_HZ), GPS_HISTORY_SEC)
-        )
-    )
-
-    latest_imu: _ImuFromApp = field(default_factory=_ImuFromApp)
-    imu_history: deque[_ImuFromApp] = field(
-        default_factory=lambda: deque(
-            maxlen=_history_len(float(config.IMU_RATE_HZ), IMU_HISTORY_SEC)
-        )
-    )
-
+    latest_gps:  _GpsFromApp  = field(default_factory=_GpsFromApp)
+    latest_imu:  _ImuFromApp  = field(default_factory=_ImuFromApp)
     latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
-    baro_history: deque[_BaroFromApp] = field(
-        default_factory=lambda: deque(
-            maxlen=_history_len(float(config.BAROMETER_RATE_HZ), BARO_HISTORY_SEC)
-        )
-    )
-
-    dr: _DeadReckoning = field(default_factory=_DeadReckoning)
-
-    estimated_history: deque[_EstimatedSample] = field(
-        default_factory=lambda: deque(
-            maxlen=_history_len(
-                float(config.MOTOR_RATE_HZ),
-                max(guidance.POS_EST_AGE, guidance.MOTION_EST_AGE, guidance.ALT_EST_AGE),
-            )
-        )
-    )
 
     target_lat: Optional[float] = None
     target_lon: Optional[float] = None
-    start_lat: Optional[float] = None
-    start_lon: Optional[float] = None
+    start_lat:  Optional[float] = None
+    start_lon:  Optional[float] = None
 
 
 MOTORAPP_RUNSTATUS: bool = True
@@ -243,404 +163,17 @@ _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
 
-_GPS_MAX_VALID_SPEED_MPS = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
 _MANUAL_STEER_DELTA_DEG = 60.0
-
-
-def _copy_deque(samples, sample_type, maxlen: Optional[int] = None):
-    return deque((sample_type(**vars(sample)) for sample in samples), maxlen=maxlen)
-
-
-def _gps_position_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
-    return bool(
-        sample.pos_health
-        and sample.lat is not None
-        and sample.lon is not None
-        and sample.pos_ts is not None
-        and timebase.valid_age(sample.pos_ts, now, age)
-    )
-
-
-def _gps_motion_valid(sample: _GpsFromApp, now: float, age: float) -> bool:
-    return bool(
-        sample.motion_health
-        and sample.course_rad is not None
-        and sample.speed_mps is not None
-        and sample.motion_ts is not None
-        and timebase.valid_age(sample.motion_ts, now, age)
-    )
-
-
-def _gps_fresh_for_history(sample: _GpsFromApp, now: float) -> bool:
-    return bool(
-        _gps_position_valid(sample, now, guidance.POS_FRESH_AGE)
-        or _gps_motion_valid(sample, now, guidance.MOTION_FRESH_AGE)
-    )
-
-
-def _imu_gyrz_valid(sample: _ImuFromApp, now: float, age: float) -> bool:
-    return bool(
-        sample.health
-        and sample.gyrz_rad_s is not None
-        and sample.ts is not None
-        and timebase.valid_age(sample.ts, now, age)
-    )
-
-
-def _baro_alt_valid(sample: _BaroFromApp, now: float, age: float) -> bool:
-    return bool(
-        sample.health
-        and sample.alt_m is not None
-        and sample.ts is not None
-        and timebase.valid_age(sample.ts, now, age)
-    )
-
-
-def _push_latest_gps_to_history(cache: _Cache, now: float) -> None:
-    if _gps_fresh_for_history(cache.latest_gps, now):
-        cache.gps_history.append(_GpsFromApp(**vars(cache.latest_gps)))
-
-
-def _push_latest_imu_to_history(cache: _Cache, now: float) -> None:
-    if _imu_gyrz_valid(cache.latest_imu, now, guidance.GYRZ_FRESH_AGE):
-        cache.imu_history.append(_ImuFromApp(**vars(cache.latest_imu)))
-
-
-def _push_latest_baro_to_history(cache: _Cache, now: float) -> None:
-    if _baro_alt_valid(cache.latest_baro, now, guidance.ALT_FRESH_AGE):
-        cache.baro_history.append(_BaroFromApp(**vars(cache.latest_baro)))
-
-
-def _valid_gps_position_samples(history, now: float):
-    samples = []
-    for sample in history:
-        if not (
-            _gps_position_valid(sample, now, guidance.POS_HISTORY_AGE)
-        ):
-            continue
-        samples.append(sample)
-    return samples
-
-
-def _valid_gps_motion_samples(history, now: float):
-    samples = []
-    for sample in history:
-        if not (
-            _gps_motion_valid(sample, now, guidance.MOTION_HISTORY_AGE)
-        ):
-            continue
-        samples.append(sample)
-    return samples
-
-
-def _est_position_regression_velocity(
-    pos_samples,
-    origin_lat: Optional[float],
-    origin_lon: Optional[float],
-    now: float,
-) -> Optional[tuple[float, float]]:
-    if origin_lat is None or origin_lon is None or len(pos_samples) < 2:
-        return None
-    latest = pos_samples[-1]
-    oldest = None
-    for sample in reversed(pos_samples[:-1]):
-        if latest.pos_ts - sample.pos_ts <= GPS_REGRESSION_SEC:
-            oldest = sample
-        else:
-            break
-    if oldest is None:
-        oldest = pos_samples[-2]
-    dt = latest.pos_ts - oldest.pos_ts
-    if dt < 0.20:
-        return None
-    n0, e0 = guidance.latlon_to_ne(oldest.lat, oldest.lon, origin_lat, origin_lon)
-    n1, e1 = guidance.latlon_to_ne(latest.lat, latest.lon, origin_lat, origin_lon)
-    v_n = (n1 - n0) / dt
-    v_e = (e1 - e0) / dt
-    speed = math.hypot(v_n, v_e)
-    if not math.isfinite(speed) or speed < GPS_MOTION_MIN_VALID_MPS or speed > _GPS_MAX_VALID_SPEED_MPS:
-        return None
-    return v_n, v_e
-
-
-def _est_course_with_gyro_propagation(
-    course_rad: float,
-    motion_ts: float,
-    now: float,
-    gyrz_rad_s: Optional[float],
-) -> tuple[float, float]:
-    if (
-        gyrz_rad_s is None
-        or not math.isfinite(float(gyrz_rad_s))
-        or not timebase.valid_age(motion_ts, now, guidance.MOTION_HISTORY_AGE)
-    ):
-        return float(course_rad), float(motion_ts)
-    return (
-        float(course_rad) + float(gyrz_rad_s) * timebase.age(now, motion_ts)
-    ) % (2.0 * math.pi), now
-
-
-def _est_gps_from_history(
-    history,
-    now: Optional[float] = None,
-    origin_lat: Optional[float] = None,
-    origin_lon: Optional[float] = None,
-    gyrz_rad_s: Optional[float] = None,
-) -> _GpsFromApp:
-    now = timebase.now() if now is None else now
-    freshed = _GpsFromApp()
-    pos_samples = _valid_gps_position_samples(history, now)
-    motion_samples = _valid_gps_motion_samples(history, now)
-    velocity = _est_position_regression_velocity(pos_samples, origin_lat, origin_lon, now)
-
-    if velocity is not None:
-        latest_pos = pos_samples[-1]
-        age = timebase.nonnegative_age(now, latest_pos.pos_ts)
-        n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
-        v_n, v_e = velocity
-        lat, lon = guidance.ne_to_latlon(n1 + v_n * age, e1 + v_e * age, origin_lat, origin_lon)
-        speed = math.hypot(v_n, v_e)
-        course = math.atan2(v_e, v_n) % (2.0 * math.pi)
-        freshed.lat = lat
-        freshed.lon = lon
-        freshed.pos_ts = now
-        freshed.rx_ts = latest_pos.rx_ts
-        freshed.pos_health = 1
-        freshed.course_rad = course
-        freshed.speed_mps = speed
-        freshed.motion_ts = now
-        freshed.motion_health = 1
-
-    if not freshed.pos_health and pos_samples and motion_samples and origin_lat is not None and origin_lon is not None:
-        latest_pos = pos_samples[-1]
-        latest_motion = motion_samples[-1]
-        course, motion_ts = _est_course_with_gyro_propagation(
-            latest_motion.course_rad,
-            latest_motion.motion_ts,
-            now,
-            gyrz_rad_s,
-        )
-        speed = float(latest_motion.speed_mps)
-        pos_age = timebase.nonnegative_age(now, latest_pos.pos_ts)
-        n1, e1 = guidance.latlon_to_ne(latest_pos.lat, latest_pos.lon, origin_lat, origin_lon)
-        dist_m = speed * pos_age
-        lat, lon = guidance.ne_to_latlon(
-            n1 + dist_m * math.cos(course),
-            e1 + dist_m * math.sin(course),
-            origin_lat,
-            origin_lon,
-        )
-        freshed.lat = lat
-        freshed.lon = lon
-        freshed.pos_ts = now
-        freshed.rx_ts = latest_pos.rx_ts
-        freshed.pos_health = 1
-        freshed.course_rad = course
-        freshed.speed_mps = speed
-        freshed.motion_ts = motion_ts
-        freshed.motion_health = 1
-
-    if (
-        freshed.motion_health
-        and gyrz_rad_s is not None
-        and math.isfinite(float(gyrz_rad_s))
-        and freshed.course_rad is not None
-        and freshed.motion_ts is not None
-        and timebase.valid_age(freshed.motion_ts, now, guidance.MOTION_HISTORY_AGE)
-    ):
-        freshed.course_rad, freshed.motion_ts = _est_course_with_gyro_propagation(
-            freshed.course_rad,
-            freshed.motion_ts,
-            now,
-            gyrz_rad_s,
-        )
-    return freshed
-
-
-def _est_imu_from_history(history, now: Optional[float] = None) -> _ImuFromApp:
-    now = timebase.now() if now is None else now
-    recent = [
-        sample
-        for sample in history
-        if (
-            _imu_gyrz_valid(sample, now, guidance.GYRZ_HISTORY_AGE)
-            and timebase.valid_age(sample.ts, now, IMU_ESTIMATE_SEC)
-        )
-    ]
-    if recent:
-        weighted_sum = 0.0
-        weight_total = 0.0
-        for sample in recent:
-            age = timebase.nonnegative_age(now, sample.ts)
-            weight = max(0.05, 1.0 - age / max(IMU_ESTIMATE_SEC, 1.0e-6))
-            weighted_sum += float(sample.gyrz_rad_s) * weight
-            weight_total += weight
-        latest = recent[-1]
-        freshed = _ImuFromApp(**vars(latest))
-        freshed.gyrz_rad_s = weighted_sum / weight_total
-        freshed.health = 1
-        return freshed
-    for sample in reversed(history):
-        if _imu_gyrz_valid(sample, now, guidance.GYRZ_HISTORY_AGE):
-            return _ImuFromApp(**vars(sample))
-    return _ImuFromApp()
-
-
-def _est_baro_from_history(history, now: Optional[float] = None) -> _BaroFromApp:
-    now = timebase.now() if now is None else now
-    samples = [
-        sample
-        for sample in history
-        if _baro_alt_valid(sample, now, guidance.ALT_HISTORY_AGE)
-    ]
-    if not samples:
-        return _BaroFromApp()
-
-    latest = samples[-1]
-    sink_rate = latest.sink_rate
-    oldest = None
-    for sample in reversed(samples[:-1]):
-        if latest.ts - sample.ts <= BARO_REGRESSION_SEC:
-            oldest = sample
-        else:
-            break
-    if oldest is not None:
-        dt = latest.ts - oldest.ts
-        if dt >= 0.20:
-            rate = (float(oldest.alt_m) - float(latest.alt_m)) / dt
-            if math.isfinite(rate):
-                sink_rate = rate
-
-    if sink_rate is None or not math.isfinite(float(sink_rate)):
-        return _BaroFromApp(**vars(latest))
-
-    age = timebase.nonnegative_age(now, latest.ts)
-    return _BaroFromApp(
-        alt_m=float(latest.alt_m) - float(sink_rate) * age,
-        sink_rate=float(sink_rate),
-        ts=now,
-        rx_ts=latest.rx_ts,
-        health=1,
-    )
-
-
-def _est_dead_reckon(
-    dr: _DeadReckoning,
-    latest_gps: _GpsFromApp,
-    est_gps: _GpsFromApp,
-    now: float,
-) -> _DeadReckoning:
-    """Constant-velocity dead reckoning from last GPS fix.
-
-    anchor 갱신: fresh GPS position만 사용한다.
-    motion 갱신: fresh GPS motion을 우선 사용하고, 없으면 estimated GPS motion을 보조로 사용한다.
-    전파:        anchor로부터 저장된 course_rad + speed_mps 로 now 시각까지 선형 외삽.
-    모션 데이터 없으면 anchor 위치를 그대로 사용 (속도 0으로 간주).
-    """
-    if (
-        _gps_position_valid(latest_gps, now, guidance.POS_FRESH_AGE)
-        and (dr.anchor_ts is None or latest_gps.pos_ts > dr.anchor_ts)
-    ):
-        dr.anchor_lat = latest_gps.lat
-        dr.anchor_lon = latest_gps.lon
-        dr.anchor_ts  = latest_gps.pos_ts
-        dr.valid = True
-
-    motion_source = (
-        latest_gps
-        if _gps_motion_valid(latest_gps, now, guidance.MOTION_FRESH_AGE)
-        else est_gps
-    )
-    if (
-        motion_source is not None
-        and motion_source.motion_ts is not None
-        and motion_source.course_rad is not None
-        and motion_source.speed_mps is not None
-        and math.isfinite(float(motion_source.course_rad))
-        and math.isfinite(float(motion_source.speed_mps))
-        and timebase.valid_age(motion_source.motion_ts, now, guidance.MOTION_DR_AGE)
-        and (dr.motion_ts is None or motion_source.motion_ts > dr.motion_ts)
-    ):
-        dr.course_rad = motion_source.course_rad
-        dr.speed_mps = motion_source.speed_mps
-        dr.motion_ts = motion_source.motion_ts
-
-    if not dr.valid or dr.anchor_ts is None:
-        return dr
-
-    if not timebase.valid_age(dr.anchor_ts, now, guidance.POS_DR_AGE):
-        dr.valid = False
-        return dr
-
-    speed  = dr.speed_mps
-    course = dr.course_rad
-    if speed is None or course is None:
-        dr.lat = dr.anchor_lat
-        dr.lon = dr.anchor_lon
-        dr.ts  = now
-        return dr
-    if dr.motion_ts is not None and not timebase.valid_age(dr.motion_ts, now, guidance.MOTION_DR_AGE):
-        dr.lat = dr.anchor_lat
-        dr.lon = dr.anchor_lon
-        dr.ts  = now
-        return dr
-
-    dt     = timebase.nonnegative_age(now, dr.anchor_ts)
-    dist_m = float(speed) * dt
-
-    anchor_lat = float(dr.anchor_lat)
-    anchor_lon = float(dr.anchor_lon)
-    d_N = dist_m * math.cos(float(course))
-    d_E = dist_m * math.sin(float(course))
-    dr.lat, dr.lon = guidance.ne_to_latlon(d_N, d_E, anchor_lat, anchor_lon)
-    dr.ts  = now
-    return dr
-
-
-def _make_estimated_sample(
-    freshed_gps: _GpsFromApp,
-    freshed_imu: _ImuFromApp,
-    freshed_baro: _BaroFromApp,
-    now: float,
-) -> _EstimatedSample:
-    return _EstimatedSample(
-        lat          = freshed_gps.lat,
-        lon          = freshed_gps.lon,
-        pos_ts       = freshed_gps.pos_ts,
-        course_rad   = freshed_gps.course_rad,
-        speed_mps    = freshed_gps.speed_mps,
-        motion_ts    = freshed_gps.motion_ts,
-        gyrz_rad_s   = freshed_imu.gyrz_rad_s,
-        gyrz_ts      = freshed_imu.ts,
-        gyrz_valid   = bool(freshed_imu.health and freshed_imu.gyrz_rad_s is not None),
-        alt_m        = freshed_baro.alt_m,
-        sink_rate    = freshed_baro.sink_rate,
-        alt_ts       = freshed_baro.ts,
-        alt_valid    = bool(freshed_baro.health and freshed_baro.alt_m is not None),
-        ts           = now,
-    )
 
 
 _CONTROLLER = None
 _L1_STATE = None
 
 def _cache_snapshot() -> _Cache:
-    latest_gps  = _GpsFromApp(**vars(_CACHE.latest_gps))
-    latest_imu  = _ImuFromApp(**vars(_CACHE.latest_imu))
-    latest_baro = _BaroFromApp(**vars(_CACHE.latest_baro))
-    dr          = _DeadReckoning(**vars(_CACHE.dr))
-
     return _Cache(
-        latest_gps=latest_gps,
-        gps_history=_copy_deque(_CACHE.gps_history, _GpsFromApp, _CACHE.gps_history.maxlen),
-        latest_imu=latest_imu,
-        imu_history=_copy_deque(_CACHE.imu_history, _ImuFromApp, _CACHE.imu_history.maxlen),
-        latest_baro=latest_baro,
-        baro_history=_copy_deque(_CACHE.baro_history, _BaroFromApp, _CACHE.baro_history.maxlen),
-        dr=dr,
-        estimated_history=_copy_deque(
-            _CACHE.estimated_history, _EstimatedSample, _CACHE.estimated_history.maxlen
-        ),
+        latest_gps=_GpsFromApp(**vars(_CACHE.latest_gps)),
+        latest_imu=_ImuFromApp(**vars(_CACHE.latest_imu)),
+        latest_baro=_BaroFromApp(**vars(_CACHE.latest_baro)),
         target_lat=_CACHE.target_lat,
         target_lon=_CACHE.target_lon,
         start_lat=_CACHE.start_lat,
@@ -689,7 +222,6 @@ def handle_gps(data: str) -> None:
         motion_health=int(has_motion_sample),
     )
     with _UPDATE_LOCK:
-        _push_latest_gps_to_history(_CACHE, rx_ts)
         _CACHE.latest_gps = sample
         if not _START_POINT_LOCKED and STATE >= 3:
             _CACHE.start_lat = float(lat)
@@ -758,7 +290,6 @@ def handle_imu(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _push_latest_imu_to_history(_CACHE, rx_ts)
         _CACHE.latest_imu = imu
 
 
@@ -799,7 +330,6 @@ def handle_barometer(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _push_latest_baro_to_history(_CACHE, rx_ts)
         _CACHE.latest_baro = baro
 
 
@@ -985,62 +515,7 @@ def handle_fac(data: str) -> None:
         EGG_ACTION_ENABLED,
     )
 
-
-
-def _send_diag(main_queue, cmd, g_out, diag_state: str,
-               start_lat=None, start_lon=None) -> None:
-    if main_queue is None:
-        return
-
-    def _fmt(value, digits: int = 4) -> str:
-        try:
-            f = float(value)
-            return "nan" if not math.isfinite(f) else f"{f:.{digits}f}"
-        except (TypeError, ValueError):
-            return "nan"
-
-    payload = ",".join(
-        [
-            str(getattr(cmd, "left_pw", 0)),
-            str(getattr(cmd, "right_pw", 0)),
-            _fmt(start_lat, 6),
-            _fmt(start_lon, 6),
-            _fmt(getattr(g_out, "target_lat", _CACHE.target_lat), 6),
-            _fmt(getattr(g_out, "target_lon", _CACHE.target_lon), 6),
-            _fmt(getattr(g_out, "carrot_lat", float("nan")), 6),
-            _fmt(getattr(g_out, "carrot_lon", float("nan")), 6),
-            _fmt(math.degrees(float(getattr(g_out, "current_heading_rad", float("nan")))), 2),
-            diag_state,
-            str(int(bool(MOTOR_ENABLED))),
-            str(int(bool(RELEASE_ACTION_ENABLED and EGG_ACTION_ENABLED))),
-            str(int(bool(RELEASE_ACTION_ENABLED))),
-            str(int(bool(EGG_ACTION_ENABLED))),
-            _fmt(getattr(g_out, "crossTrack", float("nan"))),
-            _fmt(getattr(g_out, "alongTrack", float("nan"))),
-            _fmt(getattr(cmd, "angular_velocity_cmd_deg_s", 0.0)),
-            _fmt(getattr(cmd, "angular_velocity_meas_deg_s", float("nan"))),
-            _fmt(getattr(cmd, "angular_velocity_error_deg_s", 0.0)),
-            _fmt(getattr(cmd, "delta_ff_deg", 0.0)),
-            _fmt(getattr(cmd, "delta_pid_deg", 0.0)),
-            _fmt(getattr(cmd, "delta_arm_deg", 0.0)),
-            _fmt(getattr(cmd, "left_angle_deg", 0.0)),
-            _fmt(getattr(cmd, "right_angle_deg", 0.0)),
-            str(int(bool(getattr(cmd, "saturated", False)))),
-            str(int(bool(getattr(cmd, "sensor_valid", False)))),
-            _fmt(getattr(cmd, "guidance_command_age_s", 0.0)),
-            str(getattr(cmd, "fallback_mode", "")),
-            str(getattr(cmd, "mode", "")),
-        ]
-    )
-    msgstructure.send_msg(
-        main_queue,
-        appargs.MotorAppArg.AppID,
-        appargs.CommAppArg.AppID,
-        appargs.MotorAppArg.MID_comm_motor_diag,
-        payload,
-    )
-
-
+# Control debug logging
 def _fmt_log(value, digits: int = 6) -> str:
     try:
         f = float(value)
@@ -1182,6 +657,61 @@ def _close_control_debug_log() -> None:
         _CONTROL_LOG_WRITER = None
 
 
+# Diagnostic telemetry
+def _send_diag(main_queue, cmd, g_out, diag_state: str,
+               start_lat=None, start_lon=None) -> None:
+    if main_queue is None:
+        return
+
+    def _fmt(value, digits: int = 4) -> str:
+        try:
+            f = float(value)
+            return "nan" if not math.isfinite(f) else f"{f:.{digits}f}"
+        except (TypeError, ValueError):
+            return "nan"
+
+    payload = ",".join(
+        [
+            str(getattr(cmd, "left_pw", 0)),
+            str(getattr(cmd, "right_pw", 0)),
+            _fmt(start_lat, 6),
+            _fmt(start_lon, 6),
+            _fmt(getattr(g_out, "target_lat", _CACHE.target_lat), 6),
+            _fmt(getattr(g_out, "target_lon", _CACHE.target_lon), 6),
+            _fmt(getattr(g_out, "carrot_lat", float("nan")), 6),
+            _fmt(getattr(g_out, "carrot_lon", float("nan")), 6),
+            _fmt(math.degrees(float(getattr(g_out, "current_heading_rad", float("nan")))), 2),
+            diag_state,
+            str(int(bool(MOTOR_ENABLED))),
+            str(int(bool(RELEASE_ACTION_ENABLED and EGG_ACTION_ENABLED))),
+            str(int(bool(RELEASE_ACTION_ENABLED))),
+            str(int(bool(EGG_ACTION_ENABLED))),
+            _fmt(getattr(g_out, "crossTrack", float("nan"))),
+            _fmt(getattr(g_out, "alongTrack", float("nan"))),
+            _fmt(getattr(cmd, "angular_velocity_cmd_deg_s", 0.0)),
+            _fmt(getattr(cmd, "angular_velocity_meas_deg_s", float("nan"))),
+            _fmt(getattr(cmd, "angular_velocity_error_deg_s", 0.0)),
+            _fmt(getattr(cmd, "delta_ff_deg", 0.0)),
+            _fmt(getattr(cmd, "delta_pid_deg", 0.0)),
+            _fmt(getattr(cmd, "delta_arm_deg", 0.0)),
+            _fmt(getattr(cmd, "left_angle_deg", 0.0)),
+            _fmt(getattr(cmd, "right_angle_deg", 0.0)),
+            str(int(bool(getattr(cmd, "saturated", False)))),
+            str(int(bool(getattr(cmd, "sensor_valid", False)))),
+            _fmt(getattr(cmd, "guidance_command_age_s", 0.0)),
+            str(getattr(cmd, "fallback_mode", "")),
+            str(getattr(cmd, "mode", "")),
+        ]
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.MID_comm_motor_diag,
+        payload,
+    )
+
+
 def ctrl_parafoil(main_queue=None) -> None:
     """Parafoil control loop."""
     global _CONTROLLER
@@ -1243,30 +773,10 @@ def ctrl_parafoil(main_queue=None) -> None:
                 time.sleep(period)
                 continue
 
-            freshed_imu = _est_imu_from_history(snap.imu_history, now)
-            freshed_gps = _est_gps_from_history(
-                snap.gps_history,
-                now,
-                snap.start_lat,
-                snap.start_lon,
-                freshed_imu.gyrz_rad_s,
-            )
-            freshed_baro = _est_baro_from_history(snap.baro_history, now)
-            _est_dead_reckon(snap.dr, snap.latest_gps, freshed_gps, now)
-
-            est = _make_estimated_sample(freshed_gps, freshed_imu, freshed_baro, now)
-            with _UPDATE_LOCK:
-                _CACHE.dr = _DeadReckoning(**vars(snap.dr))
-                _CACHE.estimated_history.append(est)
-
             l1_input, mode = guidance.ProduceL1Input(
                 gps=snap.latest_gps,
                 imu=snap.latest_imu,
                 baro=snap.latest_baro,
-                freshed_gps=freshed_gps,
-                freshed_imu=freshed_imu,
-                freshed_baro=freshed_baro,
-                dr=snap.dr,
                 origin_lat=snap.start_lat,
                 origin_lon=snap.start_lon,
                 target_lat=snap.target_lat,
@@ -1292,7 +802,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                 if (
                     getattr(l1_input, "gyrz", None) is not None
                     and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
-                    in (guidance.SensorQuality.FRESH, guidance.SensorQuality.FRESHED)
+                    == guidance.SensorQuality.FRESH
                 ):
                     angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
                 with _CTRL_LOCK:

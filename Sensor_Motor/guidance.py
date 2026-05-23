@@ -21,30 +21,6 @@ MOTION_FRESH_AGE = 1.5    # s
 GYRZ_FRESH_AGE   = 0.30   # s
 ALT_FRESH_AGE    = 0.75   # s
 
-# History sample age limits for estimation inputs.
-POS_HISTORY_AGE    = 5.0    # s
-MOTION_HISTORY_AGE = 5.0    # s
-GYRZ_HISTORY_AGE   = 0.50   # s
-ALT_HISTORY_AGE    = 3.0    # s
-
-# Estimated value age limits for guidance inputs.
-POS_EST_AGE    = 5.0    # s
-MOTION_EST_AGE = 5.0    # s
-GYRZ_EST_AGE   = 0.50   # s
-ALT_EST_AGE    = 3.0    # s
-
-# Dead-reckoning state retention limits.
-POS_DR_AGE       = 5.0    # s
-MOTION_DR_AGE    = 5.0    # s
-GYRZ_DR_AGE      = 0.50   # s
-ALT_DR_AGE       = 3.0    # s
-
-# Backward-compatible names. Prefer explicit *_HISTORY_AGE, *_EST_AGE, or *_DR_AGE.
-POS_STALE_MAX    = POS_EST_AGE
-MOTION_STALE_MAX = MOTION_EST_AGE
-GYRZ_STALE_MAX   = GYRZ_EST_AGE
-ALT_STALE_MAX    = ALT_EST_AGE
-
 # ── L1 parameters ─────────────────────────────────────────────────────────────
 L1_DAMPING         = 0.75
 L1_PERIOD_S        = 12.0
@@ -105,9 +81,8 @@ def project_from_origin(
 
 
 class SensorQuality(enum.Enum):
-    FRESH   = config.SENSOR_QUALITY_FRESH
-    FRESHED = config.SENSOR_QUALITY_FRESHED
-    STALE   = config.SENSOR_QUALITY_STALE
+    FRESH = config.SENSOR_QUALITY_FRESH
+    STALE = config.SENSOR_QUALITY_STALE
 
 class ControlMode(enum.Enum):
     NOMINAL_CLOSED_LOOP  = config.CONTROL_MODE_NOMINAL_CLOSED_LOOP
@@ -125,7 +100,6 @@ class FailReason(enum.Enum):
     UNSTABLE_BODY = config.FAIL_REASON_UNSTABLE_BODY
     NO_POSITION = config.FAIL_REASON_NO_POSITION
     NO_MOTION = config.FAIL_REASON_NO_MOTION
-    DR_TIMEOUT = config.FAIL_REASON_DR_TIMEOUT
     SENSOR_BLACKOUT = config.FAIL_REASON_SENSOR_BLACKOUT
 
 
@@ -163,8 +137,6 @@ class L1Input:
     target_lon: Optional[float] = None
     control_mode: Optional[ControlMode] = None
     fail_reason: FailReason = FailReason.NONE
-    dr_valid: bool = False
-    dr_age_s: Optional[float] = None
     sink_rate: Optional[float] = None
     freefall: int = 0
     tumble: int = 0
@@ -346,7 +318,6 @@ def FillFresh(
         and gps.lat is not None
         and gps.lon is not None
         and gps.pos_ts is not None
-        and getattr(gps, "pos_health", 1)
         and timebase.valid_age(gps.pos_ts, now, POS_FRESH_AGE)
         and start_lat is not None
         and start_lon is not None
@@ -367,7 +338,6 @@ def FillFresh(
         and gps_course is not None
         and gps_speed is not None
         and gps.motion_ts is not None
-        and getattr(gps, "motion_health", 1)
         and timebase.valid_age(gps.motion_ts, now, MOTION_FRESH_AGE)
     ):
         l1_input.course = gps_course
@@ -402,125 +372,6 @@ def FillFresh(
 
     return l1_input
 
-def FillFreshed(
-    l1_input: L1Input,
-    freshed_gps,
-    freshed_imu,
-    freshed_baro,
-    now: float,
-    dr=None,
-) -> L1Input:
-    """Fill non-fresh fields with history-derived freshed estimates."""
-    freshed_gps_course = getattr(freshed_gps, "course", getattr(freshed_gps, "course_rad", None)) if freshed_gps is not None else None
-    freshed_gps_speed = getattr(freshed_gps, "speed", getattr(freshed_gps, "speed_mps", None)) if freshed_gps is not None else None
-    freshed_imu_yaw = getattr(freshed_imu, "yaw", getattr(freshed_imu, "yaw_rad", None)) if freshed_imu is not None else None
-    freshed_imu_gyrx = getattr(freshed_imu, "gyrx", getattr(freshed_imu, "gyrx_rad_s", None)) if freshed_imu is not None else None
-    freshed_imu_gyry = getattr(freshed_imu, "gyry", getattr(freshed_imu, "gyry_rad_s", None)) if freshed_imu is not None else None
-    freshed_imu_gyrz = getattr(freshed_imu, "gyrz", getattr(freshed_imu, "gyrz_rad_s", None)) if freshed_imu is not None else None
-    freshed_baro_alt = getattr(freshed_baro, "alt", getattr(freshed_baro, "alt_m", None)) if freshed_baro is not None else None
-
-    if l1_input.pos_quality != SensorQuality.FRESH:
-        origin_lat = getattr(l1_input, "origin_lat", None)
-        origin_lon = getattr(l1_input, "origin_lon", None)
-        pos_filled = False
-
-        # 1차: history-derived GPS estimate.
-        if (
-            freshed_gps is not None
-            and freshed_gps.lat is not None
-            and freshed_gps.lon is not None
-            and freshed_gps.pos_ts is not None
-            and getattr(freshed_gps, "pos_health", 1)
-            and timebase.valid_age(freshed_gps.pos_ts, now, POS_EST_AGE)
-            and origin_lat is not None
-            and origin_lon is not None
-        ):
-            projected = project_from_origin(
-                freshed_gps.lat,
-                freshed_gps.lon,
-                origin_lat,
-                origin_lon,
-                max_range_m=_MAX_POS_RANGE_M,
-            )
-            if projected is not None:
-                l1_input.pos_N, l1_input.pos_E = projected
-                l1_input.pos_quality = SensorQuality.FRESHED
-                pos_filled = True
-
-        # 2차: dead reckoning 으로 fallback
-        if not pos_filled and dr is not None and getattr(dr, "valid", False):
-            dr_lat = getattr(dr, "lat", None)
-            dr_lon = getattr(dr, "lon", None)
-            if (
-                dr_lat is not None
-                and dr_lon is not None
-                and origin_lat is not None
-                and origin_lon is not None
-            ):
-                projected = project_from_origin(
-                    dr_lat, dr_lon, origin_lat, origin_lon, max_range_m=_MAX_POS_RANGE_M
-                )
-                if projected is not None:
-                    l1_input.pos_N, l1_input.pos_E = projected
-                    l1_input.pos_quality = SensorQuality.FRESHED
-                    pos_filled = True
-
-        if not pos_filled:
-            l1_input.pos_quality = SensorQuality.STALE
-
-    if l1_input.motion_quality != SensorQuality.FRESH:
-        if (
-            freshed_gps is not None
-            and freshed_gps_course is not None
-            and freshed_gps_speed is not None
-            and freshed_gps.motion_ts is not None
-            and getattr(freshed_gps, "motion_health", 1)
-        ):
-            if timebase.valid_age(freshed_gps.motion_ts, now, MOTION_EST_AGE):
-                l1_input.course = freshed_gps_course
-                l1_input.ground_speed_mps = freshed_gps_speed
-                l1_input.motion_quality = SensorQuality.FRESHED
-            else:
-                l1_input.motion_quality = SensorQuality.STALE
-        else:
-            l1_input.motion_quality = SensorQuality.STALE
-
-    if l1_input.gyrz_quality != SensorQuality.FRESH:
-        if (
-            freshed_imu is not None
-            and freshed_imu_gyrz is not None
-            and freshed_imu.ts is not None
-            and getattr(freshed_imu, "health", 1)
-        ):
-            if timebase.valid_age(freshed_imu.ts, now, GYRZ_EST_AGE):
-                l1_input.yaw          = freshed_imu_yaw
-                l1_input.gyrx         = freshed_imu_gyrx
-                l1_input.gyry         = freshed_imu_gyry
-                l1_input.gyrz         = freshed_imu_gyrz
-                l1_input.gyrz_quality = SensorQuality.FRESHED
-                l1_input.freefall     = getattr(freshed_imu, "freefall", 0)
-                l1_input.tumble       = getattr(freshed_imu, "tumble",   0)
-            else:
-                l1_input.gyrz_quality = SensorQuality.STALE
-        else:
-            l1_input.gyrz_quality = SensorQuality.STALE
-
-    if l1_input.alt_quality != SensorQuality.FRESH:
-        if (
-            freshed_baro is not None
-            and freshed_baro_alt is not None
-            and freshed_baro.ts is not None
-            and getattr(freshed_baro, "health", 1)
-        ):
-            if timebase.valid_age(freshed_baro.ts, now, ALT_EST_AGE):
-                l1_input.alt         = freshed_baro_alt
-                l1_input.alt_quality = SensorQuality.FRESHED
-            else:
-                l1_input.alt_quality = SensorQuality.STALE
-        else:
-            l1_input.alt_quality = SensorQuality.STALE
-
-    return l1_input
 
 
 def _body_fail_reason(l1_input: L1Input) -> FailReason:
@@ -553,7 +404,6 @@ def _body_fail_reason(l1_input: L1Input) -> FailReason:
 
 
 def DecideControlMode(l1_input: L1Input) -> tuple[ControlMode, FailReason]:
-    # 1=자유낙하 중, 1=텀블링 중 → FAIL
     if l1_input.freefall:
         return ControlMode.FAIL, FailReason.FREEFALL
     if l1_input.tumble:
@@ -567,64 +417,39 @@ def DecideControlMode(l1_input: L1Input) -> tuple[ControlMode, FailReason]:
         if (
             pos_quality    == SensorQuality.STALE
             and motion_quality == SensorQuality.STALE
-            and gyrz_quality == SensorQuality.STALE
+            and gyrz_quality   == SensorQuality.STALE
             and l1_input.alt_quality == SensorQuality.STALE
         ):
             fail = FailReason.SENSOR_BLACKOUT
-        elif pos_quality == SensorQuality.STALE and l1_input.dr_age_s is not None and l1_input.dr_age_s > POS_DR_AGE:
-            fail = FailReason.DR_TIMEOUT
         elif pos_quality == SensorQuality.STALE:
             fail = FailReason.NO_POSITION
         else:
             fail = FailReason.NO_MOTION
         return ControlMode.FAIL, fail
 
-    closed_loop = (
-        l1_input.gyrz is not None
-        and gyrz_quality in (SensorQuality.FRESH, SensorQuality.FRESHED)
-    )
-    nominal = pos_quality == SensorQuality.FRESH and motion_quality == SensorQuality.FRESH
-
-    if nominal and closed_loop:
-        return ControlMode.NOMINAL_CLOSED_LOOP, FailReason.NONE
-    if nominal:
-        return ControlMode.NOMINAL_FEEDFORWARD, FailReason.NONE
+    # pos and motion are both FRESH
+    closed_loop = l1_input.gyrz is not None and gyrz_quality == SensorQuality.FRESH
     if closed_loop:
-        return ControlMode.DEGRADED_CLOSED_LOOP, FailReason.NONE
-    return ControlMode.DEGRADED_FEEDFORWARD, FailReason.NONE
+        return ControlMode.NOMINAL_CLOSED_LOOP, FailReason.NONE
+    return ControlMode.NOMINAL_FEEDFORWARD, FailReason.NONE
 
-#prepocessing: fill fresh -> fill unfresh -> decide control mode -> produce L1 input
-#receives data directly from apps 
 def ProduceL1Input(
     gps,
     imu,
     baro,
-    freshed_gps,
-    freshed_imu,
-    freshed_baro,
     origin_lat: float,
     origin_lon: float,
     target_lat: float,
     target_lon: float,
     now: float,
     l1_state=None,
-    dr=None,
 ) -> tuple[L1Input, ControlMode]:
     l1_input = L1Input()
     l1_input.origin_lat = origin_lat
     l1_input.origin_lon = origin_lon
     l1_input.target_lat = target_lat
     l1_input.target_lon = target_lon
-    if dr is not None:
-        l1_input.dr_valid = bool(getattr(dr, "valid", False))
-        dr_ts = getattr(dr, "ts", None)
-        if dr_ts is None:
-            dr_ts = getattr(dr, "anchor_ts", None)
-        dr_age = timebase.age(now, dr_ts)
-        l1_input.dr_age_s = dr_age if math.isfinite(dr_age) else None
-
     FillFresh(l1_input, gps, imu, baro, origin_lat, origin_lon, now)
-    FillFreshed(l1_input, freshed_gps, freshed_imu, freshed_baro, now, dr=dr)
     control_mode, fail_reason = DecideControlMode(l1_input)
     l1_input.control_mode = control_mode
     l1_input.fail_reason = fail_reason

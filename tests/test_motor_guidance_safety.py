@@ -97,7 +97,7 @@ class TestGuidanceSafetyGates(unittest.TestCase):
         imu = SimpleNamespace(gyrz_rad_s=0.1, ts=now, health=True)
         baro = SimpleNamespace(alt_m=100.0, ts=now, health=True)
         _, mode = guidance.ProduceL1Input(
-            gps, imu, baro, None, None, None,
+            gps, imu, baro,
             None, None, TARGET_LAT, TARGET_LON, now,
         )
         self.assertEqual(mode, ControlMode.FAIL)
