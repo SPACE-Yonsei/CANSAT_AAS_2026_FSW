@@ -245,57 +245,9 @@ _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
 
-# Align with ground_station map: (0,0) means "no fix", not a real position.
-_START_NULL_LAT_TOL = 1.0e-4
-_START_NULL_LON_TOL = 1.0e-4
-# GPS sanity thresholds. Defaults are configured for the current Korea test
-# area and must be updated before operating at a distant site.
-_GPS_EXPECTED_LON_CENTER_DEG = float(getattr(config, "GPS_EXPECTED_LON_CENTER_DEG", 126.6))
-_GPS_EXPECTED_LON_RADIUS_DEG = float(getattr(config, "GPS_EXPECTED_LON_RADIUS_DEG", 20.0))
 _GPS_MAX_VALID_SPEED_MPS = float(getattr(config, "GPS_MAX_VALID_SPEED_MPS", 40.0))
-_GPS_POS_MAX_DELTA_DEG = 20.0   # deg, relative to locked start longitude
+_GPS_POS_MAX_DELTA_DEG = 20.0   # deg, relative to locked start latitude/longitude
 _MANUAL_STEER_DELTA_DEG = 60.0
-
-
-def _finite_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
-    if lat is None or lon is None:
-        return False
-    try:
-        la = float(lat)
-        lo = float(lon)
-    except (TypeError, ValueError):
-        return False
-    return (
-        math.isfinite(la)
-        and math.isfinite(lo)
-        and -90.0 <= la <= 90.0
-        and -180.0 <= lo <= 180.0
-    )
-
-
-def _is_placeholder_latlon(lat: float, lon: float) -> bool:
-    return abs(lat) <= _START_NULL_LAT_TOL and abs(lon) <= _START_NULL_LON_TOL
-
-
-def _gps_position_sanity_reason(
-    lat: Optional[float],
-    lon: Optional[float],
-    start_lon: Optional[float] = None,
-) -> Optional[str]:
-    if not _finite_latlon(lat, lon):
-        return "lat/lon not finite or out of range"
-    la = float(lat)
-    lo = float(lon)
-    if _is_placeholder_latlon(la, lo):
-        return "lat/lon placeholder"
-    if abs(lo - _GPS_EXPECTED_LON_CENTER_DEG) > _GPS_EXPECTED_LON_RADIUS_DEG:
-        return (
-            f"lon={lo:.4f} outside expected "
-            f"{_GPS_EXPECTED_LON_CENTER_DEG:.1f}+/-{_GPS_EXPECTED_LON_RADIUS_DEG:.1f} deg"
-        )
-    if start_lon is not None and abs(lo - float(start_lon)) > _GPS_POS_MAX_DELTA_DEG:
-        return f"|lon-start_lon|={abs(lo - float(start_lon)):.2f} > {_GPS_POS_MAX_DELTA_DEG:.1f} deg"
-    return None
 
 
 def _gps_motion_sane(course_deg: float, ground_speed: float) -> bool:
@@ -732,9 +684,19 @@ def handle_gps(data: str) -> None:
         LOGGER.warning("GNSS parse error: %s | raw=%r", exc, data)
         return
 
+    pos_valid = (
+        math.isfinite(lat)
+        and math.isfinite(lon)
+        and -90.0 <= lat <= 90.0
+        and -180.0 <= lon <= 180.0
+    )
     with _UPDATE_LOCK:
+        start_lat = _CACHE.start_lat
         start_lon = _CACHE.start_lon
-    pos_valid = _gps_position_sanity_reason(lat, lon, start_lon) is None
+    if pos_valid and start_lat is not None and abs(lat - float(start_lat)) > _GPS_POS_MAX_DELTA_DEG:
+        pos_valid = False
+    if pos_valid and start_lon is not None and abs(lon - float(start_lon)) > _GPS_POS_MAX_DELTA_DEG:
+        pos_valid = False
     motion_valid = pos_valid and _gps_motion_sane(course_deg, speed_mps)
 
     course_rad = math.radians(course_deg) if motion_valid else float("nan")

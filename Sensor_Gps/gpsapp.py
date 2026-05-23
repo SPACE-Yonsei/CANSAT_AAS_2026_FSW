@@ -26,6 +26,8 @@ GPS_STALE_TIMEOUT_SEC = 5.0
 GPS_MAX_HDOP     = float(os.environ.get("GPS_MAX_HDOP",     "3.0"))
 GPS_MAX_JUMP_MPS = float(os.environ.get("GPS_MAX_JUMP_MPS", "30.0"))
 GPS_MIN_MOTION_MPS = float(os.environ.get("GPS_MIN_MOTION_MPS", "0.3"))
+GPS_NULL_LAT_TOL = 1.0e-4
+GPS_NULL_LON_TOL = 1.0e-4
 
 # jump rate 추적용 상태 (단일 스레드에서만 접근)
 _prev_valid_lat: float = 0.0
@@ -58,6 +60,10 @@ def _lon_in_expected_area(lon: float) -> bool:
     return abs(float(lon) - center) <= radius
 
 
+def _is_placeholder_latlon(lat: float, lon: float) -> bool:
+    return abs(float(lat)) <= GPS_NULL_LAT_TOL and abs(float(lon)) <= GPS_NULL_LON_TOL
+
+
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6_371_000.0
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -78,7 +84,7 @@ def _eval_pos_fidelity(
         return False
     if not (-90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0):
         return False
-    if float(lat) == 0.0 or float(lon) == 0.0:
+    if _is_placeholder_latlon(float(lat), float(lon)):
         return False
     if not _lon_in_expected_area(float(lon)):
         return False
