@@ -569,6 +569,8 @@ class GroundStation(tk.Tk):
         self._battery_pct_var = tk.StringVar(value="—")
         self._dist_graph_canvas: tk.Canvas | None = None
         self._dist_to_target_history: list[float] = []
+        self._alt_graph_canvas: tk.Canvas | None = None
+        self._alt_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
 
         self._build_ui()
@@ -748,6 +750,17 @@ class GroundStation(tk.Tk):
         self._dist_graph_canvas = tk.Canvas(dist_box, background="#111827", highlightthickness=0)
         self._dist_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         self._dist_graph_canvas.bind("<Configure>", lambda _e: self._draw_dist_graph())
+
+        # Altitude graph (11th box) — row 5, col 0 (0 ~ 200 m 고정)
+        _alt_row = _dist_row + 1
+        wrap.rowconfigure(_alt_row, weight=1)
+        alt_box = ttk.LabelFrame(wrap, text="Altitude (m) — 0 ~ 200 m")
+        alt_box.grid(row=_alt_row, column=0, sticky="nsew", padx=6, pady=4)
+        alt_box.columnconfigure(0, weight=1)
+        alt_box.rowconfigure(0, weight=1)
+        self._alt_graph_canvas = tk.Canvas(alt_box, background="#111827", highlightthickness=0)
+        self._alt_graph_canvas.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self._alt_graph_canvas.bind("<Configure>", lambda _e: self._draw_alt_graph())
 
     def _build_map_and_motor(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Guidance Map / Motor")
@@ -1701,7 +1714,6 @@ class GroundStation(tk.Tk):
 
     def _update_dist_graph(self, dist_m: float | None) -> None:
         if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
-            dist_m = min(dist_m, self._DIST_GRAPH_MAX_DISPLAY_M)
             self._dist_to_target_history.append(dist_m)
             if len(self._dist_to_target_history) > self._DIST_GRAPH_MAX_HISTORY:
                 self._dist_to_target_history = (
@@ -1737,7 +1749,7 @@ class GroundStation(tk.Tk):
         pts: list[float] = []
         for i, d in enumerate(hist):
             x = pad_l + (i / (n - 1)) * pw
-            y = pad_t + ph - ((d - scale_min) / span) * ph
+            y = pad_t + ph - ((min(d, scale_max) - scale_min) / span) * ph
             pts.extend([x, y])
         if len(pts) >= 4:
             c.create_line(*pts, fill="#38bdf8", width=2, smooth=False)
