@@ -375,22 +375,3 @@ def reset_prevstate() -> None:
         _atomic_write(_serialize())
 
 
-def reset_control() -> None:
-    """Test utility: reset mission control-related persisted values.
-
-    Keeps telemetry packet/timebase counters intact for communication tests.
-    """
-    _atomic_update(
-        {
-            "PREV_STATE": 0,
-            "PREV_ALT_CAL": 0.0,
-            "PREV_MAX_ALT": 0.0,
-            "PREV_TARGET_LAT": 0.0,
-            "PREV_TARGET_LON": 0.0,
-            "PREV_SOLENOID_COUNT": 0,
-            "PREV_SOLENOID_DONE": 0,
-            "PREV_START_LAT": 0.0,
-            "PREV_START_LON": 0.0,
-            "PREV_START_LOCKED": 0,
-        }
-    )

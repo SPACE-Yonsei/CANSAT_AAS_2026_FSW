@@ -253,3 +253,9 @@ def barometerapp_main(main_queue, main_pipe) -> None:
                 command_handler(main_queue, recv_msg, None)
     except KeyboardInterrupt:
         pass
+    if _baro_hw:
+        try:
+            from Sensor_Barometer import barometer as baro_driver
+            baro_driver.terminate_bmp(_baro_hw)
+        except Exception:
+            pass
