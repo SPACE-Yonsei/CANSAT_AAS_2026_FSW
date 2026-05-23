@@ -51,6 +51,10 @@ class _ImuFromApp:
     rx_ts: Optional[float] = None
     freefall: int = 0   # 1=자유낙하 중, 0=정상
     tumble:   int = 0   # 1=텀블링 중,  0=안정
+    lin_acc_x: Optional[float] = None
+    lin_acc_y: Optional[float] = None
+    lin_acc_z: Optional[float] = None
+    lin_acc_valid: bool = False
 
 
 @dataclass
@@ -73,6 +77,8 @@ class _Cache:
     start_lon:  Optional[float] = None
 
 
+_ORIGIN_SAVED: bool = False
+
 MOTORAPP_RUNSTATUS: bool = True
 MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
@@ -86,6 +92,7 @@ _CTRL_LOCK = threading.Lock()
 _CACHE = _Cache()
 _PREV_STATE = -1
 _START_POINT_LOCKED = False
+_GUIDANCE_STATE = guidance.GuidanceState()
 
 _MANUAL_STEER_DELTA_DEG = 60.0
 
@@ -166,6 +173,34 @@ def handle_gps(data: str) -> None:
             _START_POINT_LOCKED = True
             prevstate.update_start_point(float(lat), float(lon), True)
 
+def _compute_linear_acc(
+    roll_deg: float,
+    pitch_deg: float,
+    yaw_deg: float,
+    ax: float,
+    ay: float,
+    az: float,
+    g: float = 9.81,
+) -> tuple:
+    """Remove gravity from body-frame accelerometer to yield linear acceleration.
+
+    Body→NED rotation uses ZYX Euler (roll, pitch, yaw) from BNO085 raw degrees.
+    Gravity NED = [0, 0, +g] (z-down). Gravity in body frame:
+        g_x = -sin(pitch)*g
+        g_y =  cos(pitch)*sin(roll)*g
+        g_z =  cos(pitch)*cos(roll)*g
+    Linear acc = total acc - gravity in body frame.
+
+    Returns (lin_ax, lin_ay, lin_az).
+    """
+    roll  = math.radians(roll_deg)
+    pitch = math.radians(pitch_deg)
+    g_x = -math.sin(pitch) * g
+    g_y =  math.cos(pitch) * math.sin(roll) * g
+    g_z =  math.cos(pitch) * math.cos(roll) * g
+    return ax - g_x, ay - g_y, az - g_z
+
+
 def handle_imu(data: str) -> None:
     """Parse IMU payload and update cache.
 
@@ -195,6 +230,11 @@ def handle_imu(data: str) -> None:
     except (ValueError, IndexError):
         return
 
+    lin_ax, lin_ay, lin_az = _compute_linear_acc(
+        roll_deg, pitch_deg, yaw_deg, accx_mps2, accy_mps2, accz_mps2
+    )
+    lin_valid = math.isfinite(lin_ax) and math.isfinite(lin_ay) and math.isfinite(lin_az)
+
     imu = _ImuFromApp(
         roll_rad=math.radians(roll_deg),
         pitch_rad=math.radians(pitch_deg),
@@ -212,6 +252,10 @@ def handle_imu(data: str) -> None:
         rx_ts=rx_ts,
         freefall=freefall,
         tumble=tumble,
+        lin_acc_x=lin_ax if lin_valid else None,
+        lin_acc_y=lin_ay if lin_valid else None,
+        lin_acc_z=lin_az if lin_valid else None,
+        lin_acc_valid=lin_valid,
     )
     with _UPDATE_LOCK:
         _CACHE.latest_imu = imu
@@ -259,10 +303,13 @@ def handle_target_coord(data: str) -> None:
     with _UPDATE_LOCK:
         _CACHE.target_lat = lat
         _CACHE.target_lon = lon
+        _GUIDANCE_STATE.target_lat = lat
+        _GUIDANCE_STATE.target_lon = lon
+        _GUIDANCE_STATE.target_ready = False  # trigger re-projection next cycle
 
 
 def handle_flight_state(data: str) -> None:
-    global STATE, _PREV_STATE, _START_POINT_LOCKED, _CONTROLLER
+    global STATE, _PREV_STATE, _START_POINT_LOCKED, _CONTROLLER, _ORIGIN_SAVED
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -278,7 +325,9 @@ def handle_flight_state(data: str) -> None:
             _CACHE.start_lat = None
             _CACHE.start_lon = None
             _START_POINT_LOCKED = False
+            _ORIGIN_SAVED = False
             prevstate.clear_start_point()
+            guidance.reset_guidance_state_for_flight(_GUIDANCE_STATE)
             do_ctrl_reset = True
         elif new_state in (3, 4):
             gps = _CACHE.latest_gps
@@ -449,7 +498,7 @@ def _send_diag(main_queue, cmd, g_out, diag_state: str,
 
 def ctrl_parafoil(main_queue=None) -> None:
     """Parafoil control loop."""
-    global _CONTROLLER
+    global _CONTROLLER, _ORIGIN_SAVED
     period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
     while MOTORAPP_RUNSTATUS:
         now = timebase.now()
@@ -459,7 +508,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                     control.WriteZero(PI)
                 idle_cmd = control.WriteNeutral(now, config.MOTOR_REASON_IDLE)
                 idle_out = guidance.L1Output(
-                    timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_IDLE
+                    timestamp=now, nominal=False, reason=config.MOTOR_REASON_IDLE
                 )
                 with _UPDATE_LOCK:
                     idle_snap = _cache_snapshot()
@@ -473,7 +522,7 @@ def ctrl_parafoil(main_queue=None) -> None:
                     control.WriteOff(PI)
                 landed_cmd = control.WriteNeutral(now, config.MOTOR_REASON_LANDED)
                 landed_out = guidance.L1Output(
-                    timestamp=now, nominal=False, degraded=False, reason=config.MOTOR_REASON_LANDED
+                    timestamp=now, nominal=False, reason=config.MOTOR_REASON_LANDED
                 )
                 with _UPDATE_LOCK:
                     landed_snap = _cache_snapshot()
@@ -491,7 +540,6 @@ def ctrl_parafoil(main_queue=None) -> None:
                 manual_out = guidance.L1Output(
                     timestamp=now,
                     nominal=False,
-                    degraded=False,
                     reason=manual_cmd.mode,
                     control_valid=bool(manual_cmd.valid),
                     angular_velocity_cmd_rad_s=math.radians(manual_cmd.angular_velocity_cmd_deg_s),
@@ -505,36 +553,38 @@ def ctrl_parafoil(main_queue=None) -> None:
                 time.sleep(period)
                 continue
 
-            l1_input, mode = guidance.ProduceL1Input(
-                gps=snap.latest_gps,
-                imu=snap.latest_imu,
-                baro=snap.latest_baro,
-                origin_lat=snap.start_lat,
-                origin_lon=snap.start_lon,
-                target_lat=snap.target_lat,
-                target_lon=snap.target_lon,
-                now=now,
+            fresh = guidance.decidefresh(
+                snap.latest_gps, snap.latest_imu, snap.latest_baro,
+                _GUIDANCE_STATE, now,
             )
-            g_out = guidance.ProduceL1Output(
-                l1_input=l1_input,
-                mode=mode,
-                origin_lat=snap.start_lat,
-                origin_lon=snap.start_lon,
-                target_lat=snap.target_lat,
-                target_lon=snap.target_lon,
-                now=now,
+            l1_input = guidance.produceL1input(
+                fresh, snap.latest_gps, snap.latest_imu,
+                _GUIDANCE_STATE, STATE, now,
             )
 
-            if bool(getattr(g_out, "control_valid", getattr(g_out, "nominal", False))):
+            # Persist origin on first cycle it becomes available (Task 3)
+            if _GUIDANCE_STATE.origin_ready and not _ORIGIN_SAVED:
+                prevstate.update_start_point(
+                    _GUIDANCE_STATE.origin_lat, _GUIDANCE_STATE.origin_lon, True
+                )
+                _ORIGIN_SAVED = True
+
+            g_out = guidance.produceL1output(l1_input)
+            g_out.timestamp = now
+
+            if g_out.control_valid:
                 if _CONTROLLER is None:
                     _CONTROLLER = control.MakeCtrler()
+                # Provide gyrz only for CLOSED-loop modes (pid_enabled=True)
                 angular_velocity_meas_deg_s = float("nan")
                 if (
-                    getattr(l1_input, "gyrz", None) is not None
-                    and getattr(l1_input, "gyrz_quality", guidance.SensorQuality.STALE)
-                    == guidance.SensorQuality.FRESH
+                    getattr(g_out, "pid_enabled", False)
+                    and fresh.imu_gyrz_fresh
+                    and snap.latest_imu.gyrz_rad_s is not None
                 ):
-                    angular_velocity_meas_deg_s = math.degrees(float(l1_input.gyrz))
+                    angular_velocity_meas_deg_s = math.degrees(
+                        float(config.GYRZ_SIGN) * float(snap.latest_imu.gyrz_rad_s)
+                    )
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(
                         _CONTROLLER,
@@ -547,12 +597,7 @@ def ctrl_parafoil(main_queue=None) -> None:
 
             if PI is not None:
                 control.ProducePulse(PI, cmd)
-            diag_state = (
-                config.MOTOR_REASON_DEGRADED
-                if bool(getattr(g_out, "control_valid", False)) and bool(getattr(g_out, "degraded", False))
-                else config.MOTOR_REASON_ACTIVE if bool(getattr(g_out, "nominal", False))
-                else str(getattr(g_out, "reason", config.MOTOR_REASON_DISABLED) or config.MOTOR_REASON_DISABLED)
-            )
+            diag_state = g_out.reason if g_out.control_valid else (g_out.reason or config.MOTOR_REASON_DISABLED)
             _send_diag(main_queue, cmd, g_out, diag_state, snap.start_lat, snap.start_lon)
 
         except Exception:
@@ -608,6 +653,8 @@ def init() -> None:
     ):
         _CACHE.target_lat = float(target_lat)
         _CACHE.target_lon = float(target_lon)
+        _GUIDANCE_STATE.target_lat = float(target_lat)
+        _GUIDANCE_STATE.target_lon = float(target_lon)
 
     start_point = prevstate.get_start_point()
     if start_point is not None:
@@ -616,6 +663,10 @@ def init() -> None:
             _CACHE.start_lat = float(lat)
             _CACHE.start_lon = float(lon)
             _START_POINT_LOCKED = True
+            _GUIDANCE_STATE.origin_lat = float(lat)
+            _GUIDANCE_STATE.origin_lon = float(lon)
+            _GUIDANCE_STATE.origin_ready = True
+            guidance.convert_target_to_local_en_if_possible(_GUIDANCE_STATE)
 
     _CONTROLLER = control.MakeCtrler()
     PI = control.init_control()

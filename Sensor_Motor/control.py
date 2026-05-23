@@ -102,7 +102,6 @@ class Ctrler:
 @dataclass
 class CtrlInput:
     angular_velocity_cmd_deg_s: float = 0.0
-    lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
     valid: bool = False
     timestamp: float = 0.0
@@ -112,6 +111,7 @@ class CtrlInput:
     delta_pid_max_deg: Optional[float] = None
     delta_total_max_deg: Optional[float] = None
     max_arm_rate_deg_s: Optional[float] = None
+    kp_override: Optional[float] = None
 
 
 @dataclass
@@ -145,15 +145,13 @@ def WriteNeutral(now: float, mode: str = config.CTRL_MODE_NEUTRAL) -> CtrlOutput
 
 def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
     # Accept nominal AND degraded guidance modes — both produce usable commands.
-    # FAIL mode sets nominal=False, degraded=False; only that path yields valid=False.
+    # FAIL mode sets nominal=False; only that path yields valid=False.
     is_valid = bool(
         getattr(g_out, "control_valid", False)
         or getattr(g_out, "nominal", False)
-        or getattr(g_out, "degraded", False)
     )
     return CtrlInput(
         angular_velocity_cmd_deg_s=math.degrees(float(getattr(g_out, "angular_velocity_cmd_rad_s", 0.0) or 0.0)),
-        lat_acc_cmd_mps2=float(getattr(g_out, "lat_acc_cmd_mps2", 0.0) or 0.0),
         ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
         valid=is_valid,
         timestamp=float(getattr(g_out, "timestamp", now) or now),
@@ -163,6 +161,7 @@ def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
         delta_pid_max_deg=getattr(g_out, "delta_pid_max_deg", None),
         delta_total_max_deg=getattr(g_out, "delta_total_max_deg", None),
         max_arm_rate_deg_s=getattr(g_out, "max_arm_rate_deg_s", None),
+        kp_override=getattr(g_out, "kp_override", None),
     )
 
 
@@ -311,8 +310,9 @@ def ProduceCtrlOutput(
             error = 0.0
         derivative = (error - ctl.pid.prev_error_deg) / dt
         integral_candidate = _clamp(ctl.pid.integral_deg + error * dt, -cfg.I_LIMIT_DEG, cfg.I_LIMIT_DEG)
+        kp = float(cmd.kp_override) if cmd.kp_override is not None else cfg.K_P
         delta_pid = _clamp(
-            cfg.K_P * error + cfg.K_I * integral_candidate + cfg.K_D * derivative,
+            kp * error + cfg.K_I * integral_candidate + cfg.K_D * derivative,
             -cfg.DELTA_PID_MAX_DEG,
             cfg.DELTA_PID_MAX_DEG,
         )

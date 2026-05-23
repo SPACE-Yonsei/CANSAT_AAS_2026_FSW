@@ -160,7 +160,6 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
             angular_velocity_cmd_rad_s=0.5,
-            lat_acc_cmd_mps2=1.5,
             ground_speed_mps=7.0,
             nominal=True,
             timestamp=100.0,
@@ -169,13 +168,11 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
         self.assertAlmostEqual(gcmd.angular_velocity_cmd_deg_s, math.degrees(0.5), places=5)
         self.assertTrue(gcmd.valid)
         self.assertAlmostEqual(gcmd.ground_speed_mps, 7.0)
-        self.assertAlmostEqual(gcmd.lat_acc_cmd_mps2, 1.5)
 
     def test_non_nominal_l1_gives_invalid_cmd(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
             angular_velocity_cmd_rad_s=0.0,
-            lat_acc_cmd_mps2=0.0,
             ground_speed_mps=0.0,
             nominal=False,
             timestamp=100.0,
@@ -186,10 +183,9 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
 
 class TestControllerUpdate(unittest.TestCase):
     @staticmethod
-    def _cmd(angular_velocity_deg_s=0.0, ts=100.0, lat_acc=0.0, speed=0.0):
+    def _cmd(angular_velocity_deg_s=0.0, ts=100.0, speed=0.0):
         return control.CtrlInput(
             angular_velocity_cmd_deg_s=angular_velocity_deg_s,
-            lat_acc_cmd_mps2=lat_acc,
             ground_speed_mps=speed,
             valid=True,
             timestamp=ts,
@@ -280,7 +276,7 @@ class TestControllerUpdate(unittest.TestCase):
         # lat_acc fallback was removed (P8): control uses angular_velocity_cmd_deg_s as-is.
         # Guidance is responsible for converting lat_acc to angular_velocity.
         ctl = self._ctl()
-        cmd = self._cmd(angular_velocity_deg_s=0.0, lat_acc=2.0, speed=4.0)
+        cmd = self._cmd(angular_velocity_deg_s=0.0, speed=4.0)
         out = control.ProduceCtrlOutput(ctl, cmd, float("nan"), 100.0)
         self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 0.0, places=5)
 

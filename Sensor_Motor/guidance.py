@@ -16,20 +16,7 @@ from typing import Optional
 
 from lib import config, timebase
 
-#Sensor age
-POS_FRESH_AGE    = 1.5    # s
-MOTION_FRESH_AGE = 1.5    # s
-GYRZ_FRESH_AGE   = 0.30   # s
-ALT_FRESH_AGE    = 0.75   # s
-
-# ── L1 parameters ─────────────────────────────────────────────────────────────
-L1_DAMPING         = 0.75
-L1_PERIOD_S        = 12.0
-L1_MIN_M           = 5.0
-V_MIN_MPS          = 2.0
-LAT_ACC_MAX        = 4.0    # m/s^2
-COURSE_RATE_MAX    = math.radians(config.MOTOR_NOMINAL_CLOSED_LOOP_ANGULAR_VELOCITY_CMD_MAX_DEG_S)
-EARTH_RADIUS_M     = 6_371_000.0
+EARTH_RADIUS_M = 6_371_000.0
 
 
 def latlon_to_ne(
@@ -83,13 +70,7 @@ class SensorQuality(enum.Enum):
     STALE = config.SENSOR_QUALITY_STALE
 
 class ControlMode(enum.Enum):
-    # Legacy values (kept for backward compatibility)
-    NOMINAL_CLOSED_LOOP  = config.CONTROL_MODE_NOMINAL_CLOSED_LOOP
-    NOMINAL_FEEDFORWARD  = config.CONTROL_MODE_NOMINAL_FEEDFORWARD
-    DEGRADED_CLOSED_LOOP = config.CONTROL_MODE_DEGRADED_CLOSED_LOOP
-    DEGRADED_FEEDFORWARD = config.CONTROL_MODE_DEGRADED_FEEDFORWARD
-    FAIL                 = config.CONTROL_MODE_FAIL
-    # New homing-architecture modes
+    FAIL                = config.CONTROL_MODE_FAIL
     GPS_TRACKING_CLOSED = config.CONTROL_MODE_GPS_TRACKING_CLOSED
     GPS_TRACKING_OPEN   = config.CONTROL_MODE_GPS_TRACKING_OPEN
     DR_TRACKING_CLOSED  = config.CONTROL_MODE_DR_TRACKING_CLOSED
@@ -104,15 +85,6 @@ class DRMethod(enum.Enum):
     GYRO_ACC_BLEND        = config.DR_METHOD_GYRO_ACC_BLEND
 
 
-class FailReason(enum.Enum):
-    NONE = config.FAIL_REASON_NONE
-    FREEFALL = config.FAIL_REASON_FREEFALL
-    TUMBLE_YAW_DOMINANT = config.FAIL_REASON_TUMBLE_YAW_DOMINANT
-    TUMBLE_ROLLPITCH = config.FAIL_REASON_TUMBLE_ROLLPITCH
-    UNSTABLE_BODY = config.FAIL_REASON_UNSTABLE_BODY
-    NO_POSITION = config.FAIL_REASON_NO_POSITION
-    NO_MOTION = config.FAIL_REASON_NO_MOTION
-    SENSOR_BLACKOUT = config.FAIL_REASON_SENSOR_BLACKOUT
 
 
 @dataclass
@@ -229,62 +201,56 @@ class GuidanceState:
     velocity_history: deque = field(default_factory=deque)
     imu_history: deque = field(default_factory=deque)
     baro_history: deque = field(default_factory=deque)
+    # ── Homing-architecture nav state ─────────────────────────────────────────
+    nav_E: Optional[float] = None
+    nav_N: Optional[float] = None
+    nav_course: Optional[float] = None
+    nav_V: Optional[float] = None
+    nav_vE: Optional[float] = None
+    nav_vN: Optional[float] = None
+    nav_confidence: float = 0.0
+    nav_dr_age: float = 0.0
+    nav_control_mode: str = config.CONTROL_MODE_FAIL
+    nav_dr_method: str = config.DR_METHOD_NONE
+    # DR anchor (saved at each GPS update; survives history pruning)
+    dr_start_E: Optional[float] = None
+    dr_start_N: Optional[float] = None
+    dr_start_vE: Optional[float] = None
+    dr_start_vN: Optional[float] = None
+    dr_start_V: Optional[float] = None
+    dr_start_course: Optional[float] = None
+    dr_start_time: Optional[float] = None
+    # GPS dropout course reference
+    course_at_dropout: Optional[float] = None
+    yaw_at_dropout: Optional[float] = None
+    gyro_integral_since_dropout: float = 0.0
+    # Unified last-valid-GPS timestamp
+    last_valid_gps_time: Optional[float] = None
+    # DR incremental integration timing
+    last_dr_update_time: Optional[float] = None
+    # DETUMBLING exit hysteresis timer
+    detumble_exit_start: Optional[float] = None
 
-
-@dataclass(frozen=True)
-class ControlPolicy:
-    confidence_scale: float
-    angular_velocity_cmd_max_deg_s: float
-    lat_acc_max_mps2: float
-    delta_ff_max_deg: float
-    delta_pid_max_deg: float
-    delta_total_max_deg: float
-    max_arm_rate_deg_s: float
-    pid_enabled: bool
-    l1_enabled: bool = True
-    l1_period_s: float = L1_PERIOD_S
 
 
 @dataclass
 class L1Input:
+    valid: bool = False
+    reason: str = ""
+    control_mode: Optional[ControlMode] = None
+    dr_method: str = config.DR_METHOD_NONE
+    confidence: float = 0.0
     pos_N: Optional[float] = None
     pos_E: Optional[float] = None
     course: Optional[float] = None
     ground_speed_mps: Optional[float] = None
-    yaw: Optional[float] = None
-    gyrz: Optional[float] = None
-    gyrx: Optional[float] = None
-    gyry: Optional[float] = None
-    alt: Optional[float] = None
-    pos_quality: SensorQuality = SensorQuality.STALE
-    motion_quality: SensorQuality = SensorQuality.STALE
-    gyrz_quality: SensorQuality = SensorQuality.STALE
-    alt_quality: SensorQuality = SensorQuality.STALE
-    origin_lat: Optional[float] = None
-    origin_lon: Optional[float] = None
-    target_lat: Optional[float] = None
-    target_lon: Optional[float] = None
-    control_mode: Optional[ControlMode] = None
-    fail_reason: FailReason = FailReason.NONE
-    sink_rate: Optional[float] = None
-    freefall: int = 0
-    tumble: int = 0
-    # Guidance confidence [0..1]
-    confidence: float = 0.0
-    # DR state carried into the guidance computation
-    dr_method: str = config.DR_METHOD_NONE
-    dr_pos_N: Optional[float] = None
-    dr_pos_E: Optional[float] = None
-    dr_course: Optional[float] = None
-    dr_speed_mps: Optional[float] = None
+    target_N: Optional[float] = None
+    target_E: Optional[float] = None
+    target_lat: Optional[float] = None   # for diag
+    target_lon: Optional[float] = None   # for diag
 
 def _wrap_pi(angle_rad: float) -> float:
     return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
-
-
-def _is_fresh(timestamp: Optional[float], now: float, max_age: float) -> bool:
-    age_s = timebase.age(now, timestamp)
-    return math.isfinite(age_s) and 0.0 <= age_s <= float(max_age)
 
 
 def _try_float(v) -> Optional[float]:
@@ -388,28 +354,20 @@ def choose_yaw_rate_limit(control_mode, dr_method=None) -> float:
     return config.FAIL_YAW_RATE_LIMIT_DPS
 
 
-#have to add member
 @dataclass
 class L1Output:
     timestamp: float = 0.0
     nominal: bool = False
-    degraded: bool = False
     control_valid: bool = False
     reason: str = config.MOTOR_REASON_INIT
-    fail_reason: str = config.FAIL_REASON_NONE
-    confidence_scale: float = 0.0
     angular_velocity_cmd_max_deg_s: float = 0.0
-    lat_acc_max_mps2: float = 0.0
     delta_ff_max_deg: float = 0.0
     delta_pid_max_deg: float = 0.0
     delta_total_max_deg: float = 0.0
     max_arm_rate_deg_s: float = 0.0
     pid_enabled: bool = False
     angular_velocity_cmd_rad_s: float = 0.0
-    lat_acc_cmd_mps2: float = 0.0
     ground_speed_mps: float = 0.0
-    L1_distance: float = 0.0
-    nu1: float = 0.0
     nu2: float = 0.0
     angle_to_turn: float = 0.0
     crossTrack: float = 0.0
@@ -425,84 +383,11 @@ class L1Output:
     carrot_lat: Optional[float] = None
     carrot_lon: Optional[float] = None
     current_heading_rad: float = 0.0
-    # New homing-architecture fields
+    # Homing-architecture fields
     yaw_rate_limit_dps: float = 0.0
     dr_confidence: float = 0.0
     dr_method: str = config.DR_METHOD_NONE
-
-
-def FillFresh(
-    l1_input: L1Input,
-    gps,
-    imu,
-    baro,
-    start_lat: float,
-    start_lon: float,
-    now: float,
-) -> L1Input:
-    """Fill L1Input with fresh sensor values only."""
-    gps_course = getattr(gps, "course", getattr(gps, "course_rad", None)) if gps is not None else None
-    gps_speed = getattr(gps, "speed", getattr(gps, "speed_mps", None)) if gps is not None else None
-    imu_yaw = getattr(imu, "yaw", getattr(imu, "yaw_rad", None)) if imu is not None else None
-    imu_gyrx = getattr(imu, "gyrx", getattr(imu, "gyrx_rad_s", None)) if imu is not None else None
-    imu_gyry = getattr(imu, "gyry", getattr(imu, "gyry_rad_s", None)) if imu is not None else None
-    imu_gyrz = getattr(imu, "gyrz", getattr(imu, "gyrz_rad_s", None)) if imu is not None else None
-    baro_alt = getattr(baro, "alt", getattr(baro, "alt_m", None)) if baro is not None else None
-
-    if (
-        gps is not None
-        and gps.lat is not None
-        and gps.lon is not None
-        and gps.pos_ts is not None
-        and _is_fresh(gps.pos_ts, now, POS_FRESH_AGE)
-        and start_lat is not None
-        and start_lon is not None
-    ):
-        projected = project_from_origin(gps.lat, gps.lon, start_lat, start_lon)
-        if projected is None:
-            l1_input.pos_N = None
-            l1_input.pos_E = None
-            l1_input.pos_quality = SensorQuality.STALE
-        else:
-            l1_input.pos_N, l1_input.pos_E = projected
-            l1_input.pos_quality = SensorQuality.FRESH
-
-    if (
-        gps is not None
-        and gps_course is not None
-        and gps_speed is not None
-        and gps.motion_ts is not None
-        and _is_fresh(gps.motion_ts, now, MOTION_FRESH_AGE)
-    ):
-        l1_input.course = gps_course
-        l1_input.ground_speed_mps = gps_speed
-        l1_input.motion_quality = SensorQuality.FRESH
-
-    if (
-        imu is not None
-        and imu_gyrz is not None
-        and imu.ts is not None
-        and _is_fresh(imu.ts, now, GYRZ_FRESH_AGE)
-    ):
-        l1_input.yaw = imu_yaw
-        l1_input.gyrx = imu_gyrx
-        l1_input.gyry = imu_gyry
-        l1_input.gyrz = imu_gyrz
-        l1_input.gyrz_quality = SensorQuality.FRESH
-        l1_input.freefall = getattr(imu, "freefall", 0)
-        l1_input.tumble   = getattr(imu, "tumble",   0)
-
-    if (
-        baro is not None
-        and baro_alt is not None
-        and baro.ts is not None
-        and _is_fresh(baro.ts, now, ALT_FRESH_AGE)
-    ):
-        l1_input.alt         = baro_alt
-        l1_input.alt_quality = SensorQuality.FRESH
-        l1_input.sink_rate   = getattr(baro, "sink_rate", None)
-
-    return l1_input
+    kp_override: Optional[float] = None
 
 
 def decidefresh(
@@ -602,6 +487,11 @@ def decidefresh(
         mx    = _try_float(_first_attr(imu, "magx_uT", "mag_x"))
         my    = _try_float(_first_attr(imu, "magy_uT", "mag_y"))
         mz    = _try_float(_first_attr(imu, "magz_uT", "mag_z"))
+        lin_ax = _try_float(_first_attr(imu, "lin_acc_x", "linear_ax"))
+        lin_ay = _try_float(_first_attr(imu, "lin_acc_y", "linear_ay"))
+        lin_az = _try_float(_first_attr(imu, "lin_acc_z", "linear_az"))
+        imu_lin_acc_valid = bool(getattr(imu, "lin_acc_valid", False))
+        lin_valid = imu_lin_acc_valid and (lin_ax is not None and lin_ay is not None and lin_az is not None)
         def _f(v): return v if v is not None else _nan
         append_history(
             state.imu_history,
@@ -614,7 +504,10 @@ def decidefresh(
                 gyrz_valid=gz is not None,
                 yaw_valid=yaw is not None,
                 acc_valid=(ax is not None and ay is not None and az is not None),
-                lin_acc_valid=False,
+                lin_acc_x=lin_ax,
+                lin_acc_y=lin_ay,
+                lin_acc_z=lin_az,
+                lin_acc_valid=lin_valid,
             ),
         )
 
@@ -654,211 +547,716 @@ def decidefresh(
     return result
 
 
-def _body_fail_reason(l1_input: L1Input) -> FailReason:
-    def _deg(value) -> Optional[float]:
-        try:
-            value_f = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not math.isfinite(value_f):
-            return None
-        return math.degrees(value_f)
+# ── Origin / target / local-EN helpers ────────────────────────────────────────
 
-    gx = _deg(l1_input.gyrx)
-    gy = _deg(l1_input.gyry)
-    gz = _deg(l1_input.gyrz)
-    if gx is None and gy is None and gz is None:
-        return FailReason.TUMBLE_ROLLPITCH if l1_input.tumble else FailReason.NONE
-    roll_pitch_abs = max(abs(gx or 0.0), abs(gy or 0.0))
-    yaw_abs = abs(gz or 0.0)
-    yaw_dominant = (
-        yaw_abs > config.MOTOR_TUMBLE_YAW_DOMINANT_MIN_DEG_S
-        and yaw_abs > config.MOTOR_TUMBLE_YAW_DOMINANT_RATIO * roll_pitch_abs
+def convert_latlon_to_local_en(
+    lat: float,
+    lon: float,
+    origin_lat: float,
+    origin_lon: float,
+) -> tuple[float, float]:
+    """Return local (E, N) [m] relative to origin.
+
+    Convention: N = North [m], E = East [m].
+    Bearing from North clockwise: target_bearing = atan2(dE, dN).
+    """
+    N, E = latlon_to_ne(lat, lon, origin_lat, origin_lon)
+    return E, N
+
+
+def convert_target_to_local_en_if_possible(state: GuidanceState) -> bool:
+    """Project state.target_lat/lon to state.target_E/N if origin is ready.
+
+    Idempotent — safe to call every cycle; only re-projects when target_ready
+    is False (e.g. target arrived before origin was set).
+    Returns True if target_ready afterwards.
+    """
+    if state.target_ready:
+        return True
+    if not state.origin_ready:
+        return False
+    t_lat = _try_float(state.target_lat)
+    t_lon = _try_float(state.target_lon)
+    if t_lat is None or t_lon is None:
+        return False
+    try:
+        E, N = convert_latlon_to_local_en(t_lat, t_lon, state.origin_lat, state.origin_lon)
+    except Exception:
+        return False
+    if not (math.isfinite(E) and math.isfinite(N)):
+        return False
+    state.target_E = E
+    state.target_N = N
+    state.target_ready = True
+    return True
+
+
+def gps_point_to_en_if_origin_ready(
+    state: GuidanceState,
+    lat: float,
+    lon: float,
+) -> Optional[tuple[float, float]]:
+    """Convert GPS lat/lon to local (E, N) [m].  Returns None if origin not set."""
+    if not state.origin_ready or state.origin_lat is None or state.origin_lon is None:
+        return None
+    lat_f = _try_float(lat)
+    lon_f = _try_float(lon)
+    if lat_f is None or lon_f is None:
+        return None
+    try:
+        E, N = convert_latlon_to_local_en(lat_f, lon_f, state.origin_lat, state.origin_lon)
+    except Exception:
+        return None
+    if not (math.isfinite(E) and math.isfinite(N)):
+        return None
+    return E, N
+
+
+def set_origin_from_current_gps(
+    state: GuidanceState,
+    sample: PointSample,
+) -> bool:
+    """Set origin from sample.lat/lon if not yet set.  Call only when
+    release_state == 3 and fresh.point_fresh is True.
+
+    After origin is set:
+    - all existing point_history samples are backfilled with their E/N.
+    - last_fresh_pos_N/E is updated from the most-recent history sample.
+    - convert_target_to_local_en_if_possible() is called.
+
+    Returns True on the call that actually set the origin, False otherwise.
+    """
+    if state.origin_ready:
+        return False   # immutable once set
+    lat_f = _try_float(sample.lat)
+    lon_f = _try_float(sample.lon)
+    if lat_f is None or lon_f is None:
+        return False
+
+    state.origin_lat   = lat_f
+    state.origin_lon   = lon_f
+    state.origin_ready = True
+
+    # Backfill E/N for every history sample that has valid lat/lon
+    for s in state.point_history:
+        result = gps_point_to_en_if_origin_ready(state, s.lat, s.lon)
+        if result is not None:
+            s.point_E = result[0]
+            s.point_N = result[1]
+
+    # Update DR initial condition from the freshest history sample with valid EN
+    for s in reversed(state.point_history):
+        if math.isfinite(s.point_E) and math.isfinite(s.point_N):
+            state.last_fresh_pos_E  = s.point_E
+            state.last_fresh_pos_N  = s.point_N
+            state.last_fresh_pos_ts = s.timestamp
+            break
+
+    convert_target_to_local_en_if_possible(state)
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOMING GNC ARCHITECTURE — STEPS 4-7
+# produceL1input → produceL1output → (motorapp applies cmd to control.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fail_l1input(reason: str) -> L1Input:
+    out = L1Input()
+    out.valid = False
+    out.control_mode = ControlMode.FAIL
+    out.reason = reason
+    return out
+
+
+# ── STEP 7: DETUMBLE check ────────────────────────────────────────────────────
+
+def should_detumble(fresh: FreshResult, imu, state: GuidanceState, now: float) -> bool:
+    """Return True if DETUMBLING mode should be active this cycle."""
+    if not config.DETUMBLE_ENABLE:
+        return False
+    if not fresh.imu_gyrz_fresh or imu is None:
+        return False
+    gz = _try_float(_first_attr(imu, "gyrz_rad_s", "gyrz"))
+    if gz is None:
+        return False
+    gyrz_dps = abs(math.degrees(float(config.GYRZ_SIGN) * gz))
+
+    if gyrz_dps > config.DETUMBLE_GYRZ_THRESHOLD_DPS:
+        state.detumble_exit_start = None
+        return True
+
+    was_detumbling = state.nav_control_mode == config.CONTROL_MODE_DETUMBLING
+    if not was_detumbling:
+        state.detumble_exit_start = None
+        return False
+
+    # Was detumbling — apply exit hysteresis
+    if gyrz_dps <= config.DETUMBLE_EXIT_THRESHOLD_DPS:
+        if state.detumble_exit_start is None:
+            state.detumble_exit_start = now
+        if now - state.detumble_exit_start >= config.DETUMBLE_EXIT_HOLD_S:
+            state.detumble_exit_start = None
+            return False
+        return True
+
+    # Between entry and exit thresholds — keep detumbling
+    state.detumble_exit_start = None
+    return True
+
+
+# ── STEP 5: DR feasibility ────────────────────────────────────────────────────
+
+def can_dead_reckon(fresh: FreshResult, state: GuidanceState) -> bool:
+    """Return True if DR is possible with available sensors and saved GPS anchor."""
+    has_anchor = (
+        state.dr_start_E is not None
+        and state.dr_start_N is not None
+        and state.dr_start_V is not None
+        and state.dr_start_course is not None
+        and state.dr_start_time is not None
     )
-    roll_pitch_dominant = roll_pitch_abs > config.MOTOR_TUMBLE_ROLLPITCH_MIN_DEG_S
-    if yaw_dominant:
-        return FailReason.TUMBLE_YAW_DOMINANT
-    if roll_pitch_dominant:
-        return FailReason.TUMBLE_ROLLPITCH
-    return FailReason.UNSTABLE_BODY if l1_input.tumble else FailReason.NONE
+    has_course_source = fresh.imu_yaw_fresh or fresh.imu_gyrz_fresh
+    return has_anchor and has_course_source
 
 
-def DecideControlMode(l1_input: L1Input) -> tuple[ControlMode, FailReason]:
-    if l1_input.freefall:
-        return ControlMode.FAIL, FailReason.FREEFALL
-    if l1_input.tumble:
-        return ControlMode.FAIL, _body_fail_reason(l1_input)
+# ── STEP 4: GPS tracking state update ─────────────────────────────────────────
 
-    pos_quality    = l1_input.pos_quality
-    motion_quality = l1_input.motion_quality
-    gyrz_quality   = l1_input.gyrz_quality
-
-    if pos_quality == SensorQuality.STALE or motion_quality == SensorQuality.STALE:
-        if (
-            pos_quality    == SensorQuality.STALE
-            and motion_quality == SensorQuality.STALE
-            and gyrz_quality   == SensorQuality.STALE
-            and l1_input.alt_quality == SensorQuality.STALE
-        ):
-            fail = FailReason.SENSOR_BLACKOUT
-        elif pos_quality == SensorQuality.STALE:
-            fail = FailReason.NO_POSITION
-        else:
-            fail = FailReason.NO_MOTION
-        return ControlMode.FAIL, fail
-
-    # pos and motion are both FRESH
-    closed_loop = l1_input.gyrz is not None and gyrz_quality == SensorQuality.FRESH
-    if closed_loop:
-        return ControlMode.NOMINAL_CLOSED_LOOP, FailReason.NONE
-    return ControlMode.NOMINAL_FEEDFORWARD, FailReason.NONE
-
-def ProduceL1Input(
+def update_state_from_gps_tracking(
+    state: GuidanceState,
     gps,
     imu,
-    baro,
-    origin_lat: float,
-    origin_lon: float,
-    target_lat: float,
-    target_lon: float,
+    fresh: FreshResult,
     now: float,
-) -> tuple[L1Input, ControlMode]:
-    l1_input = L1Input()
-    l1_input.origin_lat = origin_lat
-    l1_input.origin_lon = origin_lon
-    l1_input.target_lat = target_lat
-    l1_input.target_lon = target_lon
-    FillFresh(l1_input, gps, imu, baro, origin_lat, origin_lon, now)
-    control_mode, fail_reason = DecideControlMode(l1_input)
-    l1_input.control_mode = control_mode
-    l1_input.fail_reason = fail_reason
-    return (l1_input, control_mode)
+) -> None:
+    """Update nav state from fresh GPS. Also seeds the DR anchor for future use."""
+    latest_pt = state.point_history[-1]
+    latest_vel = state.velocity_history[-1]
 
-def ProduceL1Output(
-    l1_input: L1Input,
-    mode: ControlMode,
-    origin_lat: float,
-    origin_lon: float,
-    target_lat: float,
-    target_lon: float,
-    now: float,
-) -> L1Output:
-    l1_output = L1Output(timestamp=now)
-    l1_output.reason = getattr(mode, "value", str(mode))
-    l1_output.target_lat = target_lat
-    l1_output.target_lon = target_lon
-    fail_reason = getattr(l1_input, "fail_reason", FailReason.NONE)
-    if not isinstance(fail_reason, FailReason):
-        try:
-            fail_reason = FailReason(str(fail_reason))
-        except ValueError:
-            fail_reason = FailReason.NONE
-    l1_output.fail_reason = fail_reason.value
-    policy = _policy_for_mode(mode, fail_reason)
-    _apply_policy(l1_output, policy)
+    state.nav_E = latest_pt.point_E
+    state.nav_N = latest_pt.point_N
+    state.nav_course = latest_vel.course
+    state.nav_V = latest_vel.speed
 
-    if mode == ControlMode.FAIL:
-        l1_output.reason = fail_reason.value if fail_reason != FailReason.NONE else config.CONTROL_MODE_FAIL
-        if fail_reason == FailReason.TUMBLE_YAW_DOMINANT and l1_input.gyrz is not None:
-            gyrz_deg_s = math.degrees(float(l1_input.gyrz))
-            yaw_cmd_deg_s = max(
-                -policy.angular_velocity_cmd_max_deg_s,
-                min(policy.angular_velocity_cmd_max_deg_s, -config.MOTOR_TUMBLE_COUNTER_YAW_GAIN * gyrz_deg_s),
+    V = float(latest_vel.speed)
+    c = float(latest_vel.course)
+    state.nav_vE = V * math.sin(c)
+    state.nav_vN = V * math.cos(c)
+
+    gps_time = max(
+        latest_pt.timestamp,
+        latest_vel.timestamp,
+    )
+    state.last_valid_gps_time = gps_time
+
+    # Save DR anchor for potential future dropout
+    state.dr_start_E = state.nav_E
+    state.dr_start_N = state.nav_N
+    state.dr_start_vE = state.nav_vE
+    state.dr_start_vN = state.nav_vN
+    state.dr_start_V = state.nav_V
+    state.dr_start_course = state.nav_course
+    state.dr_start_time = gps_time
+
+    # Reset dropout tracking
+    state.course_at_dropout = state.nav_course
+    imu_yaw = _try_float(_first_attr(imu, "yaw_rad", "yaw")) if imu is not None else None
+    state.yaw_at_dropout = imu_yaw
+    state.gyro_integral_since_dropout = 0.0
+
+    state.last_dr_update_time = now
+    state.nav_dr_age = 0.0
+    state.nav_confidence = 1.0
+    state.nav_dr_method = config.DR_METHOD_NONE
+
+
+# ── STEP 5: DR course estimation ──────────────────────────────────────────────
+
+def _estimate_course_dr(
+    state: GuidanceState,
+    imu,
+    fresh: FreshResult,
+    dt: float,
+) -> Optional[tuple]:
+    """Estimate current course from IMU during GPS dropout.
+
+    Returns (course_rad, course_source_str) or None on failure.
+    """
+    if state.course_at_dropout is None:
+        return None
+
+    course_dropout = float(state.course_at_dropout)
+    course_from_yaw: Optional[float] = None
+    course_from_gyro: Optional[float] = None
+
+    if fresh.imu_yaw_fresh and imu is not None:
+        imu_yaw = _try_float(_first_attr(imu, "yaw_rad", "yaw"))
+        if imu_yaw is not None and state.yaw_at_dropout is not None:
+            course_from_yaw = _wrap_pi(
+                course_dropout + _wrap_pi(float(imu_yaw) - float(state.yaw_at_dropout))
             )
-            l1_output.control_valid = True
-            l1_output.angular_velocity_cmd_rad_s = math.radians(yaw_cmd_deg_s)
-            l1_output.ground_speed_mps = float(getattr(l1_input, "ground_speed_mps", 0.0) or 0.0)
-            return l1_output
-        if (
-            fail_reason == FailReason.NO_MOTION
-            and l1_input.pos_N is not None
-            and l1_input.pos_E is not None
-            and l1_input.yaw is not None
-            and origin_lat is not None
-            and origin_lon is not None
-            and target_lat is not None
-            and target_lon is not None
-        ):
-            target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
-            bearing_to_target = math.atan2(target_E - l1_input.pos_E, target_N - l1_input.pos_N)
-            heading_error = _wrap_pi(bearing_to_target - float(l1_input.yaw))
-            yaw_cmd_rad_s = config.MOTOR_TARGET_BEARING_GAIN * heading_error
-            yaw_max_rad_s = math.radians(policy.angular_velocity_cmd_max_deg_s)
-            l1_output.control_valid = True
-            l1_output.angular_velocity_cmd_rad_s = max(-yaw_max_rad_s, min(yaw_max_rad_s, yaw_cmd_rad_s))
-            l1_output.target_N = target_N
-            l1_output.target_E = target_E
-            l1_output.pos_N = l1_input.pos_N
-            l1_output.pos_E = l1_input.pos_E
-            l1_output.current_heading_rad = float(l1_input.yaw)
-            return l1_output
-        return l1_output
 
-    pos_N = getattr(l1_input, "pos_N", None)
-    pos_E = getattr(l1_input, "pos_E", None)
-    course = getattr(l1_input, "course", None)
-    speed = getattr(l1_input, "ground_speed_mps", None)
+    if fresh.imu_gyrz_fresh and imu is not None:
+        gz = _try_float(_first_attr(imu, "gyrz_rad_s", "gyrz"))
+        if gz is not None:
+            state.gyro_integral_since_dropout += float(config.GYRZ_SIGN) * float(gz) * dt
+            course_from_gyro = _wrap_pi(course_dropout + state.gyro_integral_since_dropout)
+
+    if course_from_yaw is not None and course_from_gyro is not None:
+        residual = abs(_wrap_pi(course_from_yaw - course_from_gyro))
+        if residual < math.radians(5.0):
+            return course_from_yaw, "YAW_DELTA"
+        if residual < math.radians(15.0):
+            return angle_blend(course_from_gyro, course_from_yaw, 0.7), "YAW_GYRO_BLEND"
+        return course_from_gyro, "GYRO_FALLBACK"
+
+    if course_from_yaw is not None:
+        return course_from_yaw, "YAW_DELTA"
+    if course_from_gyro is not None:
+        return course_from_gyro, "GYRO_FALLBACK"
+    return None
+
+
+def _quat_rotate(qw: float, qx: float, qy: float, qz: float,
+                 vx: float, vy: float, vz: float) -> tuple:
+    """Rotate vector (vx, vy, vz) by unit quaternion (qw, qx, qy, qz)."""
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+    wx = vx + qw * tx + qy * tz - qz * ty
+    wy = vy + qw * ty + qz * tx - qx * tz
+    wz = vz + qw * tz + qx * ty - qy * tx
+    return wx, wy, wz
+
+
+def _acc_body_to_en_with_quaternion(
+    ax: float, ay: float, az: float,
+    qw: float, qx: float, qy: float, qz: float,
+) -> tuple:
+    """Transform linear body acceleration to EN frame using quaternion.
+
+    Assumes BNO085 convention: body x=forward, y=right, z=down → NED world.
+    Returns (aE, aN).
+    """
+    ax_s = float(config.ACC_X_SIGN) * float(ax)
+    ay_s = float(config.ACC_Y_SIGN) * float(ay)
+    world_n, world_e, _ = _quat_rotate(float(qw), float(qx), float(qy), float(qz),
+                                       ax_s, ay_s, float(az))
+    return float(world_e), float(world_n)
+
+
+def _acc_body_to_en_with_yaw(ax: float, ay: float, yaw_rad: float) -> tuple:
+    """Transform body acceleration to EN frame using heading angle.
+
+    Returns (aE, aN).
+    """
+    ax_s = float(config.ACC_X_SIGN) * float(ax)
+    ay_s = float(config.ACC_Y_SIGN) * float(ay)
+    c = math.cos(float(yaw_rad))
+    s = math.sin(float(yaw_rad))
+    aN = ax_s * c - ay_s * s
+    aE = ax_s * s + ay_s * c
+    return aE, aN
+
+
+# ── STEP 5: DR state update ────────────────────────────────────────────────────
+
+def update_state_from_dead_reckoning(
+    state: GuidanceState,
+    imu,
+    fresh: FreshResult,
+    now: float,
+) -> None:
+    """Integrate nav state forward using IMU when GPS is stale."""
+    last_t = state.last_dr_update_time if state.last_dr_update_time is not None else now
+    dt = clamp(now - last_t, 0.005, 0.5)
+    state.last_dr_update_time = now
+
+    course_result = _estimate_course_dr(state, imu, fresh, dt)
+    if course_result is None:
+        state.nav_confidence = 0.0
+        return
+
+    est_course, _ = course_result
+    state.nav_course = est_course
+
+    # Speed decay (exponential)
+    V_prev = state.nav_V if state.nav_V is not None else (state.dr_start_V or 0.0)
+    tau = float(config.SPEED_DECAY_TAU_S)
+    V_decayed = float(V_prev) * math.exp(-dt / tau) if tau > 0.0 else float(V_prev)
+    V_decayed = clamp(V_decayed, float(config.V_MIN_MPS), float(config.V_MAX_MPS))
+
+    vE_gyro = V_decayed * math.sin(est_course)
+    vN_gyro = V_decayed * math.cos(est_course)
+
+    E_prev = state.nav_E if state.nav_E is not None else (state.dr_start_E or 0.0)
+    N_prev = state.nav_N if state.nav_N is not None else (state.dr_start_N or 0.0)
+    E_gyro = float(E_prev) + vE_gyro * dt
+    N_gyro = float(N_prev) + vN_gyro * dt
+
+    acc_available = False
+    E_out, N_out = E_gyro, N_gyro
+    vE_out, vN_out = vE_gyro, vN_gyro
+
+    # Acc-aided DR (optional)
     if (
-        pos_N is None
-        or pos_E is None
-        or course is None
-        or speed is None
-        or origin_lat is None
-        or origin_lon is None
-        or target_lat is None
-        or target_lon is None
+        config.USE_ACC_DOUBLE_INTEGRATION
+        and fresh.imu_linear_acc_fresh
+        and imu is not None
+        and state.nav_dr_age <= float(config.ACC_AID_END_AGE_S)
+        and state.nav_dr_age >= float(config.ACC_AID_START_AGE_S)
     ):
-        l1_output.reason = config.FAIL_REASON_NO_POSITION
-        l1_output.fail_reason = FailReason.NO_POSITION.value
-        return l1_output
+        lin_ax = _try_float(_first_attr(imu, "lin_acc_x", "linear_ax"))
+        lin_ay = _try_float(_first_attr(imu, "lin_acc_y", "linear_ay"))
+        if lin_ax is not None and lin_ay is not None:
+            # Priority 1: quaternion rotation
+            qw = _try_float(getattr(imu, "quat_w", None))
+            qx = _try_float(getattr(imu, "quat_x", None))
+            qy = _try_float(getattr(imu, "quat_y", None))
+            qz = _try_float(getattr(imu, "quat_z", None))
+            lin_az = _try_float(_first_attr(imu, "lin_acc_z", "linear_az")) or 0.0
 
-    target_N, target_E = latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
-    rel_N = target_N - float(pos_N)
-    rel_E = target_E - float(pos_E)
-    target_range = math.hypot(rel_N, rel_E)
-    if target_range <= 1e-6:
-        l1_output.reason = config.FAIL_REASON_NO_POSITION
-        l1_output.fail_reason = FailReason.NO_POSITION.value
-        return l1_output
+            aE_raw: Optional[float] = None
+            aN_raw: Optional[float] = None
+            if qw is not None and qx is not None and qy is not None and qz is not None:
+                aE_raw, aN_raw = _acc_body_to_en_with_quaternion(
+                    lin_ax, lin_ay, lin_az, qw, qx, qy, qz
+                )
+            else:
+                imu_yaw = _try_float(_first_attr(imu, "yaw_rad", "yaw"))
+                if imu_yaw is not None:
+                    aE_raw, aN_raw = _acc_body_to_en_with_yaw(lin_ax, lin_ay, imu_yaw)
 
-    speed_for_l1 = max(float(speed), V_MIN_MPS)
-    L1_distance = max((L1_DAMPING * policy.l1_period_s / math.pi) * speed_for_l1, L1_MIN_M)
-    # Fixed-target homing: the target itself is the carrot for the entire flight.
-    # The period-based L1 distance remains only as the controller gain scale.
-    carrot_N = target_N
-    carrot_E = target_E
+            if aE_raw is not None and aN_raw is not None:
+                aE_lim = float(config.ACC_LIMIT_MPS2)
+                aE = clamp(aE_raw, -aE_lim, aE_lim)
+                aN = clamp(aN_raw, -aE_lim, aE_lim)
+                vE_acc = float(state.nav_vE or vE_gyro) + aE * dt
+                vN_acc = float(state.nav_vN or vN_gyro) + aN * dt
+                E_acc = float(E_prev) + float(state.nav_vE or vE_gyro) * dt + 0.5 * aE * dt * dt
+                N_acc = float(N_prev) + float(state.nav_vN or vN_gyro) * dt + 0.5 * aN * dt * dt
+                w = float(config.ACC_BLEND_WEIGHT)
+                E_out = (1.0 - w) * E_gyro + w * E_acc
+                N_out = (1.0 - w) * N_gyro + w * N_acc
+                vE_out = (1.0 - w) * vE_gyro + w * vE_acc
+                vN_out = (1.0 - w) * vN_gyro + w * vN_acc
+                acc_available = True
 
-    target_bearing = math.atan2(rel_E, rel_N)
-    nu1 = 0.0
-    nu2 = _wrap_pi(target_bearing - float(course))
-    nu = nu2
-    nu_clamped = max(-math.pi / 2.0, min(math.pi / 2.0, nu))
-    K_L1 = 4.0 * L1_DAMPING * L1_DAMPING
-    lat_acc = K_L1 * speed_for_l1 * speed_for_l1 / L1_distance * math.sin(nu_clamped)
-    lat_acc *= policy.confidence_scale
-    lat_acc = max(-policy.lat_acc_max_mps2, min(policy.lat_acc_max_mps2, lat_acc))
-    angular_velocity_rad_s = lat_acc / speed_for_l1
-    angular_velocity_max_rad_s = math.radians(policy.angular_velocity_cmd_max_deg_s)
-    angular_velocity_rad_s = max(-angular_velocity_max_rad_s, min(angular_velocity_max_rad_s, angular_velocity_rad_s))
+    state.nav_E = E_out
+    state.nav_N = N_out
+    state.nav_vE = vE_out
+    state.nav_vN = vN_out
+    state.nav_V = math.hypot(vE_out, vN_out)
 
-    l1_output.nominal = True
-    l1_output.degraded = mode in (ControlMode.DEGRADED_CLOSED_LOOP, ControlMode.DEGRADED_FEEDFORWARD)
-    l1_output.control_valid = True
-    l1_output.angular_velocity_cmd_rad_s = angular_velocity_rad_s
-    l1_output.lat_acc_cmd_mps2 = lat_acc
-    l1_output.ground_speed_mps = float(speed)
-    l1_output.L1_distance = L1_distance
-    l1_output.nu1 = nu1
-    l1_output.nu2 = nu2
-    l1_output.angle_to_turn = nu
-    l1_output.crossTrack = 0.0
-    l1_output.alongTrack = target_range
-    l1_output.pos_N = pos_N
-    l1_output.pos_E = pos_E
-    l1_output.target_N = target_N
-    l1_output.target_E = target_E
-    l1_output.carrot_N = carrot_N
-    l1_output.carrot_E = carrot_E
-    l1_output.carrot_lat, l1_output.carrot_lon = ne_to_latlon(carrot_N, carrot_E, origin_lat, origin_lon)
-    l1_output.current_heading_rad = course
-    return l1_output
+    # DR confidence by age
+    if state.last_valid_gps_time is not None:
+        state.nav_dr_age = max(0.0, now - float(state.last_valid_gps_time))
+    state.nav_confidence = compute_dr_confidence(state.nav_dr_age)
+
+    state.nav_dr_method = (
+        config.DR_METHOD_GYRO_ACC_BLEND if acc_available else config.DR_METHOD_GYRO_INTEGRATION
+    )
+
+
+# ── STEP 4: produceL1input ────────────────────────────────────────────────────
+
+def produceL1input(
+    fresh: FreshResult,
+    gps,
+    imu,
+    state: GuidanceState,
+    release_state: int,
+    now: float,
+) -> L1Input:
+    """Decide control mode, update nav state, and return L1Input for homing.
+
+    Call decidefresh() first each cycle to populate fresh and state histories.
+    Does not compute yaw_rate_cmd — that is done by produceL1output().
+    """
+    # ── Gate: wait for STATE >= 3 ────────────────────────────────────────────
+    if release_state < 3:
+        return _fail_l1input("WAIT_RELEASE_STATE_3")
+
+    # ── Origin ───────────────────────────────────────────────────────────────
+    if not state.origin_ready:
+        if fresh.point_fresh and state.point_history:
+            set_origin_from_current_gps(state, state.point_history[-1])
+        if not state.origin_ready:
+            return _fail_l1input("FAIL_NO_ORIGIN")
+
+    # Recalculate E/N in history samples after origin is set
+    # (backfill already done by set_origin_from_current_gps)
+
+    # ── Target ───────────────────────────────────────────────────────────────
+    convert_target_to_local_en_if_possible(state)
+    if not state.target_ready:
+        return _fail_l1input("FAIL_NO_TARGET")
+
+    # ── DETUMBLING ───────────────────────────────────────────────────────────
+    if should_detumble(fresh, imu, state, now):
+        state.nav_control_mode = config.CONTROL_MODE_DETUMBLING
+        state.nav_dr_method = config.DR_METHOD_NONE
+        out = L1Input()
+        out.valid = True
+        out.control_mode = ControlMode.DETUMBLING
+        out.dr_method = config.DR_METHOD_NONE
+        out.confidence = 1.0
+        out.pos_N = state.nav_N
+        out.pos_E = state.nav_E
+        out.course = state.nav_course
+        out.ground_speed_mps = state.nav_V
+        out.target_N = state.target_N
+        out.target_E = state.target_E
+        out.target_lat = state.target_lat
+        out.target_lon = state.target_lon
+        return out
+
+    # ── GPS TRACKING ─────────────────────────────────────────────────────────
+    if fresh.point_fresh and fresh.velocity_fresh and state.point_history and state.velocity_history:
+        latest_pt = state.point_history[-1]
+        if not (math.isfinite(latest_pt.point_E) and math.isfinite(latest_pt.point_N)):
+            # Point in history without valid EN coords — try to re-project
+            res = gps_point_to_en_if_origin_ready(state, latest_pt.lat, latest_pt.lon)
+            if res is not None:
+                latest_pt.point_E, latest_pt.point_N = res[0], res[1]
+            else:
+                return _fail_l1input("FAIL_NO_POSITION_EN")
+
+        update_state_from_gps_tracking(state, gps, imu, fresh, now)
+
+        state.nav_confidence = 1.0
+        state.nav_dr_age = 0.0
+        state.nav_dr_method = config.DR_METHOD_NONE
+
+        if fresh.imu_gyrz_fresh:
+            state.nav_control_mode = config.CONTROL_MODE_GPS_TRACKING_CLOSED
+            mode = ControlMode.GPS_TRACKING_CLOSED
+        else:
+            state.nav_control_mode = config.CONTROL_MODE_GPS_TRACKING_OPEN
+            mode = ControlMode.GPS_TRACKING_OPEN
+
+    # ── DEAD RECKONING ────────────────────────────────────────────────────────
+    else:
+        if not can_dead_reckon(fresh, state):
+            state.nav_control_mode = config.CONTROL_MODE_FAIL
+            return _fail_l1input("FAIL_NO_VALID_DR")
+
+        update_state_from_dead_reckoning(state, imu, fresh, now)
+
+        if state.nav_confidence <= 0.0:
+            state.nav_control_mode = config.CONTROL_MODE_FAIL
+            return _fail_l1input("FAIL_DR_CONFIDENCE_ZERO")
+
+        if fresh.imu_gyrz_fresh:
+            state.nav_control_mode = config.CONTROL_MODE_DR_TRACKING_CLOSED
+            mode = ControlMode.DR_TRACKING_CLOSED
+        else:
+            state.nav_control_mode = config.CONTROL_MODE_DR_TRACKING_OPEN
+            mode = ControlMode.DR_TRACKING_OPEN
+
+    # ── Build L1Input ─────────────────────────────────────────────────────────
+    out = L1Input()
+    out.valid = True
+    out.control_mode = mode
+    out.dr_method = state.nav_dr_method
+    out.confidence = state.nav_confidence
+    out.pos_N = state.nav_N
+    out.pos_E = state.nav_E
+    out.course = state.nav_course
+    out.ground_speed_mps = state.nav_V
+    out.target_N = state.target_N
+    out.target_E = state.target_E
+    out.target_lat = state.target_lat
+    out.target_lon = state.target_lon
+
+    return out
+
+
+# ── STEP 6: produceL1output ────────────────────────────────────────────────────
+
+def produceL1output(l1input: L1Input) -> L1Output:
+    """Compute yaw_rate_cmd from L1Input.  Stores result in angular_velocity_cmd_rad_s.
+
+    Uses fixed-target homing: the target itself is the carrot.
+    Does not read sensor cache; consumes only l1input fields.
+    """
+    out = L1Output(timestamp=0.0)
+
+    if not l1input.valid:
+        reason = getattr(l1input, "reason", "FAIL")
+        out.reason = reason if reason else "FAIL"
+        out.control_valid = False
+        return out
+
+    mode = l1input.control_mode
+    mode_val = getattr(mode, "value", str(mode))
+
+    # ── FAIL ─────────────────────────────────────────────────────────────────
+    if mode_val == config.CONTROL_MODE_FAIL or mode == ControlMode.FAIL:
+        out.reason = getattr(l1input, "reason", config.CONTROL_MODE_FAIL) or config.CONTROL_MODE_FAIL
+        out.control_valid = False
+        return out
+
+    # ── DETUMBLING: cmd=0, PID counters the yaw rate ──────────────────────────
+    if mode_val == config.CONTROL_MODE_DETUMBLING or mode == ControlMode.DETUMBLING:
+        out.reason = config.CONTROL_MODE_DETUMBLING
+        out.control_valid = True
+        out.nominal = True
+        out.angular_velocity_cmd_rad_s = 0.0
+        out.pid_enabled = True
+        out.angular_velocity_cmd_max_deg_s = 0.0
+        out.delta_ff_max_deg = 0.0
+        out.delta_pid_max_deg = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
+        out.delta_total_max_deg = config.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
+        out.max_arm_rate_deg_s = config.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
+        out.yaw_rate_limit_dps = config.DETUMBLING_YAW_RATE_LIMIT_DPS
+        out.dr_confidence = l1input.confidence
+        out.dr_method = l1input.dr_method
+        out.kp_override = config.KP_DETUMBLE
+        return out
+
+    # ── Validate nav state ────────────────────────────────────────────────────
+    pos_E = l1input.pos_E
+    pos_N = l1input.pos_N
+    tgt_E = l1input.target_E
+    tgt_N = l1input.target_N
+    course = l1input.course
+    V_raw = l1input.ground_speed_mps
+
+    if None in (pos_E, pos_N, tgt_E, tgt_N, course, V_raw):
+        out.reason = "FAIL_NO_NAV_STATE"
+        out.control_valid = False
+        return out
+
+    # ── Distance to target ────────────────────────────────────────────────────
+    dE = float(tgt_E) - float(pos_E)
+    dN = float(tgt_N) - float(pos_N)
+    distance = math.hypot(dE, dN)
+    out.alongTrack = distance
+    out.crossTrack = 0.0
+
+    if distance <= float(config.TARGET_RADIUS_M):
+        out.reason = "TARGET_REACHED"
+        out.control_valid = True
+        out.nominal = True
+        out.angular_velocity_cmd_rad_s = 0.0
+        out.pos_N = float(pos_N)
+        out.pos_E = float(pos_E)
+        out.target_N = float(tgt_N)
+        out.target_E = float(tgt_E)
+        out.current_heading_rad = float(course)
+        _homing_fill_ctrl_params(out, mode_val, l1input.dr_method)
+        return out
+
+    # ── Target bearing and L1 guidance ────────────────────────────────────────
+    target_bearing = _wrap_pi(math.atan2(dE, dN))
+    nu = _wrap_pi(target_bearing - float(course))
+    sin_nu_eff = saturated_sin(nu)
+
+    V = clamp(float(V_raw), float(config.V_MIN_MPS), float(config.V_MAX_MPS))
+    L = float(config.L_GAIN_M)
+    yaw_rate_cmd = 2.0 * V / L * sin_nu_eff
+
+    yaw_rate_cmd *= float(l1input.confidence)
+
+    yaw_rate_limit_dps = choose_yaw_rate_limit(mode, l1input.dr_method)
+    yaw_rate_limit_rad_s = math.radians(yaw_rate_limit_dps)
+    yaw_rate_cmd = clamp(yaw_rate_cmd, -yaw_rate_limit_rad_s, yaw_rate_limit_rad_s)
+
+    out.reason = mode_val
+    out.control_valid = True
+    out.nominal = True
+    out.angular_velocity_cmd_rad_s = yaw_rate_cmd
+    out.ground_speed_mps = float(V_raw)
+    out.pos_N = float(pos_N)
+    out.pos_E = float(pos_E)
+    out.target_N = float(tgt_N)
+    out.target_E = float(tgt_E)
+    out.carrot_N = float(tgt_N)
+    out.carrot_E = float(tgt_E)
+    out.current_heading_rad = float(course)
+    out.nu2 = nu
+    out.angle_to_turn = nu
+    out.yaw_rate_limit_dps = yaw_rate_limit_dps
+    out.dr_confidence = float(l1input.confidence)
+    out.dr_method = str(l1input.dr_method)
+
+    _homing_fill_ctrl_params(out, mode_val, l1input.dr_method)
+    return out
+
+
+def _homing_fill_ctrl_params(out: L1Output, mode_val: str, dr_method: str) -> None:
+    """Set motor control authority limits on L1Output by mode."""
+    c = config
+    if mode_val == c.CONTROL_MODE_GPS_TRACKING_CLOSED:
+        out.pid_enabled = True
+        out.angular_velocity_cmd_max_deg_s = c.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+        out.delta_ff_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_FF_MAX_DEG
+        out.delta_pid_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_PID_MAX_DEG
+        out.delta_total_max_deg = c.MOTOR_NOMINAL_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
+        out.max_arm_rate_deg_s = c.MOTOR_NOMINAL_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
+    elif mode_val == c.CONTROL_MODE_GPS_TRACKING_OPEN:
+        out.pid_enabled = False
+        out.angular_velocity_cmd_max_deg_s = c.GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
+        out.delta_ff_max_deg = c.MOTOR_NOMINAL_FEEDFORWARD_DELTA_FF_MAX_DEG
+        out.delta_pid_max_deg = 0.0
+        out.delta_total_max_deg = c.MOTOR_NOMINAL_FEEDFORWARD_DELTA_TOTAL_MAX_DEG
+        out.max_arm_rate_deg_s = c.MOTOR_NOMINAL_FEEDFORWARD_MAX_ARM_RATE_DEG_S
+    elif mode_val == c.CONTROL_MODE_DR_TRACKING_CLOSED:
+        out.pid_enabled = True
+        out.angular_velocity_cmd_max_deg_s = c.DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+        out.delta_ff_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_FF_MAX_DEG
+        out.delta_pid_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_PID_MAX_DEG
+        out.delta_total_max_deg = c.MOTOR_DEGRADED_CLOSED_LOOP_DELTA_TOTAL_MAX_DEG
+        out.max_arm_rate_deg_s = c.MOTOR_DEGRADED_CLOSED_LOOP_MAX_ARM_RATE_DEG_S
+    elif mode_val == c.CONTROL_MODE_DR_TRACKING_OPEN:
+        out.pid_enabled = False
+        out.angular_velocity_cmd_max_deg_s = c.DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS
+        out.delta_ff_max_deg = c.MOTOR_DEGRADED_FEEDFORWARD_DELTA_FF_MAX_DEG
+        out.delta_pid_max_deg = 0.0
+        out.delta_total_max_deg = c.MOTOR_DEGRADED_FEEDFORWARD_DELTA_TOTAL_MAX_DEG
+        out.max_arm_rate_deg_s = c.MOTOR_DEGRADED_FEEDFORWARD_MAX_ARM_RATE_DEG_S
+    else:
+        out.pid_enabled = False
+        out.angular_velocity_cmd_max_deg_s = 0.0
+        out.delta_ff_max_deg = 0.0
+        out.delta_pid_max_deg = 0.0
+        out.delta_total_max_deg = 0.0
+        out.max_arm_rate_deg_s = 0.0
+
+
+def reset_guidance_state_for_flight(state: GuidanceState) -> None:
+    """Reset origin and nav state when transitioning back to pre-release state."""
+    state.origin_ready = False
+    state.origin_lat = None
+    state.origin_lon = None
+    state.target_ready = False
+    state.target_E = None
+    state.target_N = None
+    state.nav_E = None
+    state.nav_N = None
+    state.nav_course = None
+    state.nav_V = None
+    state.nav_vE = None
+    state.nav_vN = None
+    state.nav_confidence = 0.0
+    state.nav_dr_age = 0.0
+    state.nav_control_mode = config.CONTROL_MODE_FAIL
+    state.nav_dr_method = config.DR_METHOD_NONE
+    state.dr_start_E = None
+    state.dr_start_N = None
+    state.dr_start_vE = None
+    state.dr_start_vN = None
+    state.dr_start_V = None
+    state.dr_start_course = None
+    state.dr_start_time = None
+    state.course_at_dropout = None
+    state.yaw_at_dropout = None
+    state.gyro_integral_since_dropout = 0.0
+    state.last_valid_gps_time = None
+    state.last_dr_update_time = None
+    state.detumble_exit_start = None
+    state.point_history.clear()
+    state.velocity_history.clear()
+    state.imu_history.clear()
+    state.baro_history.clear()
