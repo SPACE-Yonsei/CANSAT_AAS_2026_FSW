@@ -107,8 +107,7 @@ def _calibrate_startup_yaw(raw_yaw: float) -> None:
     if elapsed < _STARTUP_YAW_ZERO_DELAY_S:
         return
     offset = _wrap_deg(-float(raw_yaw))
-    prevstate.PREV_YAW_OFFSET = offset
-    prevstate.YAW_OFFSET = offset
+    prevstate.update_yaw_offset(offset)
     _startup_yaw_zeroed = True
     logger.info(
         "IMU: startup yaw zeroed (raw=%.2f deg, offset=%.2f deg, elapsed=%.1fs)",
@@ -296,7 +295,7 @@ def send_imu_data(main_queue) -> None:
             appargs.ImuAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.ImuAppArg.MID_motor_imu,
-            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)}",
+            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)},{prevstate.PREV_YAW_OFFSET:.4f}",
         )
         tick += 1
         if tick >= 20:
