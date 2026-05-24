@@ -142,9 +142,10 @@ DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 # ── L1 homing guidance tuning ─────────────────────────────────────────────────
 # L_GAIN_M 12→10: 자유낙하 로그 V≈5-7 m/s 기준 응답시정수 L/(2V) ≈ 0.7-1s.
 # 작은 타겟 반경 5m 진입 시 응답성 강화.
-L_GAIN_M  = 17.0
-V_MIN_MPS = 0.5
-V_MAX_MPS = 15.0
+L_GAIN_M     = 17.0
+V_MIN_MPS    = 0.5
+V_MAX_MPS    = 15.0
+V_MAX_DR_MPS = 3.0    # DR 모드 전용 속도 상한 — GPS보다 보수적으로 포화 nu 억제
 
 # ── nu 데드밴드: 이 각도 이내면 yaw_rate_cmd=0 → 모터 중립 ──────────────────
 # 잔진동 방지. |nu| < NU_DEADBAND_DEG → 팔 움직임 없음.
@@ -172,9 +173,12 @@ ACC_LIMIT_MPS2             = 2.0
 ACC_BLEND_WEIGHT           = 0.2
 
 # ── DR confidence breakpoints ─────────────────────────────────────────────────
+# DR_CONF_AGE_3_S 8→20: GPS freshness window is 15s; DR must outlive GPS staleness.
+# At 8s, DR expired before GPS even became stale → system always fell to FAIL mode.
+# Schedule: 0-2s: 1.0, 2-5s: 1.0→0.5, 5-20s: 0.5→0.0, >20s: 0.0
 DR_CONF_AGE_1_S = 2.0
 DR_CONF_AGE_2_S = 5.0
-DR_CONF_AGE_3_S = 8.0
+DR_CONF_AGE_3_S = 20.0
 
 TARGET_RADIUS_M = 5.0
 
@@ -197,6 +201,7 @@ DETUMBLE_ENABLE             = True
 DETUMBLE_GYRZ_THRESHOLD_DPS = 200.0
 DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
 DETUMBLE_EXIT_HOLD_S        = 1.0
+DETUMBLE_BRAKE_DELTA_DEG   = 80.0   # Open-loop opposite brake authority; no PID required.
 
 # ── Sensor sign conventions ───────────────────────────────────────────────────
 # Body→NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).

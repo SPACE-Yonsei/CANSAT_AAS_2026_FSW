@@ -962,7 +962,12 @@ def produceL1output(l1input: L1Input) -> L1Output:
         sin_nu_eff = 0.0
     else:
         sin_nu_eff = saturated_sin(nu)
-    V              = clamp(l1input.V, config.V_MIN_MPS, config.V_MAX_MPS)
+    # DR 모드: 속도 상한을 V_MAX_DR_MPS로 제한 → 포화 nu 억제 (감도 완화)
+    _v_max = (config.V_MAX_DR_MPS
+              if l1input.control_mode in (ControlMode.DR_TRACKING_CLOSED,
+                                          ControlMode.DR_TRACKING_OPEN)
+              else config.V_MAX_MPS)
+    V      = clamp(l1input.V, config.V_MIN_MPS, _v_max)
 
     yaw_rate_cmd = 2.0 * V / config.L_GAIN_M * sin_nu_eff
     yaw_rate_cmd *= l1input.confidence
