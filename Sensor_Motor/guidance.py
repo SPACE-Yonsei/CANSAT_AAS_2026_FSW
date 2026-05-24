@@ -918,8 +918,8 @@ def produceL1output(l1input: L1Input) -> L1Output:
         base.control_valid = True
         base.nominal       = False
         base.reason        = "DETUMBLING"
-        base.pid_enabled   = True
-        base.kp_override   = config.KP_DETUMBLE
+        base.pid_enabled   = False
+        base.kp_override   = None
         base.yaw_rate_cmd  = 0.0
         base.angular_velocity_cmd_rad_s = 0.0
         lim = choose_yaw_rate_limit(ControlMode.DETUMBLING)

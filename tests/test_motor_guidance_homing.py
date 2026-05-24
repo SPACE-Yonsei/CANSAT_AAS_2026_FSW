@@ -366,7 +366,8 @@ class TestProduceL1Output(unittest.TestCase):
         out = produceL1output(inp)
         self.assertTrue(out.control_valid)
         self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
-        self.assertTrue(out.pid_enabled)
+        self.assertFalse(out.pid_enabled)
+        self.assertIsNone(out.kp_override)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -480,25 +481,57 @@ class TestMotorOutput(unittest.TestCase):
         self.assertEqual(cmd.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
 
-    def test_detumbling_pid_counters_yaw_rate(self):
-        """DETUMBLING: yaw_rate_cmd=0 + PID counters measured yaw.
-        KP_DETUMBLE=0 (PID OFF 테스트 모드)이면 delta=0, 양수이면 반대 방향 제동."""
+    def test_detumbling_open_loop_counters_yaw_rate(self):
+        """DETUMBLING: yaw_rate_cmd=0 and gyro sign selects opposite fixed brake."""
         inp = guidance.L1Input()
         inp.valid = True
         inp.control_mode = ControlMode.DETUMBLING
         inp.confidence = 1.0
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
-        self.assertTrue(g_out.pid_enabled)
+        self.assertFalse(g_out.pid_enabled)
         ctl = control.MakeCtrler()
-        # Spinning right at 50 deg/s → controller should command left turn
+        ctl.pid.integral_deg = 12.0
+        ctl.pid.prev_error_deg = 7.0
         measured_dps = 50.0
         cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
                                          measured_dps, _now())
-        if config.KP_DETUMBLE == 0.0:
-            self.assertEqual(cmd.delta_arm_deg, 0.0)  # PID OFF: no response expected
-        else:
-            self.assertLess(cmd.delta_arm_deg, 0.0)   # PID ON: oppose CW spin
+        self.assertEqual(cmd.mode, config.CONTROL_MODE_DETUMBLING)
+        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_arm_deg, -config.DETUMBLE_BRAKE_DELTA_DEG)
+        self.assertAlmostEqual(ctl.pid.integral_deg, 12.0)
+        self.assertAlmostEqual(ctl.pid.prev_error_deg, 7.0)
+
+    def test_detumbling_open_loop_reverses_with_gyro_sign(self):
+        inp = guidance.L1Input()
+        inp.valid = True
+        inp.control_mode = ControlMode.DETUMBLING
+        inp.confidence = 1.0
+        inp.dr_method = DRMethod.NONE
+        g_out = produceL1output(inp)
+        ctl = control.MakeCtrler()
+        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
+                                         -50.0, _now())
+        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_arm_deg, config.DETUMBLE_BRAKE_DELTA_DEG)
+
+    def test_detumbling_open_loop_no_gyro_gives_zero_brake(self):
+        inp = guidance.L1Input()
+        inp.valid = True
+        inp.control_mode = ControlMode.DETUMBLING
+        inp.confidence = 1.0
+        inp.dr_method = DRMethod.NONE
+        g_out = produceL1output(inp)
+        ctl = control.MakeCtrler()
+        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
+                                         float("nan"), _now())
+        self.assertEqual(cmd.mode, config.CONTROL_MODE_DETUMBLING)
+        self.assertFalse(cmd.sensor_valid)
+        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
+        self.assertAlmostEqual(cmd.delta_arm_deg, 0.0)
 
     def test_open_mode_feedforward_only(self):
         """GPS_TRACKING_OPEN should run feedforward-only (no PID trim)."""

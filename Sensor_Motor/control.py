@@ -68,6 +68,13 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _is_detumbling_mode(control_mode) -> bool:
+    return (
+        control_mode == config.CONTROL_MODE_DETUMBLING
+        or getattr(control_mode, "value", None) == config.CONTROL_MODE_DETUMBLING
+    )
+
+
 # ── Dataclasses ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -304,14 +311,36 @@ def ProduceCtrlOutput(
     if gyro_spike:
         out.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
 
-    # ── PID closed-loop trim ─────────────────────────────────────────────────
+    detumbling_active = _is_detumbling_mode(cmd.control_mode)
+
+    # ── PID closed-loop trim / detumbling brake ─────────────────────────────
     integral  = ctl.pid.integral_deg
     delta_pid = 0.0
     error     = 0.0
+    delta_sum = delta_ff
 
-    pid_active = bool(cmd.pid_enabled and cfg.DELTA_PID_MAX_DEG > 0.0 and sensor_valid)
+    pid_active = bool(
+        (not detumbling_active)
+        and cmd.pid_enabled
+        and cfg.DELTA_PID_MAX_DEG > 0.0
+        and sensor_valid
+    )
 
-    if pid_active:
+    if detumbling_active:
+        out.mode = config.CONTROL_MODE_DETUMBLING
+        delta_ff = 0.0
+        out.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
+        if sensor_valid:
+            error = -angular_velocity_meas_deg_s
+            if abs(angular_velocity_meas_deg_s) > cfg.ERROR_DEADBAND_DEG_S:
+                delta_sum = -math.copysign(config.DETUMBLE_BRAKE_DELTA_DEG,
+                                           angular_velocity_meas_deg_s)
+            else:
+                delta_sum = 0.0
+            out.angular_velocity_error_deg_s = error
+        else:
+            delta_sum = 0.0
+    elif pid_active:
         out.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
         error = angular_velocity_cmd_deg_s - angular_velocity_meas_deg_s
         if abs(error) < cfg.ERROR_DEADBAND_DEG_S:
@@ -327,13 +356,14 @@ def ProduceCtrlOutput(
         integral = integral_candidate
         out.angular_velocity_error_deg_s = error
         out.mode = CTRL_MODE_CLOSED_LOOP
+        delta_sum = delta_ff + delta_pid
     else:
         # No gyro: FF only. Decay integral so stale windup drains.
         integral = ctl.pid.integral_deg * INTEGRAL_DECAY_RATE
         out.mode = CTRL_MODE_FEEDFORWARD_ONLY
+        delta_sum = delta_ff
 
     # ── Sum + total clamp ────────────────────────────────────────────────────
-    delta_sum = delta_ff + delta_pid
     authority_saturated = abs(delta_sum) > cfg.DELTA_TOTAL_MAX_DEG
     saturated = command_clamped or authority_saturated
     out.saturated = saturated
@@ -373,6 +403,8 @@ def ProduceCtrlOutput(
         )
         if not error_aggravates:
             ctl.pid.integral_deg = integral
+    elif detumbling_active:
+        pass
     else:
         ctl.pid.integral_deg = integral
 

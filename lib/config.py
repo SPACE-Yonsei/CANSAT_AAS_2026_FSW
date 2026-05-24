@@ -226,8 +226,8 @@ KP_DR_CLOSED   = 0.0
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# PID OFF 테스트: KP=0 (원복 시 5.0)
-KP_DETUMBLE = 5.0
+# Legacy detumble PID gain. Detumbling now uses DETUMBLE_BRAKE_DELTA_DEG directly.
+KP_DETUMBLE = 0.0
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
