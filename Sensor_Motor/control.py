@@ -168,26 +168,26 @@ def WriteNeutral(now: float, mode: str = CTRL_MODE_NEUTRAL) -> CtrlOutput:
 
 # ── Input conversion (rad/s → deg/s) ──────────────────────────────────────────
 
-def ProduceCtrlInput(g_out, now: float) -> CtrlInput:
+def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
     """Convert a guidance L1Output into a controller CtrlInput."""
     is_valid = bool(
-        getattr(g_out, "control_valid", False)
-        or getattr(g_out, "nominal", False)
+        getattr(l1_output, "control_valid", False)
+        or getattr(l1_output, "nominal", False)
     )
-    rad = getattr(g_out, "angular_velocity_cmd_rad_s", None)
+    rad = getattr(l1_output, "angular_velocity_cmd_rad_s", None)
     if rad is None:
-        rad = getattr(g_out, "yaw_rate_cmd", 0.0)
+        rad = getattr(l1_output, "yaw_rate_cmd", 0.0)
     rad = float(rad or 0.0)
 
     return CtrlInput(
         angular_velocity_cmd_deg_s=math.degrees(rad),
-        ground_speed_mps=float(getattr(g_out, "ground_speed_mps", 0.0) or 0.0),
+        ground_speed_mps=float(getattr(l1_output, "ground_speed_mps", 0.0) or 0.0),
         valid=is_valid,
-        timestamp=float(getattr(g_out, "timestamp", now) or now),
-        pid_enabled=bool(getattr(g_out, "pid_enabled", True)),
-        control_mode=getattr(g_out, "control_mode", None),
-        dr_method=getattr(g_out, "dr_method", None),
-        kp_override=getattr(g_out, "kp_override", None),
+        timestamp=float(getattr(l1_output, "timestamp", now) or now),
+        pid_enabled=bool(getattr(l1_output, "pid_enabled", True)),
+        control_mode=getattr(l1_output, "control_mode", None),
+        dr_method=getattr(l1_output, "dr_method", None),
+        kp_override=getattr(l1_output, "kp_override", None),
     )
 
 

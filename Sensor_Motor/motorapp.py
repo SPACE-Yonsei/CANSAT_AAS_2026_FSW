@@ -616,9 +616,9 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             if yaw is not None and math.isfinite(yaw):
                 gyrz = snap.latest_imu.gyrz_rad_s
                 measured_dps = math.degrees(gyrz) if (gyrz is not None and math.isfinite(gyrz)) else float("nan")
-                ctrl_in = _imu_heading_ctrl_input(now, yaw, snap)
+                ctrl_input = _imu_heading_ctrl_input(now, yaw, snap)
                 with _CTRL_LOCK:
-                    cmd = control.ProduceCtrlOutput(_CONTROLLER, ctrl_in, measured_dps, now)
+                    cmd = control.ProduceCtrlOutput(_CONTROLLER, ctrl_input, measured_dps, now)
                 if PI is not None:
                     control.ProducePulse(PI, cmd)
                 sensorlog.log_motor_ctrl(cmd)
@@ -637,29 +637,29 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
             _ORIGIN_SAVED = True
 
-        g_out = guidance.produceL1output(l1_input)
-        g_out.timestamp = now
+        l1_output = guidance.produceL1output(l1_input)
+        l1_output.timestamp = now
 
         # ── Control ───────────────────────────────────────────────────────────
-        if g_out.control_valid:
-            measured_dps = _measured_yaw_rate_dps(g_out, fresh, snap.latest_imu)
-            ctrl_in = control.ProduceCtrlInput(g_out, now)
+        if l1_output.control_valid:
+            measured_dps = _measured_yaw_rate_dps(l1_output, fresh, snap.latest_imu)
+            ctrl_input = control.ProduceCtrlInput(l1_output, now)
             with _CTRL_LOCK:
                 cmd = control.ProduceCtrlOutput(
-                    _CONTROLLER, ctrl_in, measured_dps, now,
+                    _CONTROLLER, ctrl_input, measured_dps, now,
                 )
         else:
-            cmd = control.WriteNeutral(now, g_out.reason
+            cmd = control.WriteNeutral(now, l1_output.reason
                 or config.MOTOR_REASON_GUIDANCE_INACTIVE)
 
         if PI is not None:
             control.ProducePulse(PI, cmd)
         sensorlog.log_motor_ctrl(cmd)
-        diag_state = g_out.reason or (
-            config.MOTOR_REASON_DISABLED if not g_out.control_valid
+        diag_state = l1_output.reason or (
+            config.MOTOR_REASON_DISABLED if not l1_output.control_valid
             else config.MOTOR_REASON_GUIDANCE_INACTIVE
         )
-        _send_diag(main_queue, cmd, g_out, diag_state, snap)
+        _send_diag(main_queue, cmd, l1_output, diag_state, snap)
         return cmd
 
     except Exception:

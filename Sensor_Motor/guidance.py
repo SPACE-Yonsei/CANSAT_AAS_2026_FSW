@@ -821,6 +821,38 @@ def produceL1input(fresh: FreshResult, gps, imu,
             dr_age=0.0,
         )
 
+    # ── GPS position-only DR anchor initialization (velocity unavailable) ────
+    # GPS 위치만 있고(velocity_fresh=False) IMU heading 사용 가능하면,
+    # 속도 nan 상태에서도 DR anchor를 한 번만 초기화하여 DR_TRACKING 진입을 허용.
+    # GPS_TRACKING에서 velocity_fresh가 생기면 anchor를 즉시 덮어쓰므로
+    # 실제 비행 내비게이션 정확도에 영향 없음.
+    if (fresh.point_fresh
+            and not fresh.velocity_fresh
+            and not _can_dead_reckon(state, fresh)
+            and not _ok(state.dr_start_time)):   # 이미 초기화된 경우 건너뜀
+        lp = _last_valid_position(state)
+        li = _latest(state.imu_history)
+        if lp is not None and (fresh.imu_yaw_fresh or fresh.imu_gyrz_fresh):
+            state.dr_start_E      = lp.point_E
+            state.dr_start_N      = lp.point_N
+            state.dr_start_V      = 0.0          # 속도 정보 없음 → 0 가정
+            state.dr_start_course = (li.yaw
+                                     if (li is not None and li.yaw_valid)
+                                     else 0.0)
+            state.dr_start_vE     = 0.0
+            state.dr_start_vN     = 0.0
+            state.dr_start_time   = now
+            state.gyro_integral_since_dropout = 0.0
+            state.last_dr_update_time = float("nan")
+            state.yaw_at_dropout  = (li.yaw
+                                     if (li is not None and li.yaw_valid)
+                                     else float("nan"))
+            logger.info(
+                "DR anchor init (position-only): E=%.1f N=%.1f course=%.1f°",
+                state.dr_start_E, state.dr_start_N,
+                math.degrees(state.dr_start_course),
+            )
+
     # ── DEAD RECKONING ────────────────────────────────────────────────────────
     if not _can_dead_reckon(state, fresh):
         return _fail_l1input("FAIL_NO_VALID_DR", state, fresh)

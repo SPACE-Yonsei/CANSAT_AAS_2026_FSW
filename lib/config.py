@@ -187,8 +187,10 @@ FAIL_YAW_RATE_LIMIT_DPS                = 0.0
 # ── Detumbling ────────────────────────────────────────────────────────────────
 # 120→150 entry: 정상 spin이 120 안에 다수, 진입 임계 약간 상향
 # 40→30 exit + 0.5→1.0 hold: 임계 근처 chattering 방지 (히스테리시스 강화)
+# 150→200 entry: 지상 뛰기 테스트에서 max 224 dps 스파이크 → 150이 너무 낮아
+#   1Hz 주기로 재진입 반복. 실제 파라포일 분리 spin >300 dps이므로 200도 안전.
 DETUMBLE_ENABLE             = True
-DETUMBLE_GYRZ_THRESHOLD_DPS = 150.0
+DETUMBLE_GYRZ_THRESHOLD_DPS = 200.0
 DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
 DETUMBLE_EXIT_HOLD_S        = 1.0
 
