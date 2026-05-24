@@ -56,10 +56,10 @@ CAMERA_FPS = 30
 # ±1 km radius from expected drop zone center, converted to degrees:
 #   lat: 1000 m / 111320 m/deg ≈ 0.009 deg
 #   lon: 1000 m / (111320 * cos(37°)) ≈ 0.011 deg
-GPS_EXPECTED_LAT_CENTER_DEG = 37.0
-GPS_EXPECTED_LON_CENTER_DEG = 126.6
-GPS_EXPECTED_LAT_RADIUS_DEG = 0.009   # ±1 km in latitude
-GPS_EXPECTED_LON_RADIUS_DEG = 0.011   # ±1 km in longitude at 37°N
+GPS_EXPECTED_LAT_CENTER_DEG = 37.5    # 서울/연세대 테스트 기준 — 대회 전 경쟁지 좌표로 변경
+GPS_EXPECTED_LON_CENTER_DEG = 127.0
+GPS_EXPECTED_LAT_RADIUS_DEG = 2.0     # ±220 km (한국 전역 커버)
+GPS_EXPECTED_LON_RADIUS_DEG = 2.0     # ±170 km
 GPS_MIN_SATS = 4
 GPS_MAX_VALID_SPEED_MPS = 40.0
 
