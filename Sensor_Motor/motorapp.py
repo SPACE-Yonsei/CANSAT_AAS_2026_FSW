@@ -99,6 +99,8 @@ _GUIDANCE_STATE = guidance.GuidanceState()
 
 _MANUAL_STEER_DELTA_DEG = config.MANUAL_STEER_DELTA_DEG
 
+_imu_heading_fallback_logged: bool = False
+
 
 _CONTROLLER = None
 
@@ -394,11 +396,13 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
 
     When GPS position and target are available, computes the geographic bearing
     to the target and converts it to the startup-zeroed IMU yaw frame using
-    prevstate.PREV_YAW_OFFSET.  Works at any GPS speed (position only, no
-    velocity needed).  Falls back to config.IMU_HEADING_TARGET_DEG when GPS
-    position or target are missing.
+    the yaw_offset delivered per-cycle in the IMU message.  Works at any GPS
+    speed (position only, no velocity needed).  Falls back to holding the
+    current heading when GPS position or target are missing.
     """
-    target_heading_deg = config.IMU_HEADING_TARGET_DEG
+    global _imu_heading_fallback_logged
+    # Default: hold current heading (error=0) until GPS+target are available.
+    target_heading_deg = math.degrees(yaw_rad)
 
     gps = snap.latest_gps
     t_lat = snap.target_lat
@@ -423,6 +427,21 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
         # YAW = raw_yaw + yaw_offset, so target_imu = target_compass + yaw_offset.
         # yaw_offset is delivered per-cycle via the IMU message (field 16).
         target_heading_deg = math.degrees(abs_bearing_rad) + snap.latest_imu.yaw_offset_deg
+        if _imu_heading_fallback_logged:
+            logger.info(
+                "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
+                " bearing=%.1f° yaw_off=%.1f°",
+                gps_lat, gps_lon, t_lat, t_lon,
+                math.degrees(abs_bearing_rad), snap.latest_imu.yaw_offset_deg,
+            )
+            _imu_heading_fallback_logged = False
+    else:
+        if not _imu_heading_fallback_logged:
+            logger.info(
+                "IMU_HEADING fallback (holding heading): gps_lat=%s gps_lon=%s t_lat=%s t_lon=%s",
+                gps_lat, gps_lon, t_lat, t_lon,
+            )
+            _imu_heading_fallback_logged = True
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
     cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
