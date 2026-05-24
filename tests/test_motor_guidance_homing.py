@@ -374,29 +374,31 @@ class TestProduceL1Output(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestSaturatedSin(unittest.TestCase):
-    SAT = 0.7071067811865476   # sin(π/4)
+    """Input-clamped sine: sin(clamp(nu, ±π/2)). Saturates at ±1.0."""
 
     def test_nu_zero(self):
         self.assertAlmostEqual(saturated_sin(0.0), 0.0)
 
     def test_nu_45_deg_uses_normal_sin(self):
-        self.assertAlmostEqual(saturated_sin(math.radians(45.0)), self.SAT)
+        self.assertAlmostEqual(saturated_sin(math.radians(45.0)), math.sin(math.pi/4))
 
-    def test_nu_90_deg_saturates(self):
-        self.assertAlmostEqual(saturated_sin(math.radians(90.0)), self.SAT)
+    def test_nu_90_deg_at_saturation(self):
+        self.assertAlmostEqual(saturated_sin(math.radians(90.0)), 1.0)
 
-    def test_nu_120_deg_saturates_to_sat(self):
-        self.assertAlmostEqual(saturated_sin(math.radians(120.0)), self.SAT)
+    def test_nu_120_deg_input_clamped_to_pi_over_2(self):
+        # input 120° clamped to 90° → sin(90°) = 1.0
+        self.assertAlmostEqual(saturated_sin(math.radians(120.0)), 1.0)
 
-    def test_nu_minus_120_deg_saturates_to_minus_sat(self):
-        self.assertAlmostEqual(saturated_sin(math.radians(-120.0)), -self.SAT)
+    def test_nu_minus_120_deg_input_clamped_to_minus_pi_over_2(self):
+        self.assertAlmostEqual(saturated_sin(math.radians(-120.0)), -1.0)
 
-    def test_nu_180_deg_saturates(self):
-        # sin(180) = 0, clamped within ±SAT → still 0
-        self.assertAlmostEqual(saturated_sin(math.radians(180.0)), 0.0, places=6)
+    def test_nu_180_deg_input_clamped_to_pi_over_2(self):
+        # input π clamped to π/2 → sin(π/2) = 1.0
+        # Prevents L1 singularity at exactly target-behind.
+        self.assertAlmostEqual(saturated_sin(math.radians(180.0)), 1.0)
 
     def test_nu_minus_45_deg(self):
-        self.assertAlmostEqual(saturated_sin(math.radians(-45.0)), -self.SAT)
+        self.assertAlmostEqual(saturated_sin(math.radians(-45.0)), -math.sin(math.pi/4))
 
 
 # ══════════════════════════════════════════════════════════════════════════════

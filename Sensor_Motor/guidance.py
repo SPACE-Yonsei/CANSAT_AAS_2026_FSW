@@ -72,8 +72,14 @@ def clamp(x: float, lo: float, hi: float) -> float:
 
 
 def saturated_sin(nu: float) -> float:
-    """Sine saturated at ±sin(π/4) ≈ ±0.7071."""
-    return clamp(math.sin(nu), -0.7071067811865476, 0.7071067811865476)
+    """Sine with INPUT clamped to ±π/2 (saturates at ±1.0).
+
+    sin(clamp(nu, -π/2, +π/2)) ensures:
+      - small |nu|: smooth proportional response (= sin(nu))
+      - |nu| ≥ 90°: sat = ±1.0, command stays at maximum magnitude in the
+        correct direction (no reversal for targets behind the vehicle).
+    """
+    return math.sin(clamp(nu, -math.pi / 2.0, math.pi / 2.0))
 
 
 def compute_dr_confidence(dr_age: float) -> float:
