@@ -57,6 +57,7 @@ class _ImuFromApp:
     lin_acc_y: Optional[float] = None
     lin_acc_z: Optional[float] = None
     lin_acc_valid: bool = False
+    yaw_offset_deg: float = 0.0
 
 
 @dataclass
@@ -202,6 +203,8 @@ def handle_imu(data: str) -> None:
         # field[15]: imuapp이 전송하는 HEALTH 플래그 (0=하드웨어 이상, 1=정상)
         # health=0이면 캐시를 갱신하지 않아 타임스탬프 노후화로 자연스럽게 stale 처리
         imu_health = int(float(fields[15])) if len(fields) >= 16 else 1
+        # field[16]: imuapp이 전송하는 startup yaw offset (도, PREV_YAW_OFFSET)
+        yaw_offset_deg = float(fields[16]) if len(fields) >= 17 else 0.0
         rx_ts = timebase.now()
     except (ValueError, IndexError):
         return
@@ -236,6 +239,7 @@ def handle_imu(data: str) -> None:
         lin_acc_y=lin_ay if lin_valid else None,
         lin_acc_z=lin_az if lin_valid else None,
         lin_acc_valid=lin_valid,
+        yaw_offset_deg=yaw_offset_deg,
     )
     with _UPDATE_LOCK:
         _CACHE.latest_imu = imu
@@ -388,10 +392,11 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
 def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
     """Build CtrlInput for IMU_HEADING mode using magnetometer yaw.
 
-    When GPS position, target, and a GPS-IMU anchor (from prior GPS tracking) are
-    all available, computes the bearing to the target and converts it to the
-    startup-zeroed IMU yaw frame.  Falls back to config.IMU_HEADING_TARGET_DEG
-    (fixed heading hold) when any of those are missing.
+    When GPS position and target are available, computes the geographic bearing
+    to the target and converts it to the startup-zeroed IMU yaw frame using
+    prevstate.PREV_YAW_OFFSET.  Works at any GPS speed (position only, no
+    velocity needed).  Falls back to config.IMU_HEADING_TARGET_DEG when GPS
+    position or target are missing.
     """
     target_heading_deg = config.IMU_HEADING_TARGET_DEG
 
@@ -414,14 +419,10 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
         x_b = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
         abs_bearing_rad = math.atan2(y_b, x_b)
 
-        # Convert absolute bearing to IMU-relative yaw frame using the GPS-IMU
-        # anchor saved during the last GPS tracking phase.
-        # H0 = dr_start_course - yaw_at_dropout  (compass offset of IMU zero)
-        # target_imu = target_compass - H0
-        dr_course  = _GUIDANCE_STATE.dr_start_course  # GPS course at last GPS lock (rad)
-        yaw_at_ref = _GUIDANCE_STATE.yaw_at_dropout   # IMU yaw at last GPS lock (rad)
-        if math.isfinite(dr_course) and math.isfinite(yaw_at_ref):
-            target_heading_deg = math.degrees(abs_bearing_rad - (dr_course - yaw_at_ref))
+        # Convert absolute bearing to IMU-relative yaw frame.
+        # YAW = raw_yaw + yaw_offset, so target_imu = target_compass + yaw_offset.
+        # yaw_offset is delivered per-cycle via the IMU message (field 16).
+        target_heading_deg = math.degrees(abs_bearing_rad) + snap.latest_imu.yaw_offset_deg
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
     cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
