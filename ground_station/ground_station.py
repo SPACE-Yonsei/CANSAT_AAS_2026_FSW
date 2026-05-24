@@ -1701,6 +1701,10 @@ class GroundStation(tk.Tk):
                 self._held_current_latlon[0], self._held_current_latlon[1],
                 self._held_target_latlon[0], self._held_target_latlon[1],
             )
+        if dist_m is None:
+            d_mm = self._parse_optional_float(parsed.get("distance_mm", ""))
+            if d_mm is not None and math.isfinite(d_mm) and d_mm > 0:
+                dist_m = d_mm / 1000.0
         self._update_dist_graph(dist_m)
         now_ts = host_ts if host_ts is not None else time.time()
         fb_status = self._fallback_estimator.update(parsed, now_ts)
