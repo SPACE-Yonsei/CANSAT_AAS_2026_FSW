@@ -352,7 +352,10 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
             pos_fresh = timebase.valid_age(last_valid_gps_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
             motion_fresh = timebase.valid_age(last_valid_rmc_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
-            pos_health = pos_fresh and _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
+            if sim_sample is not None:
+                pos_health = pos_fresh
+            else:
+                pos_health = pos_fresh and _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
             motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
 
             if pos_health:
