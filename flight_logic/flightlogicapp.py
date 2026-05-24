@@ -77,6 +77,13 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
         appargs.FlightlogicAppArg.MID_motor_state,
         str(state),
     )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_comm_state,
+        str(state),
+    )
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:

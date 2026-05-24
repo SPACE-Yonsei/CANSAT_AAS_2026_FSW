@@ -385,6 +385,21 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
     return cmd
 
 
+def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
+    """Build CtrlInput for IMU_HEADING mode using magnetometer yaw."""
+    error_deg = (math.degrees(yaw_rad) - config.IMU_HEADING_TARGET_DEG + 180.0) % 360.0 - 180.0
+    cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
+                  min(config.IMU_HEADING_MAX_CMD_DEG_S,
+                      config.IMU_HEADING_KP * error_deg))
+    return control.CtrlInput(
+        angular_velocity_cmd_deg_s=cmd_dps,
+        ground_speed_mps=0.0,
+        valid=True,
+        timestamp=now,
+        pid_enabled=True,
+    )
+
+
 def handle_mtr(data: str) -> None:
     global MANUAL_STEER_MODE
     mode = str(data or "").strip().upper()
@@ -557,6 +572,23 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
                        guidance.L1Output(timestamp=now, reason=cmd.mode),
                        cmd.mode, snap)
             return cmd
+
+        # ── Gate 3.5: IMU heading mode (bypass GPS/DR guidance) ───────────────
+        if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
+            yaw = snap.latest_imu.yaw_rad
+            if yaw is not None and math.isfinite(yaw):
+                gyrz = snap.latest_imu.gyrz_rad_s
+                measured_dps = math.degrees(gyrz) if (gyrz is not None and math.isfinite(gyrz)) else float("nan")
+                ctrl_in = _imu_heading_ctrl_input(now, yaw)
+                with _CTRL_LOCK:
+                    cmd = control.ProduceCtrlOutput(_CONTROLLER, ctrl_in, measured_dps, now)
+                if PI is not None:
+                    control.ProducePulse(PI, cmd)
+                sensorlog.log_motor_ctrl(cmd)
+                g_diag = guidance.L1Output(timestamp=now, current_heading_rad=yaw, reason="IMU_HEADING")
+                _send_diag(main_queue, cmd, g_diag, "IMU_HEADING", snap)
+                return cmd
+            # IMU yaw invalid → fall through to GPS/DR guidance
 
         # ── Guidance pipeline ─────────────────────────────────────────────────
         fresh    = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
