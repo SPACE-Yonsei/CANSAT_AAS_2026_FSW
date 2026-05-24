@@ -146,6 +146,10 @@ L_GAIN_M  = 10.0
 V_MIN_MPS = 0.5
 V_MAX_MPS = 15.0
 
+# ── nu 데드밴드: 이 각도 이내면 yaw_rate_cmd=0 → 모터 중립 ──────────────────
+# 잔진동 방지. |nu| < NU_DEADBAND_DEG → 팔 움직임 없음.
+NU_DEADBAND_DEG = 15.0
+
 # ── Sensor freshness thresholds ───────────────────────────────────────────────
 GPS_FRESH_MAX_AGE_S         = 2.0
 GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias

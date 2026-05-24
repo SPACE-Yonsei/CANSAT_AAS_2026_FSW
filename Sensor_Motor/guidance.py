@@ -957,7 +957,11 @@ def produceL1output(l1input: L1Input) -> L1Output:
     # ── L1 computation ────────────────────────────────────────────────────────
     target_bearing = wrap_pi(math.atan2(dE, dN))
     nu             = wrap_pi(target_bearing - l1input.course)
-    sin_nu_eff     = saturated_sin(nu)
+    # ── nu 데드밴드: 잔진동 방지 ─────────────────────────────────────────────
+    if abs(nu) < math.radians(config.NU_DEADBAND_DEG):
+        sin_nu_eff = 0.0
+    else:
+        sin_nu_eff = saturated_sin(nu)
     V              = clamp(l1input.V, config.V_MIN_MPS, config.V_MAX_MPS)
 
     yaw_rate_cmd = 2.0 * V / config.L_GAIN_M * sin_nu_eff
