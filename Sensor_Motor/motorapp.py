@@ -385,9 +385,45 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
     return cmd
 
 
-def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
-    """Build CtrlInput for IMU_HEADING mode using magnetometer yaw."""
-    error_deg = (config.IMU_HEADING_TARGET_DEG - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
+    """Build CtrlInput for IMU_HEADING mode using magnetometer yaw.
+
+    When GPS position, target, and a GPS-IMU anchor (from prior GPS tracking) are
+    all available, computes the bearing to the target and converts it to the
+    startup-zeroed IMU yaw frame.  Falls back to config.IMU_HEADING_TARGET_DEG
+    (fixed heading hold) when any of those are missing.
+    """
+    target_heading_deg = config.IMU_HEADING_TARGET_DEG
+
+    gps = snap.latest_gps
+    t_lat = snap.target_lat
+    t_lon = snap.target_lon
+    gps_lat = gps.lat if gps is not None else None
+    gps_lon = gps.lon if gps is not None else None
+
+    if (gps_lat is not None and math.isfinite(gps_lat)
+            and gps_lon is not None and math.isfinite(gps_lon)
+            and t_lat is not None and math.isfinite(t_lat)
+            and t_lon is not None and math.isfinite(t_lon)
+            and abs(t_lat) > 1e-9 and abs(t_lon) > 1e-9):
+        # Geographic bearing from GPS position to target (True North, radians)
+        dlon = math.radians(t_lon - gps_lon)
+        lat1 = math.radians(gps_lat)
+        lat2 = math.radians(t_lat)
+        y_b = math.sin(dlon) * math.cos(lat2)
+        x_b = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+        abs_bearing_rad = math.atan2(y_b, x_b)
+
+        # Convert absolute bearing to IMU-relative yaw frame using the GPS-IMU
+        # anchor saved during the last GPS tracking phase.
+        # H0 = dr_start_course - yaw_at_dropout  (compass offset of IMU zero)
+        # target_imu = target_compass - H0
+        dr_course  = _GUIDANCE_STATE.dr_start_course  # GPS course at last GPS lock (rad)
+        yaw_at_ref = _GUIDANCE_STATE.yaw_at_dropout   # IMU yaw at last GPS lock (rad)
+        if math.isfinite(dr_course) and math.isfinite(yaw_at_ref):
+            target_heading_deg = math.degrees(abs_bearing_rad - (dr_course - yaw_at_ref))
+
+    error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
     cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                   min(config.IMU_HEADING_MAX_CMD_DEG_S,
                       config.IMU_HEADING_KP * error_deg))
@@ -579,7 +615,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             if yaw is not None and math.isfinite(yaw):
                 gyrz = snap.latest_imu.gyrz_rad_s
                 measured_dps = math.degrees(gyrz) if (gyrz is not None and math.isfinite(gyrz)) else float("nan")
-                ctrl_in = _imu_heading_ctrl_input(now, yaw)
+                ctrl_in = _imu_heading_ctrl_input(now, yaw, snap)
                 with _CTRL_LOCK:
                     cmd = control.ProduceCtrlOutput(_CONTROLLER, ctrl_in, measured_dps, now)
                 if PI is not None:

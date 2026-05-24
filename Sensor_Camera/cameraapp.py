@@ -56,11 +56,12 @@ def picam_record_thread(cam, enc) -> None:
     while CAMERAAPP_RUNSTATUS:
         if PICAM_RECORDING:
             out = picam.record(cam, enc, SEGMENT_SEC)
-            CAMERA_HEALTH = 1 if getattr(cam, "available", False) else 0
-            if out is not None:
+            is_real = out is not None and out.suffix != ".txt"
+            CAMERA_HEALTH = 1 if is_real else 0
+            if is_real:
                 logger.debug("Camera segment saved: %s", out)
             else:
-                logger.warning("Camera segment save failed")
+                logger.warning("Camera segment save failed (placeholder: %s)", out)
         else:
             time.sleep(0.1)
 

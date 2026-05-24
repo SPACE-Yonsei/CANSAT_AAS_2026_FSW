@@ -92,8 +92,7 @@ def record(cam_handle: CameraHandle, enc, sec: float) -> Path | None:
             cam_handle.cam.stop_recording()
             return h264_path
         except Exception:
-            # fall through to placeholder when backend errors at runtime
-            pass
+            logger.exception("PICAM: runtime recording error — falling back to placeholder")
 
     placeholder = cam_handle.output_dir / _timestamped_name("txt")
     placeholder.write_text("camera unavailable; placeholder segment\n", encoding="utf-8")
