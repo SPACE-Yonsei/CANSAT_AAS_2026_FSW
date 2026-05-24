@@ -130,11 +130,17 @@ def _enable_feature_retry(bno: Any, feature_id: int, attempts: Optional[int] = N
     for i in range(attempts):
         try:
             if os.environ.get("BNO08X_DEBUG", "").strip() == "1":
-                bno.enable_feature(feature_id, REPORT_INTERVAL_US)
+                try:
+                    bno.enable_feature(feature_id, REPORT_INTERVAL_US)
+                except TypeError:
+                    bno.enable_feature(feature_id)
             else:
                 with open(os.devnull, "w", encoding="utf-8") as devnull:
                     with redirect_stdout(devnull), redirect_stderr(devnull):
-                        bno.enable_feature(feature_id, REPORT_INTERVAL_US)
+                        try:
+                            bno.enable_feature(feature_id, REPORT_INTERVAL_US)
+                        except TypeError:
+                            bno.enable_feature(feature_id)
             return
         except Exception as exc:
             last = exc
@@ -300,13 +306,21 @@ def _apply_mag_yaw_correction(yaw_deg: float, mx: float, my: float) -> float:
 
 
 def _init_imu_once() -> tuple[Any, Any]:
-    from adafruit_bno08x import (  # type: ignore
-        BNO_REPORT_ACCELEROMETER,
-        BNO_REPORT_GAME_ROTATION_VECTOR,
-        BNO_REPORT_GYROSCOPE,
-        BNO_REPORT_MAGNETOMETER,
-        BNO_REPORT_ROTATION_VECTOR,
-    )
+    try:
+        from adafruit_bno08x import (  # type: ignore
+            BNO_REPORT_ACCELEROMETER,
+            BNO_REPORT_GAME_ROTATION_VECTOR,
+            BNO_REPORT_GYROSCOPE,
+            BNO_REPORT_MAGNETOMETER,
+            BNO_REPORT_ROTATION_VECTOR,
+        )
+    except ImportError:
+        # adafruit_bno08x >= 1.3.x removed top-level constants; use raw SHTP report IDs
+        BNO_REPORT_ACCELEROMETER = 0x01
+        BNO_REPORT_GYROSCOPE = 0x02
+        BNO_REPORT_MAGNETOMETER = 0x03
+        BNO_REPORT_ROTATION_VECTOR = 0x05
+        BNO_REPORT_GAME_ROTATION_VECTOR = 0x08
     from adafruit_bno08x.i2c import BNO08X_I2C  # type: ignore
 
     env_addr = os.environ.get("IMU_I2C_ADDR", "").strip()
