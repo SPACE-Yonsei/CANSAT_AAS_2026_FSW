@@ -207,8 +207,8 @@ ACC_Y_SIGN     = 1.0
 
 # ── Yaw-rate controller gains ─────────────────────────────────────────────────
 KFF_GPS_CLOSED = 0.0
-# 0.25→0.30: 파라포일 응답 지연 보상. 0.4 이상은 oscillation 위험으로 회피
-KP_GPS_CLOSED  = 0.30
+# 0.25→0.30→0.45: GPS 추적 PID 50% 상향. 10 dps 오차 → 4.5° trim (기존 3°).
+KP_GPS_CLOSED  = 0.45
 
 KFF_DR_CLOSED  = 0.0
 KP_DR_CLOSED   = 0.15
@@ -216,9 +216,10 @@ KP_DR_CLOSED   = 0.15
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# 0.10→0.20: 자유낙하 1227 dps spin을 0.10 KP로 제동 불가
-# (PID 권한 ±30°로 clamp되어 안전)
-KP_DETUMBLE = 0.20
+# 0.10→0.20→5.0: DETUMBLING bang-bang 제동.
+# KP=5.0 × 32 dps = 160° (포화) → spin > 탈출임계(30 dps) 즉시 최대 제동.
+# DELTA_PID_MAX_DEG=160°, DELTA_TOTAL_MAX_DEG=160°가 최종 보호 클램프.
+KP_DETUMBLE = 5.0
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0

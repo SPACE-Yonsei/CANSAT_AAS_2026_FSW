@@ -82,19 +82,21 @@ class ControlConfig:
     EXPO:                            float = config.CTRL_EXPO
 
     # PID
-    # DELTA_PID_MAX_DEG 25→30: 정상상태에서 트림 권한 약간 확장
+    # DELTA_PID_MAX_DEG 25→30→160: DETUMBLING에서 전체 가동범위(±80°) 활용.
+    # GPS/DR 추적 시에도 DELTA_TOTAL_MAX_DEG(160°)가 최종 보호 클램프.
     ERROR_DEADBAND_DEG_S: float = config.CTRL_ERROR_DEADBAND_DEG_S
     K_P:                  float = config.KP_GPS_CLOSED
     K_I:                  float = config.CTRL_K_I
     K_D:                  float = config.KD_YAW_RATE
     I_LIMIT_DEG:          float = config.CTRL_I_LIMIT_DEG
-    DELTA_PID_MAX_DEG:    float = 30.0
+    DELTA_PID_MAX_DEG:    float = 160.0
 
     # Total authority + slew
     # DELTA_TOTAL_MAX_DEG 100→160: 하드웨어 최대(DELTA_ARM_MAX_DEG=160)와 일치.
     # FF+PID 합이 160°에 도달하면 left/right arm이 0°/160° 극값에 도달.
+    # MAX_ARM_RATE_DEG_S 60→200: 20Hz에서 10°/사이클 → 80° 도달 0.4s.
     DELTA_TOTAL_MAX_DEG: float = 160.0
-    MAX_ARM_RATE_DEG_S:  float = 60.0
+    MAX_ARM_RATE_DEG_S:  float = 200.0
 
 
 @dataclass
