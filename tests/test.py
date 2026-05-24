@@ -15,7 +15,7 @@ except ModuleNotFoundError as exc:
     raise unittest.SkipTest("RPi.GPIO is only available on Raspberry Pi hardware") from exc
 
 
-RELAY_PIN = 5
+RELAY_PIN = 6
 
 
 def run_relay_loop() -> None:
