@@ -142,7 +142,7 @@ DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 # ── L1 homing guidance tuning ─────────────────────────────────────────────────
 # L_GAIN_M 12→10: 자유낙하 로그 V≈5-7 m/s 기준 응답시정수 L/(2V) ≈ 0.7-1s.
 # 작은 타겟 반경 5m 진입 시 응답성 강화.
-L_GAIN_M  = 10.0
+L_GAIN_M  = 17.0
 V_MIN_MPS = 0.5
 V_MAX_MPS = 15.0
 
