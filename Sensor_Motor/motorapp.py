@@ -387,7 +387,7 @@ def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
 
 def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
     """Build CtrlInput for IMU_HEADING mode using magnetometer yaw."""
-    error_deg = (config.IMU_HEADING_TARGET_DEG - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+    error_deg = (math.degrees(yaw_rad) - config.IMU_HEADING_TARGET_DEG + 180.0) % 360.0 - 180.0
     cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                   min(config.IMU_HEADING_MAX_CMD_DEG_S,
                       config.IMU_HEADING_KP * error_deg))
