@@ -83,11 +83,13 @@ def record(cam_handle: CameraHandle, enc, sec: float) -> Path | None:
 
     if cam_handle.available:
         try:
+            from picamera2.encoders import H264Encoder  # type: ignore
             from picamera2.outputs import FileOutput  # type: ignore
 
             h264_path = cam_handle.output_dir / _timestamped_name("h264")
             output = FileOutput(str(h264_path))
-            cam_handle.cam.start_recording(enc, output)
+            encoder = H264Encoder()
+            cam_handle.cam.start_recording(encoder, output)
             time.sleep(max(0.0, float(sec)))
             cam_handle.cam.stop_recording()
             return h264_path
