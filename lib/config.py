@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 # GPIO map
-BURNWIRE_GPIO = 20
+BURNWIRE_GPIO = 5
 EGG_SOLENOID_GPIO = 6
 PARAFOIL_RIGHT_GPIO = 12
 PARAFOIL_LEFT_GPIO = 13
@@ -119,7 +119,7 @@ CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 5.0    # FF 명령 데드밴드
 CTRL_DELTA_MIN_EFFECTIVE_DEG         = 5.0    # FF 최소 유효 deflection
 CTRL_EXPO                            = 1.15   # FF 엑스포 커브 지수
 CTRL_ERROR_DEADBAND_DEG_S            = 2.0    # PID 에러 데드밴드
-CTRL_K_I                             = 0.01   # PID 적분 게인
+CTRL_K_I                             = 0.0    # PID 적분 게인 (PID OFF: 0→원복 시 0.01)
 CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 
 # ── 수동 조향 (motorapp.py 사용) ─────────────────────────────────────────────
@@ -207,19 +207,18 @@ ACC_Y_SIGN     = 1.0
 
 # ── Yaw-rate controller gains ─────────────────────────────────────────────────
 KFF_GPS_CLOSED = 0.0
-# 0.25→0.30→0.45: GPS 추적 PID 50% 상향. 10 dps 오차 → 4.5° trim (기존 3°).
-KP_GPS_CLOSED  = 0.45
+# PID OFF 테스트: KP=0 (원복 시 0.45)
+KP_GPS_CLOSED  = 0.0
 
 KFF_DR_CLOSED  = 0.0
-KP_DR_CLOSED   = 0.15
+# PID OFF 테스트: KP=0 (원복 시 0.15)
+KP_DR_CLOSED   = 0.0
 
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# 0.10→0.20→5.0: DETUMBLING bang-bang 제동.
-# KP=5.0 × 32 dps = 160° (포화) → spin > 탈출임계(30 dps) 즉시 최대 제동.
-# DELTA_PID_MAX_DEG=160°, DELTA_TOTAL_MAX_DEG=160°가 최종 보호 클램프.
-KP_DETUMBLE = 5.0
+# PID OFF 테스트: KP=0 (원복 시 5.0)
+KP_DETUMBLE = 0.0
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
