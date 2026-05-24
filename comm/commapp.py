@@ -669,14 +669,14 @@ def read_cmd(main_queue, serial_instance) -> None:
 
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# 경고: 현재 5 Hz (0.2s) — 지상 테스트 전용. 대회 규정은 1 Hz.
+# 경고: 현재 2 Hz (0.5s) — 지상 테스트 전용. 대회 규정은 1 Hz.
 # 대회 비행 전 반드시 sleep(1.0) 으로 원복할 것.
 # 원복 안 하면 실격 사유 될 수 있음.
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 def _tlm_sender(serial_instance) -> None:
     while COMMAPP_RUNSTATUS:
         send_tlm(serial_instance)
-        time.sleep(0.2)
+        time.sleep(0.5)
 
 
 def commapp_main(main_queue, main_pipe) -> None:
