@@ -481,7 +481,8 @@ class TestMotorOutput(unittest.TestCase):
         self.assertEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
 
     def test_detumbling_pid_counters_yaw_rate(self):
-        """DETUMBLING: yaw_rate_cmd=0 + PID counters measured yaw."""
+        """DETUMBLING: yaw_rate_cmd=0 + PID counters measured yaw.
+        KP_DETUMBLE=0 (PID OFF 테스트 모드)이면 delta=0, 양수이면 반대 방향 제동."""
         inp = guidance.L1Input()
         inp.valid = True
         inp.control_mode = ControlMode.DETUMBLING
@@ -494,7 +495,10 @@ class TestMotorOutput(unittest.TestCase):
         measured_dps = 50.0
         cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
                                          measured_dps, _now())
-        self.assertLess(cmd.delta_arm_deg, 0.0)
+        if config.KP_DETUMBLE == 0.0:
+            self.assertEqual(cmd.delta_arm_deg, 0.0)  # PID OFF: no response expected
+        else:
+            self.assertLess(cmd.delta_arm_deg, 0.0)   # PID ON: oppose CW spin
 
     def test_open_mode_feedforward_only(self):
         """GPS_TRACKING_OPEN should run feedforward-only (no PID trim)."""

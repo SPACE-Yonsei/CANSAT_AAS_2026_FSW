@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 # GPIO map
-BURNWIRE_GPIO = 20
+BURNWIRE_GPIO = 5
 EGG_SOLENOID_GPIO = 6
 PARAFOIL_RIGHT_GPIO = 12
 PARAFOIL_LEFT_GPIO = 13
@@ -119,7 +119,7 @@ CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 5.0    # FF 명령 데드밴드
 CTRL_DELTA_MIN_EFFECTIVE_DEG         = 5.0    # FF 최소 유효 deflection
 CTRL_EXPO                            = 1.15   # FF 엑스포 커브 지수
 CTRL_ERROR_DEADBAND_DEG_S            = 2.0    # PID 에러 데드밴드
-CTRL_K_I                             = 0.01   # PID 적분 게인
+CTRL_K_I                             = 0.0    # PID 적분 게인 (PID OFF: 0→원복 시 0.01)
 CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 
 # ── 수동 조향 (motorapp.py 사용) ─────────────────────────────────────────────
@@ -142,12 +142,16 @@ DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 # ── L1 homing guidance tuning ─────────────────────────────────────────────────
 # L_GAIN_M 12→10: 자유낙하 로그 V≈5-7 m/s 기준 응답시정수 L/(2V) ≈ 0.7-1s.
 # 작은 타겟 반경 5m 진입 시 응답성 강화.
-L_GAIN_M  = 10.0
+L_GAIN_M  = 17.0
 V_MIN_MPS = 0.5
 V_MAX_MPS = 15.0
 
+# ── nu 데드밴드: 이 각도 이내면 yaw_rate_cmd=0 → 모터 중립 ──────────────────
+# 잔진동 방지. |nu| < NU_DEADBAND_DEG → 팔 움직임 없음.
+NU_DEADBAND_DEG = 15.0
+
 # ── Sensor freshness thresholds ───────────────────────────────────────────────
-GPS_FRESH_MAX_AGE_S         = 2.0
+GPS_FRESH_MAX_AGE_S         = 15.0
 GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias
 IMU_FRESH_MAX_AGE_S         = 1.5   # 0.8→1.5: reinit(~2s) 도중 0.8s 만에 stale 판정되어 CLOSED→OPEN 강제전환 방지
 BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터는 8회 miss 만에 stale — GPS 기준과 통일
@@ -187,8 +191,10 @@ FAIL_YAW_RATE_LIMIT_DPS                = 0.0
 # ── Detumbling ────────────────────────────────────────────────────────────────
 # 120→150 entry: 정상 spin이 120 안에 다수, 진입 임계 약간 상향
 # 40→30 exit + 0.5→1.0 hold: 임계 근처 chattering 방지 (히스테리시스 강화)
+# 150→200 entry: 지상 뛰기 테스트에서 max 224 dps 스파이크 → 150이 너무 낮아
+#   1Hz 주기로 재진입 반복. 실제 파라포일 분리 spin >300 dps이므로 200도 안전.
 DETUMBLE_ENABLE             = True
-DETUMBLE_GYRZ_THRESHOLD_DPS = 150.0
+DETUMBLE_GYRZ_THRESHOLD_DPS = 200.0
 DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
 DETUMBLE_EXIT_HOLD_S        = 1.0
 
@@ -205,18 +211,18 @@ ACC_Y_SIGN     = 1.0
 
 # ── Yaw-rate controller gains ─────────────────────────────────────────────────
 KFF_GPS_CLOSED = 0.0
-# 0.25→0.30: 파라포일 응답 지연 보상. 0.4 이상은 oscillation 위험으로 회피
-KP_GPS_CLOSED  = 0.30
+# PID OFF 테스트: KP=0 (원복 시 0.45)
+KP_GPS_CLOSED  = 0.0
 
 KFF_DR_CLOSED  = 0.0
-KP_DR_CLOSED   = 0.15
+# PID OFF 테스트: KP=0 (원복 시 0.15)
+KP_DR_CLOSED   = 0.0
 
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# 0.10→0.20: 자유낙하 1227 dps spin을 0.10 KP로 제동 불가
-# (PID 권한 ±30°로 clamp되어 안전)
-KP_DETUMBLE = 0.20
+# PID OFF 테스트: KP=0 (원복 시 5.0)
+KP_DETUMBLE = 0.0
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
