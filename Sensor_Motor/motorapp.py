@@ -86,7 +86,6 @@ MOTORAPP_RUNSTATUS: bool = True
 MOTOR_ENABLED: bool = True
 RELEASE_ACTION_ENABLED: bool = True
 EGG_ACTION_ENABLED: bool = True
-MANUAL_STEER_MODE: str = config.MOTOR_MANUAL_NEUTRAL
 MOTOR_CTRL_MODE:   str = config.MOTOR_CTRL_MODE
 STATE: int = 0
 PI = None
@@ -96,8 +95,6 @@ _CTRL_LOCK = threading.Lock()
 _CACHE = _Cache()
 _PREV_STATE = -1
 _GUIDANCE_STATE = guidance.GuidanceState()
-
-_MANUAL_STEER_DELTA_DEG = config.MANUAL_STEER_DELTA_DEG
 
 _imu_heading_fallback_logged: bool = False
 
@@ -364,33 +361,6 @@ def handle_mec(data: str) -> None:
                 control.WriteZero(PI)
 
 
-def _manual_steer_command(now: float, mode: str) -> control.CtrlOutput:
-    """Build a fixed-deflection CtrlOutput for manual MTR LEFT/RIGHT.
-
-    NEUTRAL is filtered upstream (Gate 3 skips this function for NEUTRAL).
-    """
-    label = f"MANUAL_{mode}"
-    cmd = control.WriteNeutral(now, label)
-    if mode == config.MOTOR_MANUAL_LEFT:
-        delta = -_MANUAL_STEER_DELTA_DEG
-    elif mode == config.MOTOR_MANUAL_RIGHT:
-        delta = _MANUAL_STEER_DELTA_DEG
-    else:
-        # defensive: never reached when Gate 3 routes this correctly
-        return cmd
-
-    left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(delta)
-    cmd.left_pw = left_pw
-    cmd.right_pw = right_pw
-    cmd.left_angle_deg = left_angle
-    cmd.right_angle_deg = right_angle
-    cmd.delta_arm_deg = delta_arm
-    # angular_velocity_cmd_deg_s is left at 0 — manual mode skips the yaw-rate loop.
-    cmd.valid = True
-    cmd.fallback_mode = label
-    return cmd
-
-
 def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
     """Build CtrlInput for IMU_HEADING mode using magnetometer yaw.
 
@@ -603,7 +573,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         with _UPDATE_LOCK:
             motor_enabled = MOTOR_ENABLED
             state         = STATE
-            manual_mode   = MANUAL_STEER_MODE
             snap          = _cache_snapshot()
 
         # ── Gate 1: motor disabled or pre-deploy → zero PWM ───────────────────
@@ -617,17 +586,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             if PI is not None:
                 control.WriteOff(PI)
             return None
-
-        # ── Gate 3: manual steer override ─────────────────────────────────────
-        if manual_mode != config.MOTOR_MANUAL_NEUTRAL:
-            cmd = _manual_steer_command(now, manual_mode)
-            if PI is not None:
-                control.ProducePulse(PI, cmd)
-            sensorlog.log_motor_ctrl(cmd)
-            _send_diag(main_queue, cmd,
-                       guidance.L1Output(timestamp=now, reason=cmd.mode),
-                       cmd.mode, snap)
-            return cmd
 
         # ── Gate 3.5: IMU heading mode (bypass GPS/DR guidance) ───────────────
         if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
