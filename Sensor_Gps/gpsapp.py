@@ -8,7 +8,6 @@ from lib import appargs
 from lib import config
 from lib import msgstructure
 from lib import events
-from lib import timebase
 from Sensor_Gps import gps
 
 import signal
@@ -134,6 +133,17 @@ def _eval_motion_fidelity(
         and GPS_MIN_MOTION_MPS <= float(speed_mps) <= max_speed
         and 0.0 <= float(course_deg) < 360.0
     )
+def _valid_age(ts: float, now: float, max_age: float, future_tol: float = 0.02) -> bool:
+    """Return True when ts is finite and within the allowed age window."""
+    try:
+        age = float(now) - float(ts)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(age):
+        return False
+    return -future_tol <= age <= max_age
+
+
 ######################################################
 ## FUNDEMENTAL METHODS                              ##
 ######################################################
@@ -272,7 +282,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             GPS_SATS = max(int(getattr(config, "GPS_MIN_SATS", 4)), 4)
             GPS_FIX_QUALITY = 1
             GPS_RMC_STATUS = "A"
-            last_valid_gps_ts = timebase.now()
+            last_valid_gps_ts = time.monotonic()
             last_valid_rmc_ts = last_valid_gps_ts
             rcv_data = [GPS_TIME, GPS_ALT, GPS_LAT, GPS_LON, GPS_SATS, GPS_FIX_QUALITY, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE, last_valid_gps_ts, 1.0, last_valid_rmc_ts]  # [10]=hdop=1.0 (sim)
         else:
@@ -330,7 +340,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         else:
             # GPS 데이터가 없을 때 (None 또는 형식 불일치) - 이전 값 유지
             # 단, 오래된 값은 stale로 간주해 초기값으로 리셋한다.
-            if last_valid_gps_ts <= 0 or (timebase.now() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
+            if last_valid_gps_ts <= 0 or (time.monotonic() - last_valid_gps_ts) > GPS_STALE_TIMEOUT_SEC:
                 GPS_LAT = None
                 GPS_LON = None
                 GPS_ALT = 0.0
@@ -347,11 +357,11 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
         #   pos fidelity 실패 → 전송 없음
         #   motion fidelity 실패 → course/spd/motion_ts 를 nan으로 전송
         if rcv_data and len(rcv_data) >= 5:
-            now_mono = timebase.now()
+            now_mono = time.monotonic()
             hdop = float(rcv_data[10]) if len(rcv_data) > 10 and _is_finite(rcv_data[10]) else float('inf')
 
-            pos_fresh = timebase.valid_age(last_valid_gps_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
-            motion_fresh = timebase.valid_age(last_valid_rmc_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
+            pos_fresh = _valid_age(last_valid_gps_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
+            motion_fresh = _valid_age(last_valid_rmc_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
             if sim_sample is not None:
                 pos_health = pos_fresh
             else:

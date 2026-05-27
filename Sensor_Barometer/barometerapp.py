@@ -9,7 +9,7 @@ import threading
 from collections import deque
 from typing import Optional
 
-from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
+from lib import appargs, config, msgstructure, prevstate, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def read_barometer_data() -> None:
                         prs_raw, tmp_raw, alt_raw = baro_driver.read_bmp(_baro_hw)
                         hardware_ok = True
                     except Exception as exc:
-                        now = timebase.wall_now()
+                        now = time.time()
                         if now - _last_baro_read_warn_ts >= 3.0:
                             logger.warning(
                                 "Barometer: BMP read failed (%s); zero frame (check I2C/addr %s)",
@@ -163,7 +163,7 @@ def read_barometer_data() -> None:
             alt = _median(_alt_window) - BAROMETER_OFFSET
 
             # sink_rate: median 필터 이후 미분 + EMA smoothing
-            now_mono = timebase.now()
+            now_mono = time.monotonic()
             sink_rate_sample: Optional[float] = None
             if _last_filtered_alt is not None and _last_alt_mono_ts is not None:
                 dt = now_mono - _last_alt_mono_ts
@@ -180,7 +180,7 @@ def read_barometer_data() -> None:
                 TEMPERATURE = tmp
                 ALTITUDE    = alt
                 SINK_RATE   = sink_rate_sample
-                _last_sample_ts       = timebase.wall_now()
+                _last_sample_ts       = time.time()
                 _last_sample_mono_ts  = now_mono
                 BAROMETER_HEALTH = 1 if hardware_ok else 0
         except Exception:
@@ -194,7 +194,7 @@ def send_barometer_data(main_queue) -> None:
     comm_tick_interval = max(1, int(round(_barometer_rate_hz())))
     tick = 0
     while BAROMETERAPP_RUNSTATUS:
-        if timebase.wall_now() - _last_sample_ts > BAROMETER_STALE_TIMEOUT_SEC:
+        if time.time() - _last_sample_ts > BAROMETER_STALE_TIMEOUT_SEC:
             BAROMETER_HEALTH = 0
         with _baro_lock:
             alt          = ALTITUDE

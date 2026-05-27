@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Optional, Tuple
 
-from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
+from lib import appargs, config, msgstructure, prevstate, sensorlog
 
 
 logger = logging.getLogger(__name__)
@@ -173,11 +173,11 @@ def _try_reinit() -> None:
             _i2c_instance, _imu_instance = imu_driver.init_imu()
         # Reset sample timestamp so the stale watchdog doesn't fire immediately
         # after a long reinit (reinit duration can exceed IMU_REINIT_COOLDOWN_SEC).
-        _last_sample_ts = timebase.wall_now()
+        _last_sample_ts = time.time()
         # monotonic ts도 현재 시각으로 갱신:
         # 갱신하지 않으면 send_imu_data가 reinit 전 구 timestamp를 계속 전송하여
         # motorapp decidefresh가 IMU_FRESH_MAX_AGE_S 초과 직후 stale 판정을 내린다.
-        _last_sample_mono_ts = timebase.now()
+        _last_sample_mono_ts = time.monotonic()
     except KeyboardInterrupt:
         raise
     except Exception as exc:
@@ -186,7 +186,7 @@ def _try_reinit() -> None:
     finally:
         # Measure cooldown from completion, not start, so a slow reinit doesn't
         # cause the watchdog to re-fire the instant it returns.
-        _last_reinit_ts = timebase.wall_now()
+        _last_reinit_ts = time.time()
 
 
 def _stale_watchdog_check() -> bool:
@@ -195,7 +195,7 @@ def _stale_watchdog_check() -> bool:
     Returns ``True`` if a reinit was triggered (so caller can skip the rest of the
     loop iteration). Debounced by ``IMU_REINIT_COOLDOWN_SEC`` to avoid reinit storms.
     """
-    now = timebase.wall_now()
+    now = time.time()
     if _last_sample_ts <= 0.0:
         return False
     if (now - _last_sample_ts) <= IMU_STALE_REINIT_SEC:
@@ -264,8 +264,8 @@ def read_imu_data() -> None:
             GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(gyrz)
             FREEFALL = freefall_flag
             TUMBLE   = tumble_flag
-            _last_sample_ts       = timebase.wall_now()
-            _last_sample_mono_ts  = timebase.now()
+            _last_sample_ts       = time.time()
+            _last_sample_mono_ts  = time.monotonic()
 
         HEALTH = 1
         time.sleep(period)
@@ -275,7 +275,7 @@ def send_imu_data(main_queue) -> None:
     global HEALTH
     tick = 0
     while IMUAPP_RUNSTATUS:
-        now = timebase.wall_now()
+        now = time.time()
         if now - _last_sample_ts > IMU_STALE_TIMEOUT_SEC:
             HEALTH = 0
 

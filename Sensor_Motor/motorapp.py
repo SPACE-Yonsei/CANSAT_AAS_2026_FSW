@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Optional
 
-from lib import appargs, config, msgstructure, prevstate, sensorlog, timebase
+from lib import appargs, config, msgstructure, prevstate, sensorlog
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ def handle_gps(data: str) -> None:
         speed_mps=speed_mps if motion_ok else None,
         pos_ts=pos_ts,
         motion_ts=motion_ts if motion_ok else None,
-        rx_ts=timebase.now(),
+        rx_ts=time.monotonic(),
         pos_health=1,
         motion_health=int(motion_ok),
     )
@@ -204,7 +204,7 @@ def handle_imu(data: str) -> None:
         imu_health = int(float(fields[15])) if len(fields) >= 16 else 1
         # field[16]: imuapp이 전송하는 startup yaw offset (도, PREV_YAW_OFFSET)
         yaw_offset_deg = float(fields[16]) if len(fields) >= 17 else 0.0
-        rx_ts = timebase.now()
+        rx_ts = time.monotonic()
     except (ValueError, IndexError):
         return
 
@@ -257,7 +257,7 @@ def handle_barometer(data: str) -> None:
         alt_m     = float(fields[0].strip())
         sample_ts = float(fields[1])
         sink_rate = None if fields[2].strip() == "nan" else float(fields[2].strip())
-        rx_ts = timebase.now()
+        rx_ts = time.monotonic()
     except (ValueError, IndexError):
         return
 
@@ -654,7 +654,7 @@ def ctrl_parafoil(main_queue=None) -> None:
     period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
     while MOTORAPP_RUNSTATUS:
         cycle_start = time.monotonic()
-        _ctrl_cycle(main_queue, timebase.now())
+        _ctrl_cycle(main_queue, time.monotonic())
         _sleep_for_period(cycle_start, period)
 
 

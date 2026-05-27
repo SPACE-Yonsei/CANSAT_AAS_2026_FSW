@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from lib import config, timebase
+from lib import config
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,27 @@ INTEGRAL_DECAY_RATE          = config.INTEGRAL_DECAY_RATE
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+def _cmd_age(now: float, timestamp: float) -> float:
+    """Return now - timestamp, or math.inf if either value is non-finite."""
+    try:
+        age = float(now) - float(timestamp)
+    except (TypeError, ValueError):
+        return math.inf
+    return age if math.isfinite(age) else math.inf
+
+
+def _clamp_dt(now: float, previous: float, default: float, lo: float, hi: float) -> float:
+    """Return a bounded positive dt for discrete control updates."""
+    try:
+        prev = float(previous)
+    except (TypeError, ValueError):
+        return default
+    if prev <= 0.0 or not math.isfinite(prev):
+        return default
+    dt = max(0.0, now - prev)
+    return max(lo, min(hi, dt)) if math.isfinite(dt) else default
 
 
 def _is_detumbling_mode(control_mode) -> bool:
@@ -266,7 +287,7 @@ def ProduceCtrlOutput(
 
     angular_velocity_cmd_deg_s = raw_cmd
 
-    age = timebase.age(now, cmd.timestamp)
+    age = _cmd_age(now, cmd.timestamp)
     out.guidance_command_age_s = age
 
     # ── Two-stage guidance timeout ───────────────────────────────────────────
@@ -298,7 +319,7 @@ def ProduceCtrlOutput(
     out.angular_velocity_cmd_deg_s = angular_velocity_cmd_deg_s
 
     # dt shared by PID + slew
-    dt = timebase.clamp_dt(now, ctl.pid.prev_time, default_s=0.1, min_s=0.01, max_s=0.2)
+    dt = _clamp_dt(now, ctl.pid.prev_time, 0.1, 0.01, 0.2)
 
     # ── Feedforward ──────────────────────────────────────────────────────────
     delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, cfg)
