@@ -6,69 +6,13 @@ Internal units: distance=m, time=s, angle=rad, speed=m/s
 
 from __future__ import annotations
 
-import math
-import logging
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import List, Optional
-
-from lib import config
-
-logger = logging.getLogger(__name__)
-
-EARTH_RADIUS_M = 6_371_000.0
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
 
-class ControlMode(str, Enum):
-    GPS_TRACKING_CLOSED = "GPS_TRACKING_CLOSED"
-    GPS_TRACKING_OPEN   = "GPS_TRACKING_OPEN"
-    DR_TRACKING_CLOSED  = "DR_TRACKING_CLOSED"
-    DR_TRACKING_OPEN    = "DR_TRACKING_OPEN"
-    DETUMBLING          = "DETUMBLING"
-    FAIL                = "FAIL"
 
 
-class DRMethod(str, Enum):
-    NONE                   = "NONE"
-    GYRO_INTEGRATION       = "GYRO_INTEGRATION"
-    ACC_DOUBLE_INTEGRATION = "ACC_DOUBLE_INTEGRATION"
-    GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 
-
-# ── Utility functions ─────────────────────────────────────────────────────────
-
-def latlon_to_ne(lat: float, lon: float, origin_lat: float, origin_lon: float):
-    """Return (N, E) metres relative to origin."""
-    dLat = math.radians(lat - origin_lat)
-    dLon = math.radians(lon - origin_lon)
-    N = dLat * EARTH_RADIUS_M
-    E = dLon * EARTH_RADIUS_M * math.cos(math.radians(origin_lat))
-    return N, E
-
-
-def ne_to_latlon(N: float, E: float, origin_lat: float, origin_lon: float):
-    """Return (lat, lon) from local NE metres."""
-    lat = origin_lat + math.degrees(N / EARTH_RADIUS_M)
-    lon = origin_lon + math.degrees(
-        E / (EARTH_RADIUS_M * math.cos(math.radians(origin_lat)))
-    )
-    return lat, lon
-
-
-def convert_latlon_to_local_en(lat: float, lon: float, origin_lat: float, origin_lon: float):
-    """Return (E, N) metres relative to origin."""
-    N, E = latlon_to_ne(lat, lon, origin_lat, origin_lon)
-    return E, N
-
-
-def wrap_pi(angle_rad: float) -> float:
-    return (angle_rad + math.pi) % (2.0 * math.pi) - math.pi
-
-
-def clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
 
 
 def saturated_sin(nu: float) -> float:
@@ -82,17 +26,7 @@ def saturated_sin(nu: float) -> float:
     return math.sin(clamp(nu, -math.pi / 2.0, math.pi / 2.0))
 
 
-def compute_dr_confidence(dr_age: float) -> float:
-    a1 = config.DR_CONF_AGE_1_S
-    a2 = config.DR_CONF_AGE_2_S
-    a3 = config.DR_CONF_AGE_3_S
-    if dr_age <= a1:
-        return 1.0
-    if dr_age <= a2:
-        return 1.0 - 0.5 * (dr_age - a1) / max(a2 - a1, 1e-6)
-    if dr_age <= a3:
-        return 0.5 * (1.0 - (dr_age - a2) / max(a3 - a2, 1e-6))
-    return 0.0
+
 
 
 def choose_yaw_rate_limit(control_mode, dr_method=None) -> float:
@@ -153,64 +87,6 @@ class GpsSample:
         return self.has_valid_point() and self.has_valid_velocity()
 
 
-@dataclass
-class ImuSample:
-    roll: float = 0.0
-    pitch: float = 0.0
-    yaw: float = 0.0
-    acc_x: float = 0.0
-    acc_y: float = 0.0
-    acc_z: float = 0.0
-    gyr_x: float = 0.0
-    gyr_y: float = 0.0
-    gyr_z: float = 0.0
-    timestamp: float = 0.0
-    lin_acc_x: float = 0.0
-    lin_acc_y: float = 0.0
-    lin_acc_z: float = 0.0
-    gyrz_valid: bool = False
-    yaw_valid: bool = False
-    acc_valid: bool = False
-    lin_acc_valid: bool = False
-
-
-@dataclass
-class BarometerSample:
-    altitude: float = 0.0
-    timestamp: float = 0.0
-    pressure: Optional[float] = None
-    valid: bool = False
-
-
-# ── FreshResult ───────────────────────────────────────────────────────────────
-
-@dataclass
-class FreshResult:
-    point_fresh: bool = False
-    point_age_s: float = float("inf")
-    velocity_fresh: bool = False
-    velocity_age_s: float = float("inf")
-    imu_fresh: bool = False
-    imu_age_s: float = float("inf")
-    imu_gyrz_fresh: bool = False
-    imu_yaw_fresh: bool = False
-    imu_acc_fresh: bool = False
-    imu_linear_acc_fresh: bool = False
-    barometer_fresh: bool = False
-    baro_age_s: float = float("inf")
-
-    @property
-    def gyrz_fresh(self) -> bool:
-        return self.imu_gyrz_fresh
-
-    @property
-    def gyrz_age_s(self) -> float:
-        return self.imu_age_s
-
-    @property
-    def baro_fresh(self) -> bool:
-        return self.barometer_fresh
-
 
 # ── GuidanceState ─────────────────────────────────────────────────────────────
 
@@ -268,30 +144,7 @@ class GuidanceState:
 
 # ── L1Input / L1Output ────────────────────────────────────────────────────────
 
-@dataclass
-class L1Input:
-    valid: bool = False
-    reason: str = "INIT"
-    control_mode: ControlMode = ControlMode.FAIL
-    dr_method: DRMethod = DRMethod.NONE
-    confidence: float = 0.0
-    E: float = float("nan")
-    N: float = float("nan")
-    vE: float = float("nan")
-    vN: float = float("nan")
-    V: float = float("nan")
-    course: float = float("nan")
-    origin_E: float = 0.0
-    origin_N: float = 0.0
-    target_E: float = float("nan")
-    target_N: float = float("nan")
-    target_lat: float = 0.0
-    target_lon: float = 0.0
-    point_age: float = float("inf")
-    velocity_age: float = float("inf")
-    imu_age: float = float("inf")
-    barometer_age: float = float("inf")
-    dr_age: float = 0.0
+
 
 
 @dataclass
