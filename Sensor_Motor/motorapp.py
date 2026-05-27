@@ -1,7 +1,7 @@
 """Motor app: sensor ingestion, guidance orchestration, actuator output.
 
 Per-cycle flow:
-  sensor handlers -> _RAW -> decidefresh -> produceL1input
+  sensor handlers -> _CACHE -> decidefresh -> produceL1input
   -> produceL1output -> ProduceCtrlInput -> ProduceCtrlOutput
   -> ProducePulse / sensorlog / diag
 """
@@ -64,16 +64,21 @@ class _BaroFromApp:
 
 
 @dataclass
-class _Raw:
+class _Cache:
+    """매 사이클 교체되는 센서 데이터만 보관. 임무 상수(target/start)는 별도 전역."""
     latest_gps:  _GpsFromApp  = field(default_factory=_GpsFromApp)
     latest_imu:  _ImuFromApp  = field(default_factory=_ImuFromApp)
     latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
 
-    target_lat: Optional[float] = None
-    target_lon: Optional[float] = None
-    start_lat:  Optional[float] = None
-    start_lon:  Optional[float] = None
 
+# ── Mission-constant coordinates ──────────────────────────────────────────────
+# GPS/IMU/Baro는 매 사이클 바뀌므로 스냅샷으로 묶어야 하지만,
+# target/start는 임무당 최대 1회 설정되는 준-상수이므로 전역에 분리 보관한다.
+# 쓰기: _UPDATE_LOCK 보호 / 읽기: 락 없이 직접 참조 (float 대입은 GIL이 원자적)
+_TARGET_LAT: Optional[float] = None
+_TARGET_LON: Optional[float] = None
+_START_LAT:  Optional[float] = None
+_START_LON:  Optional[float] = None
 
 _ORIGIN_SAVED: bool = False
 
@@ -87,7 +92,7 @@ PI = None
 
 _UPDATE_LOCK = threading.Lock()
 _CTRL_LOCK = threading.Lock()
-_RAW = _Raw()
+_CACHE = _Cache()
 _PREV_STATE = -1
 _GUIDANCE_STATE = guidance.GuidanceState()
 
@@ -96,15 +101,11 @@ _imu_heading_fallback_logged: bool = False
 
 _CONTROLLER = None
 
-def _raw_snapshot() -> _Raw:
-    return _Raw(
-        latest_gps=_GpsFromApp(**vars(_RAW.latest_gps)),
-        latest_imu=_ImuFromApp(**vars(_RAW.latest_imu)),
-        latest_baro=_BaroFromApp(**vars(_RAW.latest_baro)),
-        target_lat=_RAW.target_lat,
-        target_lon=_RAW.target_lon,
-        start_lat=_RAW.start_lat,
-        start_lon=_RAW.start_lon,
+def _cache_snapshot() -> _Cache:
+    return _Cache(
+        latest_gps=_GpsFromApp(**vars(_CACHE.latest_gps)),
+        latest_imu=_ImuFromApp(**vars(_CACHE.latest_imu)),
+        latest_baro=_BaroFromApp(**vars(_CACHE.latest_baro)),
     )
 
 # handler
@@ -143,7 +144,7 @@ def handle_gps(data: str) -> None:
         motion_health=motion_health,
     )
     with _UPDATE_LOCK:
-        _RAW.latest_gps = sample
+        _CACHE.latest_gps = sample
 
 def _compute_linear_acc(
     roll_deg: float,
@@ -225,7 +226,7 @@ def handle_imu(data: str) -> None:
         imu = _ImuFromApp(ts=sample_ts, rx_ts=rx_ts, health=0)
 
     with _UPDATE_LOCK:
-        _RAW.latest_imu = imu
+        _CACHE.latest_imu = imu
 
 
 def handle_barometer(data: str) -> None:
@@ -252,7 +253,7 @@ def handle_barometer(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _RAW.latest_baro = baro
+        _CACHE.latest_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -260,6 +261,7 @@ def handle_target_coord(data: str) -> None:
 
     Rejects out-of-range coords and the (0,0) sentinel (matches init()).
     """
+    global _TARGET_LAT, _TARGET_LON
     fields = data.split(",")
     if len(fields) != 2:
         return
@@ -273,8 +275,8 @@ def handle_target_coord(data: str) -> None:
     if abs(lat) < 1e-9 and abs(lon) < 1e-9:
         return   # (0,0) sentinel — not a real target
     with _UPDATE_LOCK:
-        _RAW.target_lat = lat   # mirror for diag/back-compat snapshot
-        _RAW.target_lon = lon
+        _TARGET_LAT = lat
+        _TARGET_LON = lon
         _GUIDANCE_STATE.target_lat = lat
         _GUIDANCE_STATE.target_lon = lon
         _GUIDANCE_STATE.target_ready = False  # trigger re-projection next cycle
@@ -282,7 +284,7 @@ def handle_target_coord(data: str) -> None:
 
 def handle_flight_state(data: str) -> None:
     """Update flight state. Origin acquisition stays in guidance pipeline."""
-    global STATE, _PREV_STATE, _CONTROLLER, _ORIGIN_SAVED
+    global STATE, _PREV_STATE, _CONTROLLER, _ORIGIN_SAVED, _START_LAT, _START_LON
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -295,8 +297,8 @@ def handle_flight_state(data: str) -> None:
         _PREV_STATE = STATE
         STATE = new_state
         if new_state < 3:
-            _RAW.start_lat = None
-            _RAW.start_lon = None
+            _START_LAT = None
+            _START_LON = None
             _ORIGIN_SAVED = False
             prevstate.clear_start_point()
             guidance.reset_guidance_state_for_flight(_GUIDANCE_STATE)
@@ -345,7 +347,7 @@ def handle_mec(data: str) -> None:
                 control.WriteZero(PI)
 
 
-def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Raw) -> control.CtrlInput:
+def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
     """Build CtrlInput for IMU_HEADING mode using magnetometer yaw.
 
     When GPS position and target are available, computes the geographic bearing
@@ -359,8 +361,8 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Raw) -> control.C
     target_heading_deg = math.degrees(yaw_rad)
 
     gps = snap.latest_gps
-    t_lat = snap.target_lat
-    t_lon = snap.target_lon
+    t_lat = _TARGET_LAT
+    t_lon = _TARGET_LON
     gps_lat = gps.lat if gps is not None else None
     gps_lon = gps.lon if gps is not None else None
 
@@ -465,23 +467,23 @@ def _fmt_num(value, digits: int = 4) -> str:
 
 
 # Diagnostic telemetry
-def _send_diag(main_queue, cmd, g_out, diag_state: str, snap: _Raw) -> None:
-    """Build and emit the motor diag string. snap supplies thread-safe state."""
+def _send_diag(main_queue, cmd, g_out, diag_state: str, snap: _Cache) -> None:
+    """Build and emit the motor diag string. snap supplies thread-safe sensor state."""
     if main_queue is None:
         return
 
     # Carrot == target in target-fixed L1 homing; logged as latlon for ground display.
-    carrot_lat = snap.target_lat
-    carrot_lon = snap.target_lon
+    carrot_lat = _TARGET_LAT
+    carrot_lon = _TARGET_LON
     payload = ",".join([
         str(cmd.left_pw),
         str(cmd.right_pw),
-        _fmt_num(snap.start_lat,  6),
-        _fmt_num(snap.start_lon,  6),
-        _fmt_num(snap.target_lat, 6),
-        _fmt_num(snap.target_lon, 6),
-        _fmt_num(carrot_lat,      6),
-        _fmt_num(carrot_lon,      6),
+        _fmt_num(_START_LAT,  6),
+        _fmt_num(_START_LON,  6),
+        _fmt_num(_TARGET_LAT, 6),
+        _fmt_num(_TARGET_LON, 6),
+        _fmt_num(carrot_lat,  6),
+        _fmt_num(carrot_lon,  6),
         _fmt_num(math.degrees(
             snap.latest_imu.yaw_rad
             if (MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING
@@ -532,14 +534,15 @@ def _measured_yaw_rate_dps(g_out, fresh, imu) -> float:
 
 
 def _sync_origin_to_prevstate() -> bool:
-    """One-shot: copy guidance origin to _RAW.start_* and prevstate.
+    """One-shot: copy guidance origin to _START_LAT/_START_LON and prevstate.
     Returns True if a sync happened, False otherwise. Caller updates _ORIGIN_SAVED.
     """
+    global _START_LAT, _START_LON
     if not _GUIDANCE_STATE.origin_ready:
         return False
     with _UPDATE_LOCK:
-        _RAW.start_lat = float(_GUIDANCE_STATE.origin_lat)
-        _RAW.start_lon = float(_GUIDANCE_STATE.origin_lon)
+        _START_LAT = float(_GUIDANCE_STATE.origin_lat)
+        _START_LON = float(_GUIDANCE_STATE.origin_lon)
     prevstate.update_start_point(
         _GUIDANCE_STATE.origin_lat, _GUIDANCE_STATE.origin_lon, True
     )
@@ -557,7 +560,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         with _UPDATE_LOCK:
             motor_enabled = MOTOR_ENABLED
             state         = STATE
-            snap          = _raw_snapshot()
+            snap          = _cache_snapshot()
 
         # ── Gate 1: motor disabled or pre-deploy → zero PWM ───────────────────
         if not motor_enabled or state < 3:
@@ -685,6 +688,7 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
     global MANUAL_STEER_MODE, _CONTROLLER, _ORIGIN_SAVED
+    global _TARGET_LAT, _TARGET_LON, _START_LAT, _START_LON
     prevstate.init_prevstate()
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
@@ -698,8 +702,8 @@ def init() -> None:
         and -180.0 <= float(target_lon) <= 180.0
         and not (target_lat == 0.0 and target_lon == 0.0)
     ):
-        _RAW.target_lat = float(target_lat)
-        _RAW.target_lon = float(target_lon)
+        _TARGET_LAT = float(target_lat)
+        _TARGET_LON = float(target_lon)
         _GUIDANCE_STATE.target_lat = float(target_lat)
         _GUIDANCE_STATE.target_lon = float(target_lon)
 
@@ -708,8 +712,8 @@ def init() -> None:
     if start_point is not None:
         lat, lon = start_point
         if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
-            _RAW.start_lat = float(lat)
-            _RAW.start_lon = float(lon)
+            _START_LAT = float(lat)
+            _START_LON = float(lon)
             _GUIDANCE_STATE.origin_lat = float(lat)
             _GUIDANCE_STATE.origin_lon = float(lon)
             _GUIDANCE_STATE.origin_ready = True

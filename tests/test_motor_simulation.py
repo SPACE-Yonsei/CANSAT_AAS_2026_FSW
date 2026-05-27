@@ -61,6 +61,10 @@ def _reset_motorapp():
     motorapp._CONTROLLER = control.MakeCtrler()
     motorapp._CACHE = _Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
+    motorapp._TARGET_LAT = None
+    motorapp._TARGET_LON = None
+    motorapp._START_LAT = None
+    motorapp._START_LON = None
 
 
 def _init_with_prevstate(payload):

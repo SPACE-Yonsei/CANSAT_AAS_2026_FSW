@@ -346,13 +346,13 @@ def _make_baro(sample: Sample, now: float) -> motorapp._BaroFromApp:
     )
 
 
-def _copy_raw(cache: motorapp._Raw) -> motorapp._Raw:
-    old_global = motorapp._RAW
-    try:
-        motorapp._RAW = cache
-        return motorapp._raw_snapshot()
-    finally:
-        motorapp._RAW = old_global
+def _copy_cache(cache: motorapp._Cache) -> motorapp._Cache:
+    """로컬 _Cache 객체의 센서 필드를 독립적으로 복사한다."""
+    return motorapp._Cache(
+        latest_gps=motorapp._GpsFromApp(**vars(cache.latest_gps)),
+        latest_imu=motorapp._ImuFromApp(**vars(cache.latest_imu)),
+        latest_baro=motorapp._BaroFromApp(**vars(cache.latest_baro)),
+    )
 
 
 def _valid_final_target(samples: Iterable[Sample]) -> Optional[tuple[float, float]]:
@@ -365,7 +365,7 @@ def _valid_final_target(samples: Iterable[Sample]) -> Optional[tuple[float, floa
 def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: str) -> tuple[dict, list[dict]]:
     if not samples:
         return {"name": name, "rows": 0}, []
-    cache = motorapp._Raw()
+    cache = motorapp._Cache()
     ctl = control.MakeCtrler()
     rows: list[dict] = []
     pending = list(samples)
@@ -375,26 +375,22 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
     now = start_t
     dt = 1.0 / float(config.MOTOR_RATE_HZ)
     state = samples[0].state
-    target_lat = target[0] if target else None
-    target_lon = target[1] if target else None
+    target_lat: Optional[float] = target[0] if target else None
+    target_lon: Optional[float] = target[1] if target else None
+    origin_lat: Optional[float] = None
+    origin_lon: Optional[float] = None
     origin_lock_time: Optional[float] = None
 
     while now <= end_t + 1.0e-9:
         while idx < len(pending) and pending[idx].t <= now + 1.0e-9:
             sample = pending[idx]
             state = sample.state
-            motorapp._push_latest_gps_to_history(cache, now)
-            motorapp._push_latest_imu_to_history(cache, now)
-            motorapp._push_latest_baro_to_history(cache, now)
             cache.latest_gps = _make_gps(sample, now)
             cache.latest_imu = _make_imu(sample, now)
             cache.latest_baro = _make_baro(sample, now)
-            if target is not None:
-                cache.target_lat = target_lat
-                cache.target_lon = target_lon
-            if cache.start_lat is None and state >= 3 and cache.latest_gps.pos_health:
-                cache.start_lat = cache.latest_gps.lat
-                cache.start_lon = cache.latest_gps.lon
+            if origin_lat is None and state >= 3 and cache.latest_gps.pos_health:
+                origin_lat = cache.latest_gps.lat
+                origin_lon = cache.latest_gps.lon
                 origin_lock_time = now
             idx += 1
 
@@ -407,24 +403,24 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
             now += dt
             continue
 
-        snap = _copy_raw(cache)
+        snap = _copy_cache(cache)
         l1_input, mode = guidance.ProduceL1Input(
             gps=snap.latest_gps,
             imu=snap.latest_imu,
             baro=snap.latest_baro,
-            origin_lat=snap.start_lat,
-            origin_lon=snap.start_lon,
-            target_lat=snap.target_lat,
-            target_lon=snap.target_lon,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+            target_lat=target_lat,
+            target_lon=target_lon,
             now=now,
         )
         g_out = guidance.ProduceL1Output(
             l1_input=l1_input,
             mode=mode,
-            origin_lat=snap.start_lat,
-            origin_lon=snap.start_lon,
-            target_lat=snap.target_lat,
-            target_lon=snap.target_lon,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
+            target_lat=target_lat,
+            target_lon=target_lon,
             now=now,
         )
         if g_out.control_valid:
@@ -456,10 +452,10 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
                 "cmd_dps": cmd.angular_velocity_cmd_deg_s,
                 "xtrack": g_out.crossTrack,
                 "along": g_out.alongTrack,
-                "start_lat": snap.start_lat,
-                "start_lon": snap.start_lon,
-                "target_lat": snap.target_lat,
-                "target_lon": snap.target_lon,
+                "start_lat": origin_lat,
+                "start_lon": origin_lon,
+                "target_lat": target_lat,
+                "target_lon": target_lon,
             }
         )
         now += dt

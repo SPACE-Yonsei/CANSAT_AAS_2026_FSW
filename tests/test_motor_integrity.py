@@ -45,6 +45,10 @@ def _reset_motorapp():
     motorapp._CONTROLLER = control.MakeCtrler()
     motorapp._CACHE = _Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
+    motorapp._TARGET_LAT = None
+    motorapp._TARGET_LON = None
+    motorapp._START_LAT = None
+    motorapp._START_LON = None
 
 
 def _gps_ns(lat=ORIGIN_LAT, lon=ORIGIN_LON, course_rad=0.0, speed=8.0,
@@ -140,8 +144,8 @@ class TestSyncOriginToPrevstate(unittest.TestCase):
         with mock.patch.object(motorapp.prevstate, "update_start_point") as m:
             self.assertTrue(motorapp._sync_origin_to_prevstate())
             m.assert_called_once_with(37.55, 126.95, True)
-        self.assertAlmostEqual(motorapp._CACHE.start_lat, 37.55)
-        self.assertAlmostEqual(motorapp._CACHE.start_lon, 126.95)
+        self.assertAlmostEqual(motorapp._START_LAT, 37.55)
+        self.assertAlmostEqual(motorapp._START_LON, 126.95)
 
 
 class TestSleepForPeriod(unittest.TestCase):
@@ -214,10 +218,10 @@ class TestSendDiagPayload(unittest.TestCase):
 
     def test_payload_field_count_and_format(self):
         snap = motorapp._cache_snapshot()
-        snap.target_lat = 37.55
-        snap.target_lon = 126.95
-        snap.start_lat  = 37.54
-        snap.start_lon  = 126.94
+        motorapp._TARGET_LAT = 37.55
+        motorapp._TARGET_LON = 126.95
+        motorapp._START_LAT  = 37.54
+        motorapp._START_LON  = 126.94
         g_out = guidance.L1Output(
             current_heading_rad=math.radians(45.0),
             crossTrack=0.0, alongTrack=900.0,

@@ -57,6 +57,10 @@ def _reset() -> None:
     motorapp.PI = None
     motorapp._CACHE = _Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
+    motorapp._TARGET_LAT = None
+    motorapp._TARGET_LON = None
+    motorapp._START_LAT = None
+    motorapp._START_LON = None
 
 
 class TestMessageRouting(unittest.TestCase):
@@ -143,11 +147,11 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
         self.assertAlmostEqual(snap.latest_gps.lat, 37.55)
         self.assertAlmostEqual(snap.latest_imu.gyrz_rad_s, math.radians(-2.5), places=5)  # negated
         self.assertAlmostEqual(snap.latest_baro.alt_m, 200.0)
-        self.assertAlmostEqual(snap.target_lat, 37.56)
-        # start_lat stays None until the ctrl_parafoil loop runs and triggers
+        self.assertAlmostEqual(motorapp._TARGET_LAT, 37.56)
+        # _START_LAT stays None until the ctrl_parafoil loop runs and triggers
         # the origin-sync one-shot (guidance pipeline sets _GUIDANCE_STATE.origin
-        # → _CACHE.start_*); the dispatch-only setup never runs that loop.
-        self.assertIsNone(snap.start_lat)
+        # → _START_LAT/_START_LON); the dispatch-only setup never runs that loop.
+        self.assertIsNone(motorapp._START_LAT)
 
     def test_neutral_command_outputs_to_servo(self):
         with mock.patch.dict(sys.modules, {"pigpio": _FakePigpio()}):

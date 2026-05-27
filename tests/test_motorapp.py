@@ -19,6 +19,10 @@ def _reset():
     motorapp.PI = None
     motorapp._CACHE = _Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
+    motorapp._TARGET_LAT = None
+    motorapp._TARGET_LON = None
+    motorapp._START_LAT = None
+    motorapp._START_LON = None
 
 
 def _gps_msg(lat=37.55, lon=126.95, course=90.0, speed=12.0, pos=True, motion=True, ts=None):
@@ -298,24 +302,21 @@ class TestCacheSnapshot(unittest.TestCase):
     def setUp(self):
         _reset()
 
-    def test_snapshot_copies_target(self):
-        motorapp._CACHE.target_lat = 37.6
-        motorapp._CACHE.target_lon = 127.0
-        snap = motorapp._cache_snapshot()
-        self.assertAlmostEqual(snap.target_lat, 37.6)
-        self.assertAlmostEqual(snap.target_lon, 127.0)
+    # ── target/start는 스냅샷이 아닌 전역변수로 관리 ──────────────────────────
+    def test_target_globals_none_after_reset(self):
+        self.assertIsNone(motorapp._TARGET_LAT)
+        self.assertIsNone(motorapp._TARGET_LON)
 
-    def test_snapshot_target_none_when_unset(self):
-        snap = motorapp._cache_snapshot()
-        self.assertIsNone(snap.target_lat)
+    def test_start_globals_none_after_reset(self):
+        self.assertIsNone(motorapp._START_LAT)
+        self.assertIsNone(motorapp._START_LON)
 
-    def test_snapshot_copies_start_point(self):
-        motorapp._CACHE.start_lat = 37.55
-        motorapp._CACHE.start_lon = 126.95
-        snap = motorapp._cache_snapshot()
-        self.assertAlmostEqual(snap.start_lat, 37.55)
-        self.assertAlmostEqual(snap.start_lon, 126.95)
+    def test_handle_target_coord_sets_globals(self):
+        motorapp.handle_target_coord("37.6,127.0")
+        self.assertAlmostEqual(motorapp._TARGET_LAT, 37.6)
+        self.assertAlmostEqual(motorapp._TARGET_LON, 127.0)
 
+    # ── 스냅샷은 센서 데이터(GPS/IMU/Baro)만 복사 ────────────────────────────
     def test_snapshot_copies_latest_gps(self):
         motorapp.handle_gps(_gps_msg())
         snap = motorapp._cache_snapshot()
@@ -332,11 +333,12 @@ class TestCacheSnapshot(unittest.TestCase):
         snap = motorapp._cache_snapshot()
         self.assertAlmostEqual(snap.latest_baro.alt_m, 333.0)
 
-    def test_snapshot_is_independent_copy(self):
-        motorapp._CACHE.target_lat = 10.0
+    def test_snapshot_gps_is_independent_copy(self):
+        """스냅샷은 _CACHE와 독립된 복사본이어야 한다."""
+        motorapp.handle_gps(_gps_msg(lat=10.0))
         snap = motorapp._cache_snapshot()
-        motorapp._CACHE.target_lat = 99.0
-        self.assertAlmostEqual(snap.target_lat, 10.0)
+        motorapp.handle_gps(_gps_msg(lat=99.0))   # 이후 갱신이 snap에 영향 없어야 함
+        self.assertAlmostEqual(snap.latest_gps.lat, 10.0)
 
 if __name__ == "__main__":
     unittest.main()

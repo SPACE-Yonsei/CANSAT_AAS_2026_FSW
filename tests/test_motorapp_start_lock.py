@@ -17,6 +17,10 @@ def _reset_motor_cache() -> None:
     motorapp._ORIGIN_SAVED = False
     motorapp._CACHE = motorapp._Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
+    motorapp._TARGET_LAT = None
+    motorapp._TARGET_LON = None
+    motorapp._START_LAT = None
+    motorapp._START_LON = None
 
 
 def _gps_msg(lat=37.560700, lon=126.930700, course=90.0, speed=5.0, ts=None) -> str:
