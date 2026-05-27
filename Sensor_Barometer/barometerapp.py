@@ -210,15 +210,17 @@ def send_barometer_data(main_queue) -> None:
             appargs.BarometerAppArg.MID_flight_alt,
             f"{alt},{health}",
         )
-        sink_str = f"{sink_rate:.4f}" if sink_rate is not None else "nan"
-        if health:
-            msgstructure.send_msg(
-                main_queue,
-                appargs.BarometerAppArg.AppID,
-                appargs.MotorAppArg.AppID,
-                appargs.BarometerAppArg.MID_motor_alt,
-                f"{alt:.4f},{sample_mono_ts:.4f},{sink_str}",
-            )
+        # Payload (3 fields): alt_m,sink_rate,health
+        # health=0 → alt and sink_rate are nan so motorapp stores None
+        alt_s  = f"{alt:.4f}"           if health else "nan"
+        sink_s = f"{sink_rate:.4f}"     if (health and sink_rate is not None) else "nan"
+        msgstructure.send_msg(
+            main_queue,
+            appargs.BarometerAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.BarometerAppArg.MID_motor_alt,
+            f"{alt_s},{sink_s},{health}",
+        )
         tick += 1
         if tick >= comm_tick_interval:
             tick = 0

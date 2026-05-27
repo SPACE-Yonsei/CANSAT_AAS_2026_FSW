@@ -1,7 +1,7 @@
 """Motor app: sensor ingestion, guidance orchestration, actuator output.
 
 Per-cycle flow:
-  sensor handlers -> _CACHE -> decidefresh -> produceL1input
+  sensor handlers -> _RAW -> decidefresh -> produceL1input
   -> produceL1output -> ProduceCtrlInput -> ProduceCtrlOutput
   -> ProducePulse / sensorlog / diag
 """
@@ -43,33 +43,28 @@ class _ImuFromApp:
     accx_mps2: Optional[float] = None
     accy_mps2: Optional[float] = None
     accz_mps2: Optional[float] = None
-    magx_uT: Optional[float] = None
-    magy_uT: Optional[float] = None
-    magz_uT: Optional[float] = None
     gyrx_rad_s: Optional[float] = None
     gyry_rad_s: Optional[float] = None
     gyrz_rad_s: Optional[float] = None
     ts: Optional[float] = None
     rx_ts: Optional[float] = None
-    freefall: int = 0   # 1=자유낙하 중, 0=정상
-    tumble:   int = 0   # 1=텀블링 중,  0=안정
     lin_acc_x: Optional[float] = None
     lin_acc_y: Optional[float] = None
     lin_acc_z: Optional[float] = None
     lin_acc_valid: bool = False
-    yaw_offset_deg: float = 0.0
+    health: int = 0
 
 
 @dataclass
 class _BaroFromApp:
     alt_m:     Optional[float] = None
     sink_rate: Optional[float] = None
-    ts:        Optional[float] = None
     rx_ts:     Optional[float] = None
+    health:    int = 0
 
 
 @dataclass
-class _Cache:
+class _Raw:
     latest_gps:  _GpsFromApp  = field(default_factory=_GpsFromApp)
     latest_imu:  _ImuFromApp  = field(default_factory=_ImuFromApp)
     latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
@@ -92,7 +87,7 @@ PI = None
 
 _UPDATE_LOCK = threading.Lock()
 _CTRL_LOCK = threading.Lock()
-_CACHE = _Cache()
+_RAW = _Raw()
 _PREV_STATE = -1
 _GUIDANCE_STATE = guidance.GuidanceState()
 
@@ -101,55 +96,54 @@ _imu_heading_fallback_logged: bool = False
 
 _CONTROLLER = None
 
-def _cache_snapshot() -> _Cache:
-    return _Cache(
-        latest_gps=_GpsFromApp(**vars(_CACHE.latest_gps)),
-        latest_imu=_ImuFromApp(**vars(_CACHE.latest_imu)),
-        latest_baro=_BaroFromApp(**vars(_CACHE.latest_baro)),
-        target_lat=_CACHE.target_lat,
-        target_lon=_CACHE.target_lon,
-        start_lat=_CACHE.start_lat,
-        start_lon=_CACHE.start_lon,
+def _raw_snapshot() -> _Raw:
+    return _Raw(
+        latest_gps=_GpsFromApp(**vars(_RAW.latest_gps)),
+        latest_imu=_ImuFromApp(**vars(_RAW.latest_imu)),
+        latest_baro=_BaroFromApp(**vars(_RAW.latest_baro)),
+        target_lat=_RAW.target_lat,
+        target_lon=_RAW.target_lon,
+        start_lat=_RAW.start_lat,
+        start_lon=_RAW.start_lon,
     )
 
-#handler
+# handler
 def handle_gps(data: str) -> None:
-    """Parse GPS payload and update cache.
+    """Parse GPS payload and update raw store.
 
-    Payload: lat,lon,pos_ts,course_deg,spd_mps,motion_ts
-    Origin acquisition is handled exclusively by guidance.produceL1input;
-    this handler only refreshes the cache.
+    Payload (8 fields): lat,lon,pos_health,pos_ts,course_deg,speed_mps,motion_health,motion_ts
+    pos_health=0  → lat/lon/pos_ts are nan.
+    motion_health=0 → course/speed/motion_ts are nan.
+    Origin acquisition is handled exclusively by guidance.produceL1input.
     """
     fields = data.split(",")
-    if len(fields) != 6:
+    if len(fields) != 8:
         return
     try:
-        lat       = float(fields[0])
-        lon       = float(fields[1])
-        pos_ts    = float(fields[2])
-        course_deg = float(fields[3])   # nan when motion invalid
-        speed_mps  = float(fields[4])   # nan when motion invalid
-        motion_ts  = float(fields[5])   # nan when motion invalid
+        lat          = float(fields[0])
+        lon          = float(fields[1])
+        pos_health   = int(float(fields[2]))
+        pos_ts       = float(fields[3])
+        course_deg   = float(fields[4])
+        speed_mps    = float(fields[5])
+        motion_health = int(float(fields[6]))
+        motion_ts    = float(fields[7])
     except (ValueError, IndexError):
         return
 
-    motion_ok = (math.isfinite(course_deg)
-                 and math.isfinite(speed_mps)
-                 and math.isfinite(motion_ts))
-
     sample = _GpsFromApp(
-        lat=lat,
-        lon=lon,
-        course_rad=math.radians(course_deg) if motion_ok else None,
-        speed_mps=speed_mps if motion_ok else None,
-        pos_ts=pos_ts,
-        motion_ts=motion_ts if motion_ok else None,
+        lat=lat          if pos_health else None,
+        lon=lon          if pos_health else None,
+        pos_ts=pos_ts    if pos_health else None,
+        course_rad=math.radians(course_deg) if motion_health else None,
+        speed_mps=speed_mps                 if motion_health else None,
+        motion_ts=motion_ts                 if motion_health else None,
         rx_ts=time.monotonic(),
-        pos_health=1,
-        motion_health=int(motion_ok),
+        pos_health=pos_health,
+        motion_health=motion_health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_gps = sample
+        _RAW.latest_gps = sample
 
 def _compute_linear_acc(
     roll_deg: float,
@@ -175,100 +169,90 @@ def _compute_linear_acc(
 
 
 def handle_imu(data: str) -> None:
-    """Parse IMU payload and update cache.
+    """Parse IMU payload and update raw store.
 
-    Current payload (16 fields):
-      roll,pitch,yaw,ax,ay,az,magx,magy,magz,gyrx,gyry,gyrz_deg_s,sample_ts,freefall,tumble,health
+    Payload (11 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts
+    All angles in degrees, acc in m/s², gyro in deg/s.
+    health=0 → data fields 0-8 are nan; timestamps still valid.
     """
     fields = data.split(",")
+    if len(fields) != 11:
+        return
     try:
-        if len(fields) < 15:
-            return
-        roll_deg   = float(fields[0])
-        pitch_deg  = float(fields[1])
-        yaw_deg    = float(fields[2])
-        accx_mps2  = float(fields[3])
-        accy_mps2  = float(fields[4])
-        accz_mps2  = float(fields[5])
-        magx_uT    = float(fields[6])
-        magy_uT    = float(fields[7])
-        magz_uT    = float(fields[8])
-        gyrx_deg_s = float(fields[9])
-        gyry_deg_s = float(fields[10])
-        gyrz_deg_s = float(fields[11])
-        sample_ts  = float(fields[12])
-        freefall   = int(float(fields[13]))
-        tumble     = int(float(fields[14]))
-        # field[15]: imuapp이 전송하는 HEALTH 플래그 (0=하드웨어 이상, 1=정상)
-        # health=0이면 캐시를 갱신하지 않아 타임스탬프 노후화로 자연스럽게 stale 처리
-        imu_health = int(float(fields[15])) if len(fields) >= 16 else 1
-        # field[16]: imuapp이 전송하는 startup yaw offset (도, PREV_YAW_OFFSET)
-        yaw_offset_deg = float(fields[16]) if len(fields) >= 17 else 0.0
-        rx_ts = time.monotonic()
+        health    = int(float(fields[9]))
+        sample_ts = float(fields[10])
+        rx_ts     = time.monotonic()
     except (ValueError, IndexError):
         return
 
-    if not imu_health:
-        # 하드웨어 이상 신호: 구 타임스탬프가 유지되도록 캐시 미갱신
-        return
+    if health:
+        try:
+            roll_deg   = float(fields[0])
+            pitch_deg  = float(fields[1])
+            yaw_deg    = float(fields[2])
+            accx_mps2  = float(fields[3])
+            accy_mps2  = float(fields[4])
+            accz_mps2  = float(fields[5])
+            gyrx_deg_s = float(fields[6])
+            gyry_deg_s = float(fields[7])
+            gyrz_deg_s = float(fields[8])
+        except (ValueError, IndexError):
+            return
+        lin_ax, lin_ay, lin_az = _compute_linear_acc(
+            roll_deg, pitch_deg, accx_mps2, accy_mps2, accz_mps2
+        )
+        lin_valid = math.isfinite(lin_ax) and math.isfinite(lin_ay) and math.isfinite(lin_az)
+        imu = _ImuFromApp(
+            roll_rad=math.radians(roll_deg),
+            pitch_rad=math.radians(pitch_deg),
+            yaw_rad=math.radians(yaw_deg),
+            accx_mps2=accx_mps2,
+            accy_mps2=accy_mps2,
+            accz_mps2=accz_mps2,
+            gyrx_rad_s=math.radians(gyrx_deg_s),
+            gyry_rad_s=math.radians(gyry_deg_s),
+            gyrz_rad_s=math.radians(-gyrz_deg_s),  # IMU Z-up gz+= CCW; negate → nav gz+ = CW = right turn
+            ts=sample_ts,
+            rx_ts=rx_ts,
+            lin_acc_x=lin_ax if lin_valid else None,
+            lin_acc_y=lin_ay if lin_valid else None,
+            lin_acc_z=lin_az if lin_valid else None,
+            lin_acc_valid=lin_valid,
+            health=1,
+        )
+    else:
+        # 하드웨어 이상: 타임스탬프만 갱신, 모든 데이터 필드는 None 유지
+        imu = _ImuFromApp(ts=sample_ts, rx_ts=rx_ts, health=0)
 
-    lin_ax, lin_ay, lin_az = _compute_linear_acc(
-        roll_deg, pitch_deg, accx_mps2, accy_mps2, accz_mps2
-    )
-    lin_valid = math.isfinite(lin_ax) and math.isfinite(lin_ay) and math.isfinite(lin_az)
-
-    imu = _ImuFromApp(
-        roll_rad=math.radians(roll_deg),
-        pitch_rad=math.radians(pitch_deg),
-        yaw_rad=math.radians(yaw_deg),
-        accx_mps2=accx_mps2,
-        accy_mps2=accy_mps2,
-        accz_mps2=accz_mps2,
-        magx_uT=magx_uT,
-        magy_uT=magy_uT,
-        magz_uT=magz_uT,
-        gyrx_rad_s=math.radians(gyrx_deg_s),
-        gyry_rad_s=math.radians(gyry_deg_s),
-        gyrz_rad_s=math.radians(-gyrz_deg_s),  # IMU Z-up: gz+= CCW; negate to match nav convention (gz+ = CW = right turn)
-        ts=sample_ts,
-        rx_ts=rx_ts,
-        freefall=freefall,
-        tumble=tumble,
-        lin_acc_x=lin_ax if lin_valid else None,
-        lin_acc_y=lin_ay if lin_valid else None,
-        lin_acc_z=lin_az if lin_valid else None,
-        lin_acc_valid=lin_valid,
-        yaw_offset_deg=yaw_offset_deg,
-    )
     with _UPDATE_LOCK:
-        _CACHE.latest_imu = imu
+        _RAW.latest_imu = imu
 
 
 def handle_barometer(data: str) -> None:
-    """Parse barometer payload and update cache.
+    """Parse barometer payload and update raw store.
 
-    Current payload:
-      alt_m,sample_ts,sink_rate
+    Payload (3 fields): alt_m,sink_rate,health
+    health=0 → alt_m and sink_rate are nan.
     """
     fields = data.split(",")
+    if len(fields) != 3:
+        return
     try:
-        if len(fields) != 3:
-            return
-        alt_m     = float(fields[0].strip())
-        sample_ts = float(fields[1])
-        sink_rate = None if fields[2].strip() == "nan" else float(fields[2].strip())
-        rx_ts = time.monotonic()
+        alt_raw   = float(fields[0].strip())
+        sink_raw  = float(fields[1].strip())
+        health    = int(float(fields[2].strip()))
+        rx_ts     = time.monotonic()
     except (ValueError, IndexError):
         return
 
     baro = _BaroFromApp(
-        alt_m=alt_m,
-        sink_rate=sink_rate,
-        ts=sample_ts,
+        alt_m=alt_raw     if health and math.isfinite(alt_raw)  else None,
+        sink_rate=sink_raw if health and math.isfinite(sink_raw) else None,
         rx_ts=rx_ts,
+        health=health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_baro = baro
+        _RAW.latest_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -289,8 +273,8 @@ def handle_target_coord(data: str) -> None:
     if abs(lat) < 1e-9 and abs(lon) < 1e-9:
         return   # (0,0) sentinel — not a real target
     with _UPDATE_LOCK:
-        _CACHE.target_lat = lat   # mirror for diag/back-compat snapshot
-        _CACHE.target_lon = lon
+        _RAW.target_lat = lat   # mirror for diag/back-compat snapshot
+        _RAW.target_lon = lon
         _GUIDANCE_STATE.target_lat = lat
         _GUIDANCE_STATE.target_lon = lon
         _GUIDANCE_STATE.target_ready = False  # trigger re-projection next cycle
@@ -311,8 +295,8 @@ def handle_flight_state(data: str) -> None:
         _PREV_STATE = STATE
         STATE = new_state
         if new_state < 3:
-            _CACHE.start_lat = None
-            _CACHE.start_lon = None
+            _RAW.start_lat = None
+            _RAW.start_lon = None
             _ORIGIN_SAVED = False
             prevstate.clear_start_point()
             guidance.reset_guidance_state_for_flight(_GUIDANCE_STATE)
@@ -361,14 +345,14 @@ def handle_mec(data: str) -> None:
                 control.WriteZero(PI)
 
 
-def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
+def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Raw) -> control.CtrlInput:
     """Build CtrlInput for IMU_HEADING mode using magnetometer yaw.
 
     When GPS position and target are available, computes the geographic bearing
     to the target and converts it to the startup-zeroed IMU yaw frame using
-    the yaw_offset delivered per-cycle in the IMU message.  Works at any GPS
-    speed (position only, no velocity needed).  Falls back to holding the
-    current heading when GPS position or target are missing.
+    prevstate.PREV_YAW_OFFSET.  Works at any GPS speed (position only, no
+    velocity needed).  Falls back to holding the current heading when GPS
+    position or target are missing.
     """
     global _imu_heading_fallback_logged
     # Default: hold current heading (error=0) until GPS+target are available.
@@ -396,13 +380,13 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
         # Convert absolute bearing to IMU-relative yaw frame.
         # YAW = raw_yaw + yaw_offset, so target_imu = target_compass + yaw_offset.
         # yaw_offset is delivered per-cycle via the IMU message (field 16).
-        target_heading_deg = math.degrees(abs_bearing_rad) + snap.latest_imu.yaw_offset_deg
+        target_heading_deg = math.degrees(abs_bearing_rad) + prevstate.PREV_YAW_OFFSET
         if _imu_heading_fallback_logged:
             logger.info(
                 "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
                 " bearing=%.1f° yaw_off=%.1f°",
                 gps_lat, gps_lon, t_lat, t_lon,
-                math.degrees(abs_bearing_rad), snap.latest_imu.yaw_offset_deg,
+                math.degrees(abs_bearing_rad), prevstate.PREV_YAW_OFFSET,
             )
             _imu_heading_fallback_logged = False
     else:
@@ -481,7 +465,7 @@ def _fmt_num(value, digits: int = 4) -> str:
 
 
 # Diagnostic telemetry
-def _send_diag(main_queue, cmd, g_out, diag_state: str, snap: _Cache) -> None:
+def _send_diag(main_queue, cmd, g_out, diag_state: str, snap: _Raw) -> None:
     """Build and emit the motor diag string. snap supplies thread-safe state."""
     if main_queue is None:
         return
@@ -548,14 +532,14 @@ def _measured_yaw_rate_dps(g_out, fresh, imu) -> float:
 
 
 def _sync_origin_to_prevstate() -> bool:
-    """One-shot: copy guidance origin to _CACHE.start_* and prevstate.
+    """One-shot: copy guidance origin to _RAW.start_* and prevstate.
     Returns True if a sync happened, False otherwise. Caller updates _ORIGIN_SAVED.
     """
     if not _GUIDANCE_STATE.origin_ready:
         return False
     with _UPDATE_LOCK:
-        _CACHE.start_lat = float(_GUIDANCE_STATE.origin_lat)
-        _CACHE.start_lon = float(_GUIDANCE_STATE.origin_lon)
+        _RAW.start_lat = float(_GUIDANCE_STATE.origin_lat)
+        _RAW.start_lon = float(_GUIDANCE_STATE.origin_lon)
     prevstate.update_start_point(
         _GUIDANCE_STATE.origin_lat, _GUIDANCE_STATE.origin_lon, True
     )
@@ -573,7 +557,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         with _UPDATE_LOCK:
             motor_enabled = MOTOR_ENABLED
             state         = STATE
-            snap          = _cache_snapshot()
+            snap          = _raw_snapshot()
 
         # ── Gate 1: motor disabled or pre-deploy → zero PWM ───────────────────
         if not motor_enabled or state < 3:
@@ -714,8 +698,8 @@ def init() -> None:
         and -180.0 <= float(target_lon) <= 180.0
         and not (target_lat == 0.0 and target_lon == 0.0)
     ):
-        _CACHE.target_lat = float(target_lat)
-        _CACHE.target_lon = float(target_lon)
+        _RAW.target_lat = float(target_lat)
+        _RAW.target_lon = float(target_lon)
         _GUIDANCE_STATE.target_lat = float(target_lat)
         _GUIDANCE_STATE.target_lon = float(target_lon)
 
@@ -724,8 +708,8 @@ def init() -> None:
     if start_point is not None:
         lat, lon = start_point
         if -90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0:
-            _CACHE.start_lat = float(lat)
-            _CACHE.start_lon = float(lon)
+            _RAW.start_lat = float(lat)
+            _RAW.start_lon = float(lon)
             _GUIDANCE_STATE.origin_lat = float(lat)
             _GUIDANCE_STATE.origin_lon = float(lon)
             _GUIDANCE_STATE.origin_ready = True

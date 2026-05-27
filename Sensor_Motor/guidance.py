@@ -164,23 +164,14 @@ class ImuSample:
     gyr_x: float = 0.0
     gyr_y: float = 0.0
     gyr_z: float = 0.0
-    mag_x: float = 0.0
-    mag_y: float = 0.0
-    mag_z: float = 0.0
     timestamp: float = 0.0
     lin_acc_x: float = 0.0
     lin_acc_y: float = 0.0
     lin_acc_z: float = 0.0
-    quat_w: float = 1.0
-    quat_x: float = 0.0
-    quat_y: float = 0.0
-    quat_z: float = 0.0
     gyrz_valid: bool = False
     yaw_valid: bool = False
     acc_valid: bool = False
     lin_acc_valid: bool = False
-    freefall: bool = False
-    tumble: bool = False
 
 
 @dataclass
@@ -460,19 +451,14 @@ def decidefresh(gps, imu, baro, state: GuidanceState, now: float) -> FreshResult
         gx  = getattr(imu, "gyrx_rad_s", None)
         gy  = getattr(imu, "gyry_rad_s", None)
         gz  = getattr(imu, "gyrz_rad_s", None)
-        mx  = getattr(imu, "magx_uT",    None)
-        my  = getattr(imu, "magy_uT",    None)
-        mz  = getattr(imu, "magz_uT",    None)
         lax = getattr(imu, "lin_acc_x",  None)
         lay = getattr(imu, "lin_acc_y",  None)
         laz = getattr(imu, "lin_acc_z",  None)
-        # Validity flags come from the sensor/motorapp layer
-        gyrz_valid    = gz  is not None
+        # Validity flags: None means sensor reported unhealthy / data unavailable
+        gyrz_valid    = gz    is not None
         yaw_valid     = yaw_r is not None
-        acc_valid     = ax  is not None and ay is not None and az is not None
+        acc_valid     = ax is not None and ay is not None and az is not None
         lin_acc_valid = bool(getattr(imu, "lin_acc_valid", False))
-        freefall      = bool(getattr(imu, "freefall", 0))
-        tumble        = bool(getattr(imu, "tumble",   0))
 
         state.imu_history.append(ImuSample(
             roll      = float(roll_r)  if roll_r  is not None else 0.0,
@@ -484,9 +470,6 @@ def decidefresh(gps, imu, baro, state: GuidanceState, now: float) -> FreshResult
             gyr_x     = float(gx) if gx is not None else 0.0,
             gyr_y     = float(gy) if gy is not None else 0.0,
             gyr_z     = float(gz) if gz is not None else 0.0,
-            mag_x     = float(mx) if mx is not None else 0.0,
-            mag_y     = float(my) if my is not None else 0.0,
-            mag_z     = float(mz) if mz is not None else 0.0,
             timestamp = float(imu_ts),
             lin_acc_x = float(lax) if lax is not None else 0.0,
             lin_acc_y = float(lay) if lay is not None else 0.0,
@@ -495,8 +478,6 @@ def decidefresh(gps, imu, baro, state: GuidanceState, now: float) -> FreshResult
             yaw_valid     = yaw_valid,
             acc_valid     = acc_valid,
             lin_acc_valid = lin_acc_valid,
-            freefall      = freefall,
-            tumble        = tumble,
         ))
 
     _prune_history(state.imu_history, window_start)
@@ -511,12 +492,12 @@ def decidefresh(gps, imu, baro, state: GuidanceState, now: float) -> FreshResult
             res.imu_linear_acc_fresh = li.lin_acc_valid
 
     # ── BAROMETER ─────────────────────────────────────────────────────────────
-    baro_ts = getattr(baro, "ts", None)
+    baro_ts = getattr(baro, "rx_ts", None)
     if baro_ts is not None and _ok(baro_ts):
         alt  = getattr(baro, "alt_m",  None)
         pres = getattr(baro, "pressure_hpa", None)
-        # alt present → valid (sensor app checked)
-        baro_valid = alt is not None
+        # alt present and finite → valid (sensor app sets None when health=0)
+        baro_valid = alt is not None and _ok(alt)
         state.baro_history.append(BarometerSample(
             altitude  = float(alt) if baro_valid else 0.0,
             timestamp = float(baro_ts),

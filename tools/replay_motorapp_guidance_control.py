@@ -297,42 +297,62 @@ def _make_gps(sample: Sample, now: float) -> motorapp._GpsFromApp:
 
 def _make_imu(sample: Sample, now: float) -> motorapp._ImuFromApp:
     ok = sample.imu_ok and sample.gyrz_deg_s is not None
+    roll_deg  = sample.roll_deg  or 0.0
+    pitch_deg = sample.pitch_deg or 0.0
+    if ok and sample.accx is not None and sample.accy is not None and sample.accz is not None:
+        try:
+            import math as _m
+            cp = _m.cos(_m.radians(pitch_deg))
+            gx_ = -_m.sin(_m.radians(pitch_deg)) * 9.81
+            gy_ =  cp * _m.sin(_m.radians(roll_deg))  * 9.81
+            gz_ =  cp * _m.cos(_m.radians(roll_deg))  * 9.81
+            lax = sample.accx - gx_
+            lay = sample.accy - gy_
+            laz = sample.accz - gz_
+            lin_valid = True
+        except Exception:
+            lax = lay = laz = 0.0
+            lin_valid = False
+    else:
+        lax = lay = laz = 0.0
+        lin_valid = False
+
     return motorapp._ImuFromApp(
-        roll_rad=math.radians(sample.roll_deg or 0.0) if sample.roll_deg is not None else None,
-        pitch_rad=math.radians(sample.pitch_deg or 0.0) if sample.pitch_deg is not None else None,
+        roll_rad=math.radians(roll_deg) if sample.roll_deg is not None else None,
+        pitch_rad=math.radians(pitch_deg) if sample.pitch_deg is not None else None,
         yaw_rad=math.radians(sample.yaw_deg or 0.0) if sample.yaw_deg is not None else None,
         accx_mps2=sample.accx,
         accy_mps2=sample.accy,
         accz_mps2=sample.accz,
-        magx_uT=sample.magx,
-        magy_uT=sample.magy,
-        magz_uT=sample.magz,
         gyrx_rad_s=math.radians(sample.gyrx_deg_s or 0.0) if ok else None,
         gyry_rad_s=math.radians(sample.gyry_deg_s or 0.0) if ok else None,
         gyrz_rad_s=math.radians(-(sample.gyrz_deg_s or 0.0)) if ok else None,
         ts=now if ok else None,
         rx_ts=now,
-        freefall=0,
-        tumble=0,
+        lin_acc_x=lax if lin_valid else None,
+        lin_acc_y=lay if lin_valid else None,
+        lin_acc_z=laz if lin_valid else None,
+        lin_acc_valid=lin_valid,
+        health=1 if ok else 0,
     )
 
 
 def _make_baro(sample: Sample, now: float) -> motorapp._BaroFromApp:
     return motorapp._BaroFromApp(
         alt_m=sample.alt_m if sample.baro_ok else None,
-        sink_rate=sample.sink_rate_mps,
-        ts=now if sample.baro_ok else None,
+        sink_rate=sample.sink_rate_mps if sample.baro_ok else None,
         rx_ts=now,
+        health=1 if sample.baro_ok else 0,
     )
 
 
-def _copy_cache(cache: motorapp._Cache) -> motorapp._Cache:
-    old_global = motorapp._CACHE
+def _copy_raw(cache: motorapp._Raw) -> motorapp._Raw:
+    old_global = motorapp._RAW
     try:
-        motorapp._CACHE = cache
-        return motorapp._cache_snapshot()
+        motorapp._RAW = cache
+        return motorapp._raw_snapshot()
     finally:
-        motorapp._CACHE = old_global
+        motorapp._RAW = old_global
 
 
 def _valid_final_target(samples: Iterable[Sample]) -> Optional[tuple[float, float]]:
@@ -345,7 +365,7 @@ def _valid_final_target(samples: Iterable[Sample]) -> Optional[tuple[float, floa
 def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: str) -> tuple[dict, list[dict]]:
     if not samples:
         return {"name": name, "rows": 0}, []
-    cache = motorapp._Cache()
+    cache = motorapp._Raw()
     ctl = control.MakeCtrler()
     rows: list[dict] = []
     pending = list(samples)
@@ -387,7 +407,7 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
             now += dt
             continue
 
-        snap = _copy_cache(cache)
+        snap = _copy_raw(cache)
         l1_input, mode = guidance.ProduceL1Input(
             gps=snap.latest_gps,
             imu=snap.latest_imu,

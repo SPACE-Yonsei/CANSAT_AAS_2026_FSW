@@ -56,23 +56,12 @@ _last_reinit_ts = 0.0
 _imu_lock = threading.Lock()
 _imu_instance = None
 _i2c_instance = None
-_acc_norm_window: list[float] = []
-_gyro_norm_window: list[float] = []
 _startup_yaw_zeroed = False
 _imuapp_start_time: float = 0.0
 # Seconds after imuapp_init() before the first yaw is used as the zero reference.
 # Override with IMU_YAW_ZERO_DELAY_SEC env var.
 _STARTUP_YAW_ZERO_DELAY_S: float = float(os.environ.get("IMU_YAW_ZERO_DELAY_SEC", "15.0"))
 
-# freefall / tumble 판정 상수 — 환경변수로 오버라이드 가능
-FREEFALL_ACC_NORM_THRESHOLD_MPS2 = float(os.environ.get("FREEFALL_ACC_NORM_MPS2", "3.0"))
-TUMBLE_GYRO_NORM_THRESHOLD_DEGS  = float(os.environ.get("TUMBLE_GYRO_NORM_DEGS",  "200.0"))
-ACC_NORM_WINDOW_SIZE  = 5
-GYRO_NORM_WINDOW_SIZE = 5
-
-# freefall / tumble 상태 (send 스레드가 읽음)
-FREEFALL = 0  # 1=자유낙하 중, 0=정상(중력 있음)
-TUMBLE   = 0  # 1=텀블링 중,  0=안정(정상 선회)
 
 # sample_ts: read 스레드에서 캡처, send 스레드가 읽음
 _last_sample_mono_ts: float = 0.0
@@ -214,9 +203,6 @@ def _stale_watchdog_check() -> bool:
 def read_imu_data() -> None:
     global ROLL, PITCH, YAW, ACCX, ACCY, ACCZ, MAGX, MAGY, MAGZ, GYRX, GYRY, GYRZ
     global HEALTH, IMU_ERROR_COUNT, _last_sample_ts, _last_sample_mono_ts
-    global _acc_norm_window, _gyro_norm_window
-    global FREEFALL, TUMBLE
-    import math as _math
     period = _imu_read_period_sec()
     while IMUAPP_RUNSTATUS:
         if _stale_watchdog_check():
@@ -241,20 +227,6 @@ def read_imu_data() -> None:
         roll, pitch, yaw, accx, accy, accz, magx, magy, magz, gyrx, gyry, gyrz = sample
         _calibrate_startup_yaw(float(yaw))
 
-        # freefall / tumble 판정 (이동평균으로 단발 스파이크 방지)
-        acc_norm_raw  = _math.sqrt(float(accx)**2 + float(accy)**2 + float(accz)**2)
-        gyro_norm_raw = _math.sqrt(float(gyrx)**2 + float(gyry)**2 + float(gyrz)**2)
-        _acc_norm_window.append(acc_norm_raw)
-        if len(_acc_norm_window) > ACC_NORM_WINDOW_SIZE:
-            _acc_norm_window.pop(0)
-        _gyro_norm_window.append(gyro_norm_raw)
-        if len(_gyro_norm_window) > GYRO_NORM_WINDOW_SIZE:
-            _gyro_norm_window.pop(0)
-        acc_norm_avg  = sum(_acc_norm_window)  / len(_acc_norm_window)
-        gyro_norm_avg = sum(_gyro_norm_window) / len(_gyro_norm_window)
-        freefall_flag = 1 if acc_norm_avg  <  FREEFALL_ACC_NORM_THRESHOLD_MPS2 else 0
-        tumble_flag   = 1 if gyro_norm_avg >= TUMBLE_GYRO_NORM_THRESHOLD_DEGS  else 0
-
         with _imu_lock:
             ROLL = float(roll)
             PITCH = float(pitch)
@@ -262,8 +234,6 @@ def read_imu_data() -> None:
             ACCX, ACCY, ACCZ = float(accx), float(accy), float(accz)
             MAGX, MAGY, MAGZ = float(magx), float(magy), float(magz)
             GYRX, GYRY, GYRZ = float(gyrx), float(gyry), float(gyrz)
-            FREEFALL = freefall_flag
-            TUMBLE   = tumble_flag
             _last_sample_ts       = time.time()
             _last_sample_mono_ts  = time.monotonic()
 
@@ -284,18 +254,28 @@ def send_imu_data(main_queue) -> None:
             fp   = PITCH
             fy   = YAW
             accx, accy, accz = ACCX, ACCY, ACCZ
-            magx, magy, magz = MAGX, MAGY, MAGZ
             gyrx, gyry, gyrz = GYRX, GYRY, GYRZ
-            freefall = FREEFALL
-            tumble   = TUMBLE
+            health         = int(HEALTH)
             sample_mono_ts = _last_sample_mono_ts
+
+        # Payload (11 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts
+        # health=0 → data fields are nan so motorapp skips populating guidance fields
+        if health:
+            payload = (
+                f"{fr},{fp},{fy},"
+                f"{accx},{accy},{accz},"
+                f"{gyrx},{gyry},{gyrz},"
+                f"{health},{sample_mono_ts:.4f}"
+            )
+        else:
+            payload = f"nan,nan,nan,nan,nan,nan,nan,nan,nan,0,{sample_mono_ts:.4f}"
 
         msgstructure.send_msg(
             main_queue,
             appargs.ImuAppArg.AppID,
             appargs.MotorAppArg.AppID,
             appargs.ImuAppArg.MID_motor_imu,
-            f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz},{sample_mono_ts:.4f},{freefall},{tumble},{int(HEALTH)},{prevstate.PREV_YAW_OFFSET:.4f}",
+            payload,
         )
         tick += 1
         if tick >= 20:
@@ -305,7 +285,7 @@ def send_imu_data(main_queue) -> None:
                 appargs.ImuAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.ImuAppArg.MID_comm_euler,
-                f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz}",
+                f"{fr},{fp},{fy},{accx},{accy},{accz},{gyrx},{gyry},{gyrz}",
             )
         time.sleep(0.05)
 

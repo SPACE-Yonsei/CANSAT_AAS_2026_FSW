@@ -352,10 +352,10 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 GPS_COURSE = None
                 last_valid_rmc_ts = 0.0
 
-        # gps->motor: pos_health 통과 시에만 전송 (fidelity gate)
-        # 포맷: lat,lon,pos_ts,course_deg,spd_mps,motion_ts
-        #   pos fidelity 실패 → 전송 없음
-        #   motion fidelity 실패 → course/spd/motion_ts 를 nan으로 전송
+        # gps->motor: 항상 전송 (health 플래그로 유효성 표시)
+        # 포맷 (8 fields): lat,lon,pos_health,pos_ts,course_deg,speed_mps,motion_health,motion_ts
+        #   pos_health=0  → lat/lon/pos_ts = nan
+        #   motion_health=0 → course/speed/motion_ts = nan
         if rcv_data and len(rcv_data) >= 5:
             now_mono = time.monotonic()
             hdop = float(rcv_data[10]) if len(rcv_data) > 10 and _is_finite(rcv_data[10]) else float('inf')
@@ -374,17 +374,19 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 _prev_valid_lon = GPS_LON
                 _prev_valid_ts  = now_mono
 
-                pts   = f"{last_valid_gps_ts:.4f}"
-                crs_s = f"{GPS_COURSE:.4f}"   if motion_health else "nan"
-                spd_s = f"{GPS_SPEED_MS:.4f}" if motion_health else "nan"
-                mts   = f"{last_valid_rmc_ts:.4f}" if motion_health else "nan"
+            lat_s = f"{GPS_LAT:.7f}"          if pos_health else "nan"
+            lon_s = f"{GPS_LON:.7f}"          if pos_health else "nan"
+            pts_s = f"{last_valid_gps_ts:.4f}" if pos_health else "nan"
+            crs_s = f"{GPS_COURSE:.4f}"        if motion_health else "nan"
+            spd_s = f"{GPS_SPEED_MS:.4f}"      if motion_health else "nan"
+            mts_s = f"{last_valid_rmc_ts:.4f}" if motion_health else "nan"
 
-                msgstructure.send_msg(
-                    Main_Queue,
-                    appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
-                    appargs.GpsAppArg.MID_motor_gps,
-                    f"{GPS_LAT:.7f},{GPS_LON:.7f},{pts},{crs_s},{spd_s},{mts}"
-                )
+            msgstructure.send_msg(
+                Main_Queue,
+                appargs.GpsAppArg.AppID, appargs.MotorAppArg.AppID,
+                appargs.GpsAppArg.MID_motor_gps,
+                f"{lat_s},{lon_s},{int(pos_health)},{pts_s},{crs_s},{spd_s},{int(motion_health)},{mts_s}"
+            )
 
         send_counter += 1
         if send_counter >= 10:
