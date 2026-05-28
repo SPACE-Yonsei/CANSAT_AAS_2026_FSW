@@ -355,7 +355,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     # ── [1] DETUMBLING ────────────────────────────────────────────────────────
     # gyrz를 줄이는 방향으로 서보를 최대로 꺾어 스핀을 제동한다.
     # ProduceCtrlOutput의 detumbling_active 경로:
-    #   delta = -sign(gyrz) × DETUMBLE_BRAKE_DELTA_DEG (= 80°)
+    #   delta = -sign(gyrz) × max differential arm angle (= 160°)
     if mode == guidance.ControlMode.DETUMBLING:
         gz_meas = snap_t.latest_imu.gyrz_rad_s or 0.0
         gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s

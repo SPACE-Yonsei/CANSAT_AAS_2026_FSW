@@ -324,7 +324,7 @@ def ProduceCtrlOutput(
             error = -angular_velocity_meas_deg_s
             if abs(angular_velocity_meas_deg_s) > cfg_t.ERROR_DEADBAND_DEG_S:
                 delta_sum = -math.copysign(
-                    config.DETUMBLE_BRAKE_DELTA_DEG,
+                    DELTA_ARM_MAX_DEG,
                     angular_velocity_meas_deg_s,
                 )
             else:
@@ -369,13 +369,17 @@ def ProduceCtrlOutput(
     _, _, left_des, right_des, delta_arm = ConnectRoMo(delta_total)
 
     # ── Slew-rate 제한 ────────────────────────────────────────────────────────
-    max_step    = cfg_t.MAX_ARM_RATE_DEG_S * dt
-    left_angle  = _clamp(left_des,
-                         ctl.prev_left_angle_deg - max_step,
-                         ctl.prev_left_angle_deg + max_step)
-    right_angle = _clamp(right_des,
-                         ctl.prev_right_angle_deg - max_step,
-                         ctl.prev_right_angle_deg + max_step)
+    if detumbling_active:
+        left_angle = left_des
+        right_angle = right_des
+    else:
+        max_step    = cfg_t.MAX_ARM_RATE_DEG_S * dt
+        left_angle  = _clamp(left_des,
+                             ctl.prev_left_angle_deg - max_step,
+                             ctl.prev_left_angle_deg + max_step)
+        right_angle = _clamp(right_des,
+                             ctl.prev_right_angle_deg - max_step,
+                             ctl.prev_right_angle_deg + max_step)
 
     left_pw  = int(_clamp(LEFT_ZERO  - left_angle  * PULSE_PER_DEG,
                           LEFT_MIN_PULSE,  LEFT_MAX_PULSE))
