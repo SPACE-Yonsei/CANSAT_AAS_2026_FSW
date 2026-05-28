@@ -1,4 +1,4 @@
-"""Sensor_Motor/guidance.py — Navigation + L1 Guidance
+﻿"""Sensor_Motor/guidance.py — Navigation + L1 Guidance
 
 Pipeline (매 사이클):
   UpdateAnchors(gps, imu, baro, now)
@@ -288,9 +288,9 @@ def _compute_dr_confidence(age: float) -> float:
     return _clamp(conf, 0.0, 1.0)
 
 
-# ── UpdateAnchors (매 사이클, 반환값 없음) ────────────────────────────────────
+# ── UpdateRaws (매 사이클, 반환값 없음) ────────────────────────────────────
 
-def UpdateAnchors(gps, imu, baro, now: float) -> None:
+def UpdateRaws(gps, imu, baro, now: float) -> None:
     """raw 센서 객체(duck-typed)에서 앵커를 갱신한다.
 
     Args:

@@ -344,7 +344,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
                 _CTRLER_t = control.MakeCtrler()
 
     # ── 항법 파이프라인 ───────────────────────────────────────────────────────
-    guidance.UpdateAnchors(snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
+    guidance.UpdateRaws(snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
 
     # origin 확정 시 prevstate에 1회 저장
     if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
