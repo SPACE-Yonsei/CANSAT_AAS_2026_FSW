@@ -71,7 +71,7 @@ def _compute_linear_acc(
 # ── 센서 핸들러 ───────────────────────────────────────────────────────────────
 
 def handle_gps(data: str) -> None:
-    """GPS 페이로드 파싱 후 _CACHE 갱신.
+    """GPS 페이로드 파싱 후 _CACHE_t 갱신.
 
     Payload (8 fields): lat,lon,pos_health,pos_ts,course_deg,speed_mps,motion_health,motion_ts
     """
@@ -106,7 +106,7 @@ def handle_gps(data: str) -> None:
 
 
 def handle_imu(data: str) -> None:
-    """IMU 페이로드 파싱 후 _CACHE 갱신.
+    """IMU 페이로드 파싱 후 _CACHE_t 갱신.
 
     Payload (11 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts
     각도=deg, 가속도=m/s², 각속도=deg/s
@@ -165,11 +165,11 @@ def handle_imu(data: str) -> None:
         imu = _ImuFromApp(ts=sample_ts, rx_ts=rx_ts, health=0)
 
     with _UPDATE_LOCK:
-        _CACHE.latest_imu = imu
+        _CACHE_t.latest_imu = imu
 
 
 def handle_barometer(data: str) -> None:
-    """기압계 페이로드 파싱 후 _CACHE 갱신.
+    """기압계 페이로드 파싱 후 _CACHE_t 갱신.
 
     Payload (3 fields): alt_m,sink_rate,health
     """
@@ -191,7 +191,7 @@ def handle_barometer(data: str) -> None:
         health=health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_baro = baro
+        _CACHE_t.latest_baro = baro
 
 
 def handle_target_coord(data: str) -> None:
@@ -213,7 +213,7 @@ def handle_target_coord(data: str) -> None:
 
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
-    global STATE, _PREV_STATE, _CTRLER
+    global STATE, _PREV_STATE, _CTRLER_t, _ORIGIN_SAVED
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -229,10 +229,11 @@ def handle_flight_state(data: str) -> None:
             prevstate.clear_start_point()
             guidance.reset()
             do_ctrl_reset = True
+            _ORIGIN_SAVED = False   # guidance.reset()이 origin 초기화 → 재동기화 허용
 
-    if do_ctrl_reset and _CTRLER is not None:
+    if do_ctrl_reset and _CTRLER_t is not None:
         with _CTRL_LOCK:
-            control.controller_reset(_CTRLER)
+            control.controller_reset(_CTRLER_t)
 
 
 def handle_release(data: str = "TRIGGER") -> None:
@@ -265,16 +266,64 @@ def handle_egg_drop() -> None:
     ).start()
 
 
+def handle_mec(data: str) -> None:
+    """MEC 명령: 모터 활성/비활성 토글 + prevstate 저장."""
+    global MOTOR_ENABLED
+    cmd = data.strip().upper()
+    if cmd == "ON":
+        MOTOR_ENABLED = True
+        prevstate.update_motor_enabled(True)
+    elif cmd == "OFF":
+        MOTOR_ENABLED = False
+        prevstate.update_motor_enabled(False)
+        if PI is not None:
+            control.WriteZero(PI)
+
+
+def handle_fac(data: str) -> None:
+    """FAC 명령: 릴리즈/에그 액추에이터 활성화 제어.
+
+    형식: "ON"/"OFF" (둘 다) 또는 "ALL|REL|EGG,ON|OFF".
+    """
+    global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
+    raw = data.strip().upper().replace(" ", "")
+    parts = [p for p in raw.split(",") if p]
+    if len(parts) == 1 and parts[0] in {"ON", "OFF"}:
+        actor, state = "ALL", parts[0]
+    elif len(parts) == 2 and parts[0] in {"ALL", "REL", "EGG"} and parts[1] in {"ON", "OFF"}:
+        actor, state = parts[0], parts[1]
+    else:
+        return
+
+    enabled = state == "ON"
+    if actor in {"ALL", "REL"}:
+        RELEASE_ACTION_ENABLED = enabled
+    if actor in {"ALL", "EGG"}:
+        EGG_ACTION_ENABLED = enabled
+
+
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
+
+def _sync_origin_to_prevstate() -> bool:
+    """guidance origin이 확정되면 prevstate에 1회 저장. 저장 시 True 반환."""
+    mi = guidance._MISSION
+    if not mi.origin_ready:
+        return False
+    lat = float(mi.origin_lat)
+    lon = float(mi.origin_lon)
+    prevstate.update_start_point(lat, lon, True)
+    logger.info("Origin synced to prevstate: lat=%.6f lon=%.6f", lat, lon)
+    return True
+
 
 def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     """한 사이클 제어 계산. 반환값은 진단용 (None이면 액션 없음)."""
-    global _CTRLER
+    global _CTRLER_t, _ORIGIN_SAVED
 
     with _UPDATE_LOCK:
         motor_enabled = MOTOR_ENABLED
         state         = STATE
-        snap          = _cache_snapshot()
+        snap_t        = _cache_snapshot()
 
     # 비활성 또는 비행 전 상태
     if not motor_enabled or state < 3:
@@ -289,32 +338,37 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         return None
 
     # ── 컨트롤러 지연 초기화 ─────────────────────────────────────────────────
-    if _CTRLER is None:
+    if _CTRLER_t is None:
         with _CTRL_LOCK:
-            if _CTRLER is None:
-                _CTRLER = control.MakeCtrler()
+            if _CTRLER_t is None:
+                _CTRLER_t = control.MakeCtrler()
 
     # ── 항법 파이프라인 ───────────────────────────────────────────────────────
-    guidance.UpdateAnchors(snap.latest_gps, snap.latest_imu, snap.latest_baro, now)
+    guidance.UpdateAnchors(snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
+
+    # origin 확정 시 prevstate에 1회 저장
+    if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
+        _ORIGIN_SAVED = True
+
     mode = guidance.DecideControlMode(now)
 
     if mode == guidance.ControlMode.DETUMBLING:
-        ctrl_out = control.ProduceDetumbleOutput(now)
-        control.MoveServo(PI, ctrl_out)
-        return ctrl_out
+        ctrl_out_t = control.ProduceDetumbleOutput(now)
+        control.MoveServo(PI, ctrl_out_t)
+        return ctrl_out_t
 
     if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
                 guidance.ControlMode.GPS_TRACKING_OPEN,
                 guidance.ControlMode.DR_TRACKING_CLOSED,
                 guidance.ControlMode.DR_TRACKING_OPEN):
-        l1_in   = guidance.ProduceL1Input(now)
-        l1_out  = guidance.ProduceL1Output(l1_in)
-        gz_meas = snap.latest_imu.gyrz_rad_s or 0.0
-        gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s (ProduceCtrlOutput 기대 단위)
-        ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-        ctrl_out = control.ProduceCtrlOutput(_CTRLER, ctrl_in, gz_meas, now)
-        control.MoveServo(PI, ctrl_out)
-        return ctrl_out
+        l1_in_t  = guidance.ProduceL1Input(now)
+        l1_out_t = guidance.ProduceL1Output(l1_in_t)
+        gz_meas  = snap_t.latest_imu.gyrz_rad_s or 0.0
+        gz_meas  = math.degrees(float(gz_meas))   # rad/s → deg/s (ProduceCtrlOutput 기대 단위)
+        ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
+        ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
+        control.MoveServo(PI, ctrl_out_t)
+        return ctrl_out_t
 
     # FAIL
     if PI is not None:
@@ -339,3 +393,129 @@ def ctrl_parafoil(main_queue=None) -> None:
         except Exception:
             logger.exception("_ctrl_cycle error")
         _sleep_for_period(cycle_start, period)
+
+
+# ── 메시지 라우터 ─────────────────────────────────────────────────────────────
+
+def dispatch(msg: str) -> None:
+    """버스 메시지를 MID 기준으로 해당 핸들러에 전달."""
+    global MOTORAPP_RUNSTATUS
+    unpacked = msgstructure.unpack_msg(msg)
+    if unpacked is False:
+        return
+    mid = unpacked.msg_id
+    if mid == appargs.MainAppArg.MID_TerminateProcess:
+        MOTORAPP_RUNSTATUS = False
+    elif mid == appargs.GpsAppArg.MID_motor_gps:
+        handle_gps(unpacked.data)
+    elif mid == appargs.ImuAppArg.MID_motor_imu:
+        handle_imu(unpacked.data)
+    elif mid == appargs.BarometerAppArg.MID_motor_alt:
+        handle_barometer(unpacked.data)
+    elif mid == appargs.FlightlogicAppArg.MID_motor_TargetCor:
+        handle_target_coord(unpacked.data)
+    elif mid == appargs.FlightlogicAppArg.MID_motor_state:
+        handle_flight_state(unpacked.data)
+    elif mid == appargs.FlightlogicAppArg.MID_motor_burnwire:
+        handle_release(unpacked.data)
+    elif mid == appargs.FlightlogicAppArg.MID_motor_EggDrop:
+        handle_egg_drop()
+    elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:
+        handle_mec(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
+        handle_fac(unpacked.data)
+
+
+# ── 초기화 / 진입점 ───────────────────────────────────────────────────────────
+
+def init() -> None:
+    """prevstate 복원 + 컨트롤러/pigpio 초기화."""
+    global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
+    global _CTRLER_t, _ORIGIN_SAVED
+
+    prevstate.init_prevstate()
+    MOTOR_ENABLED = prevstate.is_motor_enabled()
+    RELEASE_ACTION_ENABLED = True
+    EGG_ACTION_ENABLED = True
+
+    # target 좌표 복원
+    t_lat, t_lon = prevstate.get_target_gps()
+    if (-90.0 <= float(t_lat) <= 90.0
+            and -180.0 <= float(t_lon) <= 180.0
+            and not (t_lat == 0.0 and t_lon == 0.0)):
+        guidance.set_target(float(t_lat), float(t_lon))
+
+    # origin 복원 (PREV_START_LOCKED==1일 때만 반환)
+    start = prevstate.get_start_point()
+    if start is not None:
+        lat, lon = start
+        if (-90.0 <= float(lat) <= 90.0
+                and -180.0 <= float(lon) <= 180.0
+                and not (lat == 0.0 and lon == 0.0)):
+            mi = guidance._MISSION
+            mi.origin_lat   = float(lat)
+            mi.origin_lon   = float(lon)
+            mi.origin_ready = True
+            mi._raw_lat     = float(lat)
+            mi._raw_lon     = float(lon)
+            _ORIGIN_SAVED = True
+            logger.info("Origin restored from prevstate: lat=%.6f lon=%.6f", lat, lon)
+            # set_target이 _target_lat/lon을 저장한 경우 즉시 투영
+            if math.isfinite(mi._target_lat) and math.isfinite(mi._target_lon):
+                tN, tE = guidance.latlon_to_ne(mi._target_lat, mi._target_lon,
+                                               mi.origin_lat, mi.origin_lon)
+                mi.target_E     = tE
+                mi.target_N     = tN
+                mi.target_ready = True
+                logger.info("Target re-projected on init: E=%.1f N=%.1f", tE, tN)
+
+    _CTRLER_t = control.MakeCtrler()
+    PI = control.init_control()
+
+    try:
+        from . import Motor_Release
+        if hasattr(Motor_Release, "init_burnwire"):
+            Motor_Release.init_burnwire()
+    except Exception:
+        pass
+
+    try:
+        from . import Motor_Egg
+        if hasattr(Motor_Egg, "init_solenoid"):
+            Motor_Egg.init_solenoid()
+    except Exception:
+        pass
+
+    logger.info("motorapp init complete: MOTOR_ENABLED=%s", MOTOR_ENABLED)
+
+
+def motorapp_main(main_queue, main_pipe=None) -> None:
+    """모터앱 진입점. ctrl_parafoil 스레드 + dispatch 루프."""
+    global MOTORAPP_RUNSTATUS
+    if main_pipe is None:
+        main_pipe = main_queue
+        main_queue = None
+
+    init()
+
+    ctrl_thread = threading.Thread(
+        target=ctrl_parafoil,
+        args=(main_queue,),
+        daemon=True,
+        name="MotorControlLoop",
+    )
+    ctrl_thread.start()
+
+    poll_period = 1.0 / max(0.1, float(config.MOTOR_RATE_HZ))
+    try:
+        while MOTORAPP_RUNSTATUS:
+            try:
+                if main_pipe.poll(poll_period):
+                    dispatch(main_pipe.recv())
+            except (KeyboardInterrupt, EOFError, OSError):
+                break
+    except KeyboardInterrupt:
+        pass
+
+    MOTORAPP_RUNSTATUS = False
+    ctrl_thread.join(timeout=1.0)
