@@ -123,6 +123,18 @@ class DRState:
 # ── GuidanceState (매 사이클 갱신) ───────────────────────────────────────────
 
 @dataclass
+class NavState:
+    """Current navigation estimate."""
+
+    E:            float       = nan
+    N:            float       = nan
+    course:       float       = nan
+    V:            float       = nan
+    confidence:   float       = 0.0
+    control_mode: ControlMode = ControlMode.FAIL
+
+
+@dataclass
 class GuidanceState:
     """항법 추정값 + 센서 앵커 + DR 서브-상태."""
 
@@ -132,12 +144,7 @@ class GuidanceState:
     baro: BaroAnchor = field(default_factory=BaroAnchor)
 
     # ── 현재 nav 추정값 (GPS 또는 DR 결과) ───────────────────────────────
-    nav_E:            float       = nan
-    nav_N:            float       = nan
-    nav_course:       float       = nan
-    nav_V:            float       = nan
-    nav_confidence:   float       = 0.0
-    nav_control_mode: ControlMode = ControlMode.FAIL
+    nav: NavState = field(default_factory=NavState)
 
     # ── DR 서브-상태 ──────────────────────────────────────────────────────
     dr: DRState = field(default_factory=DRState)
@@ -365,7 +372,7 @@ def UpdateAnchors(gps, imu, baro, now: float) -> None:
 # ── DecideControlMode (매 사이클, freshness inline 계산) ─────────────────────
 
 def DecideControlMode(now: float) -> ControlMode:
-    """_STATE_t 기반으로 ControlMode를 결정하고 st_t.nav_control_mode에 저장."""
+    """_STATE_t 기반으로 ControlMode를 결정하고 st_t.nav.control_mode에 저장."""
     st_t = _STATE_t
 
     pos_fresh  = (st_t.gps.pos_valid
@@ -382,7 +389,7 @@ def DecideControlMode(now: float) -> ControlMode:
     # 1. DETUMBLING (최우선)
     if config.DETUMBLE_ENABLE and gyrz_fresh:
         gyrz_dps  = abs(math.degrees(st_t.imu.gyr_z))
-        currently = (st_t.nav_control_mode == ControlMode.DETUMBLING)
+        currently = (st_t.nav.control_mode == ControlMode.DETUMBLING)
         if currently:
             if gyrz_dps <= config.DETUMBLE_EXIT_THRESHOLD_DPS:
                 if not isfinite(st_t.detumble_exit_start):
@@ -392,47 +399,47 @@ def DecideControlMode(now: float) -> ControlMode:
                     st_t.detumble_exit_start = nan
                     # fallthrough to GPS/DR checks below
                 else:
-                    st_t.nav_control_mode = ControlMode.DETUMBLING
+                    st_t.nav.control_mode = ControlMode.DETUMBLING
                     return ControlMode.DETUMBLING
             else:
                 st_t.detumble_exit_start = nan
-                st_t.nav_control_mode = ControlMode.DETUMBLING
+                st_t.nav.control_mode = ControlMode.DETUMBLING
                 return ControlMode.DETUMBLING
         else:
             if gyrz_dps >= config.DETUMBLE_GYRZ_THRESHOLD_DPS:
                 st_t.detumble_exit_start = nan
-                st_t.nav_control_mode = ControlMode.DETUMBLING
+                st_t.nav.control_mode = ControlMode.DETUMBLING
                 return ControlMode.DETUMBLING
 
     # 2. GPS_TRACKING_CLOSED
     if pos_fresh and vel_fresh and gyrz_fresh:
-        st_t.nav_control_mode = ControlMode.GPS_TRACKING_CLOSED
+        st_t.nav.control_mode = ControlMode.GPS_TRACKING_CLOSED
         return ControlMode.GPS_TRACKING_CLOSED
 
     # 3. GPS_TRACKING_OPEN
     if pos_fresh and vel_fresh:
-        st_t.nav_control_mode = ControlMode.GPS_TRACKING_OPEN
+        st_t.nav.control_mode = ControlMode.GPS_TRACKING_OPEN
         return ControlMode.GPS_TRACKING_OPEN
 
     # 4. DR_TRACKING_CLOSED
     if dr_is_valid(st_t.dr) and gyrz_fresh:
-        st_t.nav_control_mode = ControlMode.DR_TRACKING_CLOSED
+        st_t.nav.control_mode = ControlMode.DR_TRACKING_CLOSED
         return ControlMode.DR_TRACKING_CLOSED
 
     # 5. DR_TRACKING_OPEN
     if dr_is_valid(st_t.dr) and yaw_fresh:
-        st_t.nav_control_mode = ControlMode.DR_TRACKING_OPEN
+        st_t.nav.control_mode = ControlMode.DR_TRACKING_OPEN
         return ControlMode.DR_TRACKING_OPEN
 
     # 6. FAIL
-    st_t.nav_control_mode = ControlMode.FAIL
+    st_t.nav.control_mode = ControlMode.FAIL
     return ControlMode.FAIL
 
 
 # ── DR 위치 추정 (내부) ───────────────────────────────────────────────────────
 
 def _update_state_from_dead_reckoning(now: float) -> None:
-    """_STATE_t.dr 앵커를 기반으로 DR 적분을 수행하고 nav_* 를 갱신."""
+    """_STATE_t.dr 앵커를 기반으로 DR 적분을 수행하고 nav 상태를 갱신."""
     st_t = _STATE_t
     dr = st_t.dr
 
@@ -446,9 +453,9 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     dt = _clamp(dt, 0.0, 0.5)
 
     # nav 위치 초기화 (첫 DR 스텝 또는 이전에 nan이면 앵커 위치로 초기화)
-    if not isfinite(st_t.nav_E) or not isfinite(st_t.nav_N):
-        st_t.nav_E = dr.anchor_E
-        st_t.nav_N = dr.anchor_N
+    if not isfinite(st_t.nav.E) or not isfinite(st_t.nav.N):
+        st_t.nav.E = dr.anchor_E
+        st_t.nav.N = dr.anchor_N
 
     imu_fresh = (isfinite(st_t.imu.ts)
                  and (now - st_t.imu.ts) <= config.IMU_FRESH_MAX_AGE_S)
@@ -482,17 +489,17 @@ def _update_state_from_dead_reckoning(now: float) -> None:
             method = DRMethod.GYRO_ACC_BLEND
 
     # ⑥ 위치 갱신
-    st_t.nav_E      += vE * dt
-    st_t.nav_N      += vN * dt
-    st_t.nav_V       = V_dr
-    st_t.nav_course  = course_est
+    st_t.nav.E      += vE * dt
+    st_t.nav.N      += vN * dt
+    st_t.nav.V       = V_dr
+    st_t.nav.course  = course_est
     dr.method      = method
     dr.last_step_time = now
 
     # ⑦ 신뢰도: DR은 유지하고 L1 yaw-rate 명령만 시간에 따라 약화한다.
     confidence = _compute_dr_confidence(now - dr.anchor_time)
     dr.confidence = confidence
-    st_t.nav_confidence = confidence
+    st_t.nav.confidence = confidence
 
 
 # ── ProduceL1Input ────────────────────────────────────────────────────────────
@@ -500,7 +507,7 @@ def _update_state_from_dead_reckoning(now: float) -> None:
 def ProduceL1Input(now: float) -> L1Input:
     """_STATE_t + _MISSION으로 L1Input을 생성.
 
-    이 함수는 내부 상태(nav_*)를 갱신하는 부수 효과가 있다.
+    이 함수는 내부 nav 상태를 갱신하는 부수 효과가 있다.
     """
     st_t = _STATE_t
     mi_t = _MISSION_t
@@ -532,7 +539,7 @@ def ProduceL1Input(now: float) -> L1Input:
     if not mi_t.target_ready:
         return L1Input(valid=False, reason="NO_TARGET")
 
-    mode = st_t.nav_control_mode
+    mode = st_t.nav.control_mode
 
     # ── DETUMBLING ────────────────────────────────────────────────────────────
     if mode == ControlMode.DETUMBLING:
@@ -540,7 +547,7 @@ def ProduceL1Input(now: float) -> L1Input:
             valid=True, reason="DETUMBLING",
             control_mode=ControlMode.DETUMBLING, dr_method=DRMethod.NONE,
             confidence=1.0,
-            E=st_t.nav_E, N=st_t.nav_N, V=st_t.nav_V, course=st_t.nav_course,
+            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
             target_E=mi_t.target_E, target_N=mi_t.target_N,
         )
 
@@ -550,11 +557,11 @@ def ProduceL1Input(now: float) -> L1Input:
                 and isfinite(st_t.gps.V) and isfinite(st_t.gps.course)):
             return L1Input(valid=False, reason="GPS_NAN")
 
-        st_t.nav_E          = st_t.gps.E
-        st_t.nav_N          = st_t.gps.N
-        st_t.nav_course     = st_t.gps.course
-        st_t.nav_V          = st_t.gps.V
-        st_t.nav_confidence = 1.0
+        st_t.nav.E          = st_t.gps.E
+        st_t.nav.N          = st_t.gps.N
+        st_t.nav.course     = st_t.gps.course
+        st_t.nav.V          = st_t.gps.V
+        st_t.nav.confidence = 1.0
 
         # DR 앵커 갱신
         imu_yaw = st_t.imu.yaw if st_t.imu.yaw_valid else nan
@@ -563,7 +570,7 @@ def ProduceL1Input(now: float) -> L1Input:
         return L1Input(
             valid=True, reason="GPS_TRACKING",
             control_mode=mode, dr_method=DRMethod.NONE, confidence=1.0,
-            E=st_t.nav_E, N=st_t.nav_N, V=st_t.nav_V, course=st_t.nav_course,
+            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
             target_E=mi_t.target_E, target_N=mi_t.target_N,
         )
 
@@ -599,7 +606,7 @@ def ProduceL1Input(now: float) -> L1Input:
             valid=True, reason="DR_TRACKING",
             control_mode=mode, dr_method=st_t.dr.method,
             confidence=st_t.dr.confidence,
-            E=st_t.nav_E, N=st_t.nav_N, V=st_t.nav_V, course=st_t.nav_course,
+            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
             target_E=mi_t.target_E, target_N=mi_t.target_N,
         )
 
