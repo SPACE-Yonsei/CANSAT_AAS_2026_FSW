@@ -433,9 +433,12 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global _CTRLER_t, _ORIGIN_SAVED
+    global _CTRLER_t, _ORIGIN_SAVED, STATE
 
     prevstate.init_prevstate()
+    # Restore flight state so _ctrl_cycle is not blocked on the first cycle.
+    # Without this, STATE stays 0 until flightlogicapp sends MID_motor_state.
+    STATE = prevstate.PREV_STATE
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
