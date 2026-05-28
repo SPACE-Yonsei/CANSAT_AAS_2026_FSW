@@ -95,6 +95,9 @@ def _run_case(name, pos_E, pos_N, course_deg, speed_mps, gyrz_dps, mode):
     now = time.monotonic()
     course_rad = math.radians(course_deg)
 
+    # 케이스마다 이전 케이스 서보 위치 영향을 차단 (슬루율 기준점 리셋)
+    control.controller_reset(ctrler)
+
     l1in = L1Input(
         valid        = True,
         reason       = "BENCH",
@@ -138,6 +141,7 @@ def _run_detumble(name, gyrz_dps):
     """
     now = time.monotonic()
 
+    control.controller_reset(ctrler)
     ctrl_in_dtb = control.CtrlInput(
         angular_velocity_cmd_deg_s = 0.0,
         valid        = True,
