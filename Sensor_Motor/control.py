@@ -192,10 +192,10 @@ def controller_reset(ctl: Ctrler) -> None:
 
 def WriteNeutral(now: float, mode: str = CTRL_MODE_NEUTRAL) -> CtrlOutput:
     """중립 PWM CtrlOutput 생성. 하드웨어 접촉 없음."""
-    cmd = CtrlOutput(timestamp=now)
-    cmd.mode = mode
-    cmd.fallback_mode = mode
-    return cmd
+    cmd_t = CtrlOutput(timestamp=now)
+    cmd_t.mode = mode
+    cmd_t.fallback_mode = mode
+    return cmd_t
 
 
 # ── 입력 변환 (guidance → control 단위 변환) ─────────────────────────────────
