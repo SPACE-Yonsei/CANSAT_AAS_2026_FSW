@@ -20,19 +20,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from lib import config
+from .guidance import ControlMode
 
 logger = logging.getLogger(__name__)
 
 
 # ── 모드 / 폴백 문자열 상수 ───────────────────────────────────────────────────
-CTRL_MODE_NEUTRAL          = "NEUTRAL"
-CTRL_MODE_CLOSED_LOOP      = "CLOSED_LOOP"
-CTRL_MODE_FEEDFORWARD_ONLY = "FEEDFORWARD_ONLY"
-
-CTRL_FALLBACK_NONE                = "NONE"
-CTRL_FALLBACK_GYRO_SPIKE          = "GYRO_SPIKE"
-
-
 # ── GPIO + 서보 캘리브레이션 (config에서 읽음) ────────────────────────────────
 PARAFOIL_LEFT_MOTOR_PIN  = config.PARAFOIL_LEFT_GPIO
 PARAFOIL_RIGHT_MOTOR_PIN = config.PARAFOIL_RIGHT_GPIO
@@ -82,11 +75,14 @@ def _clamp_dt(now: float, previous: float, default: float,
     return max(lo, min(hi, dt)) if math.isfinite(dt) else default
 
 
-def _is_detumbling_mode(control_mode) -> bool:
-    return (
-        control_mode == config.CONTROL_MODE_DETUMBLING
-        or getattr(control_mode, "value", None) == config.CONTROL_MODE_DETUMBLING
-    )
+def _as_control_mode(value) -> ControlMode:
+    if isinstance(value, ControlMode):
+        return value
+    raw = getattr(value, "value", value)
+    try:
+        return ControlMode(str(raw))
+    except (TypeError, ValueError):
+        return ControlMode.FAIL
 
 
 # ── Dataclass 정의 ────────────────────────────────────────────────────────────
@@ -135,7 +131,7 @@ class CtrlInput:
     valid:                      bool  = False
     timestamp:                  float = 0.0
     pid_enabled:                bool  = True
-    control_mode:  Optional[str]   = None
+    control_mode:  ControlMode     = ControlMode.FAIL
     dr_method:     Optional[str]   = None
     kp_override:   Optional[float] = None
 
@@ -156,9 +152,9 @@ class CtrlOutput:
     motor_cmd:     float = 0.0
     saturated:     bool  = False
     sensor_valid:  bool  = False
+    gyro_rejected: bool  = False
     valid:         bool  = False
-    mode:          str   = CTRL_MODE_NEUTRAL
-    fallback_mode: str   = CTRL_FALLBACK_NONE
+    control_mode:  ControlMode = ControlMode.FAIL
 
 
 # ── 팩토리 / 리셋 / 중립 ──────────────────────────────────────────────────────
@@ -175,12 +171,9 @@ def controller_reset(ctl: Ctrler) -> None:
     ctl.prev_right_angle_deg = NEUTRAL_ARM_DEG
 
 
-def WriteNeutral(now: float, mode: str = CTRL_MODE_NEUTRAL) -> CtrlOutput:
+def WriteNeutral(now: float, control_mode: ControlMode = ControlMode.FAIL) -> CtrlOutput:
     """중립 PWM CtrlOutput 생성. 하드웨어 접촉 없음."""
-    cmd_t = CtrlOutput(timestamp=now)
-    cmd_t.mode = mode
-    cmd_t.fallback_mode = mode
-    return cmd_t
+    return CtrlOutput(timestamp=now, control_mode=_as_control_mode(control_mode))
 
 
 # ── 입력 변환 (guidance → control 단위 변환) ─────────────────────────────────
@@ -200,7 +193,7 @@ def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
         valid=is_valid,
         timestamp=float(getattr(l1_output, "timestamp", now) or now),
         pid_enabled=bool(getattr(l1_output, "pid_enabled", True)),
-        control_mode=getattr(l1_output, "control_mode", None),
+        control_mode=_as_control_mode(getattr(l1_output, "control_mode", ControlMode.FAIL)),
         dr_method=getattr(l1_output, "dr_method", None),
         kp_override=getattr(l1_output, "kp_override", None),
     )
@@ -258,23 +251,19 @@ def ProduceCtrlOutput(
       5. FF + PID 합산, DELTA_TOTAL_MAX_DEG로 클램핑.
       6. Arm 각도 slew-rate 제한 후 PWM 출력.
     """
-    out_t = CtrlOutput(timestamp=now)
+    control_mode = _as_control_mode(cmd.control_mode)
+    out_t = CtrlOutput(timestamp=now, control_mode=control_mode)
     cfg_t = ctl.config
 
     # ── 유효하지 않은 명령 → 중립 ────────────────────────────────────────────
     if not cmd.valid:
-        out_t.mode = CTRL_MODE_NEUTRAL
-        out_t.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
         return out_t
 
     # ── NaN 명령 → 중립 ──────────────────────────────────────────────────────
     angular_velocity_cmd_deg_s = float(cmd.angular_velocity_cmd_deg_s)
     if not math.isfinite(angular_velocity_cmd_deg_s):
-        out_t.mode = CTRL_MODE_NEUTRAL
-        out_t.fallback_mode = CTRL_FALLBACK_NONE
         return out_t
     raw_cmd = angular_velocity_cmd_deg_s   # 원본 명령 (클램프 포화 판정 기준)
-    out_t.fallback_mode = CTRL_FALLBACK_NONE
 
     # ── yaw-rate 명령 클램핑 ──────────────────────────────────────────────────
     angular_velocity_cmd_deg_s = _clamp(
@@ -298,26 +287,19 @@ def ProduceCtrlOutput(
     gyro_spike   = gyro_finite and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
     sensor_valid = gyro_finite and not gyro_spike
     out_t.sensor_valid = sensor_valid
-    if gyro_spike:
-        out_t.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
+    out_t.gyro_rejected = gyro_spike
 
-    detumbling_active = _is_detumbling_mode(cmd.control_mode)
-    if detumbling_active:
-        out_t = ProduceDetumbleOutput(now, angular_velocity_meas_deg_s)
-        ctl.pid.prev_time = now
-        ctl.prev_left_angle_deg = out_t.left_angle_deg
-        ctl.prev_right_angle_deg = out_t.right_angle_deg
-        return out_t
-
-    # ── PID 폐루프 / 텀블링 제동 ──────────────────────────────────────────────
+    # ── PID 폐루프 ────────────────────────────────────────────────────────────
+    # ProduceCtrlOutput은 GPS_TRACKING_CLOSED / GPS_TRACKING_OPEN /
+    # DR_TRACKING_CLOSED / DR_TRACKING_OPEN 에서만 호출된다.
+    # DETUMBLING은 motorapp._ctrl_cycle → ProduceDetumbleOutput() 경로만 사용.
     integral  = ctl.pid.integral_deg
     delta_pid = 0.0
     error     = 0.0
     delta_sum = delta_ff
 
     pid_active = bool(
-        (not detumbling_active)
-        and cmd.pid_enabled
+        cmd.pid_enabled
         and cfg_t.DELTA_PID_MAX_DEG > 0.0
         and sensor_valid
     )
@@ -339,13 +321,11 @@ def ProduceCtrlOutput(
         )
         integral = integral_candidate
         out_t.angular_velocity_error_deg_s = error
-        out_t.mode  = CTRL_MODE_CLOSED_LOOP
         delta_sum = delta_ff + delta_pid
 
     else:
         # gyro 없음: FF만 사용. 누적 windup 감쇄.
         integral = ctl.pid.integral_deg * INTEGRAL_DECAY_RATE
-        out_t.mode  = CTRL_MODE_FEEDFORWARD_ONLY
         delta_sum = delta_ff
 
     # ── 합산 + 총 클램핑 ──────────────────────────────────────────────────────
@@ -390,7 +370,7 @@ def ProduceCtrlOutput(
         )
         if not error_aggravates:
             ctl.pid.integral_deg = integral
-    elif not detumbling_active:
+    else:
         ctl.pid.integral_deg = integral
 
     ctl.pid.prev_time           = now
@@ -411,17 +391,14 @@ def ProduceDetumbleOutput(
     left rotation (gyrz < 0)  -> left=0,   right=160
     right rotation (gyrz > 0) -> left=160, right=0
     """
-    out_t = CtrlOutput(timestamp=now)
-    out_t.mode = config.CONTROL_MODE_DETUMBLING
-    out_t.fallback_mode = CTRL_FALLBACK_NONE
+    out_t = CtrlOutput(timestamp=now, control_mode=ControlMode.DETUMBLING)
     out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
 
     gyro_finite = math.isfinite(angular_velocity_meas_deg_s)
     gyro_spike = gyro_finite and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
     sensor_valid = gyro_finite and not gyro_spike
     out_t.sensor_valid = sensor_valid
-    if gyro_spike:
-        out_t.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
+    out_t.gyro_rejected = gyro_spike
     if not sensor_valid or abs(angular_velocity_meas_deg_s) <= config.CTRL_ERROR_DEADBAND_DEG_S:
         out_t.valid = True
         return out_t

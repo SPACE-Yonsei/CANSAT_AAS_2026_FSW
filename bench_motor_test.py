@@ -1,250 +1,283 @@
 #!/usr/bin/env python3
 """
-bench_motor_test.py — 모터 알고리즘 직접 검증 스크립트
-====================================================
-main.py / 멀티프로세싱 없이 guidance→control 파이프라인을 직접 실행하고
-실제 서보를 구동하여 알고리즘을 검증합니다.
+bench_motor_test.py - motor guidance/control one-shot bench
+===========================================================
 
-사전 준비 (Raspberry Pi):
-  sudo pigpiod              # pigpio 데몬 기동
-  cd /workspace/CANSAT_AAS_2026_FSW
+main.py 없이 guidance/control 파이프라인을 직접 실행하고, pigpio가 연결된
+환경에서는 실제 서보까지 구동한다.
+
+현재 제어 기준:
+  - 타겟 거리 기반 "도달 시 중립" 특수 처리는 없다.
+  - bearing은 현재 위치에서 타겟을 보는 절대 방위각이다.
+  - nu는 bearing - course로 계산되는 방향 오차다.
+  - detumbling은 guidance/L1/PID를 거치지 않고 ProduceDetumbleOutput()을 직접 쓴다.
+
+사용:
+  sudo pigpiod
   python3 bench_motor_test.py
 
-각 케이스: Enter → 다음 케이스 / q+Enter → 종료
-Ctrl+C → 서보 중립 복귀 후 종료
+Enter: 다음 케이스 / q+Enter: 종료
+Ctrl+C: 서보 중립 복귀 후 종료
 """
-import sys
-import os
-import time
-import math
 
-# ── FSW 경로 설정 (스크립트 위치 = FSW 루트) ─────────────────────────────────
+import math
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from Sensor_Motor import guidance, control
-from Sensor_Motor.guidance import L1Input, ControlMode, DRMethod
+from Sensor_Motor import control, guidance
+from Sensor_Motor.guidance import ControlMode, DRMethod, L1Input
 from lib import config
 
-# ── pigpio 초기화 ─────────────────────────────────────────────────────────────
+
+ORIGIN_LAT, ORIGIN_LON = 37.5000, 127.0000
+TARGET_LAT, TARGET_LON = 37.5000, 127.0010
+
+
 try:
     import pigpio
+
     pi = pigpio.pi()
     if pi.connected:
-        print("[OK ] pigpio 연결 성공")
+        print("[OK ] pigpio connected")
     else:
-        print("[WARN] pigpio 연결 실패 — 계산만 표시 (서보 미구동)")
+        print("[WARN] pigpio connection failed. Calculation-only mode.")
         pi = None
 except ImportError:
-    print("[WARN] pigpio 미설치 — 계산만 표시 (서보 미구동)")
+    print("[WARN] pigpio is not installed. Calculation-only mode.")
     pi = None
 
-# ── guidance origin / target 설정 ─────────────────────────────────────────────
-# prevstate.json 과 동일하게 맞춰야 main.py 실행과 일치함
-ORIGIN_LAT, ORIGIN_LON = 37.5000, 127.0000
-TARGET_LAT, TARGET_LON = 37.5000, 127.0010   # 동쪽 88.2m
 
-# origin 직접 주입 (GPS 잠금 없이 사용)
-mi = guidance._MISSION_t
-mi.origin_lat   = ORIGIN_LAT
-mi.origin_lon   = ORIGIN_LON
-mi.origin_ready = True
-mi._raw_lat     = ORIGIN_LAT
-mi._raw_lon     = ORIGIN_LON
+def _wrap_deg(angle_deg: float) -> float:
+    while angle_deg > 180.0:
+        angle_deg -= 360.0
+    while angle_deg < -180.0:
+        angle_deg += 360.0
+    return angle_deg
 
-# target 설정 + ENU 투영
-guidance.set_target(TARGET_LAT, TARGET_LON)
-tN, tE = guidance.latlon_to_ne(TARGET_LAT, TARGET_LON, ORIGIN_LAT, ORIGIN_LON)
-mi.target_E = tE
-mi.target_N = tN
-mi.target_ready = True
 
-print(f"[SETUP] Origin ({ORIGIN_LAT}, {ORIGIN_LON})  →  (0, 0) m")
-print(f"[SETUP] Target ({TARGET_LAT}, {TARGET_LON})  →  (E={tE:.1f}m, N={tN:.1f}m)\n")
+def _deg_text(value_rad: float) -> str:
+    if not math.isfinite(value_rad):
+        return "N/A"
+    return f"{math.degrees(value_rad):+.1f}deg"
 
-# ── 컨트롤러 인스턴스 ─────────────────────────────────────────────────────────
+
+def _configure_mission() -> tuple[float, float]:
+    guidance.reset()
+    mi = guidance._MISSION_t
+    mi.origin_lat = ORIGIN_LAT
+    mi.origin_lon = ORIGIN_LON
+    mi.origin_ready = True
+    mi._raw_lat = ORIGIN_LAT
+    mi._raw_lon = ORIGIN_LON
+
+    guidance.set_target(TARGET_LAT, TARGET_LON)
+    target_N, target_E = guidance.latlon_to_ne(
+        TARGET_LAT,
+        TARGET_LON,
+        ORIGIN_LAT,
+        ORIGIN_LON,
+    )
+    mi.target_E = target_E
+    mi.target_N = target_N
+    mi.target_ready = True
+    return target_E, target_N
+
+
+tE, tN = _configure_mission()
 ctrler = control.MakeCtrler()
 
-# ── pigpio 서보 초기화 ────────────────────────────────────────────────────────
+
 if pi is not None:
-    pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  control.LEFT_NEUTRAL)
+    pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN, control.LEFT_NEUTRAL)
     pi.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, control.RIGHT_NEUTRAL)
-    print(f"[SERVO] 중립 설정: LEFT={control.LEFT_NEUTRAL}µs  RIGHT={control.RIGHT_NEUTRAL}µs\n")
+    print(
+        "[SERVO] neutral: "
+        f"LEFT={control.LEFT_NEUTRAL}us RIGHT={control.RIGHT_NEUTRAL}us"
+    )
 
 
-# ── 헬퍼 ──────────────────────────────────────────────────────────────────────
-
-def _nu_deg(pos_E, pos_N, course_deg):
-    """주어진 위치/방향에서의 nu(횡거 오차각) 계산 (deg)."""
+def _bearing_nu_deg(pos_E: float, pos_N: float, course_deg: float) -> tuple[float, float]:
     dE = tE - pos_E
     dN = tN - pos_N
-    if math.hypot(dE, dN) < config.TARGET_RADIUS_M:
-        return 0.0
     bearing = math.degrees(math.atan2(dE, dN))
-    nu = bearing - course_deg
-    # wrap [-180, 180]
-    while nu >  180: nu -= 360
-    while nu < -180: nu += 360
-    return nu
+    nu = _wrap_deg(bearing - course_deg)
+    return bearing, nu
 
 
-def _run_case(name, pos_E, pos_N, course_deg, speed_mps, gyrz_dps, mode):
-    """
-    L1Input 직접 구성 → ProduceL1Output → ProduceCtrlInput → ProduceCtrlOutput
-    → MoveServo 순으로 실행하고 결과를 출력.
-    """
+def _applied_delta(out: control.CtrlOutput) -> float:
+    return out.right_angle_deg - out.left_angle_deg
+
+
+def _move_or_print(out: control.CtrlOutput) -> None:
+    if pi is not None:
+        control.MoveServo(pi, out)
+        print("  [HW ] servo moved")
+    else:
+        print("  [SIM] pigpio unavailable, servo not moved")
+
+
+def _run_tracking_case(
+    pos_E: float,
+    pos_N: float,
+    course_deg: float,
+    speed_mps: float,
+    gyrz_dps: float,
+    mode: ControlMode,
+) -> None:
     now = time.monotonic()
-    course_rad = math.radians(course_deg)
-
-    # 케이스마다 이전 케이스 서보 위치 영향을 차단 (슬루율 기준점 리셋)
     control.controller_reset(ctrler)
 
-    l1in = L1Input(
-        valid        = True,
-        reason       = "BENCH",
-        control_mode = mode,
-        dr_method    = DRMethod.NONE,
-        confidence   = 1.0,
-        E            = pos_E,
-        N            = pos_N,
-        V            = speed_mps,
-        course       = course_rad,
-        target_E     = tE,
-        target_N     = tN,
+    l1_in = L1Input(
+        valid=True,
+        reason="BENCH",
+        control_mode=mode,
+        dr_method=DRMethod.NONE,
+        confidence=1.0,
+        E=pos_E,
+        N=pos_N,
+        V=speed_mps,
+        course=math.radians(course_deg),
+        target_E=tE,
+        target_N=tN,
     )
 
-    l1out  = guidance.ProduceL1Output(l1in)
-    ctrl_in  = control.ProduceCtrlInput(l1out, now)
+    l1_out = guidance.ProduceL1Output(l1_in)
+    ctrl_in = control.ProduceCtrlInput(l1_out, now)
     ctrl_out = control.ProduceCtrlOutput(ctrler, ctrl_in, gyrz_dps, now)
 
-    nu_deg = _nu_deg(pos_E, pos_N, course_deg)
-    dist   = math.hypot(tE - pos_E, tN - pos_N)
-
-    print(f"  위치 : E={pos_E:+7.1f}m  N={pos_N:+7.1f}m  (타겟까지 {dist:.1f}m)")
-    print(f"  비행 : course={course_deg:.1f}°  speed={speed_mps:.1f}m/s  gyrz={gyrz_dps:+.1f}dps")
-    print(f"  L1   : nu={nu_deg:+.1f}°  bearing={math.degrees(l1out.target_bearing) if math.isfinite(l1out.target_bearing) else 'N/A':.1f}°  reason={l1out.reason}")
-    print(f"  CMD  : yaw_rate={math.degrees(l1out.yaw_rate_cmd):+.2f}dps  ctrl_mode={ctrl_out.mode}")
-    actual_delta = ctrl_out.right_angle_deg - ctrl_out.left_angle_deg  # ConnectRoMo 역산
-    slew_note = " ⚠ slew" if abs(ctrl_out.delta_arm_deg - (ctrl_out.right_angle_deg - ctrl_out.left_angle_deg + (control.NEUTRAL_ARM_DEG - ctrl_out.left_angle_deg)*2 - ctrl_out.delta_arm_deg)) > 1.0 else ""
-    applied_delta = (ctrl_out.right_angle_deg - control.NEUTRAL_ARM_DEG) * 2
+    bearing_deg, nu_deg = _bearing_nu_deg(pos_E, pos_N, course_deg)
+    dist = math.hypot(tE - pos_E, tN - pos_N)
+    applied_delta = _applied_delta(ctrl_out)
     slew_limited = abs(ctrl_out.delta_arm_deg - applied_delta) > 0.5
-    print(f"  SERVO: left={ctrl_out.left_angle_deg:.1f}°({ctrl_out.left_pw}µs)  "
-          f"right={ctrl_out.right_angle_deg:.1f}°({ctrl_out.right_pw}µs)")
-    print(f"  DELTA: 목표={ctrl_out.delta_arm_deg:+.1f}°  "
-          f"적용={applied_delta:+.1f}°"
-          + ("  ⚠ slew 제한됨" if slew_limited else "  ✓"))
 
-    if pi is not None:
-        control.MoveServo(pi, ctrl_out)
-        print(f"  [HW ] 서보 구동 완료")
-    else:
-        print(f"  [SIM] (pigpio 없음 — 실제 구동 없음)")
-
-
-def _run_detumble(name, gyrz_dps):
-    """
-    DETUMBLING 브레이크 경로:
-      ProduceCtrlOutput(DETUMBLING, gyrz) → delta = -sign(gyrz) × 80°
-    """
-    now = time.monotonic()
-
-    control.controller_reset(ctrler)
-    ctrl_in_dtb = control.CtrlInput(
-        angular_velocity_cmd_deg_s = 0.0,
-        valid        = True,
-        pid_enabled  = False,
-        control_mode = config.CONTROL_MODE_DETUMBLING,
+    print(f"  pos    : E={pos_E:+7.1f}m  N={pos_N:+7.1f}m  dist={dist:.1f}m")
+    print(
+        f"  flight : course={course_deg:+.1f}deg  "
+        f"speed={speed_mps:.1f}m/s  gyrz={gyrz_dps:+.1f}dps"
     )
-    out_brake = control.ProduceCtrlOutput(ctrler, ctrl_in_dtb, gyrz_dps, now)
-    print(f"  gyrz    : {gyrz_dps:+.1f} dps  →  delta = {out_brake.delta_arm_deg:+.1f}°  (브레이크)")
-    print(f"  SERVO   : left={out_brake.left_angle_deg:.1f}°({out_brake.left_pw}µs)  "
-          f"right={out_brake.right_angle_deg:.1f}°({out_brake.right_pw}µs)")
-    if pi is not None:
-        control.MoveServo(pi, out_brake)
-        print(f"  [HW ] 서보 구동 완료")
-    else:
-        print(f"  [SIM] (pigpio 없음)")
+    print(
+        f"  L1     : bearing={bearing_deg:+.1f}deg  "
+        f"nu={nu_deg:+.1f}deg  out_bearing={_deg_text(l1_out.target_bearing)}  "
+        f"reason={l1_out.reason}"
+    )
+    print(
+        f"  CMD    : yaw_rate={math.degrees(l1_out.yaw_rate_cmd):+.2f}dps  "
+        f"ctrl_mode={ctrl_out.mode}  fallback={ctrl_out.fallback_mode}"
+    )
+    print(
+        f"  SERVO  : left={ctrl_out.left_angle_deg:.1f}deg({ctrl_out.left_pw}us)  "
+        f"right={ctrl_out.right_angle_deg:.1f}deg({ctrl_out.right_pw}us)"
+    )
+    print(
+        f"  DELTA  : target={ctrl_out.delta_arm_deg:+.1f}deg  "
+        f"applied={applied_delta:+.1f}deg"
+        + ("  (slew limited)" if slew_limited else "")
+    )
+    _move_or_print(ctrl_out)
 
 
-# ── 테스트 케이스 정의 ────────────────────────────────────────────────────────
-#
-# 좌표평면 (origin=0,0, target=(+88.2, 0)):
-#
-#       N
-#       ↑
-# +111  │  ★ CASE2 (E=0,N=111)
-#       │   ↓ course=90°→
-#       │    \
-#       │     \ nu=+52°
-#       │      ↘
-#   0   ├────────────◎─────────────── E
-#       │  CASE3→ (0,0)  TARGET(88,0)
-#       │  (E=200,N=0,course=0°↑)
-#       │  nu=-90°
-#
+def _run_detumble_case(gyrz_dps: float) -> None:
+    now = time.monotonic()
+    control.controller_reset(ctrler)
+
+    out = control.ProduceDetumbleOutput(now, gyrz_dps)
+    print(
+        f"  gyrz   : {gyrz_dps:+.1f}dps  "
+        f"delta={out.delta_arm_deg:+.1f}deg  mode={out.mode}"
+    )
+    print(
+        f"  SERVO  : left={out.left_angle_deg:.1f}deg({out.left_pw}us)  "
+        f"right={out.right_angle_deg:.1f}deg({out.right_pw}us)"
+    )
+    _move_or_print(out)
+
 
 CASES = [
-    # ── (label, run_func, args) ───────────────────────────────────────────────
-
-    ("CASE 1  │ 타겟 정면 직진  (nu≈0°, 데드밴드 내 → 중립)",
-     "gps", (tE - 20.0, 0.0, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED)),
-
-    ("CASE 2  │ 북쪽 111m, 동쪽 비행 → 오른쪽 선회  (nu=+52° → delta≈+101°)",
-     "gps", (0.0, 111.3, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED)),
-
-    ("CASE 3  │ 동쪽 200m, 북쪽 비행 → 왼쪽 선회  (nu=-90° → delta≈-132°)",
-     "gps", (200.0, 0.0, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED)),
-
-    ("CASE 4  │ 북서쪽 50m, 동쪽 비행 → 약한 오른쪽  (nu≈+30° → delta≈+64°)",
-     "gps", (0.0, 50.0, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED)),
-
-    ("CASE 5  │ 타겟 도달 (dist < 5m → nu=0, 중립)",
-     "gps", (tE - 2.0, 0.0, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED)),
-
-    ("CASE 6  │ DETUMBLING — 시계방향 +250dps",
-     "dtb", (250.0,)),
-
-    ("CASE 7  │ DETUMBLING — 반시계방향 -250dps",
-     "dtb", (-250.0,)),
+    (
+        "CASE 1 | target ahead, straight",
+        "gps",
+        (tE - 20.0, tN, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+    ),
+    (
+        "CASE 2 | north of path, eastbound -> right turn",
+        "gps",
+        (0.0, tN + 111.3, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+    ),
+    (
+        "CASE 3 | east of target, northbound -> left turn",
+        "gps",
+        (tE + 111.8, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+    ),
+    (
+        "CASE 4 | weak right command",
+        "gps",
+        (0.0, tN + 50.0, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+    ),
+    (
+        "CASE 5 | near target, northbound -> still commands turn",
+        "gps",
+        (tE - 2.0, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+    ),
+    (
+        "CASE 6 | DETUMBLING, right rotation +250dps",
+        "dtb",
+        (250.0,),
+    ),
+    (
+        "CASE 7 | DETUMBLING, left rotation -250dps",
+        "dtb",
+        (-250.0,),
+    ),
 ]
 
 
-# ── 메인 루프 ─────────────────────────────────────────────────────────────────
-
-def main():
-    print("=" * 65)
-    print(" bench_motor_test.py  —  모터 알고리즘 직접 검증")
-    print("=" * 65)
-    print(f" 중립 참조: left={control.NEUTRAL_ARM_DEG}°({control.LEFT_NEUTRAL}µs)  "
-          f"right={control.NEUTRAL_ARM_DEG}°({control.RIGHT_NEUTRAL}µs)")
-    print(f" DELTA_ARM_MAX = {control.DELTA_ARM_MAX_DEG:.0f}°   "
-          f"NU_DEADBAND = {config.NU_DEADBAND_DEG}°")
-    print("=" * 65)
-    print(" Enter: 다음 케이스 │ q: 종료\n")
+def main() -> None:
+    print("=" * 70)
+    print(" bench_motor_test.py - current motor control bench")
+    print("=" * 70)
+    print(f" Origin: ({ORIGIN_LAT:.7f}, {ORIGIN_LON:.7f}) -> E=0.0m, N=0.0m")
+    print(
+        f" Target: ({TARGET_LAT:.7f}, {TARGET_LON:.7f}) "
+        f"-> E={tE:.1f}m, N={tN:.1f}m"
+    )
+    print(
+        f" Neutral: left={control.NEUTRAL_ARM_DEG:.1f}deg({control.LEFT_NEUTRAL}us)  "
+        f"right={control.NEUTRAL_ARM_DEG:.1f}deg({control.RIGHT_NEUTRAL}us)"
+    )
+    print(
+        f" Limits : arm=[{control.ARM_MIN_DEG:.0f}, {control.ARM_MAX_DEG:.0f}]deg  "
+        f"delta_max={control.DELTA_ARM_MAX_DEG:.0f}deg  "
+        f"nu_deadband={config.NU_DEADBAND_DEG:.1f}deg"
+    )
+    print("=" * 70)
+    print("Enter: next case / q: quit\n")
 
     try:
-        for i, (label, kind, args) in enumerate(CASES):
-            print(f"\n{'─'*65}")
+        for label, kind, args in CASES:
+            print("\n" + "-" * 70)
             print(f" {label}")
-            print(f"{'─'*65}")
+            print("-" * 70)
 
             if kind == "gps":
-                _run_case(label, *args)
+                _run_tracking_case(*args)
             elif kind == "dtb":
-                _run_detumble(label, *args)
+                _run_detumble_case(*args)
 
-            user = input("\n  [Enter=다음  q=종료] > ").strip().lower()
+            user = input("\n  [Enter=next  q=quit] > ").strip().lower()
             if user == "q":
                 break
-
     except KeyboardInterrupt:
         pass
     finally:
-        print("\n[EXIT] 서보 중립 복귀 후 종료")
+        print("\n[EXIT] neutral/off and stop")
         if pi is not None:
-            pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  control.LEFT_NEUTRAL)
+            pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN, control.LEFT_NEUTRAL)
             pi.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, control.RIGHT_NEUTRAL)
             time.sleep(0.3)
-            pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  0)
+            pi.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN, 0)
             pi.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, 0)
             pi.stop()
 

@@ -578,8 +578,8 @@ def print_cycle_output(sim: Simulator, ctrl_out: control.CtrlOutput | None) -> N
     else:
         print(
             "control: "
-            f"valid={int(ctrl_out.valid)} mode={ctrl_out.mode} "
-            f"fallback={ctrl_out.fallback_mode} sensor={int(ctrl_out.sensor_valid)} "
+            f"valid={int(ctrl_out.valid)} control_mode={ctrl_out.control_mode.value} "
+            f"sensor={int(ctrl_out.sensor_valid)} gyro_rejected={int(ctrl_out.gyro_rejected)} "
             f"sat={int(ctrl_out.saturated)} "
             f"cmd={ctrl_out.angular_velocity_cmd_deg_s:.2f}deg/s "
             f"meas={safe_num(ctrl_out.angular_velocity_meas_deg_s):.2f}deg/s "

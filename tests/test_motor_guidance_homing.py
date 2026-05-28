@@ -496,7 +496,7 @@ class TestMotorOutput(unittest.TestCase):
         measured_dps = 50.0
         cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
                                          measured_dps, _now())
-        self.assertEqual(cmd.mode, config.CONTROL_MODE_DETUMBLING)
+        self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_arm_deg, -config.DETUMBLE_BRAKE_DELTA_DEG)
@@ -527,14 +527,14 @@ class TestMotorOutput(unittest.TestCase):
         ctl = control.MakeCtrler()
         cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
                                          float("nan"), _now())
-        self.assertEqual(cmd.mode, config.CONTROL_MODE_DETUMBLING)
+        self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertFalse(cmd.sensor_valid)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_arm_deg, 0.0)
 
-    def test_open_mode_feedforward_only(self):
-        """GPS_TRACKING_OPEN should run feedforward-only (no PID trim)."""
+    def test_open_mode_keeps_guidance_control_mode(self):
+        """GPS_TRACKING_OPEN remains the only reported control mode."""
         l1 = self._make_gps_tracking_l1(closed=False)
         g_out = produceL1output(l1)
         # In open mode the controller still runs PID; pid_enabled is True for L1 modes.
@@ -542,7 +542,7 @@ class TestMotorOutput(unittest.TestCase):
         cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
                                          float("nan"), _now())
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
-        self.assertEqual(cmd.mode, control.CTRL_MODE_FEEDFORWARD_ONLY)
+        self.assertEqual(cmd.control_mode, ControlMode.GPS_TRACKING_OPEN)
 
     def test_yaw_rate_limit_applied(self):
         """produceL1output clamps yaw_rate_cmd to the mode limit."""

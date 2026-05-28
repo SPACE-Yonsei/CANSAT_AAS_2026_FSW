@@ -6,7 +6,7 @@ import time
 import unittest
 from unittest import mock
 
-from Sensor_Motor import control
+from Sensor_Motor import control, guidance
 
 
 class _FakePi:
@@ -149,10 +149,9 @@ class TestNeutralCommand(unittest.TestCase):
         self.assertAlmostEqual(cmd.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(cmd.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
-    def test_neutral_command_mode_label(self):
-        cmd = control.WriteNeutral(time.monotonic(), "IDLE")
-        self.assertEqual(cmd.mode, "IDLE")
-        self.assertEqual(cmd.fallback_mode, "IDLE")
+    def test_neutral_command_control_mode_label(self):
+        cmd = control.WriteNeutral(time.monotonic(), guidance.ControlMode.FAIL)
+        self.assertEqual(cmd.control_mode, guidance.ControlMode.FAIL)
 
 
 class TestGuidanceCommandFromL1(unittest.TestCase):
@@ -233,10 +232,10 @@ class TestControllerUpdate(unittest.TestCase):
             )
         self.assertAlmostEqual(ctl.pid.integral_deg, 0.0)
 
-    def test_no_gyro_feedforward_only(self):
+    def test_no_gyro_preserves_guidance_control_mode(self):
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), float("nan"), 100.0)
-        self.assertEqual(out.mode, "FEEDFORWARD_ONLY")
+        self.assertEqual(out.control_mode, guidance.ControlMode.FAIL)
         self.assertFalse(out.sensor_valid)
         self.assertAlmostEqual(out.delta_pid_deg, 0.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
@@ -244,7 +243,7 @@ class TestControllerUpdate(unittest.TestCase):
     def test_valid_gyro_closed_loop(self):
         ctl = self._ctl()
         out = control.ProduceCtrlOutput(ctl, self._cmd(10.0), 5.0, 100.0)
-        self.assertEqual(out.mode, "CLOSED_LOOP")
+        self.assertEqual(out.control_mode, guidance.ControlMode.FAIL)
         self.assertTrue(out.sensor_valid)
 
     def test_command_timestamp_does_not_neutralize(self):
@@ -267,7 +266,7 @@ class TestControllerUpdate(unittest.TestCase):
             100.0,
         )
         self.assertTrue(out.valid)
-        self.assertEqual(out.fallback_mode, "NONE")
+        self.assertFalse(out.gyro_rejected)
         self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 10.0)
 
     def test_angular_velocity_cmd_zero_stays_zero(self):
