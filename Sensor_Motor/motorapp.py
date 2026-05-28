@@ -365,7 +365,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
                 guidance.ControlMode.DR_TRACKING_OPEN):
         l1_in_t  = guidance.ProduceL1Input(now)
         l1_out_t = guidance.ProduceL1Output(l1_in_t)
-        l1_out_t.timestamp = now   # guidance 명령 age 계산 기준 (control 타임아웃)
         gz_meas  = snap_t.latest_imu.gyrz_rad_s or 0.0
         gz_meas  = math.degrees(float(gz_meas))   # rad/s → deg/s (ProduceCtrlOutput 기대 단위)
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)

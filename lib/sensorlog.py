@@ -247,7 +247,6 @@ _MOTOR_CTRL_HEADER = [
     "delta_arm_deg",
     "angular_velocity_cmd_deg_s",
     "angular_velocity_meas_deg_s",
-    "guidance_command_age_s",
     "saturated",
     "sensor_valid",
 ]
@@ -272,7 +271,6 @@ def log_motor_ctrl(cmd) -> None:
             getattr(cmd, "delta_arm_deg", ""),
             getattr(cmd, "angular_velocity_cmd_deg_s", ""),
             getattr(cmd, "angular_velocity_meas_deg_s", ""),
-            getattr(cmd, "guidance_command_age_s", ""),
             int(bool(getattr(cmd, "saturated", False))),
             int(bool(getattr(cmd, "sensor_valid", False))),
         ])

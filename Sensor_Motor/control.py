@@ -28,11 +28,8 @@ logger = logging.getLogger(__name__)
 CTRL_MODE_NEUTRAL          = "NEUTRAL"
 CTRL_MODE_CLOSED_LOOP      = "CLOSED_LOOP"
 CTRL_MODE_FEEDFORWARD_ONLY = "FEEDFORWARD_ONLY"
-CTRL_MODE_GUIDANCE_TIMEOUT = "GUIDANCE_TIMEOUT"
 
 CTRL_FALLBACK_NONE                = "NONE"
-CTRL_FALLBACK_GUIDANCE_TIMEOUT    = "GUIDANCE_TIMEOUT"
-CTRL_FALLBACK_GUIDANCE_ATTENUATED = "GUIDANCE_ATTENUATED"
 CTRL_FALLBACK_GYRO_SPIKE          = "GYRO_SPIKE"
 
 
@@ -61,9 +58,7 @@ LEFT_MAX_PULSE   = int(LEFT_ZERO  - ARM_MIN_DEG * PULSE_PER_DEG)
 RIGHT_MIN_PULSE  = int(RIGHT_ZERO + ARM_MIN_DEG * PULSE_PER_DEG)
 RIGHT_MAX_PULSE  = int(RIGHT_ZERO + ARM_MAX_DEG * PULSE_PER_DEG)
 
-# 타임아웃 / 스파이크 / 적분 감쇄 (config에서)
-GUIDANCE_TIMEOUT_ATTENUATE_S = config.GUIDANCE_TIMEOUT_ATTENUATE_S
-GUIDANCE_TIMEOUT_FAIL_S      = config.GUIDANCE_TIMEOUT_FAIL_S
+# 스파이크 / 적분 감쇄 (config에서)
 GYRO_SPIKE_LIMIT_DEG_S       = config.GYRO_SPIKE_LIMIT_DEG_S
 INTEGRAL_DECAY_RATE          = config.INTEGRAL_DECAY_RATE
 
@@ -72,15 +67,6 @@ INTEGRAL_DECAY_RATE          = config.INTEGRAL_DECAY_RATE
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
-
-
-def _cmd_age(now: float, timestamp: float) -> float:
-    """now - timestamp. 어느 쪽이든 non-finite이면 math.inf."""
-    try:
-        age = float(now) - float(timestamp)
-    except (TypeError, ValueError):
-        return math.inf
-    return age if math.isfinite(age) else math.inf
 
 
 def _clamp_dt(now: float, previous: float, default: float,
@@ -173,7 +159,6 @@ class CtrlOutput:
     valid:         bool  = False
     mode:          str   = CTRL_MODE_NEUTRAL
     fallback_mode: str   = CTRL_FALLBACK_NONE
-    guidance_command_age_s: float = 0.0
 
 
 # ── 팩토리 / 리셋 / 중립 ──────────────────────────────────────────────────────
@@ -266,7 +251,7 @@ def ProduceCtrlOutput(
     """CtrlInput + gyrz 측정값으로 서보 명령을 계산.
 
     Pipeline:
-      1. 유효성 확인; guidance 명령 age 체크 (FAIL / 감쇄 구간).
+      1. 유효성 확인.
       2. yaw-rate 명령 클램핑.
       3. Expo 형상 피드포워드 (FF) — DELTA_FF_MAX_DEG 이내.
       4. PID 폐루프 보정 (gyrz 유효 + pid_enabled일 때) — DELTA_PID_MAX_DEG 이내.
@@ -289,25 +274,7 @@ def ProduceCtrlOutput(
         out_t.fallback_mode = CTRL_FALLBACK_NONE
         return out_t
     raw_cmd = angular_velocity_cmd_deg_s   # 원본 명령 (클램프 포화 판정 기준)
-    age = _cmd_age(now, cmd.timestamp)
-    out_t.guidance_command_age_s = age
-
-    # ── 2단계 guidance 타임아웃 ───────────────────────────────────────────────
-    if age > GUIDANCE_TIMEOUT_FAIL_S:
-        out_t.mode          = CTRL_MODE_GUIDANCE_TIMEOUT
-        out_t.fallback_mode = CTRL_FALLBACK_GUIDANCE_TIMEOUT
-        out_t.valid = False
-        out_t.left_angle_deg  = NEUTRAL_ARM_DEG
-        out_t.right_angle_deg = NEUTRAL_ARM_DEG
-        out_t.left_pw         = LEFT_NEUTRAL
-        out_t.right_pw        = RIGHT_NEUTRAL
-        return out_t
-
-    if age > GUIDANCE_TIMEOUT_ATTENUATE_S:
-        angular_velocity_cmd_deg_s *= 0.5
-        out_t.fallback_mode = CTRL_FALLBACK_GUIDANCE_ATTENUATED
-    else:
-        out_t.fallback_mode = CTRL_FALLBACK_NONE
+    out_t.fallback_mode = CTRL_FALLBACK_NONE
 
     # ── yaw-rate 명령 클램핑 ──────────────────────────────────────────────────
     angular_velocity_cmd_deg_s = _clamp(
