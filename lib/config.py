@@ -152,22 +152,15 @@ BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터는 8회 miss 
 BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
 HISTORY_WINDOW_S  = 3.0
-# SPEED_DECAY_TAU_S 10→6: 파라포일 전개 후 정상속도 5-8 m/s에 ~1s 도달.
-# 10s 시정수는 DR 시 속도 과대추정 → 6s로 단축
-SPEED_DECAY_TAU_S = 6.0
-
 # ── Accelerometer-aided DR ────────────────────────────────────────────────────
 USE_ACC_DOUBLE_INTEGRATION = True
-ACC_AID_START_AGE_S        = 0.0
-ACC_AID_END_AGE_S          = 5.0
 # ACC_LIMIT_MPS2 1.5→2.0: 1.5는 정상 활공 acc 변동과 겹쳐 acc-blend 비활성.
 # 2.0으로 풀어 acc 보조 활성화 (LIMIT 초과는 spin/임팩트 시점이라 적절)
 ACC_LIMIT_MPS2             = 2.0
 ACC_BLEND_WEIGHT           = 0.2
 
-# ── DR confidence breakpoints ─────────────────────────────────────────────────
-# DR_CONF_AGE_3_S 8→20: GPS freshness window is 15s; DR must outlive GPS staleness.
-# At 8s, DR expired before GPS even became stale → system always fell to FAIL mode.
+# ── DR confidence scaling ─────────────────────────────────────────────────────
+# DR remains available while the anchor is valid; confidence only scales L1 yaw-rate.
 # Schedule: 0-2s: 1.0, 2-5s: 1.0→0.5, 5-20s: 0.5→0.0, >20s: 0.0
 DR_CONF_AGE_1_S = 2.0
 DR_CONF_AGE_2_S = 5.0

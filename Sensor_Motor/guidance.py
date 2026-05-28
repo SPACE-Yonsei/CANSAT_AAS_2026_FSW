@@ -116,7 +116,6 @@ class DRState:
     last_step_time: float = nan   # 직전 DR 스텝 시각 (dt 계산용)
 
     # ── DR 결과 메타 (매 사이클 갱신) ────────────────────────────────────
-    age:        float    = 0.0
     method:     DRMethod = DRMethod.NONE
     confidence: float    = 0.0
 
@@ -217,7 +216,6 @@ def dr_lock(dr: DRState, E: float, N: float, V: float,
     dr.yaw_at_anchor  = yaw    # nan이어도 저장 (yaw_valid=False 케이스)
     dr.gyro_integral  = 0.0    # ← 반드시 리셋
     dr.last_step_time = nan
-    dr.age            = 0.0
     dr.method         = DRMethod.NONE
     dr.confidence     = 1.0
 
@@ -232,7 +230,6 @@ def dr_reset(dr: DRState) -> None:
     dr.yaw_at_anchor  = nan
     dr.gyro_integral  = 0.0
     dr.last_step_time = nan
-    dr.age            = 0.0
     dr.method         = DRMethod.NONE
     dr.confidence     = 0.0
 
@@ -267,17 +264,21 @@ def dr_estimate_course(dr: DRState, imu: ImuAnchor) -> float:
 
 
 def _compute_dr_confidence(age: float) -> float:
-    """DR 경과 시간 → 신뢰도 [0, 1]."""
-    a1 = config.DR_CONF_AGE_1_S   # 2s
-    a2 = config.DR_CONF_AGE_2_S   # 5s
-    a3 = config.DR_CONF_AGE_3_S   # 20s
-    if age <= a1:
+    """Return DR confidence in [0, 1]; confidence scales guidance, not mode validity."""
+    if not isfinite(age) or age < 0.0:
         return 1.0
-    if age <= a2:
-        return 1.0 - 0.5 * (age - a1) / max(a2 - a1, 1e-6)
-    if age <= a3:
-        return 0.5 * (1.0 - (age - a2) / max(a3 - a2, 1e-6))
-    return 0.0
+    a1 = config.DR_CONF_AGE_1_S
+    a2 = config.DR_CONF_AGE_2_S
+    a3 = config.DR_CONF_AGE_3_S
+    if age <= a1:
+        conf = 1.0
+    elif age <= a2:
+        conf = 1.0 - 0.5 * (age - a1) / max(a2 - a1, 1e-6)
+    elif age <= a3:
+        conf = 0.5 * (1.0 - (age - a2) / max(a3 - a2, 1e-6))
+    else:
+        conf = 0.0
+    return _clamp(conf, 0.0, 1.0)
 
 
 # ── UpdateAnchors (매 사이클, 반환값 없음) ────────────────────────────────────
@@ -415,17 +416,13 @@ def DecideControlMode(now: float) -> ControlMode:
 
     # 4. DR_TRACKING_CLOSED
     if dr_is_valid(st_t.dr) and gyrz_fresh:
-        dr_age = now - st_t.dr.anchor_time
-        if _compute_dr_confidence(dr_age) > 0.0:
-            st_t.nav_control_mode = ControlMode.DR_TRACKING_CLOSED
-            return ControlMode.DR_TRACKING_CLOSED
+        st_t.nav_control_mode = ControlMode.DR_TRACKING_CLOSED
+        return ControlMode.DR_TRACKING_CLOSED
 
     # 5. DR_TRACKING_OPEN
     if dr_is_valid(st_t.dr) and yaw_fresh:
-        dr_age = now - st_t.dr.anchor_time
-        if _compute_dr_confidence(dr_age) > 0.0:
-            st_t.nav_control_mode = ControlMode.DR_TRACKING_OPEN
-            return ControlMode.DR_TRACKING_OPEN
+        st_t.nav_control_mode = ControlMode.DR_TRACKING_OPEN
+        return ControlMode.DR_TRACKING_OPEN
 
     # 6. FAIL
     st_t.nav_control_mode = ControlMode.FAIL
@@ -448,9 +445,6 @@ def _update_state_from_dead_reckoning(now: float) -> None:
         dt = 0.0
     dt = _clamp(dt, 0.0, 0.5)
 
-    age = now - dr.anchor_time if isfinite(dr.anchor_time) else 0.0
-    dr.age = age
-
     # nav 위치 초기화 (첫 DR 스텝 또는 이전에 nan이면 앵커 위치로 초기화)
     if not isfinite(st_t.nav_E) or not isfinite(st_t.nav_N):
         st_t.nav_E = dr.anchor_E
@@ -466,8 +460,8 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     # ② heading 추정 (IMU stale 시 anchor_course 유지)
     course_est = dr_estimate_course(dr, st_t.imu)
 
-    # ③ 속도 감쇄
-    V_dr = dr.anchor_V * math.exp(-age / max(config.SPEED_DECAY_TAU_S, 1e-6))
+    # ③ 속도 유지
+    V_dr = dr.anchor_V
     V_dr = max(0.0, V_dr)
 
     # ④ EN 속도
@@ -477,8 +471,7 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     # ⑤ 가속도계 보정 (선택적)
     method = DRMethod.GYRO_INTEGRATION
     if (config.USE_ACC_DOUBLE_INTEGRATION
-            and imu_fresh and st_t.imu.lin_acc_valid
-            and config.ACC_AID_START_AGE_S <= age <= config.ACC_AID_END_AGE_S):
+            and imu_fresh and st_t.imu.lin_acc_valid):
         lax = st_t.imu.lin_acc_x * config.ACC_X_SIGN
         lay = st_t.imu.lin_acc_y * config.ACC_Y_SIGN
         if math.hypot(lax, lay) <= config.ACC_LIMIT_MPS2:
@@ -496,9 +489,9 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     dr.method      = method
     dr.last_step_time = now
 
-    # ⑦ 신뢰도
-    confidence     = _compute_dr_confidence(age)
-    dr.confidence  = confidence
+    # ⑦ 신뢰도: DR은 유지하고 L1 yaw-rate 명령만 시간에 따라 약화한다.
+    confidence = _compute_dr_confidence(now - dr.anchor_time)
+    dr.confidence = confidence
     st_t.nav_confidence = confidence
 
 
@@ -601,9 +594,6 @@ def ProduceL1Input(now: float) -> L1Input:
             return L1Input(valid=False, reason="NO_DR_ANCHOR")
 
         _update_state_from_dead_reckoning(now)
-
-        if st_t.dr.confidence <= 0.0:
-            return L1Input(valid=False, reason="DR_EXPIRED")
 
         return L1Input(
             valid=True, reason="DR_TRACKING",
