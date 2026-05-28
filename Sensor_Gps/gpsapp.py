@@ -19,7 +19,7 @@ import time
 # Runstatus of application. Application is terminated when false
 GPSAPP_RUNSTATUS = True
 gps_instance = None
-GPS_STALE_TIMEOUT_SEC = 5.0
+GPS_STALE_TIMEOUT_SEC = 15.0  # guidance GPS_FRESH_MAX_AGE_S(15s)와 일치 (5.0→15.0)
 
 # pos fidelity 상수 — 환경변수로 오버라이드 가능
 GPS_MAX_HDOP     = float(os.environ.get("GPS_MAX_HDOP",     "3.0"))

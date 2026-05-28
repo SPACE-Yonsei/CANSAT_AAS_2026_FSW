@@ -19,7 +19,6 @@ READ_SIZE   = 32
 
 I2C_LOCK_PATH = os.getenv("FSW_I2C_LOCK_FILE", "/tmp/fsw_i2c.lock")
 I2C_LOCK_TIMEOUT_SEC = float(os.getenv("I2C_LOCK_TIMEOUT_SEC", "2.0"))
-NMEA_CACHE_MAX_AGE_SEC = float(os.getenv("GPS_NMEA_CACHE_MAX_AGE_SEC", "2.0"))
 
 class I2CLock:
     def __init__(self, path=I2C_LOCK_PATH):
@@ -219,13 +218,11 @@ def parse_gps_data(NMEA_lines):
         else:
             continue
 
-    gga_fresh = _last_gga_data is not None and (now - _last_gga_ts) <= NMEA_CACHE_MAX_AGE_SEC
-    rmc_fresh = _last_rmc_data is not None and (now - _last_rmc_ts) <= NMEA_CACHE_MAX_AGE_SEC
-
-    # Position/altitude are GGA-based; stale GGA invalidates the row.
-    # RMC may be absent, stale, or from a different GPS time.
-    if gga_fresh:
-        rmc = _last_rmc_data if rmc_fresh and _nmea_times_match(_last_gga_data, _last_rmc_data) else None
+    # Position/altitude are GGA-based; last known GGA는 항상 사용
+    # (freshness 판단은 gpsapp의 GPS_STALE_TIMEOUT_SEC에서 일괄 처리)
+    # RMC may be absent or from a different GPS time.
+    if _last_gga_data is not None:
+        rmc = _last_rmc_data if (_last_rmc_data is not None and _nmea_times_match(_last_gga_data, _last_rmc_data)) else None
         rmc_ts = _last_rmc_ts if rmc is not None else 0.0
         gps_data = [_last_gga_data, rmc, _last_gga_ts, rmc_ts]
 
