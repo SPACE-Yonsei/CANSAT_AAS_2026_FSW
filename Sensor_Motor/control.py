@@ -273,67 +273,67 @@ def ProduceCtrlOutput(
       5. FF + PID 합산, DELTA_TOTAL_MAX_DEG로 클램핑.
       6. Arm 각도 slew-rate 제한 후 PWM 출력.
     """
-    out = CtrlOutput(timestamp=now)
-    cfg = ctl.config
+    out_t = CtrlOutput(timestamp=now)
+    cfg_t = ctl.config
 
     # ── 유효하지 않은 명령 → 중립 ────────────────────────────────────────────
     if not cmd.valid:
-        out.mode = CTRL_MODE_NEUTRAL
-        out.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
-        return out
+        out_t.mode = CTRL_MODE_NEUTRAL
+        out_t.fallback_mode = config.MOTOR_REASON_GUIDANCE_INACTIVE
+        return out_t
 
     # ── NaN 명령 → 중립 ──────────────────────────────────────────────────────
     raw_cmd = float(cmd.angular_velocity_cmd_deg_s)
     if not math.isfinite(raw_cmd):
-        out.mode = CTRL_MODE_NEUTRAL
-        out.fallback_mode = CTRL_FALLBACK_NONE
-        return out
+        out_t.mode = CTRL_MODE_NEUTRAL
+        out_t.fallback_mode = CTRL_FALLBACK_NONE
+        return out_t
 
     angular_velocity_cmd_deg_s = raw_cmd
     age = _cmd_age(now, cmd.timestamp)
-    out.guidance_command_age_s = age
+    out_t.guidance_command_age_s = age
 
     # ── 2단계 guidance 타임아웃 ───────────────────────────────────────────────
     if age > GUIDANCE_TIMEOUT_FAIL_S:
-        out.mode          = CTRL_MODE_GUIDANCE_TIMEOUT
-        out.fallback_mode = CTRL_FALLBACK_GUIDANCE_TIMEOUT
-        out.valid = False
-        out.left_angle_deg  = NEUTRAL_ARM_DEG
-        out.right_angle_deg = NEUTRAL_ARM_DEG
-        out.left_pw         = LEFT_NEUTRAL
-        out.right_pw        = RIGHT_NEUTRAL
-        return out
+        out_t.mode          = CTRL_MODE_GUIDANCE_TIMEOUT
+        out_t.fallback_mode = CTRL_FALLBACK_GUIDANCE_TIMEOUT
+        out_t.valid = False
+        out_t.left_angle_deg  = NEUTRAL_ARM_DEG
+        out_t.right_angle_deg = NEUTRAL_ARM_DEG
+        out_t.left_pw         = LEFT_NEUTRAL
+        out_t.right_pw        = RIGHT_NEUTRAL
+        return out_t
 
     if age > GUIDANCE_TIMEOUT_ATTENUATE_S:
         angular_velocity_cmd_deg_s *= 0.5
-        out.fallback_mode = CTRL_FALLBACK_GUIDANCE_ATTENUATED
+        out_t.fallback_mode = CTRL_FALLBACK_GUIDANCE_ATTENUATED
     else:
-        out.fallback_mode = CTRL_FALLBACK_NONE
+        out_t.fallback_mode = CTRL_FALLBACK_NONE
 
     # ── yaw-rate 명령 클램핑 ──────────────────────────────────────────────────
     angular_velocity_cmd_deg_s = _clamp(
         angular_velocity_cmd_deg_s,
-        -cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
-         cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+        -cfg_t.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
+         cfg_t.ANGULAR_VELOCITY_CMD_MAX_DEG_S,
     )
     command_clamped = not math.isclose(
         angular_velocity_cmd_deg_s, raw_cmd, rel_tol=0.0, abs_tol=1.0e-9
     )
-    out.angular_velocity_cmd_deg_s = angular_velocity_cmd_deg_s
+    out_t.angular_velocity_cmd_deg_s = angular_velocity_cmd_deg_s
 
     # PID + slew 공유 dt
     dt = _clamp_dt(now, ctl.pid.prev_time, 0.1, 0.01, 0.2)
 
     # ── 피드포워드 ────────────────────────────────────────────────────────────
-    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, cfg)
+    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, cfg_t)
 
     # ── Gyro 스파이크 거부 ────────────────────────────────────────────────────
     gyro_finite  = math.isfinite(angular_velocity_meas_deg_s)
     gyro_spike   = gyro_finite and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
     sensor_valid = gyro_finite and not gyro_spike
-    out.sensor_valid = sensor_valid
+    out_t.sensor_valid = sensor_valid
     if gyro_spike:
-        out.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
+        out_t.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
 
     detumbling_active = _is_detumbling_mode(cmd.control_mode)
 
@@ -346,64 +346,64 @@ def ProduceCtrlOutput(
     pid_active = bool(
         (not detumbling_active)
         and cmd.pid_enabled
-        and cfg.DELTA_PID_MAX_DEG > 0.0
+        and cfg_t.DELTA_PID_MAX_DEG > 0.0
         and sensor_valid
     )
 
     if detumbling_active:
-        out.mode  = config.CONTROL_MODE_DETUMBLING
+        out_t.mode  = config.CONTROL_MODE_DETUMBLING
         delta_ff  = 0.0
-        out.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
+        out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
         if sensor_valid:
             error = -angular_velocity_meas_deg_s
-            if abs(angular_velocity_meas_deg_s) > cfg.ERROR_DEADBAND_DEG_S:
+            if abs(angular_velocity_meas_deg_s) > cfg_t.ERROR_DEADBAND_DEG_S:
                 delta_sum = -math.copysign(
                     config.DETUMBLE_BRAKE_DELTA_DEG,
                     angular_velocity_meas_deg_s,
                 )
             else:
                 delta_sum = 0.0
-            out.angular_velocity_error_deg_s = error
+            out_t.angular_velocity_error_deg_s = error
         else:
             delta_sum = 0.0
 
     elif pid_active:
-        out.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
+        out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
         error = angular_velocity_cmd_deg_s - angular_velocity_meas_deg_s
-        if abs(error) < cfg.ERROR_DEADBAND_DEG_S:
+        if abs(error) < cfg_t.ERROR_DEADBAND_DEG_S:
             error = 0.0
         derivative         = (error - ctl.pid.prev_error_deg) / dt
         integral_candidate = _clamp(
             ctl.pid.integral_deg + error * dt,
-            -cfg.I_LIMIT_DEG, cfg.I_LIMIT_DEG,
+            -cfg_t.I_LIMIT_DEG, cfg_t.I_LIMIT_DEG,
         )
-        kp      = float(cmd.kp_override) if cmd.kp_override is not None else cfg.K_P
+        kp      = float(cmd.kp_override) if cmd.kp_override is not None else cfg_t.K_P
         delta_pid = _clamp(
-            kp * error + cfg.K_I * integral_candidate + cfg.K_D * derivative,
-            -cfg.DELTA_PID_MAX_DEG, cfg.DELTA_PID_MAX_DEG,
+            kp * error + cfg_t.K_I * integral_candidate + cfg_t.K_D * derivative,
+            -cfg_t.DELTA_PID_MAX_DEG, cfg_t.DELTA_PID_MAX_DEG,
         )
         integral = integral_candidate
-        out.angular_velocity_error_deg_s = error
-        out.mode  = CTRL_MODE_CLOSED_LOOP
+        out_t.angular_velocity_error_deg_s = error
+        out_t.mode  = CTRL_MODE_CLOSED_LOOP
         delta_sum = delta_ff + delta_pid
 
     else:
         # gyro 없음: FF만 사용. 누적 windup 감쇄.
         integral = ctl.pid.integral_deg * INTEGRAL_DECAY_RATE
-        out.mode  = CTRL_MODE_FEEDFORWARD_ONLY
+        out_t.mode  = CTRL_MODE_FEEDFORWARD_ONLY
         delta_sum = delta_ff
 
     # ── 합산 + 총 클램핑 ──────────────────────────────────────────────────────
-    authority_saturated = abs(delta_sum) > cfg.DELTA_TOTAL_MAX_DEG
+    authority_saturated = abs(delta_sum) > cfg_t.DELTA_TOTAL_MAX_DEG
     saturated = command_clamped or authority_saturated
-    out.saturated = saturated
-    delta_total   = _clamp(delta_sum, -cfg.DELTA_TOTAL_MAX_DEG, cfg.DELTA_TOTAL_MAX_DEG)
+    out_t.saturated = saturated
+    delta_total   = _clamp(delta_sum, -cfg_t.DELTA_TOTAL_MAX_DEG, cfg_t.DELTA_TOTAL_MAX_DEG)
 
     # ── delta_total → arm 각도 ────────────────────────────────────────────────
     _, _, left_des, right_des, delta_arm = ConnectRoMo(delta_total)
 
     # ── Slew-rate 제한 ────────────────────────────────────────────────────────
-    max_step    = cfg.MAX_ARM_RATE_DEG_S * dt
+    max_step    = cfg_t.MAX_ARM_RATE_DEG_S * dt
     left_angle  = _clamp(left_des,
                          ctl.prev_left_angle_deg - max_step,
                          ctl.prev_left_angle_deg + max_step)
@@ -416,15 +416,15 @@ def ProduceCtrlOutput(
     right_pw = int(_clamp(RIGHT_ZERO + right_angle * PULSE_PER_DEG,
                           RIGHT_MIN_PULSE, RIGHT_MAX_PULSE))
 
-    out.delta_ff_deg    = delta_ff
-    out.delta_pid_deg   = delta_pid
-    out.delta_arm_deg   = delta_arm
-    out.motor_cmd       = delta_arm
-    out.left_angle_deg  = left_angle
-    out.right_angle_deg = right_angle
-    out.left_pw         = left_pw
-    out.right_pw        = right_pw
-    out.valid           = True
+    out_t.delta_ff_deg    = delta_ff
+    out_t.delta_pid_deg   = delta_pid
+    out_t.delta_arm_deg   = delta_arm
+    out_t.motor_cmd       = delta_arm
+    out_t.left_angle_deg  = left_angle
+    out_t.right_angle_deg = right_angle
+    out_t.left_pw         = left_pw
+    out_t.right_pw        = right_pw
+    out_t.valid           = True
 
     # ── PID 상태 업데이트 ─────────────────────────────────────────────────────
     if pid_active:
@@ -442,7 +442,7 @@ def ProduceCtrlOutput(
     ctl.pid.prev_time           = now
     ctl.prev_left_angle_deg     = left_angle
     ctl.prev_right_angle_deg    = right_angle
-    return out
+    return out_t
 
 
 # ── Detumbling 전용 출력 ──────────────────────────────────────────────────────
