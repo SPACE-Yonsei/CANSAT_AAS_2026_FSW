@@ -353,8 +353,19 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     mode = guidance.DecideControlMode(now)
 
     # ── [1] DETUMBLING ────────────────────────────────────────────────────────
+    # gyrz를 줄이는 방향으로 서보를 최대로 꺾어 스핀을 제동한다.
+    # ProduceCtrlOutput의 detumbling_active 경로:
+    #   delta = -sign(gyrz) × DETUMBLE_BRAKE_DELTA_DEG (= 80°)
     if mode == guidance.ControlMode.DETUMBLING:
-        ctrl_out_t = control.ProduceDetumbleOutput(now)
+        gz_meas = snap_t.latest_imu.gyrz_rad_s or 0.0
+        gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s
+        ctrl_in_dtb = control.CtrlInput(
+            angular_velocity_cmd_deg_s = 0.0,
+            valid        = True,
+            pid_enabled  = False,
+            control_mode = config.CONTROL_MODE_DETUMBLING,
+        )
+        ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_dtb, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
         return ctrl_out_t
 
