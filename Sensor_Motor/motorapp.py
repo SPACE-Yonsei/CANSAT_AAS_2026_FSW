@@ -306,11 +306,11 @@ def handle_fac(data: str) -> None:
 
 def _sync_origin_to_prevstate() -> bool:
     """guidance origin이 확정되면 prevstate에 1회 저장. 저장 시 True 반환."""
-    mi = guidance._MISSION
-    if not mi.origin_ready:
+    mi_t = guidance._MISSION_t
+    if not mi_t.origin_ready:
         return False
-    lat = float(mi.origin_lat)
-    lon = float(mi.origin_lon)
+    lat = float(mi_t.origin_lat)
+    lon = float(mi_t.origin_lon)
     prevstate.update_start_point(lat, lon, True)
     logger.info("Origin synced to prevstate: lat=%.6f lon=%.6f", lat, lon)
     return True
@@ -452,21 +452,21 @@ def init() -> None:
         if (-90.0 <= float(lat) <= 90.0
                 and -180.0 <= float(lon) <= 180.0
                 and not (lat == 0.0 and lon == 0.0)):
-            mi = guidance._MISSION
-            mi.origin_lat   = float(lat)
-            mi.origin_lon   = float(lon)
-            mi.origin_ready = True
-            mi._raw_lat     = float(lat)
-            mi._raw_lon     = float(lon)
+            mi_t = guidance._MISSION_t
+            mi_t.origin_lat   = float(lat)
+            mi_t.origin_lon   = float(lon)
+            mi_t.origin_ready = True
+            mi_t._raw_lat     = float(lat)
+            mi_t._raw_lon     = float(lon)
             _ORIGIN_SAVED = True
             logger.info("Origin restored from prevstate: lat=%.6f lon=%.6f", lat, lon)
             # set_target이 _target_lat/lon을 저장한 경우 즉시 투영
-            if math.isfinite(mi._target_lat) and math.isfinite(mi._target_lon):
-                tN, tE = guidance.latlon_to_ne(mi._target_lat, mi._target_lon,
-                                               mi.origin_lat, mi.origin_lon)
-                mi.target_E     = tE
-                mi.target_N     = tN
-                mi.target_ready = True
+            if math.isfinite(mi_t._target_lat) and math.isfinite(mi_t._target_lon):
+                tN, tE = guidance.latlon_to_ne(mi_t._target_lat, mi_t._target_lon,
+                                               mi_t.origin_lat, mi_t.origin_lon)
+                mi_t.target_E     = tE
+                mi_t.target_N     = tN
+                mi_t.target_ready = True
                 logger.info("Target re-projected on init: E=%.1f N=%.1f", tE, tN)
 
     _CTRLER_t = control.MakeCtrler()
