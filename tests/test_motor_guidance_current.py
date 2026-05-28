@@ -31,19 +31,7 @@ class TestCurrentGuidanceOutput(unittest.TestCase):
 
 class TestCurrentDetumblingOutput(unittest.TestCase):
     def _detumble_output(self, gyrz_deg_s):
-        ctl = control.MakeCtrler()
-        cmd = control.CtrlInput(
-            angular_velocity_cmd_deg_s=0.0,
-            valid=True,
-            pid_enabled=False,
-            control_mode=config.CONTROL_MODE_DETUMBLING,
-        )
-        return control.ProduceCtrlOutput(
-            ctl,
-            cmd,
-            angular_velocity_meas_deg_s=gyrz_deg_s,
-            now=100.0,
-        )
+        return control.ProduceDetumbleOutput(100.0, gyrz_deg_s)
 
     def test_left_rotation_commands_max_right_damping(self):
         out = self._detumble_output(-250.0)

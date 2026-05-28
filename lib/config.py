@@ -187,7 +187,6 @@ DETUMBLE_ENABLE             = True
 DETUMBLE_GYRZ_THRESHOLD_DPS = 200.0
 DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
 DETUMBLE_EXIT_HOLD_S        = 1.0
-DETUMBLE_BRAKE_DELTA_DEG   = 160.0  # Open-loop opposite brake authority; no PID required.
 
 # ── Sensor sign conventions ───────────────────────────────────────────────────
 # Body→NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).
@@ -212,7 +211,7 @@ KP_DR_CLOSED   = 0.0
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# Legacy detumble PID gain. Detumbling now commands the maximum differential arm angle.
+# Legacy detumble PID gain. Detumbling uses fixed min/max arm angles.
 KP_DETUMBLE = 0.0
 
 KI_YAW_RATE = 0.0

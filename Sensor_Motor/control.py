@@ -302,6 +302,12 @@ def ProduceCtrlOutput(
         out_t.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
 
     detumbling_active = _is_detumbling_mode(cmd.control_mode)
+    if detumbling_active:
+        out_t = ProduceDetumbleOutput(now, angular_velocity_meas_deg_s)
+        ctl.pid.prev_time = now
+        ctl.prev_left_angle_deg = out_t.left_angle_deg
+        ctl.prev_right_angle_deg = out_t.right_angle_deg
+        return out_t
 
     # ── PID 폐루프 / 텀블링 제동 ──────────────────────────────────────────────
     integral  = ctl.pid.integral_deg
@@ -316,24 +322,7 @@ def ProduceCtrlOutput(
         and sensor_valid
     )
 
-    if detumbling_active:
-        out_t.mode  = config.CONTROL_MODE_DETUMBLING
-        delta_ff  = 0.0
-        out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
-        if sensor_valid:
-            error = -angular_velocity_meas_deg_s
-            if abs(angular_velocity_meas_deg_s) > cfg_t.ERROR_DEADBAND_DEG_S:
-                delta_sum = -math.copysign(
-                    DELTA_ARM_MAX_DEG,
-                    angular_velocity_meas_deg_s,
-                )
-            else:
-                delta_sum = 0.0
-            out_t.angular_velocity_error_deg_s = error
-        else:
-            delta_sum = 0.0
-
-    elif pid_active:
+    if pid_active:
         out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
         error = angular_velocity_cmd_deg_s - angular_velocity_meas_deg_s
         if abs(error) < cfg_t.ERROR_DEADBAND_DEG_S:
@@ -367,19 +356,14 @@ def ProduceCtrlOutput(
 
     # ── delta_total → arm 각도 ────────────────────────────────────────────────
     _, _, left_des, right_des, delta_arm = ConnectRoMo(delta_total)
-
     # ── Slew-rate 제한 ────────────────────────────────────────────────────────
-    if detumbling_active:
-        left_angle = left_des
-        right_angle = right_des
-    else:
-        max_step    = cfg_t.MAX_ARM_RATE_DEG_S * dt
-        left_angle  = _clamp(left_des,
-                             ctl.prev_left_angle_deg - max_step,
-                             ctl.prev_left_angle_deg + max_step)
-        right_angle = _clamp(right_des,
-                             ctl.prev_right_angle_deg - max_step,
-                             ctl.prev_right_angle_deg + max_step)
+    max_step    = cfg_t.MAX_ARM_RATE_DEG_S * dt
+    left_angle  = _clamp(left_des,
+                         ctl.prev_left_angle_deg - max_step,
+                         ctl.prev_left_angle_deg + max_step)
+    right_angle = _clamp(right_des,
+                         ctl.prev_right_angle_deg - max_step,
+                         ctl.prev_right_angle_deg + max_step)
 
     left_pw  = int(_clamp(LEFT_ZERO  - left_angle  * PULSE_PER_DEG,
                           LEFT_MIN_PULSE,  LEFT_MAX_PULSE))
@@ -417,15 +401,42 @@ def ProduceCtrlOutput(
 
 # ── Detumbling 전용 출력 ──────────────────────────────────────────────────────
 
-def ProduceDetumbleOutput(now: float) -> CtrlOutput:
-    """DETUMBLING 모드: yaw_rate_cmd=0 중립 유지.
+def ProduceDetumbleOutput(
+    now: float,
+    angular_velocity_meas_deg_s: float = float("nan"),
+) -> CtrlOutput:
+    """DETUMBLING mode output.
 
-    ProduceCtrlOutput에 mode=DETUMBLING으로 전달하지 않고,
-    단순히 중립 서보 명령을 반환한다.
-    실제 텀블링 제동(gyrz 기반 brake)은 ProduceCtrlOutput 내 detumbling_active
-    경로가 담당한다.
+    Uses the normal 80 deg neutral frame and commands +/-80 deg:
+    left rotation (gyrz < 0)  -> left=0,   right=160
+    right rotation (gyrz > 0) -> left=160, right=0
     """
-    return WriteNeutral(now, mode=config.CONTROL_MODE_DETUMBLING)
+    out_t = CtrlOutput(timestamp=now)
+    out_t.mode = config.CONTROL_MODE_DETUMBLING
+    out_t.fallback_mode = CTRL_FALLBACK_NONE
+    out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
+
+    gyro_finite = math.isfinite(angular_velocity_meas_deg_s)
+    gyro_spike = gyro_finite and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
+    sensor_valid = gyro_finite and not gyro_spike
+    out_t.sensor_valid = sensor_valid
+    if gyro_spike:
+        out_t.fallback_mode = CTRL_FALLBACK_GYRO_SPIKE
+    if not sensor_valid or abs(angular_velocity_meas_deg_s) <= config.CTRL_ERROR_DEADBAND_DEG_S:
+        out_t.valid = True
+        return out_t
+
+    delta = -math.copysign(DELTA_ARM_MAX_DEG, angular_velocity_meas_deg_s)
+    left_pw, right_pw, left_angle, right_angle, delta_arm = ConnectRoMo(delta)
+    out_t.angular_velocity_error_deg_s = -angular_velocity_meas_deg_s
+    out_t.delta_arm_deg = delta_arm
+    out_t.motor_cmd = delta_arm
+    out_t.left_angle_deg = left_angle
+    out_t.right_angle_deg = right_angle
+    out_t.left_pw = left_pw
+    out_t.right_pw = right_pw
+    out_t.valid = True
+    return out_t
 
 
 # ── pigpio 바인딩 ──────────────────────────────────────────────────────────────

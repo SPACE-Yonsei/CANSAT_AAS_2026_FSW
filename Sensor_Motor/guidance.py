@@ -149,9 +149,6 @@ class GuidanceState:
     # ── DR 서브-상태 ──────────────────────────────────────────────────────
     dr: DRState = field(default_factory=DRState)
 
-    # ── Detumbling 히스테리시스 타이머 ────────────────────────────────────
-    detumble_exit_start: float = nan
-
 
 # ── L1Input / L1Output ────────────────────────────────────────────────────────
 
@@ -386,52 +383,27 @@ def DecideControlMode(now: float) -> ControlMode:
     gyrz_fresh = imu_fresh and st_t.imu.gyrz_valid
     yaw_fresh  = imu_fresh and st_t.imu.yaw_valid
 
-    # 1. DETUMBLING (최우선)
-    if config.DETUMBLE_ENABLE and gyrz_fresh:
-        gyrz_dps  = abs(math.degrees(st_t.imu.gyr_z))
-        currently = (st_t.nav.control_mode == ControlMode.DETUMBLING)
-        if currently:
-            if gyrz_dps <= config.DETUMBLE_EXIT_THRESHOLD_DPS:
-                if not isfinite(st_t.detumble_exit_start):
-                    st_t.detumble_exit_start = now
-                elif now - st_t.detumble_exit_start >= config.DETUMBLE_EXIT_HOLD_S:
-                    # 탈출 조건 충족 → 히스테리시스 타이머 초기화 후 아래 진행
-                    st_t.detumble_exit_start = nan
-                    # fallthrough to GPS/DR checks below
-                else:
-                    st_t.nav.control_mode = ControlMode.DETUMBLING
-                    return ControlMode.DETUMBLING
-            else:
-                st_t.detumble_exit_start = nan
-                st_t.nav.control_mode = ControlMode.DETUMBLING
-                return ControlMode.DETUMBLING
-        else:
-            if gyrz_dps >= config.DETUMBLE_GYRZ_THRESHOLD_DPS:
-                st_t.detumble_exit_start = nan
-                st_t.nav.control_mode = ControlMode.DETUMBLING
-                return ControlMode.DETUMBLING
-
-    # 2. GPS_TRACKING_CLOSED
+    # 1. GPS_TRACKING_CLOSED
     if pos_fresh and vel_fresh and gyrz_fresh:
         st_t.nav.control_mode = ControlMode.GPS_TRACKING_CLOSED
         return ControlMode.GPS_TRACKING_CLOSED
 
-    # 3. GPS_TRACKING_OPEN
+    # 2. GPS_TRACKING_OPEN
     if pos_fresh and vel_fresh:
         st_t.nav.control_mode = ControlMode.GPS_TRACKING_OPEN
         return ControlMode.GPS_TRACKING_OPEN
 
-    # 4. DR_TRACKING_CLOSED
+    # 3. DR_TRACKING_CLOSED
     if dr_is_valid(st_t.dr) and gyrz_fresh:
         st_t.nav.control_mode = ControlMode.DR_TRACKING_CLOSED
         return ControlMode.DR_TRACKING_CLOSED
 
-    # 5. DR_TRACKING_OPEN
+    # 4. DR_TRACKING_OPEN
     if dr_is_valid(st_t.dr) and yaw_fresh:
         st_t.nav.control_mode = ControlMode.DR_TRACKING_OPEN
         return ControlMode.DR_TRACKING_OPEN
 
-    # 6. FAIL
+    # 5. FAIL
     st_t.nav.control_mode = ControlMode.FAIL
     return ControlMode.FAIL
 
