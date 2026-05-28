@@ -256,7 +256,7 @@ class TestFailMode(unittest.TestCase):
         l1 = guidance._fail_l1input("FAIL_NO_VALID_DR", GuidanceState(), FreshResult())
         g_out = produceL1output(l1)
         self.assertFalse(g_out.control_valid)
-        self.assertAlmostEqual(g_out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertAlmostEqual(g_out.yaw_rate_cmd, 0.0)
 
     def test_fail_l1input_motor_neutral(self):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
@@ -337,25 +337,25 @@ class TestProduceL1Output(unittest.TestCase):
         l1 = self._build_l1input(pos_N=0.0, target_N=900.0, course_deg=0.0)
         out = produceL1output(l1)
         self.assertTrue(out.control_valid)
-        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0, places=6)
+        self.assertAlmostEqual(out.yaw_rate_cmd, 0.0, places=6)
 
     def test_target_east_course_north_yaw_rate_positive(self):
         l1 = self._build_l1input(pos_N=0.0, target_E=900.0, target_N=0.0, course_deg=0.0)
         out = produceL1output(l1)
         self.assertTrue(out.control_valid)
-        self.assertGreater(out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertGreater(out.yaw_rate_cmd, 0.0)
 
     def test_target_west_course_north_yaw_rate_negative(self):
         l1 = self._build_l1input(pos_N=0.0, target_E=-900.0, target_N=0.0, course_deg=0.0)
         out = produceL1output(l1)
         self.assertTrue(out.control_valid)
-        self.assertLess(out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertLess(out.yaw_rate_cmd, 0.0)
 
     def test_fail_mode_no_control(self):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
         out = produceL1output(l1)
         self.assertFalse(out.control_valid)
-        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertAlmostEqual(out.yaw_rate_cmd, 0.0)
 
     def test_detumbling_mode_zero_yaw_rate_cmd(self):
         inp = guidance.L1Input()
@@ -365,7 +365,7 @@ class TestProduceL1Output(unittest.TestCase):
         inp.dr_method = DRMethod.NONE
         out = produceL1output(inp)
         self.assertTrue(out.control_valid)
-        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0)
+        self.assertAlmostEqual(out.yaw_rate_cmd, 0.0)
         self.assertFalse(out.pid_enabled)
         self.assertIsNone(out.kp_override)
 
@@ -559,7 +559,7 @@ class TestMotorOutput(unittest.TestCase):
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
         limit_rad_s = math.radians(config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS)
-        self.assertLessEqual(abs(g_out.angular_velocity_cmd_rad_s), limit_rad_s + 1e-9)
+        self.assertLessEqual(abs(g_out.yaw_rate_cmd), limit_rad_s + 1e-9)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -738,7 +738,6 @@ class TestSpec_ProduceL1Output_NorthTarget(unittest.TestCase):
         self.assertTrue(out.control_valid)
         self.assertAlmostEqual(out.nu, 0.0, places=9)
         self.assertAlmostEqual(out.yaw_rate_cmd, 0.0, places=9)
-        self.assertAlmostEqual(out.angular_velocity_cmd_rad_s, 0.0, places=9)
         self.assertAlmostEqual(out.target_bearing, 0.0, places=9)
 
 
@@ -766,8 +765,6 @@ class TestNewL1OutputFields(unittest.TestCase):
         self.assertAlmostEqual(out.nu, 0.0, places=9)
         self.assertAlmostEqual(out.distance_to_target, 900.0, places=3)
         self.assertAlmostEqual(out.yaw_rate_cmd, 0.0, places=9)
-        # Backward-compatible alias and mirror
-        self.assertEqual(out.yaw_rate_cmd, out.angular_velocity_cmd_rad_s)
         self.assertEqual(out.distance_to_target, out.alongTrack)
         self.assertEqual(out.carrot_E, out.target_E)
         self.assertEqual(out.carrot_N, out.target_N)

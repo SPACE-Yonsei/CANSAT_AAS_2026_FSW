@@ -173,7 +173,6 @@ class L1Output:
     dr_method:                  DRMethod    = DRMethod.NONE
     confidence:                 float       = 0.0
     yaw_rate_cmd:               float       = 0.0   # rad/s
-    angular_velocity_cmd_rad_s: float       = 0.0   # alias (== yaw_rate_cmd)
     yaw_rate_limit_dps:         float       = 0.0
     nu:                         float       = nan   # cross-track angle (rad)
     target_bearing:             float       = nan
@@ -636,7 +635,7 @@ def _choose_yaw_rate_limit(mode: ControlMode) -> float:
 
 def ProduceL1Output(l1in: L1Input) -> L1Output:
     """L1Input으로 yaw_rate_cmd를 계산한다. 상태 접촉 없음 (pure)."""
-    base = L1Output(
+    output = L1Output(
         control_mode=l1in.control_mode,
         dr_method=l1in.dr_method,
         confidence=l1in.confidence,
@@ -647,41 +646,42 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
 
     # ── Invalid / FAIL ────────────────────────────────────────────────────────
     if not l1in.valid:
-        base.control_valid = False
-        base.nominal       = False
-        base.reason        = l1in.reason
-        return base
+        output.control_valid = False
+        output.nominal       = False
+        output.reason        = l1in.reason
+        return output
 
     # ── DETUMBLING ────────────────────────────────────────────────────────────
     if l1in.control_mode == ControlMode.DETUMBLING:
         lim = _choose_yaw_rate_limit(ControlMode.DETUMBLING)
-        base.control_valid      = True
-        base.nominal            = False
-        base.reason             = "DETUMBLING"
-        base.pid_enabled        = False
-        base.yaw_rate_limit_dps = math.degrees(lim)
-        return base
+        output.control_valid      = True
+        output.nominal            = False
+        output.reason             = "DETUMBLING"
+        output.pid_enabled        = False
+        output.yaw_rate_limit_dps = math.degrees(lim)
+        return output
 
     # ── NaN 검사 ─────────────────────────────────────────────────────────────
     for v in (l1in.E, l1in.N, l1in.target_E, l1in.target_N, l1in.course, l1in.V):
         if not _ok(v):
-            base.control_valid = False
-            base.reason        = "NAN_NAV_STATE"
-            return base
+            output.control_valid = False
+            output.reason        = "NAN_NAV_STATE"
+            return output
 
     dE   = l1in.target_E - l1in.E
     dN   = l1in.target_N - l1in.N
     dist = math.hypot(dE, dN)
-    base.distance_to_target = dist
+    output.distance_to_target = dist
 
+    #need correction
     # ── 목표 도달 ─────────────────────────────────────────────────────────────
     if dist <= config.TARGET_RADIUS_M:
-        base.control_valid  = True
-        base.nominal        = True
-        base.reason         = "TARGET_REACHED"
-        base.target_bearing = _wrap_pi(math.atan2(dE, dN))
-        base.nu             = 0.0
-        return base
+        output.control_valid  = True
+        output.nominal        = True
+        output.reason         = "TARGET_REACHED"
+        output.target_bearing = _wrap_pi(math.atan2(dE, dN))
+        output.nu             = 0.0
+        return output
 
     # ── L1 계산 ───────────────────────────────────────────────────────────────
     target_bearing = _wrap_pi(math.atan2(dE, dN))   # North 기준
@@ -706,15 +706,14 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     lim          = _choose_yaw_rate_limit(l1in.control_mode)
     yaw_rate_cmd = _clamp(yaw_rate_cmd, -lim, lim)
 
-    base.target_bearing             = target_bearing
-    base.nu                         = nu
-    base.yaw_rate_cmd               = yaw_rate_cmd
-    base.angular_velocity_cmd_rad_s = yaw_rate_cmd
-    base.yaw_rate_limit_dps         = math.degrees(lim)
-    base.control_valid              = True
-    base.nominal                    = True
-    base.reason                     = l1in.reason
-    base.pid_enabled                = True
+    output.target_bearing             = target_bearing
+    output.nu                         = nu
+    output.yaw_rate_cmd               = yaw_rate_cmd
+    output.yaw_rate_limit_dps         = math.degrees(lim)
+    output.control_valid              = True
+    output.nominal                    = True
+    output.reason                     = l1in.reason
+    output.pid_enabled                = True
 
     logger.debug(
         "L1 mode=%s dist=%.1fm bear=%.1f° nu=%.1f° cmd=%.2f°/s conf=%.2f",
@@ -722,7 +721,7 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
         math.degrees(target_bearing), math.degrees(nu),
         math.degrees(yaw_rate_cmd), l1in.confidence,
     )
-    return base
+    return output
 
 
 # ── 공개 API ─────────────────────────────────────────────────────────────────

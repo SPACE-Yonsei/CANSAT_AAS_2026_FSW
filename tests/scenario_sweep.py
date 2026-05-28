@@ -180,7 +180,7 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
         cross_track_calc_m=g_out.crossTrack,
         L1_distance_m=g_out.L1_distance,
         lat_acc_cmd_mps2=g_out.lat_acc_cmd_mps2,
-        angular_velocity_cmd_deg_s=math.degrees(g_out.angular_velocity_cmd_rad_s),
+        angular_velocity_cmd_deg_s=math.degrees(g_out.yaw_rate_cmd),
         delta_ff_deg=cmd.delta_ff_deg,
         delta_pid_deg=cmd.delta_pid_deg,
         delta_arm_deg=cmd.delta_arm_deg,

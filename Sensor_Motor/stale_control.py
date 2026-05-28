@@ -204,9 +204,7 @@ def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
         getattr(l1_output, "control_valid", False)
         or getattr(l1_output, "nominal", False)
     )
-    rad = getattr(l1_output, "angular_velocity_cmd_rad_s", None)
-    if rad is None:
-        rad = getattr(l1_output, "yaw_rate_cmd", 0.0)
+    rad = getattr(l1_output, "yaw_rate_cmd", 0.0)
     rad = float(rad or 0.0)
 
     return CtrlInput(

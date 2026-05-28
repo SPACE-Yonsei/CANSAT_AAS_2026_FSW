@@ -165,7 +165,6 @@ class L1Output:
     distance_to_target: float = float("nan")
     yaw_rate_cmd: float = 0.0
     yaw_rate_limit_dps: float = 0.0
-    angular_velocity_cmd_rad_s: float = 0.0   # alias; always == yaw_rate_cmd
     ground_speed_mps: float = 0.0
     crossTrack: float = 0.0
     alongTrack: float = float("nan")
@@ -744,7 +743,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
         base.nominal       = False
         base.reason        = l1input.reason
         base.yaw_rate_cmd  = 0.0
-        base.angular_velocity_cmd_rad_s = 0.0
         return base
 
     # ── DETUMBLING ────────────────────────────────────────────────────────────
@@ -755,7 +753,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
         base.pid_enabled   = False
         base.kp_override   = None
         base.yaw_rate_cmd  = 0.0
-        base.angular_velocity_cmd_rad_s = 0.0
         lim = choose_yaw_rate_limit(ControlMode.DETUMBLING)
         base.yaw_rate_limit_dps = math.degrees(lim)
         return base
@@ -767,7 +764,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
             base.control_valid = False
             base.reason = "FAIL_NAN_NAV_STATE"
             base.yaw_rate_cmd = 0.0
-            base.angular_velocity_cmd_rad_s = 0.0
             return base
 
     dE = l1input.target_E - l1input.E
@@ -783,7 +779,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
         base.nominal        = True
         base.reason         = "TARGET_REACHED"
         base.yaw_rate_cmd   = 0.0
-        base.angular_velocity_cmd_rad_s = 0.0
         base.target_bearing = wrap_pi(math.atan2(dE, dN))
         base.nu             = 0.0
         return base
@@ -812,7 +807,6 @@ def produceL1output(l1input: L1Input) -> L1Output:
     base.target_bearing = target_bearing
     base.nu             = nu
     base.yaw_rate_cmd   = yaw_rate_cmd
-    base.angular_velocity_cmd_rad_s = yaw_rate_cmd
     base.yaw_rate_limit_dps = math.degrees(lim)
     base.control_valid  = True
     base.nominal        = True

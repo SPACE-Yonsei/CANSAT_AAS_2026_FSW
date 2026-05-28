@@ -21,12 +21,15 @@ EGG_ACTION_ENABLED:     bool = True
 
 PI = None  # pigpio handle
 
-# ── 스레드 공유 변수 ──────────────────────────────────────────────────────────
-_CACHE       = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레드가 씀)
-_UPDATE_LOCK = threading.Lock()  # _CACHE 보호
+# guidance origin → prevstate 저장 완료 여부 (1회만 저장)
+_ORIGIN_SAVED: bool = False
 
-_CTRLER:   Optional[control.Ctrler] = None  # PID 상태
-_CTRL_LOCK = threading.Lock()               # _CTRLER reset 동시성
+# ── 스레드 공유 변수 ──────────────────────────────────────────────────────────
+_CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레드가 씀)
+_UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
+
+_CTRLER_t: Optional[control.Ctrler] = None  # PID 상태
+_CTRL_LOCK = threading.Lock()               # _CTRLER_t reset 동시성
 
 _PREV_STATE: int = 0
 
@@ -35,9 +38,9 @@ _PREV_STATE: int = 0
 
 def _cache_snapshot() -> _Cache:
     return _Cache(
-        latest_gps=_GpsFromApp(**vars(_CACHE.latest_gps)),
-        latest_imu=_ImuFromApp(**vars(_CACHE.latest_imu)),
-        latest_baro=_BaroFromApp(**vars(_CACHE.latest_baro)),
+        latest_gps=_GpsFromApp(**vars(_CACHE_t.latest_gps)),
+        latest_imu=_ImuFromApp(**vars(_CACHE_t.latest_imu)),
+        latest_baro=_BaroFromApp(**vars(_CACHE_t.latest_baro)),
     )
 
 
@@ -99,7 +102,7 @@ def handle_gps(data: str) -> None:
         motion_health=motion_health,
     )
     with _UPDATE_LOCK:
-        _CACHE.latest_gps = sample
+        _CACHE_t.latest_gps = sample
 
 
 def handle_imu(data: str) -> None:

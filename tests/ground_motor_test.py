@@ -276,8 +276,8 @@ def run_section_b() -> None:
         _row("crossTrack_m",    f"{g_out.crossTrack:+.2f} m")
         _row("alongTrack_m",    f"{g_out.alongTrack:+.2f} m")
         _row("L1_distance_m",   f"{g_out.L1_distance:.2f} m")
-        _row("angular_velocity_cmd", f"{g_out.angular_velocity_cmd_rad_s:+.4f} rad/s  "
-                                    f"({math.degrees(g_out.angular_velocity_cmd_rad_s):+.2f} deg/s)")
+        _row("angular_velocity_cmd", f"{g_out.yaw_rate_cmd:+.4f} rad/s  "
+                                    f"({math.degrees(g_out.yaw_rate_cmd):+.2f} deg/s)")
         _row("lat_acc_cmd",     f"{g_out.lat_acc_cmd_mps2:+.4f} m/s²")
 
         _sep("Control Output")

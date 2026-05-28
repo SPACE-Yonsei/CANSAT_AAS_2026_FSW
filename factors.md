@@ -231,7 +231,7 @@
 | `FreshResult` | point_fresh, velocity_fresh, imu_fresh, imu_gyrz_fresh, imu_yaw_fresh, imu_acc_fresh, imu_linear_acc_fresh, barometer_fresh + age_s | `gyrz_fresh/gyrz_age_s/baro_fresh` 별칭 |
 | `GuidanceState` | origin_lat/lon/ready, target_lat/lon/E/N/ready, gps/imu/baro_history, nav_E/N/course/V/vE/vN/confidence/dr_age/control_mode/dr_method, dr_start_E/N/V/course/time/vE/vN, yaw_at_dropout, gyro_integral_since_dropout, last_dr_update_time, detumble_exit_start | — |
 | `L1Input` | valid, reason, control_mode, dr_method, confidence, E/N/vE/vN/V/course, origin_E/N, target_E/N/lat/lon, point_age, velocity_age, imu_age, barometer_age, dr_age | — |
-| `L1Output` | timestamp, control_valid, nominal, reason, control_mode, dr_method, confidence, origin_E/N, target_E/N, target_bearing, nu, distance_to_target, yaw_rate_cmd, yaw_rate_limit_dps, **angular_velocity_cmd_rad_s** (alias), ground_speed_mps, crossTrack, alongTrack, pos_E/N, carrot_E/N, current_heading_rad, pid_enabled, kp_override | — |
+| `L1Output` | timestamp, control_valid, nominal, reason, control_mode, dr_method, confidence, origin_E/N, target_E/N, target_bearing, nu, distance_to_target, yaw_rate_cmd, yaw_rate_limit_dps, ground_speed_mps, crossTrack, alongTrack, pos_E/N, carrot_E/N, current_heading_rad, pid_enabled, kp_override | — |
 
 #### 함수 (실행/호출 순서)
 

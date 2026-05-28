@@ -159,7 +159,7 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
     def test_converts_rad_to_deg(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
-            angular_velocity_cmd_rad_s=0.5,
+            yaw_rate_cmd=0.5,
             ground_speed_mps=7.0,
             nominal=True,
             timestamp=100.0,
@@ -172,7 +172,7 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
     def test_non_nominal_l1_gives_invalid_cmd(self):
         from types import SimpleNamespace
         l1 = SimpleNamespace(
-            angular_velocity_cmd_rad_s=0.0,
+            yaw_rate_cmd=0.0,
             ground_speed_mps=0.0,
             nominal=False,
             timestamp=100.0,

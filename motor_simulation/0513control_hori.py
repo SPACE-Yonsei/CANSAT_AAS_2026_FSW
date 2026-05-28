@@ -199,7 +199,7 @@ def print_summary_row(result: SimulationResult) -> None:
     print(
         f"x={result.case.x_m:+7.1f} m | "
         f"cross={g.crossTrack:+8.2f} m | "
-        f"yaw_cmd={g.angular_velocity_cmd_rad_s:+7.4f} rad/s | "
+        f"yaw_cmd={g.yaw_rate_cmd:+7.4f} rad/s | "
         f"lat_acc={g.lat_acc_cmd_mps2:+7.3f} m/s^2 | "
         f"L={c.left_angle_deg:6.2f} deg | "
         f"R={c.right_angle_deg:6.2f} deg | "
