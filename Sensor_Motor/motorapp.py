@@ -352,11 +352,13 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
 
     mode = guidance.DecideControlMode(now)
 
+    # ── [1] DETUMBLING ────────────────────────────────────────────────────────
     if mode == guidance.ControlMode.DETUMBLING:
         ctrl_out_t = control.ProduceDetumbleOutput(now)
         control.MoveServo(PI, ctrl_out_t)
         return ctrl_out_t
 
+    # ── [2] GPS/DR 자율 추종 ─────────────────────────────────────────────────
     if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
                 guidance.ControlMode.GPS_TRACKING_OPEN,
                 guidance.ControlMode.DR_TRACKING_CLOSED,
@@ -371,7 +373,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         control.MoveServo(PI, ctrl_out_t)
         return ctrl_out_t
 
-    # FAIL
+    # ── [3] FAIL ─────────────────────────────────────────────────────────────
     if PI is not None:
         control.WriteOff(PI)
     return None
