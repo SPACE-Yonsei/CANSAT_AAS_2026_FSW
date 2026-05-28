@@ -166,6 +166,7 @@ class L1Input:
 
 @dataclass
 class L1Output:
+    timestamp:                  float       = 0.0   # monotonic, _ctrl_cycle에서 스탬프
     control_valid:              bool        = False
     nominal:                    bool        = False
     reason:                     str         = "INIT"

@@ -283,13 +283,12 @@ def ProduceCtrlOutput(
         return out_t
 
     # ── NaN 명령 → 중립 ──────────────────────────────────────────────────────
-    raw_cmd = float(cmd.angular_velocity_cmd_deg_s)
-    if not math.isfinite(raw_cmd):
+    angular_velocity_cmd_deg_s = float(cmd.angular_velocity_cmd_deg_s)
+    if not math.isfinite(angular_velocity_cmd_deg_s):
         out_t.mode = CTRL_MODE_NEUTRAL
         out_t.fallback_mode = CTRL_FALLBACK_NONE
         return out_t
-
-    angular_velocity_cmd_deg_s = raw_cmd
+    raw_cmd = angular_velocity_cmd_deg_s   # 원본 명령 (클램프 포화 판정 기준)
     age = _cmd_age(now, cmd.timestamp)
     out_t.guidance_command_age_s = age
 
