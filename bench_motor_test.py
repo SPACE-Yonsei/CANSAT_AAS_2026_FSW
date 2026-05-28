@@ -3,14 +3,20 @@
 bench_motor_test.py - motor guidance/control one-shot bench
 ===========================================================
 
-main.py 없이 guidance/control 파이프라인을 직접 실행하고, pigpio가 연결된
-환경에서는 실제 서보까지 구동한다.
+_ctrl_cycle 파이프라인을 직접 재현한다.
 
-현재 제어 기준:
-  - 타겟 거리 기반 "도달 시 중립" 특수 처리는 없다.
-  - bearing은 현재 위치에서 타겟을 보는 절대 방위각이다.
-  - nu는 bearing - course로 계산되는 방향 오차다.
-  - detumbling은 guidance/L1/PID를 거치지 않고 ProduceDetumbleOutput()을 직접 쓴다.
+ControlMode별 파이프라인 (motorapp._ctrl_cycle 기준):
+
+  DETUMBLING:
+    _should_detumble → ProduceDetumbleOutput(now, gz_meas) → MoveServo
+
+  GPS_TRACKING_CLOSED / GPS_TRACKING_OPEN /
+  DR_TRACKING_CLOSED  / DR_TRACKING_OPEN:
+    ProduceL1Input → ProduceL1Output
+      → ProduceCtrlInput → ProduceCtrlOutput(ctrler, ctrl_in, gz_meas) → MoveServo
+
+  FAIL:
+    WriteOff
 
 사용:
   sudo pigpiod
@@ -56,12 +62,6 @@ def _wrap_deg(angle_deg: float) -> float:
     while angle_deg < -180.0:
         angle_deg += 360.0
     return angle_deg
-
-
-def _deg_text(value_rad: float) -> str:
-    if not math.isfinite(value_rad):
-        return "N/A"
-    return f"{math.degrees(value_rad):+.1f}deg"
 
 
 def _configure_mission() -> tuple[float, float]:
@@ -119,13 +119,22 @@ def _move_or_print(out: control.CtrlOutput) -> None:
         print("  [SIM] pigpio unavailable, servo not moved")
 
 
+# ── GPS_TRACKING_CLOSED / GPS_TRACKING_OPEN /
+#    DR_TRACKING_CLOSED  / DR_TRACKING_OPEN ───────────────────────────────────
+#
+# motorapp._ctrl_cycle 파이프라인:
+#   ProduceL1Input → ProduceL1Output
+#   → ProduceCtrlInput → ProduceCtrlOutput(ctrler, ctrl_in, gz_meas) → MoveServo
+#
+# bench에서는 L1Input을 직접 주입한다 (실제 센서 없음).
+
 def _run_tracking_case(
     pos_E: float,
     pos_N: float,
     course_deg: float,
     speed_mps: float,
     gyrz_dps: float,
-    mode: ControlMode,
+    control_mode: ControlMode,
 ) -> None:
     now = time.monotonic()
     control.controller_reset(ctrler)
@@ -133,7 +142,7 @@ def _run_tracking_case(
     l1_in = L1Input(
         valid=True,
         reason="BENCH",
-        control_mode=mode,
+        control_mode=control_mode,
         dr_method=DRMethod.NONE,
         confidence=1.0,
         E=pos_E,
@@ -144,8 +153,9 @@ def _run_tracking_case(
         target_N=tN,
     )
 
-    l1_out = guidance.ProduceL1Output(l1_in)
-    ctrl_in = control.ProduceCtrlInput(l1_out, now)
+    # _ctrl_cycle 파이프라인 재현
+    l1_out   = guidance.ProduceL1Output(l1_in)
+    ctrl_in  = control.ProduceCtrlInput(l1_out, now)
     ctrl_out = control.ProduceCtrlOutput(ctrler, ctrl_in, gyrz_dps, now)
 
     bearing_deg, nu_deg = _bearing_nu_deg(pos_E, pos_N, course_deg)
@@ -153,82 +163,167 @@ def _run_tracking_case(
     applied_delta = _applied_delta(ctrl_out)
     slew_limited = abs(ctrl_out.delta_arm_deg - applied_delta) > 0.5
 
-    print(f"  pos    : E={pos_E:+7.1f}m  N={pos_N:+7.1f}m  dist={dist:.1f}m")
+    pid_label = "ON" if ctrl_in.pid_enabled else "OFF"
+
+    print(f"  pos          : E={pos_E:+7.1f}m  N={pos_N:+7.1f}m  dist={dist:.1f}m")
     print(
-        f"  flight : course={course_deg:+.1f}deg  "
+        f"  flight       : course={course_deg:+.1f}deg  "
         f"speed={speed_mps:.1f}m/s  gyrz={gyrz_dps:+.1f}dps"
     )
     print(
-        f"  L1     : bearing={bearing_deg:+.1f}deg  "
-        f"nu={nu_deg:+.1f}deg  out_bearing={_deg_text(l1_out.target_bearing)}  "
-        f"reason={l1_out.reason}"
+        f"  L1           : bearing={bearing_deg:+.1f}deg  nu={nu_deg:+.1f}deg  "
+        f"yaw_rate_cmd={math.degrees(l1_out.yaw_rate_cmd):+.2f}dps"
     )
     print(
-        f"  CMD    : yaw_rate={math.degrees(l1_out.yaw_rate_cmd):+.2f}dps  "
-        f"ctrl_mode={ctrl_out.mode}  fallback={ctrl_out.fallback_mode}"
+        f"  control_mode : {ctrl_out.control_mode}  PID={pid_label}"
     )
     print(
-        f"  SERVO  : left={ctrl_out.left_angle_deg:.1f}deg({ctrl_out.left_pw}us)  "
-        f"right={ctrl_out.right_angle_deg:.1f}deg({ctrl_out.right_pw}us)"
-    )
-    print(
-        f"  DELTA  : target={ctrl_out.delta_arm_deg:+.1f}deg  "
+        f"  delta        : FF={ctrl_out.delta_ff_deg:+.1f}deg  "
+        f"PID={ctrl_out.delta_pid_deg:+.1f}deg  "
+        f"target={ctrl_out.delta_arm_deg:+.1f}deg  "
         f"applied={applied_delta:+.1f}deg"
         + ("  (slew limited)" if slew_limited else "")
     )
+    print(
+        f"  SERVO        : left={ctrl_out.left_angle_deg:.1f}deg({ctrl_out.left_pw}us)  "
+        f"right={ctrl_out.right_angle_deg:.1f}deg({ctrl_out.right_pw}us)"
+    )
     _move_or_print(ctrl_out)
 
+
+# ── DETUMBLING ────────────────────────────────────────────────────────────────
+#
+# motorapp._ctrl_cycle 파이프라인:
+#   _should_detumble → ProduceDetumbleOutput(now, gz_meas) → MoveServo
+#
+# ProduceCtrlOutput을 거치지 않는다.
 
 def _run_detumble_case(gyrz_dps: float) -> None:
     now = time.monotonic()
     control.controller_reset(ctrler)
 
+    # _ctrl_cycle에서 ProduceDetumbleOutput을 직접 호출하는 것과 동일
     out = control.ProduceDetumbleOutput(now, gyrz_dps)
+
+    applied_delta = _applied_delta(out)
     print(
-        f"  gyrz   : {gyrz_dps:+.1f}dps  "
-        f"delta={out.delta_arm_deg:+.1f}deg  mode={out.mode}"
+        f"  control_mode : {out.control_mode}"
     )
     print(
-        f"  SERVO  : left={out.left_angle_deg:.1f}deg({out.left_pw}us)  "
+        f"  gyrz         : {gyrz_dps:+.1f}dps  "
+        f"delta={out.delta_arm_deg:+.1f}deg  applied={applied_delta:+.1f}deg"
+    )
+    print(
+        f"  SERVO        : left={out.left_angle_deg:.1f}deg({out.left_pw}us)  "
         f"right={out.right_angle_deg:.1f}deg({out.right_pw}us)"
     )
     _move_or_print(out)
 
 
+# ── 감도 테이블 ───────────────────────────────────────────────────────────────
+#
+# nu → yaw_rate_cmd → delta_ff → arm 각도
+#
+# L1 공식: yaw_rate_cmd = 2·V / L_GAIN_M · sin(nu) · confidence
+# expo 곡선: delta_ff = DELTA_MIN_EFFECTIVE + (DELTA_FF_MAX - DELTA_MIN_EFFECTIVE) · (|cmd|/cmd_max)^EXPO
+# 믹서: left = NEUTRAL - delta/2 / right = NEUTRAL + delta/2
+
+_NU_SWEEP_DEG = [-180, -150, -120, -90, -60, -45, -30, -15, 0,
+                  15, 30, 45, 60, 90, 120, 150, 180]
+
+
+def _nu_to_yaw_rate_dps(nu_deg: float, speed_mps: float, confidence: float = 1.0) -> float:
+    """L1 공식. yaw_rate_cmd (deg/s)."""
+    nu_rad = math.radians(nu_deg)
+    sin_nu = max(-1.0, min(1.0, math.sin(nu_rad)))
+    rate_rad_s = 2.0 * speed_mps / config.L_GAIN_M * sin_nu * confidence
+    return math.degrees(rate_rad_s)
+
+
+def _print_sensitivity_table(speed_mps: float, confidence: float = 1.0) -> None:
+    """nu → yaw_rate_cmd → delta_ff → arm 각도 감도 테이블 출력."""
+    cfg = control.ControlConfig()
+
+    header = (
+        f"{'nu':>7}  {'yaw_rate':>10}  {'delta_ff':>10}  "
+        f"{'left_arm':>10}  {'right_arm':>10}  {'left_pw':>8}  {'right_pw':>8}"
+    )
+    unit = (
+        f"{'(deg)':>7}  {'(dps)':>10}  {'(deg)':>10}  "
+        f"{'(deg)':>10}  {'(deg)':>10}  {'(us)':>8}  {'(us)':>8}"
+    )
+    sep = "-" * len(header)
+
+    print(f"\n  V={speed_mps:.1f}m/s  L_GAIN={config.L_GAIN_M:.1f}m  confidence={confidence:.2f}")
+    print(f"  cmd_max={cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S:.1f}dps  "
+          f"deadband={cfg.ANGULAR_VELOCITY_DEADBAND_DEG_S:.1f}dps  "
+          f"expo={cfg.EXPO:.2f}  "
+          f"delta_ff_max={cfg.DELTA_FF_MAX_DEG:.0f}deg  "
+          f"delta_min_eff={cfg.DELTA_MIN_EFFECTIVE_DEG:.1f}deg")
+    print(f"  {sep}")
+    print(f"  {header}")
+    print(f"  {unit}")
+    print(f"  {sep}")
+
+    for nu_deg in _NU_SWEEP_DEG:
+        yaw_rate_dps = _nu_to_yaw_rate_dps(nu_deg, speed_mps, confidence)
+        delta_ff = control.angular_velocity_to_delta_ff(yaw_rate_dps, cfg)
+        left_pw, right_pw, left_angle, right_angle, _ = control.ConnectRoMo(delta_ff)
+        clamped = abs(yaw_rate_dps) > cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S
+        clamp_mark = "*" if clamped else " "
+        print(
+            f"  {nu_deg:>+6.0f}°  {yaw_rate_dps:>+9.2f}{clamp_mark}  "
+            f"{delta_ff:>+10.1f}  "
+            f"{left_angle:>10.1f}  {right_angle:>10.1f}  "
+            f"{left_pw:>8}  {right_pw:>8}"
+        )
+
+    print(f"  {sep}")
+    print("  * : yaw_rate_cmd가 cmd_max에 클램핑됨")
+
+
+def _print_sensitivity_section() -> None:
+    print("\n" + "=" * 70)
+    print(" 감도 테이블: nu → yaw_rate_cmd → delta_ff → arm 각도")
+    print("=" * 70)
+    for v in (5.0, 8.0):
+        _print_sensitivity_table(speed_mps=v)
+
+
 CASES = [
     (
-        "CASE 1 | target ahead, straight",
-        "gps",
+        "CASE 1 | GPS_TRACKING_CLOSED | target ahead, straight",
+        "tracking",
         (tE - 20.0, tN, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
     ),
     (
-        "CASE 2 | north of path, eastbound -> right turn",
-        "gps",
+        "CASE 2 | GPS_TRACKING_CLOSED | north of path, eastbound -> right turn",
+        "tracking",
         (0.0, tN + 111.3, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
     ),
     (
-        "CASE 3 | east of target, northbound -> left turn",
-        "gps",
+        "CASE 3 | GPS_TRACKING_CLOSED | east of target, northbound -> left turn",
+        "tracking",
         (tE + 111.8, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
     ),
     (
-        "CASE 4 | weak right command",
-        "gps",
+        "CASE 4 | GPS_TRACKING_CLOSED | weak right command",
+        "tracking",
         (0.0, tN + 50.0, 90.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
     ),
     (
-        "CASE 5 | near target, northbound -> still commands turn",
-        "gps",
-        (tE - 2.0, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_CLOSED),
+        "CASE 5 | GPS_TRACKING_OPEN | east of target, northbound -> left turn (FF only, no PID)",
+        "tracking",
+        (tE + 111.8, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_OPEN),
     ),
     (
-        "CASE 6 | DETUMBLING, right rotation +250dps",
-        "dtb",
+        "CASE 6 | DETUMBLING | right rotation +250dps",
+        "detumble",
         (250.0,),
     ),
     (
-        "CASE 7 | DETUMBLING, left rotation -250dps",
-        "dtb",
+        "CASE 7 | DETUMBLING | left rotation -250dps",
+        "detumble",
         (-250.0,),
     ),
 ]
@@ -236,7 +331,7 @@ CASES = [
 
 def main() -> None:
     print("=" * 70)
-    print(" bench_motor_test.py - current motor control bench")
+    print(" bench_motor_test.py - _ctrl_cycle 파이프라인 재현")
     print("=" * 70)
     print(f" Origin: ({ORIGIN_LAT:.7f}, {ORIGIN_LON:.7f}) -> E=0.0m, N=0.0m")
     print(
@@ -253,6 +348,8 @@ def main() -> None:
         f"nu_deadband={config.NU_DEADBAND_DEG:.1f}deg"
     )
     print("=" * 70)
+    _print_sensitivity_section()
+    print("\n" + "=" * 70)
     print("Enter: next case / q: quit\n")
 
     try:
@@ -261,9 +358,9 @@ def main() -> None:
             print(f" {label}")
             print("-" * 70)
 
-            if kind == "gps":
+            if kind == "tracking":
                 _run_tracking_case(*args)
-            elif kind == "dtb":
+            elif kind == "detumble":
                 _run_detumble_case(*args)
 
             user = input("\n  [Enter=next  q=quit] > ").strip().lower()
