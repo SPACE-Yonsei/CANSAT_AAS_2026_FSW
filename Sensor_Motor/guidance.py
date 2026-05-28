@@ -671,16 +671,6 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     dist = math.hypot(dE, dN)
     output_t.distance_to_target = dist
 
-    #need correction
-    # ── 목표 도달 ─────────────────────────────────────────────────────────────
-    if dist <= config.TARGET_RADIUS_M:
-        output_t.control_valid  = True
-        output_t.nominal        = True
-        output_t.reason         = "TARGET_REACHED"
-        output_t.target_bearing = _wrap_pi(math.atan2(dE, dN))
-        output_t.nu             = 0.0
-        return output_t
-
     # ── L1 계산 ───────────────────────────────────────────────────────────────
     target_bearing = _wrap_pi(math.atan2(dE, dN))   # North 기준
     nu             = _wrap_pi(target_bearing - l1in.course)

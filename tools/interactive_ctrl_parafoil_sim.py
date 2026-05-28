@@ -216,8 +216,8 @@ PRESETS: dict[str, list[Case]] = {
             baro_sample=SAMPLE_DROP,
         ),
         case(
-            "target_reached",
-            "Fresh GPS inside TARGET_RADIUS_M should command zero yaw rate.",
+            "near_target_no_distance_special_case",
+            "Fresh GPS near the target still runs normal bearing-based guidance.",
             reset_before=True,
             e_m=0.0,
             n_m=float(config.TARGET_RADIUS_M) * 0.5 + 900.0,

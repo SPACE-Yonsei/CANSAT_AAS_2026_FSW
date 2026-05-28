@@ -123,9 +123,15 @@ def _run_case(name, pos_E, pos_N, course_deg, speed_mps, gyrz_dps, mode):
     print(f"  비행 : course={course_deg:.1f}°  speed={speed_mps:.1f}m/s  gyrz={gyrz_dps:+.1f}dps")
     print(f"  L1   : nu={nu_deg:+.1f}°  bearing={math.degrees(l1out.target_bearing) if math.isfinite(l1out.target_bearing) else 'N/A':.1f}°  reason={l1out.reason}")
     print(f"  CMD  : yaw_rate={math.degrees(l1out.yaw_rate_cmd):+.2f}dps  ctrl_mode={ctrl_out.mode}")
+    actual_delta = ctrl_out.right_angle_deg - ctrl_out.left_angle_deg  # ConnectRoMo 역산
+    slew_note = " ⚠ slew" if abs(ctrl_out.delta_arm_deg - (ctrl_out.right_angle_deg - ctrl_out.left_angle_deg + (control.NEUTRAL_ARM_DEG - ctrl_out.left_angle_deg)*2 - ctrl_out.delta_arm_deg)) > 1.0 else ""
+    applied_delta = (ctrl_out.right_angle_deg - control.NEUTRAL_ARM_DEG) * 2
+    slew_limited = abs(ctrl_out.delta_arm_deg - applied_delta) > 0.5
     print(f"  SERVO: left={ctrl_out.left_angle_deg:.1f}°({ctrl_out.left_pw}µs)  "
-          f"right={ctrl_out.right_angle_deg:.1f}°({ctrl_out.right_pw}µs)  "
-          f"delta={ctrl_out.delta_arm_deg:+.1f}°")
+          f"right={ctrl_out.right_angle_deg:.1f}°({ctrl_out.right_pw}µs)")
+    print(f"  DELTA: 목표={ctrl_out.delta_arm_deg:+.1f}°  "
+          f"적용={applied_delta:+.1f}°"
+          + ("  ⚠ slew 제한됨" if slew_limited else "  ✓"))
 
     if pi is not None:
         control.MoveServo(pi, ctrl_out)
