@@ -387,9 +387,9 @@ def ProduceDetumbleOutput(
 ) -> CtrlOutput:
     """DETUMBLING mode output.
 
-    Uses the normal 80 deg neutral frame and commands +/-80 deg:
-    left rotation (gyrz < 0)  -> left=0,   right=160
-    right rotation (gyrz > 0) -> left=160, right=0
+    Neutral=80deg 기준 +/-DELTA_ARM_MAX_DEG 최대 제동.
+    left rotation  (gyrz < 0) -> delta=+DELTA_ARM_MAX  left=NEUTRAL-MAX/2  right=NEUTRAL+MAX/2
+    right rotation (gyrz > 0) -> delta=-DELTA_ARM_MAX  left=NEUTRAL+MAX/2  right=NEUTRAL-MAX/2
     """
     out_t = CtrlOutput(timestamp=now, control_mode=ControlMode.DETUMBLING)
     out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
