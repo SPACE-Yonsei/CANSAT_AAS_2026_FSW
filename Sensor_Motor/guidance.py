@@ -1,4 +1,4 @@
-﻿"""Sensor_Motor/guidance.py — Navigation + L1 Guidance
+"""Sensor_Motor/guidance.py — Navigation + L1 Guidance
 
 Pipeline (매 사이클):
   UpdateAnchors(gps, imu, baro, now)
@@ -673,7 +673,12 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     output_t.control_valid              = True
     output_t.nominal                    = True
     output_t.reason                     = l1in.reason
-    output_t.pid_enabled                = True
+    # CLOSED 모드만 gyrz 피드백(PID) 활성화.
+    # OPEN 모드는 gyrz 없음 → FF only.
+    output_t.pid_enabled                = l1in.control_mode in (
+        ControlMode.GPS_TRACKING_CLOSED,
+        ControlMode.DR_TRACKING_CLOSED,
+    )
 
     logger.debug(
         "L1 mode=%s dist=%.1fm bear=%.1f° nu=%.1f° cmd=%.2f°/s conf=%.2f",

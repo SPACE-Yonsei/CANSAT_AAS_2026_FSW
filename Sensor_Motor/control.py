@@ -92,7 +92,7 @@ class ControlConfig:
     # 피드포워드 형상
     ANGULAR_VELOCITY_CMD_MAX_DEG_S:  float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
     ANGULAR_VELOCITY_DEADBAND_DEG_S: float = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-    DELTA_FF_MAX_DEG:                float = 160.0
+    DELTA_FF_MAX_DEG:                float = DELTA_ARM_MAX_DEG  # config.ARM_MAX_DEG 기반 자동 계산
     DELTA_MIN_EFFECTIVE_DEG:         float = config.CTRL_DELTA_MIN_EFFECTIVE_DEG
     EXPO:                            float = config.CTRL_EXPO
 
@@ -102,10 +102,10 @@ class ControlConfig:
     K_I:                  float = config.CTRL_K_I
     K_D:                  float = config.KD_YAW_RATE
     I_LIMIT_DEG:          float = config.CTRL_I_LIMIT_DEG
-    DELTA_PID_MAX_DEG:    float = 160.0
+    DELTA_PID_MAX_DEG:    float = DELTA_ARM_MAX_DEG
 
     # 총 권한 + slew
-    DELTA_TOTAL_MAX_DEG: float = 160.0
+    DELTA_TOTAL_MAX_DEG: float = DELTA_ARM_MAX_DEG
     MAX_ARM_RATE_DEG_S:  float = 200.0
 
 

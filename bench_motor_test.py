@@ -127,6 +127,43 @@ def _move_or_print(out: control.CtrlOutput) -> None:
 #   → ProduceCtrlInput → ProduceCtrlOutput(ctrler, ctrl_in, gz_meas) → MoveServo
 #
 # bench에서는 L1Input을 직접 주입한다 (실제 센서 없음).
+#
+# 정상상태(steady-state) 시뮬레이션:
+#   단일 사이클은 slew-rate에 의해 max_step=MAX_ARM_RATE×dt_cap 이상 이동 불가.
+#   실제 제어루프(20Hz, dt=0.05s, step=10°/사이클)를 모사하여 수렴 위치를 함께 표시.
+
+_BENCH_DT_S = 1.0 / max(1.0, float(config.MOTOR_RATE_HZ))   # 실제 제어 주기
+_BENCH_MAX_CYCLES = 60                                         # 최대 시뮬레이션 사이클 수
+_BENCH_CONV_DEG   = 0.1                                        # 수렴 판정 임계 (deg)
+
+
+def _steady_state(l1_in: L1Input, gyrz_dps: float, now_base: float):
+    """동일 L1Input으로 정상상태 수렴까지 다중 사이클 시뮬레이션.
+
+    Returns: (ctrl_out_final, cycles_taken)
+    """
+    ctl = control.MakeCtrler()   # 중립에서 시작 (별도 ctrler)
+    prev_left  = control.NEUTRAL_ARM_DEG
+    prev_right = control.NEUTRAL_ARM_DEG
+    ctrl_out   = None
+    ctrl_in    = None
+
+    for i in range(_BENCH_MAX_CYCLES):
+        now      = now_base + i * _BENCH_DT_S
+        l1_out   = guidance.ProduceL1Output(l1_in)
+        ctrl_in  = control.ProduceCtrlInput(l1_out, now)
+        ctrl_out = control.ProduceCtrlOutput(ctl, ctrl_in, gyrz_dps, now)
+
+        # 수렴 판정
+        if (abs(ctrl_out.left_angle_deg  - prev_left)  < _BENCH_CONV_DEG and
+                abs(ctrl_out.right_angle_deg - prev_right) < _BENCH_CONV_DEG):
+            return ctrl_out, ctrl_in, i + 1
+
+        prev_left  = ctrl_out.left_angle_deg
+        prev_right = ctrl_out.right_angle_deg
+
+    return ctrl_out, ctrl_in, _BENCH_MAX_CYCLES
+
 
 def _run_tracking_case(
     pos_E: float,
@@ -137,7 +174,6 @@ def _run_tracking_case(
     control_mode: ControlMode,
 ) -> None:
     now = time.monotonic()
-    control.controller_reset(ctrler)
 
     l1_in = L1Input(
         valid=True,
@@ -153,17 +189,21 @@ def _run_tracking_case(
         target_N=tN,
     )
 
-    # _ctrl_cycle 파이프라인 재현
+    # ── 1-사이클 즉시 출력 (단일 스텝, slew 제한 있음) ───────────────────────
+    control.controller_reset(ctrler)
     l1_out   = guidance.ProduceL1Output(l1_in)
     ctrl_in  = control.ProduceCtrlInput(l1_out, now)
     ctrl_out = control.ProduceCtrlOutput(ctrler, ctrl_in, gyrz_dps, now)
 
+    # ── 정상상태 시뮬레이션 (20Hz 다중 사이클, slew 수렴 후) ─────────────────
+    ss_out, ss_in, ss_cycles = _steady_state(l1_in, gyrz_dps, now)
+
     bearing_deg, nu_deg = _bearing_nu_deg(pos_E, pos_N, course_deg)
     dist = math.hypot(tE - pos_E, tN - pos_N)
-    applied_delta = _applied_delta(ctrl_out)
-    slew_limited = abs(ctrl_out.delta_arm_deg - applied_delta) > 0.5
 
-    pid_label = "ON" if ctrl_in.pid_enabled else "OFF"
+    step1_delta  = _applied_delta(ctrl_out)
+    ss_delta     = _applied_delta(ss_out)
+    pid_label    = "ON" if ctrl_in.pid_enabled else "OFF"
 
     print(f"  pos          : E={pos_E:+7.1f}m  N={pos_N:+7.1f}m  dist={dist:.1f}m")
     print(
@@ -178,17 +218,23 @@ def _run_tracking_case(
         f"  control_mode : {ctrl_out.control_mode}  PID={pid_label}"
     )
     print(
-        f"  delta        : FF={ctrl_out.delta_ff_deg:+.1f}deg  "
+        f"  target delta : FF={ctrl_out.delta_ff_deg:+.1f}deg  "
         f"PID={ctrl_out.delta_pid_deg:+.1f}deg  "
-        f"target={ctrl_out.delta_arm_deg:+.1f}deg  "
-        f"applied={applied_delta:+.1f}deg"
-        + ("  (slew limited)" if slew_limited else "")
+        f"sum={ctrl_out.delta_arm_deg:+.1f}deg"
     )
     print(
-        f"  SERVO        : left={ctrl_out.left_angle_deg:.1f}deg({ctrl_out.left_pw}us)  "
-        f"right={ctrl_out.right_angle_deg:.1f}deg({ctrl_out.right_pw}us)"
+        f"  step1 SERVO  : left={ctrl_out.left_angle_deg:.1f}deg({ctrl_out.left_pw}us)  "
+        f"right={ctrl_out.right_angle_deg:.1f}deg({ctrl_out.right_pw}us)  "
+        f"delta={step1_delta:+.1f}deg  (1사이클, slew 제한)"
     )
-    _move_or_print(ctrl_out)
+    conv_mark = "✓" if ss_cycles < _BENCH_MAX_CYCLES else "MAX"
+    print(
+        f"  steady SERVO : left={ss_out.left_angle_deg:.1f}deg({ss_out.left_pw}us)  "
+        f"right={ss_out.right_angle_deg:.1f}deg({ss_out.right_pw}us)  "
+        f"delta={ss_delta:+.1f}deg  ({ss_cycles}사이클 수렴 {conv_mark})"
+    )
+    print("  [HW] moving to steady-state position...")
+    _move_or_print(ss_out)
 
 
 # ── DETUMBLING ────────────────────────────────────────────────────────────────
