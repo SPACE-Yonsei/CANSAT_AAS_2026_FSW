@@ -267,6 +267,7 @@ def send_imu_data(main_queue) -> None:
             fp   = PITCH
             fy   = YAW
             accx, accy, accz = ACCX, ACCY, ACCZ
+            magx, magy, magz = MAGX, MAGY, MAGZ
             gyrx, gyry, gyrz = GYRX, GYRY, GYRZ
             health         = int(HEALTH)
             sample_mono_ts = _last_sample_mono_ts
@@ -293,12 +294,13 @@ def send_imu_data(main_queue) -> None:
         tick += 1
         if tick >= 20:
             tick = 0
+            # commapp expects 12 fields: roll,pitch,yaw,ax,ay,az,mx,my,mz,gyrx,gyry,gyrz
             msgstructure.send_msg(
                 main_queue,
                 appargs.ImuAppArg.AppID,
                 appargs.CommAppArg.AppID,
                 appargs.ImuAppArg.MID_comm_euler,
-                f"{fr},{fp},{fy},{accx},{accy},{accz},{gyrx},{gyry},{gyrz}",
+                f"{fr},{fp},{fy},{accx},{accy},{accz},{magx},{magy},{magz},{gyrx},{gyry},{gyrz}",
             )
         time.sleep(0.05)
 
