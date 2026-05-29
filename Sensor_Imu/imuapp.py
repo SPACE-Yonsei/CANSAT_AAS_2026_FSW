@@ -146,7 +146,7 @@ def imuapp_init() -> None:
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        logger.debug("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
+        logger.warning("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
         _i2c_instance, _imu_instance = None, None
 
 
@@ -170,7 +170,7 @@ def _try_reinit() -> None:
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        logger.debug("IMU: reinit failed (%s)", exc)
+        logger.warning("IMU: reinit failed (%s)", exc)
         _i2c_instance, _imu_instance = None, None
     finally:
         # Measure cooldown from completion, not start, so a slow reinit doesn't

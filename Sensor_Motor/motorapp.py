@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+﻿from dataclasses import dataclass, field
 import logging
 import math
 import threading
@@ -357,7 +357,6 @@ def handle_fac(data: str) -> None:
         RELEASE_ACTION_ENABLED = enabled
     if actor in {"ALL", "EGG"}:
         EGG_ACTION_ENABLED = enabled
-
 
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 

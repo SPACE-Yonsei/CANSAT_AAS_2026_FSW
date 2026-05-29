@@ -2,6 +2,7 @@
 
 > 기준 코드: 2026-05-29  
 > 변경 이력:
+> - 2026-05-29: 섹션 8 추가 — 비행 중 모드 전이 시나리오 (Origin 획득, GPS dropout→DR, GPS 복구, pos-only fallback, STATE 전환 리셋, 전이 흐름도)
 > - 2026-05-29: 섹션 7 추가 — 센서 값 경우의 수 전체 열거 (GPS/IMU/Baro 4레이어, ControlMode 매트릭스, DR 앵커 초기화, Timeout 수치 일람)
 > - 2026-05-29: CASE 5 오류 수정 — `_should_detumble`은 `DecideControlMode` 이전 호출, `ProduceDetumbleOutput`은 중립이 아닌 최대 반대편향 출력
 > - 이전: UpdateAnchors→UpdateRaws 이름 변경 / NavState 중첩 구조 / IMU_FRESH_MAX_AGE_S=3.0 / GPS_STALE_TIMEOUT_SEC=15.0 / DR 속도감쇄 제거 / NMEA 캐시 레이어 제거
@@ -1292,3 +1293,256 @@ gyrz_deg_s (BNO085 원시, CCW=양수)
 | 13 | control | `_clamp_dt` lo/hi | **0.01/0.2s** | dt 범위 이탈 | default 0.1s 대체 |
 | 14 | motorapp | `ctrl_thread.join` | **1s** | 종료 시 대기 | 스레드 강제 종료 |
 | 15 | imuapp | `t1/t2.join` | **2s** | 종료 시 대기 | 스레드 강제 종료 |
+
+---
+
+## 8. 비행 중 모드 전이 시나리오
+
+> 정적 상태(단일 ControlMode) 이외에 **시간에 따라 모드가 바뀌는** 전이 과정을 다룬다.
+
+---
+
+### 8-A. Origin 최초 획득 (비행 시작 직후)
+
+**전제**: 전원 켜고 낙하 전, GPS가 처음으로 신호를 잡는 순간.
+
+```
+[T=0s] imuapp/gpsapp 시작. STATE=0 or 1.
+
+[T=0 ~ T=first_GPS_lock]
+  UpdateRaws(): pos_health=0 → gps.E/N 미갱신, gps.pos_valid=False
+  ProduceL1Input(): origin_ready=False, pos_fresh=False
+    → L1Input(valid=False, reason="NO_ORIGIN")
+  → _ctrl_cycle: STATE<3 → WriteZero (비행 전이라 서보 무관)
+
+[T=first_GPS_lock] GPS pos_health=1 최초 수신
+  UpdateRaws():
+    pos_health=1, origin_ready=False
+    → mi._raw_lat = lat,  mi._raw_lon = lon    ← raw만 저장
+    → gps.E/N 미투영 (origin 없음)
+    gps.pos_ts = ts,  gps.pos_valid = True
+
+  ProduceL1Input() 내부 origin 획득 분기:
+    origin_ready=False, pos_fresh=True, _ok(_raw_lat)=True
+    → mi.origin_lat = _raw_lat,  mi.origin_lon = _raw_lon
+    → mi.origin_ready = True
+    → gps.E = 0.0,  gps.N = 0.0    ← 첫 수신 위치가 origin (E=0, N=0)
+    target_ready=False이면 아직 대기
+    _ok(mi._target_lat) → True이면 즉시 투영:
+      latlon_to_ne(target_lat, target_lon, origin_lat, origin_lon)
+      → mi.target_E, mi.target_N,  mi.target_ready = True
+
+  _sync_origin_to_prevstate() (motorapp):
+    origin_ready=True → prevstate.update_start_point(lat, lon, True)  ← 1회만
+
+[T=first_GPS_lock + 다음 사이클]
+  UpdateRaws(): pos_health=1, origin_ready=True
+    → latlon_to_ne() 투영 → gps.E/N 정상 갱신 시작
+  DecideControlMode() → GPS_TRACKING_* 진입 가능
+```
+
+**핵심**: origin 확정 전 사이클은 모두 `reason="NO_ORIGIN"`. origin이 확정되는 그 사이클에 E=0, N=0이 기록되고 다음 사이클부터 실제 좌표가 들어온다.
+
+---
+
+### 8-B. GPS_TRACKING → DR_TRACKING 전환 (GPS dropout)
+
+**전제**: GPS_TRACKING_CLOSED로 정상 비행 중 GPS 신호 소실.
+
+```
+타임라인:
+  T=1000.0s  마지막 GPS pos/vel 수신
+  T=1000.0~1015.0s  GPS 없음 (gpsapp: health=0 전송)
+  T=1015.0s  pos_ts age = 15.0s → stale 경계
+
+[T=1000.0~1014.99s]  GPS stale 미달 (age < 15s)
+  UpdateRaws(): pos_health=0 → gps.E/N/V/course 미갱신 (1000.0s 값 유지)
+  DecideControlMode():
+    now - pos_ts = 14.99s < 15.0s → pos_fresh=True  ← 아직 GPS_TRACKING 유지
+    GPS_TRACKING_CLOSED 또는 OPEN 유지
+  ProduceL1Input():
+    GPS_TRACKING 분기 → dr_lock() 매 사이클 호출
+    dr.anchor_E/N/V/course = 1000.0s 시점 GPS 값 (매 사이클 덮어씀)
+    dr.gyro_integral = 0.0  (매 사이클 리셋)
+
+[T=1015.001s]  age = 15.001s → stale 초과 첫 사이클
+  DecideControlMode():
+    pos_fresh=False (15.001 > 15.0)
+    vel_fresh=False
+    gyrz_fresh=True (IMU 정상)
+    dr_is_valid=True  ← 마지막 GPS_TRACKING 사이클에서 dr_lock됨
+    → DR_TRACKING_CLOSED  ← 전환 발생
+
+  ProduceL1Input():
+    DR_TRACKING 분기 → _update_state_from_dead_reckoning()
+    dt = 1015.001 - dr.anchor_time(1014.99) = 0.011s  ← 첫 DR 스텝
+    gyro_integral += gyr_z * 0.011
+    course_est = dr_estimate_course()
+    nav.E += V * sin(course_est) * 0.011
+    nav.N += V * cos(course_est) * 0.011
+    confidence = _compute_dr_confidence(age=0.011s) = 1.0
+
+변수 상태 비교:
+  직전 사이클 (GPS):  nav.E = gps.E (정확)  confidence=1.0
+  전환 사이클 (DR):   nav.E ≈ gps.E + ε    confidence=1.0 (아직 2s 이내)
+  ← E/N 점프 없음. 앵커가 마지막 GPS값이므로 연속.
+```
+
+---
+
+### 8-C. DR_TRACKING → GPS_TRACKING 복구 (GPS 재획득)
+
+**전제**: DR_TRACKING_CLOSED 중 GPS 신호 복구.
+
+```
+타임라인:
+  T=1015s  DR_TRACKING 전환 (앵커=마지막 GPS)
+  T=1035s  DR로 20초 경과. confidence=0.0 (20s 이상)
+  T=1036s  GPS pos/vel 재수신
+
+[T=1036.0s] GPS 재획득 첫 사이클
+  UpdateRaws():
+    pos_health=1 → gps.E/N 갱신 (실제 현재 위치)
+    motion_health=1 → gps.V/course 갱신
+    gps.pos_ts = 1036.0,  gps.motion_ts = 1036.0
+
+  DecideControlMode():
+    pos_fresh=True (age=0s)
+    vel_fresh=True
+    gyrz_fresh=True
+    → GPS_TRACKING_CLOSED  ← 복구
+
+  ProduceL1Input():
+    GPS_TRACKING 분기:
+    nav.E = gps.E  ← DR 추정값 → GPS 실측값으로 즉시 덮어씀
+    nav.N = gps.N  ← 점프 가능성 있음 (DR 오차 누적량에 따라)
+    nav.V = gps.V
+    nav.course = gps.course
+    nav.confidence = 1.0
+
+    dr_lock(dr, gps.E, gps.N, gps.V, gps.course, imu_yaw, 1036.0)
+    dr.gyro_integral = 0.0  ← 적분 리셋
+    dr.anchor_time   = 1036.0
+
+주의 — nav 점프:
+  DR 20초 누적 오차가 있으면 gps.E vs nav.E 사이 수십m 차이 가능.
+  덮어쓰는 순간 L1 nu가 급변 → 조향 명령 급변 → slew-rate가 서보 속도 제한.
+  max_step = MAX_ARM_RATE(200dps) × dt(0.05s) = 10°/사이클로 완충.
+```
+
+---
+
+### 8-D. GPS pos만 있고 vel 없는 상태 (D-9 수치 예시)
+
+**전제**: GPS 위성 충분하나 RMC 수신 늦음. pos_ts 신선, motion_ts stale.
+
+```
+상태:
+  gps.pos_ts   = 1000.0s  (age=0.01s → pos_fresh=True)
+  gps.motion_ts = 980.0s  (age=20.0s → vel_fresh=False)
+  imu.gyrz_valid = True,  gyrz_fresh = True
+
+DecideControlMode():
+  pos_fresh=True,  vel_fresh=False
+  → GPS_TRACKING_* 불가 (vel 필요)
+  dr_is_valid=True (이전 GPS_TRACKING 사이클에서 앵커 있음)
+  gyrz_fresh=True
+  → DR_TRACKING_CLOSED
+
+ProduceL1Input():
+  GPS_TRACKING 분기 건너뜀 (mode≠GPS_TRACKING)
+  pos_fresh=True, dr_is_valid=True → 앵커 초기화 건너뜀 (이미 있음)
+  DR_TRACKING 분기:
+    _update_state_from_dead_reckoning()
+    ← GPS 위치는 있지만 사용 안 함; DR 앵커 기준 적분
+
+실제 동작:
+  GPS 위치(gps.E/N)는 신선하게 갱신되고 있지만 L1에는 사용 안 됨.
+  DR 앵커(anchor_time=마지막 GPS_TRACKING 사이클)부터 적분으로만 항법.
+  RMC 복구되면 다음 사이클에 vel_fresh=True → GPS_TRACKING 복귀.
+```
+
+---
+
+### 8-E. STATE 전환에 따른 리셋 동작
+
+`handle_flight_state(new_state)` 호출 시 전체 변화.
+
+```
+[new_state == STATE]  변화 없음 → return
+
+[new_state < 3]  비행 전 상태로 복귀
+  prevstate.clear_start_point()
+  guidance.reset():
+    _MISSION_t = MissionFrame()  ← origin/target/raw 전체 소실
+    _STATE_t   = GuidanceState() ← GPS/IMU/baro 앵커, DR 전체 소실
+    _MISSION_t._target_lat/lon = 이전 target 좌표 보존
+  control.controller_reset(_CTRLER_t):
+    pid.integral=0, pid.prev_error=0, pid.prev_time=0
+    prev_left/right_angle = 80°
+  _ORIGIN_SAVED = False   ← origin 재동기화 허용
+  _DETUMBLE_ACTIVE = False
+  _DETUMBLE_EXIT_START = nan
+
+  결과:
+    다음 사이클: origin_ready=False → NO_ORIGIN → WriteZero
+    GPS 재수신 때까지 origin 재획득 대기
+
+[new_state = 3 or 4]  낙하/강하 중
+  새 상태만 저장. 리셋 없음.
+  (STATE<3에서 3으로 갈 때도 리셋 없음 — 조건은 new_state<3)
+
+[new_state = 5]  착지
+  리셋 없음. _ctrl_cycle에서:
+    state==5 → WriteOff → return None
+  서보 PWM=0 유지. 다른 동작 없음.
+```
+
+**STATE 전환 요약표:**
+
+| 전환 | guidance.reset() | controller_reset() | 서보 |
+|------|-----------------|-------------------|------|
+| any→0,1,2 | ✅ (origin 소실) | ✅ | WriteZero |
+| any→3,4 | ❌ | ❌ | 정상 제어 |
+| any→5 | ❌ | ❌ | WriteOff |
+
+---
+
+### 8-F. 모드 전이 전체 흐름도
+
+```
+전원 ON
+  │
+  ├─[STATE<3]─────────────────────────────────────────────────────┐
+  │  WriteZero                                                     │
+  │  GPS 수신 시작 → origin 획득 대기 (8-A)                        │
+  │                                                                │
+  └─[STATE=3 진입]                                                 │
+       │                                                           │
+       ├─[origin 없음] → NO_ORIGIN → WriteZero                    │
+       │                                                           │
+       ├─[origin 있음, GPS 신선]                                   │
+       │    GPS_TRACKING_CLOSED/OPEN                               │
+       │    dr_lock() 매 사이클 갱신                               │
+       │         │                                                 │
+       │         ├─[GPS age > 15s] → DR_TRACKING_CLOSED/OPEN (8-B)│
+       │         │    DR 적분. confidence 감쇠.                    │
+       │         │         │                                       │
+       │         │         ├─[GPS 복구] → GPS_TRACKING 복귀 (8-C) │
+       │         │         │    nav 점프 가능. slew로 완충.        │
+       │         │         │                                       │
+       │         │         └─[IMU stale] → DR_OPEN or FAIL        │
+       │         │                                                 │
+       │         └─[vel stale만] → DR_TRACKING (8-D)              │
+       │              pos 있어도 DR 앵커 기준 항법                 │
+       │                                                           │
+       ├─[|gyrz| ≥ 200dps] → DETUMBLING (CASE 5)                  │
+       │    최대 반대편향. GPS/DR 파이프라인 건너뜀.               │
+       │    탈출 후 GPS/DR/FAIL 재판정.                            │
+       │                                                           │
+       ├─[모든 센서 stale] → FAIL → WriteOff (CASE 6)             │
+       │                                                           │
+       └─[STATE=5] → WriteOff 유지                                 │
+                                                      ←───────────┘
+                                              STATE<3 시 guidance.reset()
+```
