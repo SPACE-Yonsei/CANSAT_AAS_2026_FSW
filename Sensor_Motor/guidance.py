@@ -224,19 +224,6 @@ def dr_lock(dr: DRState, E: float, N: float, V: float,
     dr.confidence     = 1.0
 
 
-def dr_reset(dr: DRState) -> None:
-    """비행 리셋 시 전체 초기화."""
-    dr.anchor_E       = nan
-    dr.anchor_N       = nan
-    dr.anchor_V       = nan
-    dr.anchor_course  = nan
-    dr.anchor_time    = nan
-    dr.yaw_at_anchor  = nan
-    dr.gyro_integral  = 0.0
-    dr.last_step_time = nan
-    dr.method         = DRMethod.NONE
-    dr.confidence     = 0.0
-
 
 def dr_estimate_course(dr: DRState, imu: ImuAnchor) -> float:
     """현재 heading 추정 (gyro 적분 + yaw delta 블렌드).
