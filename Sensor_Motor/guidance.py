@@ -500,16 +500,6 @@ def ProduceL1Input(now: float) -> L1Input:
 
     mode = st_t.nav.control_mode
 
-    # ── DETUMBLING ────────────────────────────────────────────────────────────
-    if mode == ControlMode.DETUMBLING:
-        return L1Input(
-            valid=True, reason="DETUMBLING",
-            control_mode=ControlMode.DETUMBLING, dr_method=DRMethod.NONE,
-            confidence=1.0,
-            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
-            target_E=mi_t.target_E, target_N=mi_t.target_N,
-        )
-
     # ── GPS_TRACKING (pos+vel 신선) ───────────────────────────────────────────
     if mode in (ControlMode.GPS_TRACKING_CLOSED, ControlMode.GPS_TRACKING_OPEN):
         if not (isfinite(st_t.gps.E) and isfinite(st_t.gps.N)
