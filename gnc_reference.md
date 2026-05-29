@@ -1,7 +1,10 @@
 # motorapp / guidance 변수·함수 레퍼런스 + 전 경우의 수 수치 예시
 
 > 기준 코드: 2026-05-29  
-> 변경 이력: UpdateAnchors→UpdateRaws 이름 변경 / NavState 중첩 구조 / IMU_FRESH_MAX_AGE_S=3.0 / GPS_STALE_TIMEOUT_SEC=15.0 / DR 속도감쇄 제거 / NMEA 캐시 레이어 제거
+> 변경 이력:
+> - 2026-05-29: 섹션 7 추가 — 센서 값 경우의 수 전체 열거 (GPS/IMU/Baro 4레이어, ControlMode 매트릭스, DR 앵커 초기화, Timeout 수치 일람)
+> - 2026-05-29: CASE 5 오류 수정 — `_should_detumble`은 `DecideControlMode` 이전 호출, `ProduceDetumbleOutput`은 중립이 아닌 최대 반대편향 출력
+> - 이전: UpdateAnchors→UpdateRaws 이름 변경 / NavState 중첩 구조 / IMU_FRESH_MAX_AGE_S=3.0 / GPS_STALE_TIMEOUT_SEC=15.0 / DR 속도감쇄 제거 / NMEA 캐시 레이어 제거
 
 ---
 
@@ -817,64 +820,115 @@ mode = FEEDFORWARD_ONLY  ← gyrz 없으므로
 
 ### CASE 5 — DETUMBLING
 
+> **주의**: `_should_detumble()`은 `DecideControlMode()` **이전**에 호출된다.
+> True이면 L1 파이프라인 전체를 건너뛰고 즉시 반환.
+
 #### 좌표 평면
 
 ```
 N(m)
  ↑
      ┤
-     │       ↻↻↻  vehicle (17.7, 55.6) 고속 스핀 중
-  56 ┤       ✈ gyrz=250 dps
+     │       ↻↻↻  vehicle (17.7, 55.6) CW 고속 스핀
+  56 ┤       ✈ gyrz=+250 dps (오른쪽 회전)
      │
    0 ┼───────────────── E(m)
 
- gyrz ≥ 200 dps → L1 계산 전에 DETUMBLING 진입
- 목표 추종 없음 → 중립 서보로 스핀 감쇄 기다림
+ _should_detumble() → True (|250| ≥ DETUMBLE_GYRZ_THRESHOLD=200)
+ DecideControlMode(), ProduceL1Input/Output 호출 없음
 ```
 
 #### 입력
 
 ```
 handle_imu("0,0,45,0,0,9.81,0,0,250,1,1000.010")
-  gyrz_deg_s=250 → gyrz_rad_s=radians(-250)=-4.363 rad/s
-  → _STATE_t.imu.gyr_z=-4.363 rad/s
+  gyrz_deg_s=+250 (BNO085, CCW=양수 규약)
+  → gyrz_rad_s = radians(-250) = -4.363 rad/s  ← 부호 반전 (handle_imu)
+  → _STATE_t.imu.gyr_z = -4.363 rad/s  (UpdateRaws)
 ```
 
-#### ⑤ DecideControlMode
+#### ③ _ctrl_cycle — _should_detumble() 분기
 
 ```
-gyrz_fresh=True
-gyrz_dps = abs(degrees(-4.363)) = 250.0 ≥ 200.0  → DETUMBLING 진입
-nav.control_mode = DETUMBLING
+_fresh_gyrz_dps(snap_t, now):
+  imu.health=1, ts=1000.010, age=0.01s ≤ 3.0s → 유효
+  gyrz_rad_s=-4.363 → degrees(-4.363)=-250.0 dps
+  반환: -250.0 dps
 
-반환: ControlMode.DETUMBLING
+_should_detumble():
+  gyrz_dps = -250.0,  abs(-250.0) = 250.0 ≥ 200.0
+  _DETUMBLE_ACTIVE = True
+  → True 반환
+
+  → _ctrl_cycle 내부:
+    guidance._STATE_t.nav.control_mode = ControlMode.DETUMBLING
+    gz_meas = _fresh_gyrz_dps() = -250.0 dps
+    ← DecideControlMode/ProduceL1Input/L1Output 호출 없음
 ```
 
-#### ⑥ _ctrl_cycle DETUMBLING 분기
+#### ④ ProduceDetumbleOutput(now, gz_meas=-250.0 dps)
 
 ```
-mode == DETUMBLING → GPS/DR 파이프라인 건너뜀
+DELTA_ARM_MAX_DEG = 2.0 * min(80-0, 142-80) = 2.0 * 62 = 124°
 
-ctrl_out_t = control.ProduceDetumbleOutput(now)
-  → WriteNeutral(now, mode=CONTROL_MODE_DETUMBLING)
-  → CtrlOutput(
-      mode=DETUMBLING,
-      left_angle=80°,    right_angle=80°,
-      left_pw=1591µs,    right_pw=1525µs,  ← 중립
-      valid=False
-    )
+① 스파이크 검사:
+  gyro_finite = True
+  |250| > GYRO_SPIKE_LIMIT(1500)? → False → sensor_valid=True
 
-control.MoveServo(PI, ctrl_out_t)
-  → left_pw=1591, right_pw=1525
-return ctrl_out_t  (ProduceL1Input/L1Output 호출 없음)
+② 중립 조건:
+  sensor_valid=True, |250| > CTRL_ERROR_DEADBAND(2.0) → 중립 건너뜀
+
+③ 반대부호 최대 편향:
+  delta = -copysign(124, -250.0) = +124°
+  (gyrz < 0 = CCW 스핀 → delta > 0 = 오른쪽 회전 명령으로 상쇄)
+
+④ ConnectRoMo(+124°):
+  left_angle  = clamp(80 - 124/2,  0, 142) = clamp(80-62, 0, 142)  = 18°
+  right_angle = clamp(80 + 124/2,  0, 142) = clamp(80+62, 0, 142)  = 142°
+  left_pw  = int(2480 - 18*11.11)  = int(2480-200) = 2280 µs
+  right_pw = int(636  + 142*11.11) = int(636+1578) = 2214 µs
+
+반환: CtrlOutput(
+  mode=DETUMBLING,
+  delta_arm=+124°,
+  left_angle=18°,     right_angle=142°,
+  left_pw=2280µs,     right_pw=2214µs,   ← 최대 CW 편향
+  sensor_valid=True,  valid=True
+)
+
+물리 해석:
+  delta > 0 → left arm 위로(줄 풀림), right arm 아래로(줄 당김)
+  → 패러포일 오른쪽 후방 당김 → CW(오른쪽) 회전 유발
+  → 현재 CCW 스핀(-250dps)을 상쇄 ✓
 ```
 
-#### DETUMBLING 탈출
+#### CASE 5b — DETUMBLING 중립 (gyro=nan 또는 spike)
 
 ```
-매 사이클:
-  gyrz_dps < 30.0 → detumble_exit_start 타이머 시작
-  → 1.0초 유지 시 탈출, nav.control_mode 초기화 후 GPS/DR 체크로 복귀
+gz_meas = nan  (imu stale 또는 _fresh_gyrz_dps=None)
+또는
+|gz_meas| > 1500 dps (spike)
+
+→ sensor_valid = False
+→ 중립 출력:
+  delta=0°, left_angle=80°, right_angle=80°
+  left_pw=1591µs, right_pw=1525µs
+  valid=True
+```
+
+#### DETUMBLING 탈출 타이머
+
+```
+매 사이클 _should_detumble():
+
+[탈출 조건 진입] abs(gyrz_dps) ≤ 30.0 dps:
+  최초 진입: _DETUMBLE_EXIT_START = now → return True (아직 유지)
+  경과 < 1.0s: return True (유지)
+  경과 ≥ 1.0s: _DETUMBLE_ACTIVE=False, _DETUMBLE_EXIT_START=nan → return False
+
+[탈출 후] DecideControlMode() 재개 → GPS/DR/FAIL 중 결정
+[스핀 재발] abs(gyrz_dps) ≥ 200 → 재진입
+[히스테리시스] 탈출 구간(30dps)에서 재진입 구간(200dps) 사이 170dps 여유 → chattering 방지
 ```
 
 ---
@@ -959,3 +1013,282 @@ return None
 > **DR 모드 진입**: confidence 체크 없음. `dr_is_valid()` + gyrz/yaw fresh만으로 진입.  
 > confidence는 `ProduceL1Output`에서 yaw_rate_cmd에 곱해지는 스케일 팩터.  
 > confidence=0 → cmd=0 되지만 모드는 DR_TRACKING_* 유지 (FAIL 아님).
+
+---
+
+## 7. 센서 값 경우의 수 전체 열거
+
+> 각 레이어는 독립적으로 분기를 가짐.  
+> 표기: ✅=조건 충족, ❌=조건 미충족, —=해당 없음.
+
+---
+
+### 7-A. GPS 경우의 수
+
+#### 레이어 1: gpsapp.py (하드웨어 → IPC 메시지)
+
+```
+판단 함수:
+  _eval_pos_fidelity()   → pos_health 결정
+  _eval_motion_fidelity() → motion_health 결정
+  _valid_age()            → age 검사 (age ∈ [-0.02s, GPS_STALE_TIMEOUT_SEC=15s])
+```
+
+**pos_health 결정 트리** (8개 게이트, 순서대로)
+
+| 케이스 | 조건 | pos_health | motorapp 수신 lat/lon |
+|--------|------|------------|----------------------|
+| G-P1 | 정상: age≤15s, fix≥1, sats≥4, HDOP≤3.0, no-jump | 1 | 실제 좌표 |
+| G-P2 | GPS 하드웨어 전혀 없음 (`gps_instance=None`) | — | 전송 없음 |
+| G-P3 | gpsapp stale: age>15s | 0 | `nan` |
+| G-P4 | fix_quality=0 (위성 없음) | 0 | `nan` |
+| G-P5 | sats < 4 (`GPS_MIN_SATS`) | 0 | `nan` |
+| G-P6 | HDOP > 3.0 | 0 | `nan` |
+| G-P7 | jump rate > 30 m/s | 0 | `nan` |
+| G-P8 | 좌표 (0,0) sentinel | 0 | `nan` |
+| G-P9 | 기대 영역 외 (`GPS_EXPECTED_*_RADIUS`) | 0 | `nan` |
+| G-P10 | SIM_GPS_ACTIVE=True | 1 (강제) | 시뮬 좌표 |
+
+**motion_health 결정 조건** (모두 AND)
+
+| 케이스 | 조건 | motion_health |
+|--------|------|---------------|
+| G-M1 | pos_health=True AND rmc='A' AND 0.3≤speed≤40 AND 0≤course<360 | 1 |
+| G-M2 | pos_health=False | 0 |
+| G-M3 | rmc_status ≠ 'A' (정지 또는 신호 없음) | 0 |
+| G-M4 | speed < 0.3 m/s (GPS_MIN_MOTION_MPS) | 0 |
+| G-M5 | speed > 40 m/s (GPS_MAX_VALID_SPEED_MPS) | 0 |
+| G-M6 | age > 15s | 0 |
+
+#### 레이어 2: motorapp.py handle_gps() → `_GpsFromApp`
+
+| pos_health | motion_health | _GpsFromApp 결과 |
+|-----------|---------------|-----------------|
+| 1 | 1 | lat/lon/pos_ts/course_rad/speed_mps/motion_ts 모두 유효 |
+| 1 | 0 | lat/lon/pos_ts 유효, course_rad/speed_mps/motion_ts = None |
+| 0 | 0 | 모든 필드 None |
+| 0 | 1 | 불가 (pos_health=False → motion_health 강제 False) |
+
+#### 레이어 3: guidance.py UpdateRaws() → `GpsAnchor`
+
+| `_GpsFromApp` 상태 | GpsAnchor 변화 |
+|-------------------|---------------|
+| pos_health=1, lat/lon/ts valid, origin_ready=True | `gps.E/N` 갱신, `gps.pos_ts` 갱신, `gps.pos_valid=True` |
+| pos_health=1, lat/lon/ts valid, **origin_ready=False** | `_raw_lat/lon` 갱신만, `gps.E/N` 미갱신 |
+| pos_health=0 (전부 None) | GpsAnchor 전체 **미갱신** (이전 값 유지, pos_ts 도 갱신 안 됨) |
+| motion_health=1 | `gps.V/course/motion_ts` 갱신, `gps.motion_valid=True` |
+| motion_health=0 | gps.V/course/motion_ts 미갱신 (이전 값 유지) |
+
+> `gps.pos_valid` 는 한 번 True 가 되면 절대 False 로 되돌아가지 않음.  
+> freshness 는 `now - gps.pos_ts` 로만 판단한다.
+
+#### 레이어 4: guidance.py DecideControlMode() — GPS freshness 판단
+
+| gps.pos_valid | now - pos_ts | pos_fresh |
+|---------------|-------------|-----------|
+| False (한 번도 못받음) | — | False |
+| True | ≤ 15.0s | True |
+| True | > 15.0s | **False** (stale) |
+
+| gps.motion_valid | now - motion_ts | vel_fresh |
+|-----------------|----------------|-----------|
+| False | — | False |
+| True | ≤ 15.0s | True |
+| True | > 15.0s | **False** |
+
+#### 레이어 5: guidance.py ProduceL1Input() — origin 획득 및 DR 앵커 갱신
+
+| 조건 | 결과 |
+|------|------|
+| origin_ready=False, pos_fresh=True, raw_lat/lon valid | origin 확정, gps.E/N=0.0 기록, target 재투영 |
+| origin_ready=False, pos_fresh=False | `L1Input(valid=False, reason="NO_ORIGIN")` |
+| origin_ready=True, target_ready=False | `L1Input(valid=False, reason="NO_TARGET")` |
+| mode=GPS_TRACKING_*, gps.E/N/V/course NaN | `L1Input(valid=False, reason="GPS_NAN")` |
+| mode=GPS_TRACKING_*, 모든 값 finite | `dr_lock()` 실행, L1Input(valid=True) |
+
+---
+
+### 7-B. IMU 경우의 수
+
+#### 레이어 1: imuapp.py (하드웨어 → IPC 메시지)
+
+| 케이스 | 조건 | HEALTH | payload |
+|--------|------|--------|---------|
+| I-1 | 정상 read, age≤1s (send 스레드 판단) | 1 | roll,pitch,yaw,acc,gyr,1,sample_mono_ts |
+| I-2 | send 스레드: now-_last_sample_ts > **1.0s** | 0 | nan,nan,...,0,sample_mono_ts |
+| I-3 | read 스레드: now-_last_sample_ts > **2.0s** 且 cooldown 지남 | 0 + reinit | BNO085 RST 펄스 후 재초기화 |
+| I-4 | 연속 read 실패 **5회** | 0 + reinit | 재초기화 |
+| I-5 | 시작 후 **15s** 미경과 | 1 (health는 정상) | yaw=raw (offset 미적용) |
+| I-6 | 시작 후 15s 경과 (최초 1회) | 1 | yaw=0 영점 기록 후 offset 적용 |
+
+#### 레이어 2: motorapp.py handle_imu() → `_ImuFromApp`
+
+| health | 결과 |
+|--------|------|
+| 1 | roll/pitch/yaw/acc/gyr 모두 저장, `gyrz_rad_s = radians(-gyrz_deg_s)` (부호 반전), lin_acc 계산 |
+| 0 | `_ImuFromApp(ts=sample_ts, rx_ts=..., health=0)` — 나머지 전부 None |
+
+**부호 변환 상세:**
+
+```
+gyrz_deg_s (BNO085 원시, CCW=양수)
+  → handle_imu: gyrz_rad_s = radians(-gyrz_deg_s)   ← Z-up→nav 반전
+  → guidance: gyr_z *= GYRZ_SIGN(1.0)               ← 추가 반전 없음
+  → _should_detumble: gyrz_dps = degrees(gyrz_rad_s) ← 복원: -원시값
+    ∴ BNO085 +250dps(CCW) → _should_detumble 수신 -250dps
+```
+
+#### 레이어 3: guidance.py UpdateRaws() → `ImuAnchor`
+
+| health | ts valid | 결과 |
+|--------|----------|------|
+| 1 | valid | `imu.ts`, `imu.yaw`, `imu.gyr_z`, `imu.lin_acc_x/y` 갱신 |
+| 0 | — | ImuAnchor **전체 미갱신** (이전 값 + 이전 ts 유지) |
+| 1 | yaw=None | `imu.yaw` 미갱신, `imu.yaw_valid=False` 유지 |
+| 1 | gyrz=None | `imu.gyr_z` 미갱신, `imu.gyrz_valid=False` 유지 |
+| 1 | lin_acc_valid=False | `imu.lin_acc_x/y` 미갱신, `imu.lin_acc_valid=False` |
+
+#### 레이어 4: motorapp.py `_fresh_gyrz_dps()` — detumble용 별도 신선도 판정
+
+| 조건 | 반환 |
+|------|------|
+| health=1, ts finite, gyrz finite, age ≤ **3.0s** | `degrees(gyrz_rad_s)` (dps) |
+| health=0 | `None` → `_should_detumble` False |
+| age > 3.0s | `None` → `_should_detumble` False |
+| gyrz=nan (gyrz_valid=False) | `None` |
+
+#### 레이어 5: guidance.py DecideControlMode() — IMU freshness 판단
+
+| imu.ts | age | gyrz_valid | yaw_valid | 결과 |
+|--------|-----|-----------|-----------|------|
+| nan | — | — | — | imu_fresh=False, gyrz_fresh=False, yaw_fresh=False |
+| finite | ≤ **3.0s** | True | True | imu_fresh=True, gyrz_fresh=True, yaw_fresh=True |
+| finite | ≤ 3.0s | False | True | gyrz_fresh=False, yaw_fresh=True → DR_OPEN 가능 |
+| finite | ≤ 3.0s | True | False | gyrz_fresh=True, yaw_fresh=False → CLOSED 가능 |
+| finite | > 3.0s | any | any | imu_fresh=False, 모두 False |
+
+#### gyrz 값에 따른 동작 분기 (레이어 통합)
+
+| |gyrz_dps| 범위 | _should_detumble | ProduceDetumbleOutput | ProduceCtrlOutput |
+|---|---------|-----------------|----------------------|-------------------|
+| 0 | 0~2.0 | False | 중립 (deadband) | 중립 (deadband) |
+| 2.0~5.0 | False | — | FF deadband 이내 → 중립 |
+| 5.0~200 | False | — | FF 동작 (expo 곡선) |
+| ≥200 | **True** (DETUMBLING) | 최대 반대편향 | — |
+| >1500 | True (spike) | 중립 (spike rejection) | 중립 (spike rejection) |
+| nan/None | False | 중립 | 중립 (sensor_valid=False) |
+
+---
+
+### 7-C. Barometer 경우의 수
+
+#### 레이어 1: barometerapp.py (하드웨어 → IPC)
+
+| 케이스 | 조건 | BAROMETER_HEALTH | payload |
+|--------|------|-----------------|---------|
+| B-1 | 정상 read, age≤1s | 1 | alt_m, sink_rate, 1 |
+| B-2 | send 스레드: age > **1.0s** | 0 | nan, nan, 0 |
+| B-3 | BMP init 실패 (`_baro_hw=False`) | 0 | 0.0, nan, 0 |
+| B-4 | BMP read 예외 | 0 | 0.0, nan, 0 |
+| B-5 | sink_rate 스파이크 (|raw| > 30 m/s) | 1 | alt 정상, sink_rate=nan |
+| B-6 | CAL 명령 수신 | 1 | `BAROMETER_OFFSET` 갱신 후 정상 alt |
+
+#### 레이어 2: motorapp.py handle_barometer() → `_BaroFromApp`
+
+| health | 결과 |
+|--------|------|
+| 1, alt/sink finite | `_BaroFromApp(alt_m=..., sink_rate=..., health=1)` |
+| 1, alt=nan | `_BaroFromApp(alt_m=None, sink_rate=None, health=1)` |
+| 0 | `_BaroFromApp(alt_m=None, sink_rate=None, health=0)` |
+
+#### 레이어 3: guidance.py UpdateRaws() → `BaroAnchor`
+
+| health | alt valid | 결과 |
+|--------|----------|------|
+| 1 | valid | `baro.alt_m`, `baro.ts`, `baro.valid=True` 갱신 |
+| 0 | — | BaroAnchor 미갱신 |
+
+> **현재 guidance.py는 baro를 ControlMode 결정이나 L1 계산에 사용하지 않음.**  
+> `baro.alt_m`, `baro.sink_rate`는 저장만 됨 (미래 고도 기반 로직용 예약).
+
+---
+
+### 7-D. ControlMode 결정 전체 매트릭스
+
+> 우선순위: DETUMBLING > GPS_TRACKING_CLOSED > GPS_TRACKING_OPEN > DR_TRACKING_CLOSED > DR_TRACKING_OPEN > FAIL
+
+| | pos_fresh | vel_fresh | gyrz_fresh | yaw_fresh | dr_valid | \|gyrz\|≥200 | ControlMode | 서보 |
+|---|-----------|-----------|-----------|-----------|---------|-------------|------------|------|
+| **D-1** | ✅ | ✅ | ✅ | — | — | ❌ | GPS_CLOSED | L1+FF+PID, lim=40dps |
+| **D-2** | ✅ | ✅ | ❌ | — | — | ❌ | GPS_OPEN | L1+FF only, lim=25dps |
+| **D-3** | ❌ | — | ✅ | — | ✅ | ❌ | DR_CLOSED | DR L1+FF+PID×conf, lim=20dps |
+| **D-4** | ❌ | — | ❌ | ✅ | ✅ | ❌ | DR_OPEN | DR L1+FF×conf, lim=15dps |
+| **D-5** | any | any | any | any | any | ✅ | DETUMBLING | 최대반대편향 (또는 중립 if spike/nan) |
+| **D-6** | ❌ | — | ❌ | ❌ | ✅ | ❌ | FAIL | WriteOff |
+| **D-7** | ❌ | — | any | any | ❌ | ❌ | FAIL | WriteOff |
+| **D-8** | ✅ | ❌ | any | any | ❌ | ❌ | FAIL | WriteOff |
+| **D-9** | ✅ | ❌ | any | any | ✅ | ❌ | DR_CLOSED/OPEN | DR_is_valid이면 DR 진입 |
+
+> **D-9 설명**: pos_fresh=True 이지만 vel_fresh=False 인 경우 (위성 느림).
+> GPS_TRACKING 요건(pos+vel 모두) 미달 → DR 경로로 fallback.
+> 단, DR 앵커가 없으면 FAIL.
+
+**추가 모드 전환 불가 조건 (override):**
+
+| 조건 | 결과 |
+|------|------|
+| `MOTOR_ENABLED=False` | WriteZero (모든 모드 무관) |
+| `STATE < 3` | WriteZero (비행 전) |
+| `STATE == 5` | WriteOff (착지) |
+| `_CTRLER_t is None` | `MakeCtrler()` 후 정상 진행 |
+| `PI is None` (pigpio 없음) | `MoveServo` no-op (로그만) |
+
+---
+
+### 7-E. DR 앵커 초기화 경우의 수
+
+`ProduceL1Input()` 내부, GPS_TRACKING 분기 이외 구간에서 실행.
+
+| 조건 | 결과 |
+|------|------|
+| dr_is_valid=True (이미 있음) | 앵커 초기화 건너뜀 |
+| dr_is_valid=False, pos_fresh=True, imu_fresh=True, yaw_valid=True | `dr_lock(E,N,0.0,yaw,imu_yaw,now)` — 속도=0으로 정적 초기화 |
+| dr_is_valid=False, pos_fresh=True, imu_fresh=True, gyrz_valid=True (yaw 없음) | `anchor_course=dr.anchor_course` (이전 알던 방향) 사용 |
+| dr_is_valid=False, pos_fresh=True, imu_fresh=False | `L1Input(valid=False, reason="NO_HEADING_SOURCE")` |
+| dr_is_valid=False, pos_fresh=False | 초기화 불가 (위치 기준점 없음) |
+
+---
+
+### 7-F. DR 신뢰도 구간별 동작
+
+| 앵커 나이 (age = now - anchor_time) | confidence | yaw_rate_cmd 효과 |
+|-------------------------------------|-----------|-------------------|
+| 0 ~ 2.0s | 1.0 | 원본 명령 100% |
+| 2.0 ~ 5.0s | 1.0 → 0.5 (선형) | 명령 100%→50% 감쇄 |
+| 5.0 ~ 20.0s | 0.5 → 0.0 (선형) | 명령 50%→0% 감쇄 |
+| > 20.0s | 0.0 | 명령 완전 제거 (모드는 DR 유지) |
+
+> confidence=0 이어도 ControlMode는 DR_TRACKING_* 유지.  
+> WriteOff 되지 않음 — FF 데드밴드(5dps) 이내면 중립 서보.
+
+---
+
+### 7-G. Timeout 조건 전체 수치 일람
+
+| # | 파일 | 상수 | 값 | 조건 | 효과 |
+|---|------|------|----|------|------|
+| 1 | gpsapp | `GPS_STALE_TIMEOUT_SEC` | **15s** | age > 15s | GPS 변수 None 리셋, pos_health=0 전송 |
+| 2 | imuapp | `IMU_STALE_TIMEOUT_SEC` | **1s** | age > 1s (send) | HEALTH=0, nan payload |
+| 3 | imuapp | `IMU_STALE_REINIT_SEC` | **2s** | age > 2s (read) | BNO085 RST+reinit |
+| 4 | imuapp | `IMU_REINIT_COOLDOWN_SEC` | **5s** | 재reinit 방지 쿨다운 | reinit 스킵 |
+| 5 | imuapp | `IMU_MAX_CONSECUTIVE_ERRORS` | **5회** | 연속 read 실패 횟수 | reinit |
+| 6 | imuapp | `_STARTUP_YAW_ZERO_DELAY_S` | **15s** | 시작 후 경과 시간 | yaw 영점 보류 |
+| 7 | barometerapp | `BAROMETER_STALE_TIMEOUT_SEC` | **1s** | age > 1s | HEALTH=0 |
+| 8 | motorapp | `IMU_FRESH_MAX_AGE_S` | **3s** | age > 3s | `_fresh_gyrz_dps`=None |
+| 9 | motorapp | `DETUMBLE_EXIT_HOLD_S` | **1s** | 히스테리시스 유지 | Detumble 탈출 지연 |
+| 10 | guidance | `GPS_FRESH_MAX_AGE_S` | **15s** | age > 15s | pos_fresh/vel_fresh=False |
+| 11 | guidance | `IMU_FRESH_MAX_AGE_S` | **3s** | age > 3s | imu_fresh=False |
+| 12 | guidance | `DR_CONF_AGE_1/2/3_S` | **2/5/20s** | 구간별 나이 | confidence 단계적 감쇠 |
+| 13 | control | `_clamp_dt` lo/hi | **0.01/0.2s** | dt 범위 이탈 | default 0.1s 대체 |
+| 14 | motorapp | `ctrl_thread.join` | **1s** | 종료 시 대기 | 스레드 강제 종료 |
+| 15 | imuapp | `t1/t2.join` | **2s** | 종료 시 대기 | 스레드 강제 종료 |

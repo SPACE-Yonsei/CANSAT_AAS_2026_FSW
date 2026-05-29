@@ -531,9 +531,9 @@ def ProduceL1Input(now: float) -> L1Input:
                  and (now - st_t.imu.ts) <= config.IMU_FRESH_MAX_AGE_S)
 
     if pos_fresh and not dr_is_valid(st_t.dr):
-        if imu_fresh and (st_t.imu.yaw_valid or st_t.imu.gyrz_valid):
-            course0 = st_t.imu.yaw if st_t.imu.yaw_valid else st_t.dr.anchor_course
-            imu_yaw = st_t.imu.yaw if st_t.imu.yaw_valid else nan
+        if imu_fresh and st_t.imu.yaw_valid:
+            course0 = st_t.imu.yaw
+            imu_yaw = st_t.imu.yaw
             if isfinite(st_t.gps.E) and isfinite(st_t.gps.N) and isfinite(course0):
                 dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, 0.0, course0, imu_yaw, now)
                 logger.info(
