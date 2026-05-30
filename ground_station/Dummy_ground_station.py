@@ -1230,7 +1230,7 @@ class GroundStation(tk.Tk):
         target_lon = self._parse_optional_float(parsed.get("target_lon", ""))
         carrot_lat = self._parse_optional_float(parsed.get("carrot_lat", ""))
         carrot_lon = self._parse_optional_float(parsed.get("carrot_lon", ""))
-        cur_hdg = self._parse_optional_float(parsed.get("current_heading_deg", ""))
+        cur_hdg = self._parse_optional_float(parsed.get("filtered_yaw", ""))
 
         if start_lat is not None and start_lon is not None:
             self._held_start_latlon = (start_lat, start_lon)
