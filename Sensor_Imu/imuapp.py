@@ -118,28 +118,19 @@ def _synthetic_sample() -> Tuple[float, float, float, float, float, float, float
     return (0.0,) * 12
 
 
-_read_sample_count = 0
-
 def _read_sensor_sample():
     """Read from real IMU if available; on driver exception return zeros."""
-    global _imu_instance, _read_sample_count
+    global _imu_instance
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
         if _imu_instance is None:
-            if _read_sample_count == 0:
-                print("[IMU_DEBUG] _read_sensor_sample: _imu_instance가 None → 초기화 실패 상태", flush=True)
-            _read_sample_count += 1
             return False
         sample = imu_driver.read_sensor_data(_imu_instance)
         if sample is False:
             return False
-        _read_sample_count += 1
-        if _read_sample_count <= 3 or _read_sample_count % 50 == 0:
-            print(f"[IMU_DEBUG] sample #{_read_sample_count}: roll={sample[0]:.1f} pitch={sample[1]:.1f} yaw={sample[2]:.1f}", flush=True)
         return sample
     except Exception as exc:
-        print(f"[IMU_DEBUG] _read_sensor_sample 예외: {type(exc).__name__}: {exc}", flush=True)
         return _synthetic_sample()
 
 
@@ -148,17 +139,13 @@ def imuapp_init() -> None:
     prevstate.refresh_runtime_overrides()
     _startup_yaw_zeroed = False
     _imuapp_start_time = time.time()
-    print("[IMU_DEBUG] imuapp_init: 시작", flush=True)
     try:
         from Sensor_Imu import imu as imu_driver  # type: ignore
 
-        print("[IMU_DEBUG] imuapp_init: init_imu() 호출 중...", flush=True)
         _i2c_instance, _imu_instance = imu_driver.init_imu()
-        print(f"[IMU_DEBUG] imuapp_init: 성공 (i2c={_i2c_instance}, bno={_imu_instance})", flush=True)
     except KeyboardInterrupt:
         raise
     except Exception as exc:
-        print(f"[IMU_DEBUG] imuapp_init: 실패! {type(exc).__name__}: {exc}", flush=True)
         logger.warning("IMU: hardware init failed (%s); samples will stay at zero until reinit succeeds", exc)
         _i2c_instance, _imu_instance = None, None
 
@@ -316,9 +303,7 @@ def imuapp_terminate() -> None:
 
 
 def imuapp_main(main_queue, main_pipe) -> None:
-    print("[IMU_DEBUG] imuapp_main: 프로세스 시작", flush=True)
     imuapp_init()
-    print(f"[IMU_DEBUG] imuapp_main: init 완료, _imu_instance={_imu_instance}", flush=True)
     t1 = threading.Thread(target=read_imu_data, daemon=True)
     t2 = threading.Thread(target=send_imu_data, args=(main_queue,), daemon=True)
     t1.start()

@@ -202,24 +202,20 @@ def run_section_a() -> None:
 # Section B — L1 파이프라인 시나리오
 # ══════════════════════════════════════════════════════════════════════
 def _make_l1_input(pos_N: float, pos_E: float, course_rad: float) -> guidance.L1Input:
-    """하드코딩된 상태로 L1Input 생성. 모든 품질 FRESH 강제."""
-    inp = guidance.L1Input()
-    inp.N = pos_N
-    inp.E = pos_E
-    inp.course = course_rad
-    inp.V = GROUND_SPEED_MPS
-    inp.gyrz = GYRZ_RAD_S
-    inp.alt = ALT_M
-    inp.pos_quality    = guidance.SensorQuality.FRESH
-    inp.motion_quality = guidance.SensorQuality.FRESH
-    inp.gyrz_quality   = guidance.SensorQuality.FRESH
-    inp.alt_quality    = guidance.SensorQuality.FRESH
-    inp.origin_lat  = ORIGIN_LAT
-    inp.origin_lon  = ORIGIN_LON
-    inp.target_lat  = TARGET_LAT
-    inp.target_lon  = TARGET_LON
-    inp.control_mode = guidance.ControlMode.NOMINAL_FEEDFORWARD
-    return inp
+    """하드코딩된 상태로 L1Input 생성."""
+    target_N, target_E = guidance.latlon_to_ne(TARGET_LAT, TARGET_LON, ORIGIN_LAT, ORIGIN_LON)
+    return guidance.L1Input(
+        valid=True,
+        reason="GPS_TRACKING",
+        control_mode=guidance.ControlMode.GPS_TRACKING_OPEN,
+        confidence=1.0,
+        N=pos_N,
+        E=pos_E,
+        V=GROUND_SPEED_MPS,
+        course=course_rad,
+        target_N=target_N,
+        target_E=target_E,
+    )
 
 
 def run_section_b() -> None:
@@ -227,7 +223,7 @@ def run_section_b() -> None:
     print(f"  Origin : ({ORIGIN_LAT:.4f}, {ORIGIN_LON:.4f})")
     print(f"  Target : ({TARGET_LAT:.6f}, {TARGET_LON:.4f})  [북쪽 500m 고정]")
     print(f"  Speed  : {GROUND_SPEED_MPS} m/s (가상)  |  gyrz = {GYRZ_RAD_S} rad/s")
-    print(f"  Mode   : NOMINAL_FEEDFORWARD (GPS only, gyro 피드백 없음)")
+    print(f"  Mode   : GPS_TRACKING_OPEN (GPS only, gyro 피드백 없음)")
 
     total = 0
     passed = 0
@@ -237,13 +233,7 @@ def run_section_b() -> None:
 
         # L1 guidance
         l1_in = _make_l1_input(sc["pos_N"], sc["pos_E"], sc["course_rad"])
-        g_out = guidance.ProduceL1Output(
-            l1_in,
-            guidance.ControlMode.NOMINAL_FEEDFORWARD,
-            ORIGIN_LAT, ORIGIN_LON,
-            TARGET_LAT, TARGET_LON,
-            now,
-        )
+        g_out = guidance.ProduceL1Output(l1_in)
 
         # Control (fresh controller per scenario to avoid PID accumulation)
         ctl = control.MakeCtrler()
@@ -269,27 +259,24 @@ def run_section_b() -> None:
         _row("입력 course", f"{math.degrees(sc['course_rad']):+.1f}°")
 
         _sep("L1 Output")
-        _row("nominal",         str(g_out.nominal))
-        _row("nu_deg",          f"{math.degrees(g_out.angle_to_turn):+.3f}°")
-        _row("  nu1 (xtrack)",  f"{math.degrees(g_out.nu1):+.3f}°  crosstrack 기여")
-        _row("  nu2 (heading)", f"{math.degrees(g_out.nu2):+.3f}°  heading error 기여")
-        _row("crossTrack_m",    f"{g_out.crossTrack:+.2f} m")
-        _row("alongTrack_m",    f"{g_out.alongTrack:+.2f} m")
-        _row("L1_distance_m",   f"{g_out.L1_distance:.2f} m")
+        _row("nominal",              str(g_out.nominal))
+        _row("nu_deg",               f"{math.degrees(g_out.nu):+.3f}°")
+        _row("target_bearing_deg",   f"{math.degrees(g_out.target_bearing):+.3f}°")
+        _row("distance_to_target_m", f"{g_out.distance_to_target:.2f} m")
         _row("angular_velocity_cmd", f"{g_out.yaw_rate_cmd:+.4f} rad/s  "
-                                    f"({math.degrees(g_out.yaw_rate_cmd):+.2f} deg/s)")
-        _row("lat_acc_cmd",     f"{g_out.lat_acc_cmd_mps2:+.4f} m/s²")
+                                     f"({math.degrees(g_out.yaw_rate_cmd):+.2f} deg/s)")
+        _row("yaw_rate_limit_dps",   f"{g_out.yaw_rate_limit_dps:.1f} deg/s")
 
         _sep("Control Output")
-        _row("delta_ff_deg",    f"{cmd.delta_ff_deg:+.3f}°  (K_FF × angular_velocity_cmd)")
-        _row("delta_pid_deg",   f"{cmd.delta_pid_deg:+.3f}°  (현재 K_P=K_I=K_D=0)")
+        _row("delta_ff_deg",    f"{cmd.delta_ff_deg:+.3f}°")
+        _row("delta_pid_deg",   f"{cmd.delta_pid_deg:+.3f}°")
         _row("delta_arm_deg",   f"{cmd.delta_arm_deg:+.3f}°  (ff + pid)")
         _row("left_angle_deg",  f"{cmd.left_angle_deg:.2f}°   {_arm_note(cmd.left_angle_deg)}")
         _row("right_angle_deg", f"{cmd.right_angle_deg:.2f}°   {_arm_note(cmd.right_angle_deg)}")
         _row("left_pw",         f"{cmd.left_pw} us")
         _row("right_pw",        f"{cmd.right_pw} us")
         _row("saturated",       str(cmd.saturated))
-        _row("mode",            cmd.mode)
+        _row("control_mode",    cmd.control_mode.value)
 
         _sep("판정")
         _row(f"예상: {sc['expected']:<8}  실제: {actual:<8}", result)
@@ -330,7 +317,7 @@ def run_section_c(pi) -> None:
         _row("right_pw",       f"{cmd.right_pw} us  →  GPIO {control.PARAFOIL_RIGHT_MOTOR_PIN}")
         _block_close()
 
-        control.ProducePulse(pi, cmd)
+        control.MoveServo(pi, cmd)
 
         for remaining in range(int(STEP_SEC), 0, -1):
             print(f"\r  실행 중... {remaining}s 남음  ", end="", flush=True)
