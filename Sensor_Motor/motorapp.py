@@ -35,6 +35,9 @@ _PREV_STATE: int = 0
 _DETUMBLE_ACTIVE: bool = False
 _DETUMBLE_EXIT_START: float = math.nan
 
+# 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
+_MANUAL_STEER_MODE: str = ""
+
 
 # ── 캐시 스냅샷 ───────────────────────────────────────────────────────────────
 
@@ -337,6 +340,27 @@ def handle_mec(data: str) -> None:
             control.WriteZero(PI)
 
 
+def handle_mtr(data: str) -> None:
+    """MTR 명령: 수동 조향 모드 설정.
+
+    LEFT/RIGHT → 고정 deflection(±MANUAL_STEER_DELTA_DEG) 유지.
+    NEUTRAL    → 서보 중립 고정 후 auto(L1 guidance)로 복귀.
+    """
+    global _MANUAL_STEER_MODE
+    aliases = {
+        "L": "LEFT", "LEFT": "LEFT",
+        "N": "NEUTRAL", "NEUTRAL": "NEUTRAL",
+        "R": "RIGHT", "RIGHT": "RIGHT",
+    }
+    mode = aliases.get(data.strip().upper())
+    if mode is None:
+        return
+    _MANUAL_STEER_MODE = "" if mode == "NEUTRAL" else mode
+    logger.info("MTR manual steer: %s → _MANUAL_STEER_MODE=%r", mode, _MANUAL_STEER_MODE)
+    if mode == "NEUTRAL" and PI is not None:
+        control.WriteZero(PI)
+
+
 def handle_fac(data: str) -> None:
     """FAC 명령: 릴리즈/에그 액추에이터 활성화 제어.
 
@@ -406,7 +430,27 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
         _ORIGIN_SAVED = True
 
-    # ── [1] DETUMBLING ────────────────────────────────────────────────────────
+    # ── [1] MANUAL STEER override ────────────────────────────────────────────
+    if _MANUAL_STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
+        _delta = {
+            "LEFT":    -config.MANUAL_STEER_DELTA_DEG,
+            "RIGHT":   +config.MANUAL_STEER_DELTA_DEG,
+            "NEUTRAL":  0.0,
+        }[_MANUAL_STEER_MODE]
+        lp, rp, la, ra, _da = control.ConnectRoMo(_delta)
+        manual_out = control.CtrlOutput(
+            timestamp=now,
+            left_pw=lp, right_pw=rp,
+            left_angle_deg=la, right_angle_deg=ra,
+            delta_arm_deg=_da,
+            delta_ff_deg=_da,
+            valid=True,
+            control_mode=guidance.ControlMode.FAIL,
+        )
+        control.MoveServo(PI, manual_out)
+        return manual_out
+
+    # ── [2] DETUMBLING ────────────────────────────────────────────────────────
     if _should_detumble(snap_t, now):
         guidance._STATE_t.nav.control_mode = guidance.ControlMode.DETUMBLING
         gz_meas = _fresh_gyrz_dps(snap_t, now)
@@ -420,7 +464,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
 
     mode = guidance.DecideControlMode(now)
 
-    # ── [2] GPS/DR 자율 추종 ─────────────────────────────────────────────────
+    # ── [3] GPS/DR 자율 추종 ─────────────────────────────────────────────────
     if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
                 guidance.ControlMode.GPS_TRACKING_OPEN,
                 guidance.ControlMode.DR_TRACKING_CLOSED,
@@ -434,7 +478,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         control.MoveServo(PI, ctrl_out_t)
         return ctrl_out_t
 
-    # ── [3] FAIL ─────────────────────────────────────────────────────────────
+    # ── [4] FAIL ─────────────────────────────────────────────────────────────
     if PI is not None:
         control.WriteOff(PI)
     return None
@@ -486,6 +530,8 @@ def dispatch(msg: str) -> None:
         handle_egg_drop()
     elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:
         handle_mec(unpacked.data)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_MTR:
+        handle_mtr(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_FAC:
         handle_fac(unpacked.data)
 
