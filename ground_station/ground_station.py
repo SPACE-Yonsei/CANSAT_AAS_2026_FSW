@@ -280,6 +280,7 @@ class GuidanceFallbackEstimator:
         self._last_valid_gps_fix: tuple[float, float, float] | None = None
         self._last_course_deg = math.nan
         self._last_speed_m_s = math.nan
+        self._gps_null_mode: bool = False
 
         self._level_idx = 5
         self._level_reason = "BOOT_NO_VALID_SENSOR"
@@ -288,12 +289,22 @@ class GuidanceFallbackEstimator:
         self._recover_candidate_since_ts = 0.0
 
     def invalidate_gps(self, now_ts: float) -> None:
-        """GPS null 명령 시 호출 — location/course 타이머를 now로 리셋해 L:/CS: 가 0부터 카운트."""
-        self._last_valid_location_ts = now_ts
-        self._last_valid_course_speed_ts = now_ts
+        """GPS null 명령 시 호출 — TLM GPS 업데이트를 차단하고 location/CS를 즉시 stale로 만든다.
+
+        SIMGN 후 TLM에는 동결된 lat/lon이 계속 들어오므로, _gps_null_mode=True 동안
+        update()에서 GPS 위치 타임스탬프 갱신을 막아야 한다. 그렇지 않으면 동결 좌표가
+        매 패킷마다 _last_valid_location_ts를 리셋해서 location age가 0으로 유지된다.
+        """
+        self._gps_null_mode = True
+        self._last_valid_location_ts = math.inf
+        self._last_valid_course_speed_ts = math.inf
         self._last_valid_gps_fix = None
         self._last_course_deg = math.nan
         self._last_speed_m_s = math.nan
+
+    def reactivate_gps(self) -> None:
+        """SIMGR 주입 후 호출 — GPS null 억제를 해제하고 다음 TLM부터 GPS freshness 추적 재개."""
+        self._gps_null_mode = False
 
     @staticmethod
     def _age(last_ts: float, now_ts: float) -> float:
@@ -391,18 +402,19 @@ class GuidanceFallbackEstimator:
             self._recover_candidate_idx = None
 
     def update(self, parsed: dict[str, str], now_ts: float) -> _FallbackStatus:
-        lat = self._parse_optional_float(parsed.get("gps_lat", ""))
-        lon = self._parse_optional_float(parsed.get("gps_lon", ""))
-        sats = self._parse_int(parsed.get("gps_sats", ""))
-        gps_quality_ok = sats is None or sats >= _GPS_SATS_MIN
-        if (
-            gps_quality_ok
-            and lat is not None
-            and lon is not None
-            and _valid_gps_latlon(lat, lon)
-        ):
-            self._last_valid_location_ts = now_ts
-            self._estimate_course_speed(lat, lon, now_ts)
+        if not self._gps_null_mode:
+            lat = self._parse_optional_float(parsed.get("gps_lat", ""))
+            lon = self._parse_optional_float(parsed.get("gps_lon", ""))
+            sats = self._parse_int(parsed.get("gps_sats", ""))
+            gps_quality_ok = sats is None or sats >= _GPS_SATS_MIN
+            if (
+                gps_quality_ok
+                and lat is not None
+                and lon is not None
+                and _valid_gps_latlon(lat, lon)
+            ):
+                self._last_valid_location_ts = now_ts
+                self._estimate_course_speed(lat, lon, now_ts)
 
         gyroz = self._parse_optional_float(parsed.get("gyro_yaw", ""))
         if self._is_finite_in_range(gyroz, -_GYROZ_ABS_MAX_DEG_S, _GYROZ_ABS_MAX_DEG_S):
@@ -1226,6 +1238,7 @@ class GroundStation(tk.Tk):
         body = f"SIMGR,{self._inject_gps_var.get().strip()}"
         if self._send_body(body):
             self._gps_fresh_label.set("GPS: ●FRESH")
+            self._fallback_estimator.reactivate_gps()
 
     def _send_gps_null(self) -> None:
         """SIMGN 전송 → gpsapp pos_health=0 강제 → 즉시 stale."""
