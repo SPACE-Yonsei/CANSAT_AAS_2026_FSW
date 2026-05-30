@@ -98,6 +98,9 @@ _ensure_entry() {
 
 _ensure_entry "dtparam=i2c_arm" "on"
 _ensure_entry "dtparam=i2c1" "on"
+
+# i2c-dev exposes /dev/i2c-N; not auto-loaded on DietPi
+grep -qx "i2c-dev" /etc/modules || echo "i2c-dev" >> /etc/modules
 _ensure_entry "enable_uart" "1"
 _ensure_entry "camera_auto_detect" "1"
 
