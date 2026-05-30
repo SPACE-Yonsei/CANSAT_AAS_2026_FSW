@@ -74,6 +74,11 @@ Then reboot.
   - each segment is raw **H.264** elementary stream (`.h264`) via `FileOutput` (no MP4 mux per segment)
 - Output directory: `PICAM_Video/` (under the FSW working directory)
 - Output filename format: `P_MMDD_HHMMSS_microsec.h264` (or placeholder `.txt` if the backend fails). Remux locally if needed: `ffmpeg -i seg.h264 -c copy seg.mp4`
+- **강제 종료 시 영상 보존**:
+  - 이미 완료된 세그먼트(7초 단위)는 안전하게 저장됨
+  - `SIGTERM` (일반 종료): `finally` 블록에서 `cam.close()` 호출 → 현재 세그먼트 저장 가능
+  - `SIGKILL` (강제 종료): 현재 녹화 중인 세그먼트만 손실 (최대 7초)
+  - 불완전한 `.h264` 파일도 ffmpeg으로 복구 가능: `ffmpeg -i incomplete.h264 -c copy recovered.mp4`
 - If camera backend is unavailable:
   - system falls back gracefully
   - placeholder segment files are created so pipeline/test does not break
@@ -224,6 +229,7 @@ FSW_LOG_TLM=0 python3 main.py
 
 | Log | Action |
 |-----|--------|
+| `No module named 'picamera2'` in venv | `picamera2`는 apt 패키지라 venv에 직접 설치 불가. venv를 `--system-site-packages`로 재생성: `python3 -m venv --system-site-packages venv` |
 | `No module named 'adafruit_ina228'` | In the **same venv** you use for `python3 main.py`: `pip install adafruit-circuitpython-ina228` |
 | `No I2C device at address: 0x40` but `i2cdetect` has no `40` | **INA228 not on the bus** (or wrong address). Your scan’s `42` is GNSS, not shunt monitor — wire INA228 or set `ELECTRO_I2C_ADDR` if the board uses a different chip address. |
 | IMU `No I2C device at address: 0x4a` though `i2cdetect` shows `4a` | Try `IMU_I2C_ADDR=0x4B`, `BNO08X_DEBUG=1`, RESET/PS0 wiring, and **100 kHz** (`dtparam=i2c_arm_baudrate=100000`). Chip at `4a` must be **BNO08x** (library probes hard). |
