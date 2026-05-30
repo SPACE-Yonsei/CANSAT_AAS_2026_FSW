@@ -215,7 +215,8 @@ def read_imu_data() -> None:
         if sample is False:
             IMU_ERROR_COUNT += 1
             if IMU_ERROR_COUNT >= IMU_MAX_CONSECUTIVE_ERRORS:
-                _try_reinit()
+                if time.time() - _last_reinit_ts >= IMU_REINIT_COOLDOWN_SEC:
+                    _try_reinit()
                 IMU_ERROR_COUNT = 0
             HEALTH = 0
             time.sleep(period)

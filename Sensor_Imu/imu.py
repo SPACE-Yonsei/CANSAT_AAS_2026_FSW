@@ -553,6 +553,8 @@ def reinit_imu(_i2c_old: Any, _bno_old: Any) -> tuple[Any, Any]:
     _MAG_WINDOW.clear()
     _MAG_LAST_NORM = None
     _FREEZE_STATE.update({"prev_quat": None, "count": 0, "frozen": False})
+    # BNO085가 freeze에서 자체 회복할 시간 확보 (main 브랜치 동일 패턴)
+    time.sleep(2.0)
     return init_imu()
 
 
