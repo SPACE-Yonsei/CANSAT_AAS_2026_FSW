@@ -55,7 +55,28 @@ if ! apt-get install -y pigpio 2>/dev/null; then
     unzip -q pigpio.zip
     cd pigpio-master
     make -j$(nproc)
-    make install
+    # Python setup.py fails on Python 3.12+ (distutils removed); daemon binary is
+    # installed before that step, and the Python client is handled by pip below.
+    make install || true
+    [[ -f /usr/local/bin/pigpiod ]] || install -m 0755 pigpiod /usr/local/bin/
+    ldconfig
+    # Source build has no systemd unit — create one
+    if [[ ! -f /lib/systemd/system/pigpiod.service ]] && \
+       [[ ! -f /usr/lib/systemd/system/pigpiod.service ]]; then
+        cat > /etc/systemd/system/pigpiod.service <<'EOF'
+[Unit]
+Description=Pigpio GPIO daemon
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/pigpiod
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
     cd "${REPO_DIR}"
     echo "    pigpio built and installed from source"
 fi
