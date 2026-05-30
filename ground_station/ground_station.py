@@ -48,22 +48,6 @@ except Exception as exc:
 # (`python ground_station/ground_station.py`) by re-using the script's dir on
 # sys.path. PyInstaller bundles already place this module alongside.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from scenario_runner import (  # type: ignore[import-not-found]
-        PRESETS as _SCENARIO_PRESETS,
-        ScenarioConfig as _ScenarioConfig,
-        ScenarioRunner as _ScenarioRunner,
-        get_preset as _scenario_get_preset,
-        list_preset_names as _scenario_list_presets,
-    )
-    _SCENARIO_AVAILABLE = True
-except Exception as _scenario_import_exc:  # pragma: no cover  (defensive)
-    _SCENARIO_PRESETS = {}
-    _ScenarioConfig = None  # type: ignore[assignment]
-    _ScenarioRunner = None  # type: ignore[assignment]
-    _scenario_get_preset = None  # type: ignore[assignment]
-    _scenario_list_presets = lambda: []  # type: ignore[assignment]
-    _SCENARIO_AVAILABLE = False
 
 
 TEAM_ID = "1070"
@@ -578,16 +562,6 @@ class GroundStation(tk.Tk):
         # Latest parsed TLM dict (also fed to the Scenario panel as a feedback
         # source). Updated each time a frame survives _parse_tlm.
         self._latest_tlm: dict[str, str] | None = None
-        # Scenario player state (None when no scenario active).
-        self._scenario_runner: "_ScenarioRunner | None" = None
-        self._scenario_after_id: str | None = None
-        self._scenario_setup_cmds: list[str] | None = None
-        self._scenario_setup_ix: int = 0
-        # Async teardown pump (avoids blocking the Tk loop while spacing
-        # SS,5 / SIM,DISABLE on slow XBee links).
-        self._scenario_teardown_cmds: list[str] | None = None
-        self._scenario_teardown_ix: int = 0
-        self._scenario_status_var = tk.StringVar(value="idle")
         self._fallback_estimator = GuidanceFallbackEstimator()
         self._release_action_enabled_remote: bool | None = None
         self._egg_action_enabled_remote: bool | None = None
@@ -632,7 +606,6 @@ class GroundStation(tk.Tk):
         self._build_telemetry_panel(left)
         self._build_map_and_motor(right)
         self._build_console_and_command(right, row_offset=1)
-        self._build_scenario_panel(right, row=3)
         self._build_status_bar()
 
     def _build_top_bar(self) -> None:
@@ -961,346 +934,6 @@ class GroundStation(tk.Tk):
             anchor="w",
         ).pack(side=tk.LEFT, padx=(8, 0))
 
-    def _build_scenario_panel(self, parent: ttk.Frame, row: int) -> None:
-        """Closed-loop scenario player panel — preset + overrides + controls.
-
-        Shows a brief description, lets the operator override the most common
-        environmental knobs, and animates the result on the existing map by
-        sending SIMG / SIMP at the scenario tick rate.
-        """
-        parent.rowconfigure(row, weight=0)
-
-        if not _SCENARIO_AVAILABLE:
-            box = ttk.LabelFrame(parent, text="Scenario player (unavailable)")
-            box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
-            ttk.Label(
-                box,
-                text="scenario_runner.py 가 import되지 않아 비활성. "
-                     "ground_station/scenario_runner.py 가 같은 폴더에 있는지 확인하세요.",
-                foreground="#f87171",
-                wraplength=500,
-            ).pack(padx=8, pady=6, anchor="w")
-            return
-
-        box = ttk.LabelFrame(parent, text="Scenario player (closed-loop SIM)")
-        box.grid(row=row, column=0, sticky="ew", pady=(8, 0))
-        for c in range(6):
-            box.columnconfigure(c, weight=0)
-        box.columnconfigure(1, weight=1)
-
-        preset_names = _scenario_list_presets()
-        default_name = preset_names[0] if preset_names else ""
-
-        ttk.Label(box, text="Preset:").grid(row=0, column=0, padx=6, pady=4, sticky="w")
-        self._scenario_preset_var = tk.StringVar(value=default_name)
-        preset_combo = ttk.Combobox(
-            box, textvariable=self._scenario_preset_var,
-            state="readonly", values=preset_names, width=22,
-        )
-        preset_combo.grid(row=0, column=1, padx=6, pady=4, sticky="ew")
-        preset_combo.bind("<<ComboboxSelected>>", self._on_scenario_preset_change)
-
-        self._scenario_play_btn = ttk.Button(
-            box, text="Play", width=8, command=self._on_scenario_play
-        )
-        self._scenario_play_btn.grid(row=0, column=2, padx=(8, 4), pady=4)
-        self._scenario_stop_btn = ttk.Button(
-            box, text="Stop", width=8, state="disabled",
-            command=self._on_scenario_stop,
-        )
-        self._scenario_stop_btn.grid(row=0, column=3, padx=4, pady=4)
-
-        # Description / status spans the row.
-        self._scenario_desc_var = tk.StringVar(
-            value=_SCENARIO_PRESETS[default_name].description if default_name else ""
-        )
-        ttk.Label(
-            box, textvariable=self._scenario_desc_var,
-            foreground="#94a3b8", wraplength=560,
-        ).grid(row=1, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 4))
-
-        # Optional overrides — blank means "use preset value".
-        ttk.Label(box, text="Wind speed (m/s):").grid(row=2, column=0, sticky="w", padx=6, pady=2)
-        self._scenario_wind_speed_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self._scenario_wind_speed_var, width=8).grid(
-            row=2, column=1, sticky="w", padx=6
-        )
-        ttk.Label(box, text="Wind dir FROM (deg):").grid(row=2, column=2, sticky="e", padx=6)
-        self._scenario_wind_dir_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self._scenario_wind_dir_var, width=8).grid(
-            row=2, column=3, sticky="w", padx=6
-        )
-
-        ttk.Label(box, text="Descent (m/s):").grid(row=3, column=0, sticky="w", padx=6, pady=2)
-        self._scenario_descent_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self._scenario_descent_var, width=8).grid(
-            row=3, column=1, sticky="w", padx=6
-        )
-        ttk.Label(box, text="Airspeed (m/s):").grid(row=3, column=2, sticky="e", padx=6)
-        self._scenario_airspeed_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self._scenario_airspeed_var, width=8).grid(
-            row=3, column=3, sticky="w", padx=6
-        )
-
-        ttk.Label(box, text="Turn 90deg distance (m):").grid(row=4, column=0, sticky="w", padx=6, pady=2)
-        self._scenario_turn90_var = tk.StringVar()
-        ttk.Entry(box, textvariable=self._scenario_turn90_var, width=8).grid(
-            row=4, column=1, sticky="w", padx=6
-        )
-        self._scenario_mission_flow_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
-            box,
-            text="Mission flow mode (release/egg 확인용: target 도달해도 계속 하강)",
-            variable=self._scenario_mission_flow_var,
-        ).grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=2)
-
-        ttk.Label(box, textvariable=self._scenario_status_var,
-                  font=("Consolas", 9), foreground="#bae6fd").grid(
-            row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(4, 6)
-        )
-
-    def _on_scenario_preset_change(self, _event=None) -> None:
-        if not _SCENARIO_AVAILABLE:
-            return
-        name = self._scenario_preset_var.get()
-        cfg = _SCENARIO_PRESETS.get(name)
-        if cfg is None:
-            return
-        self._scenario_desc_var.set(cfg.description)
-
-    def _scenario_override_config(self, cfg) -> tuple[bool, str]:
-        """Apply non-empty Entry overrides onto a preset config (in-place)."""
-        def _maybe_float(var: tk.StringVar) -> float | None:
-            s = var.get().strip()
-            if s == "":
-                return None
-            try:
-                v = float(s)
-            except ValueError:
-                return None
-            if not math.isfinite(v):
-                return None
-            return v
-
-        errors: list[str] = []
-        v = _maybe_float(self._scenario_wind_speed_var)
-        if v is not None:
-            if v >= 0.0:
-                cfg.wind_speed_ms = v
-            else:
-                errors.append("wind speed는 0 이상이어야 합니다.")
-        v = _maybe_float(self._scenario_wind_dir_var)
-        if v is not None:
-            cfg.wind_dir_met_deg = v % 360.0
-        v = _maybe_float(self._scenario_descent_var)
-        if v is not None:
-            if v > 0.0:
-                cfg.descent_rate_ms = v
-            else:
-                errors.append("descent는 0보다 커야 합니다.")
-        v = _maybe_float(self._scenario_airspeed_var)
-        if v is not None:
-            if v > 0.0:
-                cfg.airspeed_ms = v
-                cfg.reference_speed_ms = v
-            else:
-                errors.append("airspeed는 0보다 커야 합니다.")
-        v = _maybe_float(self._scenario_turn90_var)
-        if v is not None:
-            if v > 1.0:
-                cfg.turn_distance_90deg_m = v
-                cfg.pulse_to_yaw_gain = None
-            else:
-                errors.append("turn 90deg distance는 1m보다 커야 합니다.")
-
-        if self._scenario_mission_flow_var.get():
-            cfg.stop_on_target_reach = False
-            cfg.use_release_state = True
-
-        if errors:
-            return False, "\n".join(errors)
-        return True, ""
-
-    def _on_scenario_play(self) -> None:
-        if not _SCENARIO_AVAILABLE:
-            return
-        if self._ser is None:
-            messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
-            return
-        if self._scenario_runner is not None:
-            return  # already running
-        name = self._scenario_preset_var.get()
-        try:
-            cfg = _scenario_get_preset(name)
-        except KeyError:
-            messagebox.showerror("Scenario", f"unknown preset: {name}")
-            return
-        # Each play uses a fresh dataclass copy so overrides don't pollute the
-        # global preset table across runs.
-        from copy import deepcopy
-        cfg = deepcopy(cfg)
-        ok, err_msg = self._scenario_override_config(cfg)
-        if not ok:
-            messagebox.showerror("Scenario override invalid", err_msg)
-            return
-
-        # Map view: clear leftover trail so the new run starts clean.
-        self._clear_gps_trail()
-
-        runner = _ScenarioRunner(
-            send_cb=self._send_body,
-            get_tlm_cb=self._get_latest_tlm,
-            log_cb=lambda msg: self._append_console(msg, "ok"),
-            config=cfg,
-        )
-        self._scenario_runner = runner
-        self._scenario_play_btn.configure(state="disabled")
-        self._scenario_stop_btn.configure(state="normal")
-        self._scenario_status_var.set(f"starting: {cfg.name}")
-        # Pace setup UART over Tk ``after`` so the UI stays responsive and each
-        # command clears the radio link before the next (same spacing as CLI).
-        try:
-            self._scenario_setup_cmds = runner.begin_async_setup()
-        except RuntimeError as exc:
-            self._append_console(f"[scenario] setup error: {exc}", "err")
-            self._scenario_runner = None
-            self._scenario_play_btn.configure(state="normal")
-            self._scenario_stop_btn.configure(state="disabled")
-            return
-        self._scenario_setup_ix = 0
-        self._pump_scenario_setup()
-
-    def _pump_scenario_setup(self) -> None:
-        """Send one setup command, wait ``setup_inter_cmd_delay_s``, repeat."""
-        runner = self._scenario_runner
-        cmds = self._scenario_setup_cmds
-        if runner is None or cmds is None:
-            return
-        ix = self._scenario_setup_ix
-        if ix >= len(cmds):
-            runner.complete_async_setup()
-            self._scenario_setup_cmds = None
-            self._scenario_setup_ix = 0
-            # Extra beat after SIM,ACTIVATE / SS before first SIMG tick.
-            cfg = runner.config
-            first_tick_ms = max(
-                800, min(5000, int(cfg.setup_inter_cmd_delay_s * 600))
-            )
-            self._scenario_after_id = self.after(first_tick_ms, self._scenario_tick)
-            return
-        self._send_body(cmds[ix])
-        self._scenario_setup_ix = ix + 1
-        delay_ms = max(0, int(runner.config.setup_inter_cmd_delay_s * 1000))
-        self._scenario_after_id = self.after(delay_ms, self._pump_scenario_setup)
-
-    def _scenario_tick(self) -> None:
-        self._scenario_after_id = None
-        runner = self._scenario_runner
-        if runner is None:
-            return
-        cfg = runner.config
-        spacing_ms = max(0, int(cfg.simg_simp_spacing_s * 1000))
-        gap_after_simp_ms = max(
-            0, int((cfg.tick_period_s - cfg.simg_simp_spacing_s) * 1000)
-        )
-        try:
-            if runner.awaiting_simp():
-                still_running = runner.tick_send_simp()
-                delay_ms = gap_after_simp_ms if still_running else None
-            else:
-                still_running = runner.tick_integrate_and_simg()
-                delay_ms = spacing_ms if still_running else None
-        except Exception as exc:
-            self._append_console(f"[scenario] tick error: {exc}", "err")
-            still_running = False
-            delay_ms = None
-        s = runner.state
-        tlm = self._get_latest_tlm() or {}
-        fsw_state = str(tlm.get("state", "--")).strip() or "--"
-        self._scenario_status_var.set(
-            f"{runner.config.name}  t={s.elapsed_s:5.1f}s  "
-            f"alt={s.alt_m:6.1f}m  d={s.distance_to_target_m:6.1f}m  "
-            f"hdg={s.heading_deg:5.1f}deg  yr={s.angular_velocity_deg_s:+5.1f}deg/s  "
-            f"fsw_state={fsw_state}"
-        )
-        if still_running and delay_ms is not None:
-            self._scenario_after_id = self.after(delay_ms, self._scenario_tick)
-        elif not still_running:
-            self._finalise_scenario(send_teardown=True, reason=s.finish_reason or "complete")
-
-    def _on_scenario_stop(self) -> None:
-        if self._scenario_runner is None:
-            return
-        self._finalise_scenario(send_teardown=True, reason="user-stop")
-
-    def _finalise_scenario(self, *, send_teardown: bool, reason: str) -> None:
-        runner = self._scenario_runner
-        if runner is None:
-            return
-        if self._scenario_after_id is not None:
-            try:
-                self.after_cancel(self._scenario_after_id)
-            except tk.TclError:
-                pass
-            self._scenario_after_id = None
-        self._scenario_setup_cmds = None
-        self._scenario_setup_ix = 0
-        # Mark the runner stopped without sending teardown synchronously —
-        # SS,5 / SIM,DISABLE pacing happens in _pump_scenario_teardown so the
-        # Tk loop stays responsive on slow UART links.
-        try:
-            runner.stop(send_teardown=False, reason=reason)
-        except Exception as exc:
-            self._append_console(f"[scenario] stop error: {exc}", "err")
-
-        teardown_cmds = (
-            runner.teardown_command_sequence(reason) if send_teardown else []
-        )
-        self._scenario_teardown_cmds = teardown_cmds
-        self._scenario_teardown_ix = 0
-        s = runner.state
-        if teardown_cmds:
-            self._scenario_status_var.set(
-                f"stopping: {runner.config.name}  reason={s.finish_reason}"
-            )
-            self._scenario_play_btn.configure(state="disabled")
-            self._scenario_stop_btn.configure(state="disabled")
-            self._pump_scenario_teardown()
-        else:
-            self._scenario_status_var.set(
-                f"done: {runner.config.name}  reason={s.finish_reason}  "
-                f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
-            )
-            self._scenario_runner = None
-            self._scenario_teardown_cmds = None
-            self._scenario_play_btn.configure(state="normal")
-            self._scenario_stop_btn.configure(state="disabled")
-
-    def _pump_scenario_teardown(self) -> None:
-        """Send one teardown command, wait ``teardown_inter_cmd_delay_s``, repeat."""
-        self._scenario_after_id = None
-        runner = self._scenario_runner
-        cmds = self._scenario_teardown_cmds
-        if runner is None or cmds is None:
-            return
-        ix = self._scenario_teardown_ix
-        if ix >= len(cmds):
-            s = runner.state
-            self._scenario_status_var.set(
-                f"done: {runner.config.name}  reason={s.finish_reason}  "
-                f"final_d={s.distance_to_target_m:.1f}m  alt={s.alt_m:.1f}m"
-            )
-            self._scenario_runner = None
-            self._scenario_teardown_cmds = None
-            self._scenario_teardown_ix = 0
-            self._scenario_play_btn.configure(state="normal")
-            self._scenario_stop_btn.configure(state="disabled")
-            return
-        self._send_body(cmds[ix])
-        self._scenario_teardown_ix = ix + 1
-        delay_ms = max(0, int(runner.config.teardown_inter_cmd_delay_s * 1000))
-        self._scenario_after_id = self.after(delay_ms, self._pump_scenario_teardown)
-
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -1351,11 +984,6 @@ class GroundStation(tk.Tk):
         self._append_console(f"[connect] {port} @ {baud}", "ok")
 
     def _disconnect(self) -> None:
-        # Stop a running scenario first so it doesn't try to write to a closed
-        # serial port. send_teardown=False because the port may already be
-        # gone — best-effort cleanup only.
-        if self._scenario_runner is not None:
-            self._finalise_scenario(send_teardown=False, reason="serial-disconnect")
         if self._map_redraw_after_id is not None:
             try:
                 self.after_cancel(self._map_redraw_after_id)
@@ -1547,10 +1175,7 @@ class GroundStation(tk.Tk):
             self._motor_steer_var.set(f"manual steer: {cmd} (pending)")
 
     def _send_body(self, body: str) -> bool:
-        """Low-level CMD send used by both manual entry and scenario player.
-
-        Does NOT reset the GPS trail; the caller decides (the manual UI does).
-        """
+        """Low-level CMD send. Does NOT reset the GPS trail; the caller decides."""
         if self._ser is None:
             return False
         body = (body or "").strip()
