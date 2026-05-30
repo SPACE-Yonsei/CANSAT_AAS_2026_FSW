@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import os
 import re
 import threading
@@ -262,6 +263,19 @@ _MOTOR_RAW_HEADER = [
 ]
 
 
+def _motor_f(obj, attr, _nan=float("nan")):
+    try:
+        v = getattr(obj, attr, _nan)
+        return float(v) if v is not None else _nan
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _motor_deg(obj, attr):
+    v = _motor_f(obj, attr)
+    return math.degrees(v) if math.isfinite(v) else float("nan")
+
+
 def log_motor_raw(
     flight_state: int,
     motor_enabled: bool,
@@ -270,20 +284,6 @@ def log_motor_raw(
     l1_out=None,
 ) -> None:
     """패러포일 제어 사이클 1회 출력 + guidance 상태."""
-    import math as _math
-    _nan = float("nan")
-
-    def _f(obj, attr):
-        try:
-            v = getattr(obj, attr, _nan)
-            return float(v) if v is not None else _nan
-        except (TypeError, ValueError):
-            return _nan
-
-    def _deg(obj, attr):
-        v = _f(obj, attr)
-        return _math.degrees(v) if _math.isfinite(v) else _nan
-
     try:
         w = _get_raw_writer("motor", _MOTOR_RAW_HEADER)
         if w is None:
@@ -294,23 +294,23 @@ def log_motor_raw(
             int(bool(motor_enabled)),
             str(motor_ctrl_mode),
             str(getattr(ctrl_out, "control_mode", "")),
-            _f(l1_out, "pos_N"),
-            _f(l1_out, "pos_E"),
-            _f(l1_out, "target_N"),
-            _f(l1_out, "target_E"),
-            _f(l1_out, "distance_to_target"),
-            _deg(l1_out, "target_bearing"),
-            _deg(l1_out, "nu"),
-            _f(l1_out, "ground_speed_mps"),
-            _f(ctrl_out, "left_pw"),
-            _f(ctrl_out, "right_pw"),
-            _f(ctrl_out, "left_angle_deg"),
-            _f(ctrl_out, "right_angle_deg"),
-            _f(ctrl_out, "delta_ff_deg"),
-            _f(ctrl_out, "delta_pid_deg"),
-            _f(ctrl_out, "delta_arm_deg"),
-            _f(ctrl_out, "angular_velocity_cmd_deg_s"),
-            _f(ctrl_out, "angular_velocity_meas_deg_s"),
+            _motor_f(l1_out, "pos_N"),
+            _motor_f(l1_out, "pos_E"),
+            _motor_f(l1_out, "target_N"),
+            _motor_f(l1_out, "target_E"),
+            _motor_f(l1_out, "distance_to_target"),
+            _motor_deg(l1_out, "target_bearing"),
+            _motor_deg(l1_out, "nu"),
+            _motor_f(l1_out, "ground_speed_mps"),
+            _motor_f(ctrl_out, "left_pw"),
+            _motor_f(ctrl_out, "right_pw"),
+            _motor_f(ctrl_out, "left_angle_deg"),
+            _motor_f(ctrl_out, "right_angle_deg"),
+            _motor_f(ctrl_out, "delta_ff_deg"),
+            _motor_f(ctrl_out, "delta_pid_deg"),
+            _motor_f(ctrl_out, "delta_arm_deg"),
+            _motor_f(ctrl_out, "angular_velocity_cmd_deg_s"),
+            _motor_f(ctrl_out, "angular_velocity_meas_deg_s"),
             int(bool(getattr(ctrl_out, "saturated", False))),
             int(bool(getattr(ctrl_out, "sensor_valid", False))),
         ])
