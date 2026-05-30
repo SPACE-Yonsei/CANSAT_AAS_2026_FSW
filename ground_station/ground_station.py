@@ -1463,6 +1463,33 @@ class GroundStation(tk.Tk):
         # SIMGs go through _send_body without this reset and accumulate.
         if ubody.startswith("SIMG,"):
             self._clear_gps_trail()
+            # SIMG에서 current 위치도 즉시 반영 (TLM 도착 전 map 선행 표시)
+            try:
+                simg_parts = ubody[5:].split(",")
+                s_lat = float(simg_parts[0])
+                s_lon = float(simg_parts[1])
+                if _is_meaningful_target_latlon(s_lat, s_lon):
+                    self._held_current_latlon = (s_lat, s_lon)
+                    self._map_points["current"] = (s_lat, s_lon)
+                    if self._held_target_latlon is not None:
+                        tg = self._held_target_latlon
+                        if _is_meaningful_target_latlon(tg[0], tg[1]):
+                            self._map_points["target"] = tg
+                    self._request_map_redraw()
+            except (IndexError, ValueError):
+                pass
+        # TC 명령 → GCS에서 target을 즉시 로컬 저장 (TLM motor_diag 없이도 맵에 표시)
+        elif ubody.startswith("TC,"):
+            try:
+                tc_parts = ubody[3:].split(",")
+                t_lat = float(tc_parts[0])
+                t_lon = float(tc_parts[1])
+                if _is_meaningful_target_latlon(t_lat, t_lon):
+                    self._held_target_latlon = (t_lat, t_lon)
+                    self._map_points["target"] = (t_lat, t_lon)
+                    self._request_map_redraw()
+            except (IndexError, ValueError):
+                pass
 
     def _toggle_release_action(self) -> None:
         if self._ser is None:
