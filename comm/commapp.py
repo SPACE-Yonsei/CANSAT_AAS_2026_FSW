@@ -204,6 +204,17 @@ def cmd_simg(option: str, main_queue) -> bool:
     )
 
 
+def cmd_simgn(option: str, main_queue) -> bool:
+    """SIMGN: GPS null 모드 — pos_health=0 강제로 즉시 stale. SIM ACTIVATE 필요."""
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SIMGN,
+        "",
+    )
+
+
 def cmd_simgr(option: str, main_queue) -> bool:
     """east_m,north_m,course_deg,speed_m_s[,alt_m] — relative offset from target; forwarded to FlightLogic."""
     parts = [x.strip() for x in option.split(",") if x.strip() != ""]
@@ -660,6 +671,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_simg(option, main_queue)
     if cmd == "SIMGR":
         return cmd_simgr(option, main_queue)
+    if cmd == "SIMGN":
+        return cmd_simgn(option, main_queue)
     if cmd == "CAL":
         return cmd_cal(option, main_queue)
     if cmd == "MEC":

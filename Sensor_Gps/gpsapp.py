@@ -34,6 +34,7 @@ _prev_valid_lon: float = 0.0
 _prev_valid_ts:  float = 0.0
 
 SIM_GPS_ACTIVE = False
+SIM_GPS_NULL   = False  # SIMGN: pos_health=0 강제 (즉시 stale)
 SIM_GPS_LAT = 0.0
 SIM_GPS_LON = 0.0
 SIM_GPS_ALT = 0.0
@@ -161,11 +162,17 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
         events.LogEvent(appargs.GpsAppArg.AppName, events.EventType.info, f"GPSAPP TERMINATION DETECTED")
         GPSAPP_RUNSTATUS = False
 
+    elif recv_msg.msg_id == appargs.GpsAppArg.MID_flight_gps_null:
+        with _SIM_GPS_LOCK:
+            SIM_GPS_NULL = True
+        return
+
     elif recv_msg.msg_id == appargs.GpsAppArg.MID_flight_gps_sim:
         data = str(recv_msg.data).strip()
         if data.upper() == "CLEAR":
             with _SIM_GPS_LOCK:
                 SIM_GPS_ACTIVE = False
+                SIM_GPS_NULL   = False
                 SIM_GPS_LAT = 0.0
                 SIM_GPS_LON = 0.0
                 SIM_GPS_ALT = 0.0
@@ -189,6 +196,7 @@ def command_handler (recv_msg : msgstructure.MsgStructure):
             return
         with _SIM_GPS_LOCK:
             SIM_GPS_ACTIVE = True
+            SIM_GPS_NULL   = False  # 새 위치 주입 시 null 모드 해제
             SIM_GPS_LAT = lat
             SIM_GPS_LON = lon
             SIM_GPS_ALT = alt
@@ -267,6 +275,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
     while GPSAPP_RUNSTATUS:
         sim_sample = None
+        sim_null = False
         with _SIM_GPS_LOCK:
             if SIM_GPS_ACTIVE:
                 sim_sample = (
@@ -276,6 +285,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                     SIM_GPS_SPEED_MS,
                     SIM_GPS_COURSE,
                 )
+                sim_null = SIM_GPS_NULL
         if sim_sample is not None:
             GPS_TIME = time.strftime("%H:%M:%S")
             GPS_LAT, GPS_LON, GPS_ALT, GPS_SPEED_MS, GPS_COURSE = sim_sample
@@ -362,11 +372,15 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
 
             pos_fresh = _valid_age(last_valid_gps_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
             motion_fresh = _valid_age(last_valid_rmc_ts, now_mono, GPS_STALE_TIMEOUT_SEC)
-            if sim_sample is not None:
+            if sim_null:
+                pos_health = 0
+                motion_health = 0
+            elif sim_sample is not None:
                 pos_health = pos_fresh
+                motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
             else:
                 pos_health = pos_fresh and _eval_pos_fidelity(GPS_LAT, GPS_LON, hdop, GPS_SATS, GPS_FIX_QUALITY, now_mono)
-            motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
+                motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
 
             if pos_health:
                 global _prev_valid_lat, _prev_valid_lon, _prev_valid_ts

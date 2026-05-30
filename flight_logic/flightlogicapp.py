@@ -309,6 +309,20 @@ def handle_simg(data: str, main_queue) -> None:
         )
 
 
+def handle_simgn(data: str, main_queue) -> None:
+    """SIMGN: GPS를 즉시 stale로 만든다 (pos_health=0 강제). SIM ACTIVATE 필요."""
+    if not sim_active:
+        logger.warning("SIMGN ignored: SIM ACTIVATE required first")
+        return
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.GpsAppArg.AppID,
+        appargs.GpsAppArg.MID_flight_gps_null,
+        "",
+    )
+
+
 def handle_simgr(data: str, main_queue) -> None:
     """SIM GPS Relative: east_m,north_m,course_deg,speed_m_s[,alt_m] — offset from target origin."""
     if not sim_active:
@@ -589,6 +603,8 @@ def dispatch(msg: str, main_queue) -> None:
         handle_simg(unpacked.data, main_queue)
     elif mid == appargs.CommAppArg.MID_RouteCmd_SIMGR:
         handle_simgr(unpacked.data, main_queue)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_SIMGN:
+        handle_simgn(unpacked.data, main_queue)
     elif mid == appargs.BarometerAppArg.MID_flight_alt:
         handle_barometer(unpacked.data, main_queue)
     elif mid == appargs.DistanceAppArg.MID_flight_dis:

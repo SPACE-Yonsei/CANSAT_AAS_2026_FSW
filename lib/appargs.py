@@ -36,6 +36,7 @@ class CommAppArg:
     MID_RouteCmd_FAC = 1201110
     MID_RouteCmd_CMC = 1201111  # Control Mode Command
     MID_RouteCmd_SIMGR = 1201112  # SIM GPS Relative (east_m, north_m, course, speed[, alt])
+    MID_RouteCmd_SIMGN = 1201113  # SIM GPS Null — force pos_health=0 (instant stale)
 
 
 class BarometerAppArg:
@@ -64,7 +65,8 @@ class GpsAppArg:
     MID_motor_gps = 1501901
 
     MID_comm_gga = 1501201
-    MID_flight_gps_sim = 1501101
+    MID_flight_gps_sim  = 1501101
+    MID_flight_gps_null = 1501102  # force pos_health=0 while SIM active
 
 
 class DistanceAppArg:
