@@ -391,7 +391,8 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
             )
             _imu_heading_fallback_logged = True
 
-    error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+    raw_error = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+    error_deg = max(-90.0, min(90.0, raw_error))   # ±90° 초과 구간은 90°로 고정
     cmd_dps   = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                     min(+config.IMU_HEADING_MAX_CMD_DEG_S,
                         config.IMU_HEADING_KP * error_deg))
