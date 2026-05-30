@@ -302,9 +302,16 @@ class GuidanceFallbackEstimator:
         self._last_course_deg = math.nan
         self._last_speed_m_s = math.nan
 
-    def reactivate_gps(self) -> None:
-        """SIMGR 주입 후 호출 — GPS null 억제를 해제하고 다음 TLM부터 GPS freshness 추적 재개."""
+    def reactivate_gps(self, now_ts: float) -> None:
+        """SIMGR 주입 후 호출 — null 억제 해제, CS freshness를 복구 유지 시간만큼 선행 부스트.
+
+        frozen GPS(동일 좌표)는 position delta=0이라 _estimate_course_speed가 CS를
+        절대 갱신할 수 없다. SIMGR은 FSW에 motion_health=1 데이터를 제공하므로,
+        그 사실을 반영해 cs_ts를 now + RECOVERY_HOLD로 설정한다.
+        이렇게 하면 이후 3초 동안 cs_cur=True가 유지되어 L4→L0 복구가 가능해진다.
+        """
         self._gps_null_mode = False
+        self._last_valid_course_speed_ts = now_ts + _LEVEL_RECOVERY_HOLD_S
 
     @staticmethod
     def _age(last_ts: float, now_ts: float) -> float:
@@ -1151,7 +1158,7 @@ class GroundStation(tk.Tk):
         if ubody.startswith("SIMG,") or ubody.startswith("SIMGR,"):
             self._clear_gps_trail()
             self._gps_fresh_label.set("GPS: ●FRESH")
-            self._fallback_estimator.reactivate_gps()
+            self._fallback_estimator.reactivate_gps(time.time())
             # SIMG에서 current 위치도 즉시 반영 (TLM 도착 전 map 선행 표시)
             try:
                 simg_parts = ubody[5:].split(",")
@@ -1244,7 +1251,7 @@ class GroundStation(tk.Tk):
         body = f"SIMGR,{self._inject_gps_var.get().strip()}"
         if self._send_body(body):
             self._gps_fresh_label.set("GPS: ●FRESH")
-            self._fallback_estimator.reactivate_gps()
+            self._fallback_estimator.reactivate_gps(time.time())
 
     def _send_gps_null(self) -> None:
         """SIMGN 전송 → gpsapp pos_health=0 강제 → 즉시 stale."""

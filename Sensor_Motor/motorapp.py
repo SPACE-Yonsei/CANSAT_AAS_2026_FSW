@@ -43,6 +43,8 @@ MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
 
 # IMU_HEADING: GPS+target 없을 때 로그 중복 방지 플래그
 _imu_heading_fallback_logged: bool = False
+# IMU_HEADING: |error|>90° 구간 방향 고정 (히스테리시스) — +1.0=우, -1.0=좌, 0.0=미결정
+_imu_heading_turn_dir: float = 0.0
 
 
 # ── 캐시 스냅샷 ───────────────────────────────────────────────────────────────
@@ -362,8 +364,9 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
     GPS 위치 + 타겟 좌표가 유효하면 지리 bearing을 계산해 IMU yaw 프레임으로 변환.
     yaw_offset_deg는 해당 사이클 IMU 메시지에서 직접 수신 (매 사이클 일관성 보장).
     GPS/타겟이 없으면 현재 heading 유지 (error=0).
+    |error|>90°: 서보 끝단 고정. 방향은 첫 진입 시 결정 후 |error|<70°까지 유지 (히스테리시스).
     """
-    global _imu_heading_fallback_logged
+    global _imu_heading_fallback_logged, _imu_heading_turn_dir
     target_heading_deg = math.degrees(yaw_rad)
 
     gps     = snap.latest_gps
@@ -403,9 +406,14 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
     if abs(error_deg) > 90.0:
-        # 뒤쪽 반구(>±90°): 서보 물리 끝단 고정 — ±180° 경계 sign-flip 진동 방지
-        cmd_dps = math.copysign(config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS, error_deg)
+        # 뒤쪽 반구(>±90°): 서보 끝단 고정.
+        # ±180° 경계에서 IMU 노이즈로 error 부호가 반전되면 방향이 계속 바뀌므로
+        # 첫 진입 시 방향을 결정하고 |error|<70°가 될 때까지 유지.
+        if _imu_heading_turn_dir == 0.0:
+            _imu_heading_turn_dir = math.copysign(1.0, error_deg)
+        cmd_dps = _imu_heading_turn_dir * config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
     else:
+        _imu_heading_turn_dir = 0.0  # 70°~90° 사이 또는 이하: 방향 고정 해제
         cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                       min(config.IMU_HEADING_MAX_CMD_DEG_S,
                           config.IMU_HEADING_KP * error_deg))
