@@ -46,8 +46,9 @@ class _ImuFromApp:
     lin_acc_x:     Optional[float] = None   # 중력 제거된 전진 가속도 (m/s²)
     lin_acc_y:     Optional[float] = None   # 중력 제거된 우측 가속도 (m/s²)
     lin_acc_z:     Optional[float] = None
-    lin_acc_valid: bool = False
-    health:        int = 0
+    lin_acc_valid:  bool  = False
+    health:         int   = 0
+    yaw_offset_deg: float = 0.0
 
 
 @dataclass
@@ -64,6 +65,8 @@ class _Cache:
     latest_gps:  _GpsFromApp  = field(default_factory=_GpsFromApp)
     latest_imu:  _ImuFromApp  = field(default_factory=_ImuFromApp)
     latest_baro: _BaroFromApp = field(default_factory=_BaroFromApp)
+    target_lat:  Optional[float] = None
+    target_lon:  Optional[float] = None
 
 
 # ── guidance 전용 Navigation Anchor ──────────────────────────────────────────

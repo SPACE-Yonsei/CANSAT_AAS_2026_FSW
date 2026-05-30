@@ -48,10 +48,18 @@ _imu_heading_fallback_logged: bool = False
 # ── 캐시 스냅샷 ───────────────────────────────────────────────────────────────
 
 def _cache_snapshot() -> _Cache:
+    try:
+        t_lat = float(guidance._MISSION_t._target_lat)
+        t_lon = float(guidance._MISSION_t._target_lon)
+    except Exception:
+        t_lat = None
+        t_lon = None
     return _Cache(
         latest_gps=_GpsFromApp(**vars(_CACHE_t.latest_gps)),
         latest_imu=_ImuFromApp(**vars(_CACHE_t.latest_imu)),
         latest_baro=_BaroFromApp(**vars(_CACHE_t.latest_baro)),
+        target_lat=t_lat,
+        target_lon=t_lon,
     )
 
 
@@ -171,16 +179,17 @@ def handle_gps(data: str) -> None:
 def handle_imu(data: str) -> None:
     """IMU 페이로드 파싱 후 _CACHE_t 갱신.
 
-    Payload (11 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts
+    Payload (12 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts,yaw_offset
     각도=deg, 가속도=m/s², 각속도=deg/s
     """
     fields = data.split(",")
-    if len(fields) != 11:
+    if len(fields) < 11:
         return
     try:
-        health    = int(float(fields[9]))
-        sample_ts = float(fields[10])
-        rx_ts     = time.monotonic()
+        health         = int(float(fields[9]))
+        sample_ts      = float(fields[10])
+        yaw_offset_deg = float(fields[11]) if len(fields) >= 12 else 0.0
+        rx_ts          = time.monotonic()
     except (ValueError, IndexError):
         return
 
@@ -222,10 +231,11 @@ def handle_imu(data: str) -> None:
             lin_acc_z=lin_az if lin_valid else None,
             lin_acc_valid=lin_valid,
             health=1,
+            yaw_offset_deg=yaw_offset_deg,
         )
     else:
         # 하드웨어 이상: 타임스탬프만 갱신
-        imu = _ImuFromApp(ts=sample_ts, rx_ts=rx_ts, health=0)
+        imu = _ImuFromApp(ts=sample_ts, rx_ts=rx_ts, health=0, yaw_offset_deg=yaw_offset_deg)
 
     with _UPDATE_LOCK:
         _CACHE_t.latest_imu = imu
@@ -346,41 +356,41 @@ def handle_mec(data: str) -> None:
             control.WriteZero(PI)
 
 
-def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
+def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
     """IMU_HEADING 모드 CtrlInput 생성.
 
     GPS 위치 + 타겟 좌표가 유효하면 지리 bearing을 계산해 IMU yaw 프레임으로 변환.
+    yaw_offset_deg는 해당 사이클 IMU 메시지에서 직접 수신 (매 사이클 일관성 보장).
     GPS/타겟이 없으면 현재 heading 유지 (error=0).
     """
     global _imu_heading_fallback_logged
-    # fallback: 현재 heading 유지
     target_heading_deg = math.degrees(yaw_rad)
 
-    t_lat = guidance._MISSION_t._target_lat
-    t_lon = guidance._MISSION_t._target_lon
-    gps   = _CACHE_t.latest_gps
+    gps     = snap.latest_gps
+    t_lat   = snap.target_lat
+    t_lon   = snap.target_lon
     gps_lat = gps.lat if gps is not None else None
     gps_lon = gps.lon if gps is not None else None
 
-    if (gps_lat is not None and math.isfinite(float(gps_lat))
-            and gps_lon is not None and math.isfinite(float(gps_lon))
-            and math.isfinite(float(t_lat)) and math.isfinite(float(t_lon))
-            and (abs(float(t_lat)) > 1e-9 or abs(float(t_lon)) > 1e-9)):
-        # 지리 bearing: True North 기준 (rad)
-        dlon  = math.radians(float(t_lon) - float(gps_lon))
-        lat1  = math.radians(float(gps_lat))
-        lat2  = math.radians(float(t_lat))
-        y_b   = math.sin(dlon) * math.cos(lat2)
-        x_b   = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-        abs_bearing_rad = math.atan2(y_b, x_b)
-        # IMU yaw 프레임으로 변환 (시동 zeroing offset 적용)
-        target_heading_deg = math.degrees(abs_bearing_rad) + prevstate.YAW_OFFSET
+    if (gps_lat is not None and math.isfinite(gps_lat)
+            and gps_lon is not None and math.isfinite(gps_lon)
+            and t_lat is not None and math.isfinite(t_lat)
+            and t_lon is not None and math.isfinite(t_lon)
+            and abs(t_lat) > 1e-9 and abs(t_lon) > 1e-9):
+        dlon = math.radians(t_lon - gps_lon)
+        lat1 = math.radians(gps_lat)
+        lat2 = math.radians(t_lat)
+        y_b  = math.sin(dlon) * math.cos(lat2)
+        x_b  = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+        abs_bearing_rad    = math.atan2(y_b, x_b)
+        yaw_off            = snap.latest_imu.yaw_offset_deg
+        target_heading_deg = math.degrees(abs_bearing_rad) + yaw_off
         if _imu_heading_fallback_logged:
             logger.info(
                 "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
                 " bearing=%.1f° yaw_off=%.1f°",
-                float(gps_lat), float(gps_lon), float(t_lat), float(t_lon),
-                math.degrees(abs_bearing_rad), prevstate.YAW_OFFSET,
+                gps_lat, gps_lon, t_lat, t_lon,
+                math.degrees(abs_bearing_rad), yaw_off,
             )
             _imu_heading_fallback_logged = False
     else:
@@ -391,14 +401,10 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float) -> control.CtrlInput:
             )
             _imu_heading_fallback_logged = True
 
-    raw_error = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
-    _max = config.IMU_HEADING_MAX_CMD_DEG_S
-    if raw_error > 90.0:
-        cmd_dps = _max                                          # +90° 초과: 최대 정방향
-    elif raw_error < -90.0:
-        cmd_dps = -_max                                         # -90° 초과: 최대 역방향
-    else:
-        cmd_dps = max(-_max, min(_max, config.IMU_HEADING_KP * raw_error))  # P 제어
+    error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+    cmd_dps   = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
+                    min(config.IMU_HEADING_MAX_CMD_DEG_S,
+                        config.IMU_HEADING_KP * error_deg))
     return control.CtrlInput(
         angular_velocity_cmd_deg_s=cmd_dps,
         ground_speed_mps=0.0,
@@ -555,7 +561,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         if yaw is not None and math.isfinite(float(yaw)):
             gyrz = snap_t.latest_imu.gyrz_rad_s
             measured_dps = math.degrees(float(gyrz)) if (gyrz is not None and math.isfinite(float(gyrz))) else float("nan")
-            ctrl_in    = _imu_heading_ctrl_input(now, float(yaw))
+            ctrl_in    = _imu_heading_ctrl_input(now, float(yaw), snap_t)
             ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in, measured_dps, now)
             control.MoveServo(PI, ctrl_out_t)
             sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)

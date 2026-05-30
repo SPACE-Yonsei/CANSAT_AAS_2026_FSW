@@ -259,18 +259,19 @@ def send_imu_data(main_queue) -> None:
             gyrx, gyry, gyrz = GYRX, GYRY, GYRZ
             health         = int(HEALTH)
             sample_mono_ts = _last_sample_mono_ts
+        yaw_off = prevstate.YAW_OFFSET
 
-        # Payload (11 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts
+        # Payload (12 fields): roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts,yaw_offset
         # health=0 → data fields are nan so motorapp skips populating guidance fields
         if health:
             payload = (
                 f"{fr},{fp},{fy},"
                 f"{accx},{accy},{accz},"
                 f"{gyrx},{gyry},{gyrz},"
-                f"{health},{sample_mono_ts:.4f}"
+                f"{health},{sample_mono_ts:.4f},{yaw_off:.4f}"
             )
         else:
-            payload = f"nan,nan,nan,nan,nan,nan,nan,nan,nan,0,{sample_mono_ts:.4f}"
+            payload = f"nan,nan,nan,nan,nan,nan,nan,nan,nan,0,{sample_mono_ts:.4f},{yaw_off:.4f}"
 
         msgstructure.send_msg(
             main_queue,
