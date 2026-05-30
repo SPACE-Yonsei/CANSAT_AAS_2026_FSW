@@ -1708,7 +1708,7 @@ class GroundStation(tk.Tk):
         self._set_force_action_ui(release_action_enabled, egg_action_enabled)
         try:
             v = float(parsed.get("voltage_v", ""))
-            pct = max(0.0, min(100.0, (v - 6.2) / (8.2 - 6.2) * 100.0))
+            pct = max(0.0, min(100.0, (v - 6.0) / (8.4 - 6.0) * 100.0))
             self._battery_pct_var.set(f"{pct:.0f} %")
             if self._battery_bar is not None:
                 self._battery_bar["value"] = pct
