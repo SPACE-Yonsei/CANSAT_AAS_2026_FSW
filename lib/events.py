@@ -36,10 +36,10 @@ class _CsvEventHandler(logging.Handler):
         self._open_csv()
 
     def _open_csv(self) -> None:
-        directory = Path("eventlogs")
-        directory.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._path = directory / f"events_{ts}.csv"
+        directory = Path("eventlogs") / f"run_{ts}"
+        directory.mkdir(parents=True, exist_ok=True)
+        self._path = directory / "events.csv"
         self._fp = self._path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._fp)
         self._writer.writerow(

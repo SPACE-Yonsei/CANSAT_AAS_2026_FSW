@@ -89,3 +89,18 @@ def cameraapp_main(main_pipe) -> None:
         logger.info("Camera app terminating")
         t.join(timeout=2.0)
         picam.terminate(cam)
+
+
+if __name__ == "__main__":
+    import logging
+    from multiprocessing import Pipe
+
+    logging.basicConfig(level=logging.DEBUG)
+    parent, child = Pipe()
+    try:
+        cameraapp_main(child)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        parent.close()
+        child.close()
