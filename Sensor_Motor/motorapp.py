@@ -405,18 +405,26 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
             _imu_heading_fallback_logged = True
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
-    if abs(error_deg) > 90.0:
-        # 뒤쪽 반구(>±90°): 서보 끝단 고정.
-        # ±180° 경계에서 IMU 노이즈로 error 부호가 반전되면 방향이 계속 바뀌므로
-        # 첫 진입 시 방향을 결정하고 |error|<70°가 될 때까지 유지.
+    abs_err = abs(error_deg)
+    if abs_err > 90.0:
+        # 진입: 처음 90° 초과 시 방향 결정, 이후 노이즈로 부호 반전돼도 유지
         if _imu_heading_turn_dir == 0.0:
             _imu_heading_turn_dir = math.copysign(1.0, error_deg)
         cmd_dps = _imu_heading_turn_dir * config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
-    else:
-        _imu_heading_turn_dir = 0.0  # 70°~90° 사이 또는 이하: 방향 고정 해제
+    elif abs_err < 70.0:
+        # 해제: 70° 미만으로 내려와야만 히스테리시스 종료 → 90° 경계 chattering 방지
+        _imu_heading_turn_dir = 0.0
         cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                       min(config.IMU_HEADING_MAX_CMD_DEG_S,
                           config.IMU_HEADING_KP * error_deg))
+    else:
+        # 전환 구간 70°~90°: 이미 방향이 잡혀있으면 끝단 유지, 아니면 비례제어
+        if _imu_heading_turn_dir != 0.0:
+            cmd_dps = _imu_heading_turn_dir * config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+        else:
+            cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
+                          min(config.IMU_HEADING_MAX_CMD_DEG_S,
+                              config.IMU_HEADING_KP * error_deg))
     return control.CtrlInput(
         angular_velocity_cmd_deg_s=cmd_dps,
         ground_speed_mps=0.0,
