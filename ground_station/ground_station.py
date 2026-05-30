@@ -1898,6 +1898,12 @@ class GroundStation(tk.Tk):
         pw = max(20.0, pr - pl)
         ph = max(20.0, pb - pt)
 
+        # 가로/세로 동일 스케일 (1m == 같은 픽셀 수)
+        _px_per_m = min(pw / (2.0 * half_e), ph / (2.0 * half_n))
+        half_e = pw / (2.0 * _px_per_m)
+        half_n = ph / (2.0 * _px_per_m)
+        dec = _map_geo_decimals(max(2.0 * half_e, 2.0 * half_n, 5.0))
+
         def project(lat: float, lon: float) -> tuple[float, float]:
             east = (lon - ref_lon) * meter_per_lon
             north = (lat - ref_lat) * 111320.0
@@ -2044,18 +2050,37 @@ class GroundStation(tk.Tk):
 
         if "current" in self._map_points:
             cx, cy = project(*self._map_points["current"])
+            cur_lat_p, cur_lon_p = self._map_points["current"]
+
+            # 현재 heading 화살표 (파랑, 실선)
             if math.isfinite(self._current_heading_deg):
                 rad = math.radians(self._current_heading_deg)
                 dx = math.sin(rad) * 36.0
                 dy = -math.cos(rad) * 36.0
                 c.create_line(cx, cy, cx + dx, cy + dy, fill="#38bdf8", width=3, arrow=tk.LAST)
+
+            # 목표 방향 화살표 (빨강, 점선)
+            target_bearing_deg: float = math.nan
+            if "target" in self._map_points:
+                tgt_lat_p, tgt_lon_p = self._map_points["target"]
+                dE = (tgt_lon_p - cur_lon_p) * math.cos(math.radians(cur_lat_p))
+                dN = tgt_lat_p - cur_lat_p
+                if abs(dE) > 1e-9 or abs(dN) > 1e-9:
+                    bearing_rad = math.atan2(dE, dN)
+                    tx = math.sin(bearing_rad) * 40.0
+                    ty = -math.cos(bearing_rad) * 40.0
+                    target_bearing_deg = math.degrees(bearing_rad) % 360.0
+                    c.create_line(
+                        cx, cy, cx + tx, cy + ty,
+                        fill="#f87171", width=2, arrow=tk.LAST, dash=(6, 4),
+                    )
+
+            hdg_txt = f"ψ {self._current_heading_deg:.0f}°" if math.isfinite(self._current_heading_deg) else "ψ —"
+            tgt_txt = f"→T {target_bearing_deg:.0f}°" if math.isfinite(target_bearing_deg) else ""
+            label_parts = [hdg_txt] + ([tgt_txt] if tgt_txt else [])
             c.create_text(
                 cx, cy + 22,
-                text=(
-                    f"ψ {self._current_heading_deg:.0f}°"
-                    if math.isfinite(self._current_heading_deg)
-                    else "ψ —"
-                ),
+                text="\n".join(label_parts),
                 fill="#bae6fd",
                 font=_MAP_FONT_SMALL,
                 anchor="n",
