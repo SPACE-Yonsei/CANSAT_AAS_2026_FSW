@@ -106,7 +106,7 @@ class ControlConfig:
 
     # 총 권한 + slew
     DELTA_TOTAL_MAX_DEG: float = DELTA_ARM_MAX_DEG
-    MAX_ARM_RATE_DEG_S:  float = 200.0
+    MAX_ARM_RATE_DEG_S:  float = 60.0
 
 
 @dataclass
