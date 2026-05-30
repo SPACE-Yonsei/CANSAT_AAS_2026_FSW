@@ -234,10 +234,20 @@ def log_distance_raw(range_mm: float) -> None:
         pass
 
 
-_MOTOR_CTRL_HEADER = [
+_MOTOR_RAW_HEADER = [
     "timestamp",
-    "mode",
-    "fallback_mode",
+    "flight_state",
+    "motor_enabled",
+    "motor_ctrl_mode",
+    "control_mode",
+    "pos_N",
+    "pos_E",
+    "target_N",
+    "target_E",
+    "dist_to_target_m",
+    "bearing_to_target_deg",
+    "crosstrack_angle_deg",
+    "ground_speed_mps",
     "left_pw",
     "right_pw",
     "left_angle_deg",
@@ -252,29 +262,59 @@ _MOTOR_CTRL_HEADER = [
 ]
 
 
-def log_motor_ctrl(cmd) -> None:
-    """One parafoil control cycle output before PWM is written to servos."""
+def log_motor_raw(
+    flight_state: int,
+    motor_enabled: bool,
+    motor_ctrl_mode: str,
+    ctrl_out,
+    l1_out=None,
+) -> None:
+    """패러포일 제어 사이클 1회 출력 + guidance 상태."""
+    import math as _math
+    _nan = float("nan")
+
+    def _f(obj, attr):
+        try:
+            v = getattr(obj, attr, _nan)
+            return float(v) if v is not None else _nan
+        except (TypeError, ValueError):
+            return _nan
+
+    def _deg(obj, attr):
+        v = _f(obj, attr)
+        return _math.degrees(v) if _math.isfinite(v) else _nan
+
     try:
-        w = _get_raw_writer("motor_ctrl", _MOTOR_CTRL_HEADER)
+        w = _get_raw_writer("motor", _MOTOR_RAW_HEADER)
         if w is None:
             return
         w.writerow([
             datetime.now().isoformat(timespec="milliseconds"),
-            getattr(cmd, "mode", ""),
-            getattr(cmd, "fallback_mode", ""),
-            getattr(cmd, "left_pw", ""),
-            getattr(cmd, "right_pw", ""),
-            getattr(cmd, "left_angle_deg", ""),
-            getattr(cmd, "right_angle_deg", ""),
-            getattr(cmd, "delta_ff_deg", ""),
-            getattr(cmd, "delta_pid_deg", ""),
-            getattr(cmd, "delta_arm_deg", ""),
-            getattr(cmd, "angular_velocity_cmd_deg_s", ""),
-            getattr(cmd, "angular_velocity_meas_deg_s", ""),
-            int(bool(getattr(cmd, "saturated", False))),
-            int(bool(getattr(cmd, "sensor_valid", False))),
+            int(flight_state),
+            int(bool(motor_enabled)),
+            str(motor_ctrl_mode),
+            str(getattr(ctrl_out, "control_mode", "")),
+            _f(l1_out, "pos_N"),
+            _f(l1_out, "pos_E"),
+            _f(l1_out, "target_N"),
+            _f(l1_out, "target_E"),
+            _f(l1_out, "distance_to_target"),
+            _deg(l1_out, "target_bearing"),
+            _deg(l1_out, "nu"),
+            _f(l1_out, "ground_speed_mps"),
+            _f(ctrl_out, "left_pw"),
+            _f(ctrl_out, "right_pw"),
+            _f(ctrl_out, "left_angle_deg"),
+            _f(ctrl_out, "right_angle_deg"),
+            _f(ctrl_out, "delta_ff_deg"),
+            _f(ctrl_out, "delta_pid_deg"),
+            _f(ctrl_out, "delta_arm_deg"),
+            _f(ctrl_out, "angular_velocity_cmd_deg_s"),
+            _f(ctrl_out, "angular_velocity_meas_deg_s"),
+            int(bool(getattr(ctrl_out, "saturated", False))),
+            int(bool(getattr(ctrl_out, "sensor_valid", False))),
         ])
-        _flush_raw("motor_ctrl")
+        _flush_raw("motor")
     except Exception:
         pass
 

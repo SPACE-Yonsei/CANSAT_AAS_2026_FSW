@@ -527,6 +527,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             control_mode=guidance.ControlMode.FAIL,
         )
         control.MoveServo(PI, manual_out)
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, manual_out)
         return manual_out
 
     # ── [2] DETUMBLING ────────────────────────────────────────────────────────
@@ -539,6 +540,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _CTRLER_t.prev_left_angle_deg = ctrl_out_t.left_angle_deg
         _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
         control.MoveServo(PI, ctrl_out_t)
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
         return ctrl_out_t
 
     mode = guidance.DecideControlMode(now)
@@ -552,6 +554,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             ctrl_in    = _imu_heading_ctrl_input(now, float(yaw))
             ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in, measured_dps, now)
             control.MoveServo(PI, ctrl_out_t)
+            sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
             return ctrl_out_t
         # IMU yaw 무효 → GPS/DR fallthrough
 
@@ -567,6 +570,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
         ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
         return ctrl_out_t
 
     # ── [4] FAIL ─────────────────────────────────────────────────────────────
