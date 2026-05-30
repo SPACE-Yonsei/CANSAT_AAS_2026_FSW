@@ -28,13 +28,37 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[1/6] Installing system packages..."
 apt-get update -qq
+
+# Core packages — must succeed
 apt-get install -y \
     python3 python3-pip python3-venv python3-dev \
-    git i2c-tools pigpio \
-    python3-picamera2 python3-libcamera \
-    libgpiod2 libgpiod-dev \
-    libopenblas-dev libatlas-base-dev \
-    build-essential
+    git i2c-tools \
+    libgpiod-dev \
+    libopenblas-dev \
+    build-essential \
+    wget unzip
+
+# picamera2 — available on Bookworm; skip gracefully on older images
+apt-get install -y python3-picamera2 python3-libcamera 2>/dev/null \
+    || echo "    [WARN] python3-picamera2 not found in apt — camera will use fallback"
+
+# libgpiod runtime lib — package name differs by Debian version
+apt-get install -y libgpiod2 2>/dev/null \
+    || apt-get install -y libgpiod3 2>/dev/null \
+    || echo "    [WARN] libgpiod runtime lib not found — GPIO may be limited"
+
+# pigpio — not in Debian Bookworm repos; build from source if needed
+if ! apt-get install -y pigpio 2>/dev/null; then
+    echo "    pigpio not in apt — building from source (joan2937/pigpio)..."
+    cd /tmp
+    wget -q https://github.com/joan2937/pigpio/archive/master.zip -O pigpio.zip
+    unzip -q pigpio.zip
+    cd pigpio-master
+    make -j$(nproc)
+    make install
+    cd "${REPO_DIR}"
+    echo "    pigpio built and installed from source"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. /boot config.txt — I2C, UART, Camera, pigpio
