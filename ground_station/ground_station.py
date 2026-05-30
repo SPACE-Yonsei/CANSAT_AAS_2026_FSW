@@ -1150,6 +1150,8 @@ class GroundStation(tk.Tk):
         # SIMGs go through _send_body without this reset and accumulate.
         if ubody.startswith("SIMG,") or ubody.startswith("SIMGR,"):
             self._clear_gps_trail()
+            self._gps_fresh_label.set("GPS: ●FRESH")
+            self._fallback_estimator.reactivate_gps()
             # SIMG에서 current 위치도 즉시 반영 (TLM 도착 전 map 선행 표시)
             try:
                 simg_parts = ubody[5:].split(",")
@@ -1165,6 +1167,10 @@ class GroundStation(tk.Tk):
                     self._request_map_redraw()
             except (IndexError, ValueError):
                 pass
+        # SIMGN → GPS 즉시 stale 처리 (Null 버튼과 동일 효과)
+        elif ubody == "SIMGN":
+            self._gps_fresh_label.set("GPS: ○STALE")
+            self._fallback_estimator.invalidate_gps(time.time())
         # TC 명령 → GCS에서 target을 즉시 로컬 저장 (TLM motor_diag 없이도 맵에 표시)
         elif ubody.startswith("TC,"):
             try:
