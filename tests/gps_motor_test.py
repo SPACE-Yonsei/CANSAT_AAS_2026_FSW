@@ -39,14 +39,15 @@ from Sensor_Motor.sensor_types import _GpsFromApp, _ImuFromApp, _BaroFromApp
 # ══════════════════════════════════════════════════════════════════════
 _EARTH_R = 6_371_000.0
 
-ORIGIN_LAT = 37.5000
-ORIGIN_LON = 127.0000
-TARGET_LAT = ORIGIN_LAT + math.degrees(500.0 / _EARTH_R)   # origin 북쪽 500 m
+ORIGIN_LAT = 37.558658   # 실제 현재 위치
+ORIGIN_LON = 126.945271
+TARGET_LAT = ORIGIN_LAT + math.degrees(500.0 / _EARTH_R)   # 북쪽 500 m
 TARGET_LON = ORIGIN_LON
 
 GROUND_SPEED_MPS = 5.0
 
 # 200 m 이탈 → nu ≈ 21.8°  > NU_DEADBAND(15°) 이므로 모터 작동 보장
+# (500m 거리에서 deadband 최소 crosstrack = 134m → 200m 사용)
 _LON_PER_200M = math.degrees(
     200.0 / (_EARTH_R * math.cos(math.radians(ORIGIN_LAT)))
 )

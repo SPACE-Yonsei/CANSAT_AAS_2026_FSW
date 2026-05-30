@@ -1751,7 +1751,7 @@ class GroundStation(tk.Tk):
 
     _DIST_GRAPH_MAX_HISTORY = 120
 
-    _DIST_GRAPH_MAX_DISPLAY_M = 200.0
+    _DIST_GRAPH_MAX_DISPLAY_M = 500.0
 
     def _update_dist_graph(self, dist_m: float | None) -> None:
         if dist_m is not None and math.isfinite(dist_m) and dist_m >= 0:
