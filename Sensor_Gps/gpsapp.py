@@ -375,6 +375,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
             if sim_null:
                 pos_health = 0
                 motion_health = 0
+                GPS_SATS = 0  # GCS fallback estimator도 location stale로 인식
             elif sim_sample is not None:
                 pos_health = pos_fresh
                 motion_health = motion_fresh and _eval_motion_fidelity(pos_health, GPS_RMC_STATUS, GPS_SPEED_MS, GPS_COURSE)
