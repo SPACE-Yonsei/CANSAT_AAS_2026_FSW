@@ -449,6 +449,11 @@ COMMAND_PRESETS = [
     ("SIMP,120",     "SIM baro altitude (m)"),
     ("SIMG,37.56,126.93,90,8.5", "SIM GPS lat,lon,course°,speed_m/s"),
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
+    ("SIMGR,0,0,0,5,100",       "SIM GPS 상대 타겟기준 동(+E)/북(+N) m, course°,speed,alt"),
+    ("SIMGR,100,0,270,5,100",   "SIM GPS 상대 +100m 동쪽"),
+    ("SIMGR,-100,0,90,5,100",   "SIM GPS 상대 -100m 서쪽"),
+    ("SIMGR,0,100,180,5,100",   "SIM GPS 상대 +100m 북쪽"),
+    ("SIMGR,0,-100,0,5,100",    "SIM GPS 상대 -100m 남쪽"),
     ("TC,37.57,126.94", "Target lat,lon (release)"),
     ("CAL,",         "Calibrate barometer (zero-set)"),
     ("MEC,ON",  "Mechanism ON"),
@@ -1089,7 +1094,7 @@ class GroundStation(tk.Tk):
         ubody = body.strip().upper().replace(" ", "")
         # Manual SIMG entry = new leg, so reset the blue trail. Scenario-mode
         # SIMGs go through _send_body without this reset and accumulate.
-        if ubody.startswith("SIMG,"):
+        if ubody.startswith("SIMG,") or ubody.startswith("SIMGR,"):
             self._clear_gps_trail()
             # SIMG에서 current 위치도 즉시 반영 (TLM 도착 전 map 선행 표시)
             try:
