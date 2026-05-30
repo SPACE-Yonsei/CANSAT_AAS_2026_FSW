@@ -53,7 +53,7 @@ if ! apt-get install -y pigpio 2>/dev/null; then
     rm -rf /tmp/pigpio-master /tmp/pigpio.zip
     cd /tmp
     wget -q https://github.com/joan2937/pigpio/archive/master.zip -O pigpio.zip
-    unzip -qo pigpio.zip
+    unzip -q pigpio.zip
     cd pigpio-master
     make -j$(nproc)
     # Python setup.py fails on Python 3.12+ (distutils removed); daemon binary is
