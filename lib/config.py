@@ -224,7 +224,11 @@ KD_YAW_RATE = 0.0
 # IMU_HEADING : IMU ?�력�?방위각만?�로 목표 ?�딩 추종 (GPS 불필??
 
 
-# IMU_HEADING 모드 ?�용 ?�라미터
-IMU_HEADING_TARGET_DEG    = 0.0   # 목표 ?�기 방위�?(0=북쪽)
-IMU_HEADING_KP            = 1.5   # 방위�??�차 ??angular_velocity_cmd P 게인 [°/s per °]
-IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 최�?�?[°/s]
+MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
+MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
+MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
+
+# IMU_HEADING 모드 파라미터
+IMU_HEADING_TARGET_DEG    = 0.0   # 목표 방위각 (0=북쪽, GPS 없을 때 fallback)
+IMU_HEADING_KP            = 1.5   # bearing 오차(deg) → angular_velocity_cmd(deg/s) P게인
+IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 상한 (deg/s)

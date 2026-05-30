@@ -38,6 +38,12 @@ _DETUMBLE_EXIT_START: float = math.nan
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _MANUAL_STEER_MODE: str = ""
 
+# 모터 제어 소스 모드 (CMC 명령으로 변경)
+_MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
+
+# IMU_HEADING 모드: GPS에서 계산한 목표 bearing (rad). NaN = 아직 미계산.
+_IMU_HEADING_BEARING_RAD: float = math.nan
+
 
 # ── 캐시 스냅샷 ───────────────────────────────────────────────────────────────
 
@@ -294,6 +300,8 @@ def handle_flight_state(data: str) -> None:
     if do_ctrl_reset and _CTRLER_t is not None:
         with _CTRL_LOCK:
             control.controller_reset(_CTRLER_t)
+        global _IMU_HEADING_BEARING_RAD
+        _IMU_HEADING_BEARING_RAD = math.nan
 
 
 def handle_release(data: str = "TRIGGER") -> None:
@@ -338,6 +346,23 @@ def handle_mec(data: str) -> None:
         prevstate.update_motor_enabled(False)
         if PI is not None:
             control.WriteZero(PI)
+
+
+def handle_cmc(data: str) -> None:
+    """CMC 명령: 모터 제어 소스 모드 변경 (GPS_GUIDED / GPS_ONLY / IMU_HEADING)."""
+    global _MOTOR_CTRL_MODE, _IMU_HEADING_BEARING_RAD
+    mode = data.strip().upper()
+    valid = {
+        config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        config.MOTOR_CTRL_MODE_GPS_ONLY,
+        config.MOTOR_CTRL_MODE_IMU_HEADING,
+    }
+    if mode not in valid:
+        return
+    _MOTOR_CTRL_MODE = mode
+    if mode == config.MOTOR_CTRL_MODE_IMU_HEADING:
+        _IMU_HEADING_BEARING_RAD = math.nan  # 다음 GPS 수신 시 재계산
+    logger.info("CMC mode → %s", mode)
 
 
 def handle_mtr(data: str) -> None:
@@ -464,7 +489,67 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
 
     mode = guidance.DecideControlMode(now)
 
-    # ── [3] GPS/DR 자율 추종 ─────────────────────────────────────────────────
+    # ── [3] IMU_HEADING 모드 ──────────────────────────────────────────────────
+    if _MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
+        global _IMU_HEADING_BEARING_RAD
+
+        # 현재 GPS 위치 (pos_health 유효할 때만 bearing 재계산)
+        gps = snap_t.latest_gps
+        cur_lat = gps.lat
+        cur_lon = gps.lon
+        pos_ok = (
+            cur_lat is not None and cur_lon is not None
+            and math.isfinite(float(cur_lat)) and math.isfinite(float(cur_lon))
+            and bool(gps.pos_health)
+        )
+
+        # 타겟 좌표
+        mi_t = guidance._MISSION_t
+        t_lat = mi_t._target_lat
+        t_lon = mi_t._target_lon
+        target_ok = math.isfinite(float(t_lat)) and math.isfinite(float(t_lon))
+
+        # GPS + 타겟 모두 유효하면 bearing 재계산
+        if pos_ok and target_ok:
+            tN, tE = guidance.latlon_to_ne(float(t_lat), float(t_lon),
+                                           float(cur_lat), float(cur_lon))
+            _IMU_HEADING_BEARING_RAD = math.atan2(tE, tN)  # 0=북, +π/2=동
+
+        # bearing 미계산이면 FAIL
+        if not math.isfinite(_IMU_HEADING_BEARING_RAD):
+            logger.debug("IMU_HEADING: bearing 미계산 (GPS/target 없음) → 중립")
+            if PI is not None:
+                control.WriteOff(PI)
+            return None
+
+        # IMU yaw
+        imu_yaw_rad = getattr(snap_t.latest_imu, "yaw_rad", None)
+        if imu_yaw_rad is None or not math.isfinite(float(imu_yaw_rad)):
+            logger.debug("IMU_HEADING: IMU yaw 무효 → 중립")
+            if PI is not None:
+                control.WriteOff(PI)
+            return None
+
+        # yaw 오차 → P 제어 ([-π, +π] 정규화)
+        err_rad = _IMU_HEADING_BEARING_RAD - float(imu_yaw_rad)
+        err_rad = (err_rad + math.pi) % (2.0 * math.pi) - math.pi
+        cmd_dps = config.IMU_HEADING_KP * math.degrees(err_rad)
+        cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
+                      min(+config.IMU_HEADING_MAX_CMD_DEG_S, cmd_dps))
+
+        imu_ctrl_in = control.CtrlInput(
+            angular_velocity_cmd_deg_s=cmd_dps,
+            ground_speed_mps=5.0,
+            valid=True,
+            timestamp=now,
+            pid_enabled=False,
+            control_mode=guidance.ControlMode.GPS_TRACKING_OPEN,
+        )
+        ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, imu_ctrl_in, math.nan, now)
+        control.MoveServo(PI, ctrl_out_t)
+        return ctrl_out_t
+
+    # ── [4] GPS/DR 자율 추종 ─────────────────────────────────────────────────
     if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
                 guidance.ControlMode.GPS_TRACKING_OPEN,
                 guidance.ControlMode.DR_TRACKING_CLOSED,
@@ -528,6 +613,8 @@ def dispatch(msg: str) -> None:
         handle_release(unpacked.data)
     elif mid == appargs.FlightlogicAppArg.MID_motor_EggDrop:
         handle_egg_drop()
+    elif mid == appargs.CommAppArg.MID_RouteCmd_CMC:
+        handle_cmc(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_MEC:
         handle_mec(unpacked.data)
     elif mid == appargs.CommAppArg.MID_RouteCmd_MTR:
