@@ -287,6 +287,14 @@ class GuidanceFallbackEstimator:
         self._recover_candidate_idx: int | None = None
         self._recover_candidate_since_ts = 0.0
 
+    def invalidate_gps(self, now_ts: float) -> None:
+        """GPS null 명령 시 호출 — location/course 타이머를 now로 리셋해 L:/CS: 가 0부터 카운트."""
+        self._last_valid_location_ts = now_ts
+        self._last_valid_course_speed_ts = now_ts
+        self._last_valid_gps_fix = None
+        self._last_course_deg = math.nan
+        self._last_speed_m_s = math.nan
+
     @staticmethod
     def _age(last_ts: float, now_ts: float) -> float:
         if not math.isfinite(last_ts):
@@ -1223,6 +1231,7 @@ class GroundStation(tk.Tk):
         """SIMGN 전송 → gpsapp pos_health=0 강제 → 즉시 stale."""
         if self._send_body("SIMGN"):
             self._gps_fresh_label.set("GPS: ○STALE")
+            self._fallback_estimator.invalidate_gps(time.time())
 
     def _send_body(self, body: str) -> bool:
         """Low-level CMD send. Does NOT reset the GPS trail; the caller decides."""
