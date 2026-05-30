@@ -318,6 +318,7 @@ class GroundStation(tk.Tk):
         # Avoid blocking the Tk mainloop: CSV flush / map redraw / console scroll are debounced.
         self._csv_flush_after_id: str | None = None
         self._map_redraw_after_id: str | None = None
+        self._map_heartbeat_after_id: str | None = None
         self._map_dirty: bool = False
         self._console_scroll_after_id: str | None = None
         # Latest parsed TLM dict (also fed to the Scenario panel as a feedback
@@ -340,6 +341,7 @@ class GroundStation(tk.Tk):
         self._refresh_ports()
         self.after(_RX_POLL_IDLE_MS, self._drain_rx)
         self.after(500, self._update_status)
+        self.after(1000, self._map_heartbeat)
 
     # --------------------------------------------------------------- UI ---
     def _build_ui(self) -> None:
@@ -1289,6 +1291,10 @@ class GroundStation(tk.Tk):
         self._map_dirty = False
         self._draw_map()
 
+    def _map_heartbeat(self) -> None:
+        self._request_map_redraw()
+        self._map_heartbeat_after_id = self.after(1000, self._map_heartbeat)
+
     def _draw_map(self) -> None:
         c = self._map_canvas
         c.delete("all")
@@ -1512,17 +1518,6 @@ class GroundStation(tk.Tk):
                 dx = math.sin(rad) * 36.0
                 dy = -math.cos(rad) * 36.0
                 c.create_line(cx, cy, cx + dx, cy + dy, fill="#38bdf8", width=3, arrow=tk.LAST)
-            c.create_text(
-                cx, cy + 22,
-                text=(
-                    f"ψ {self._current_heading_deg:.0f}°"
-                    if math.isfinite(self._current_heading_deg)
-                    else "ψ —"
-                ),
-                fill="#bae6fd",
-                font=_MAP_FONT_SMALL,
-                anchor="n",
-            )
 
     # ------------------------------------------------------ rx pipeline ---
     def _drain_rx(self) -> None:
@@ -1658,6 +1653,12 @@ class GroundStation(tk.Tk):
             except tk.TclError:
                 pass
             self._map_redraw_after_id = None
+        if self._map_heartbeat_after_id is not None:
+            try:
+                self.after_cancel(self._map_heartbeat_after_id)
+            except tk.TclError:
+                pass
+            self._map_heartbeat_after_id = None
         if self._console_scroll_after_id is not None:
             try:
                 self.after_cancel(self._console_scroll_after_id)
