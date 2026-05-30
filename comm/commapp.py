@@ -204,6 +204,29 @@ def cmd_simg(option: str, main_queue) -> bool:
     )
 
 
+def cmd_simgr(option: str, main_queue) -> bool:
+    """east_m,north_m,course_deg,speed_m_s[,alt_m] — relative offset from target; forwarded to FlightLogic."""
+    parts = [x.strip() for x in option.split(",") if x.strip() != ""]
+    if len(parts) not in (4, 5):
+        return False
+    try:
+        float(parts[0])  # east_m
+        float(parts[1])  # north_m
+        float(parts[2])  # course_deg
+        float(parts[3])  # speed_m_s
+        if len(parts) == 5:
+            float(parts[4])  # alt_m
+    except ValueError:
+        return False
+    return msgstructure.send_msg(
+        main_queue,
+        appargs.CommAppArg.AppID,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.CommAppArg.MID_RouteCmd_SIMGR,
+        option.strip(),
+    )
+
+
 def cmd_cal(option: str, main_queue) -> bool:
     return msgstructure.send_msg(
         main_queue,
@@ -635,6 +658,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return cmd_simp(option, main_queue)
     if cmd == "SIMG":
         return cmd_simg(option, main_queue)
+    if cmd == "SIMGR":
+        return cmd_simgr(option, main_queue)
     if cmd == "CAL":
         return cmd_cal(option, main_queue)
     if cmd == "MEC":

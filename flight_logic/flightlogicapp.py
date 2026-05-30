@@ -309,6 +309,39 @@ def handle_simg(data: str, main_queue) -> None:
         )
 
 
+def handle_simgr(data: str, main_queue) -> None:
+    """SIM GPS Relative: east_m,north_m,course_deg,speed_m_s[,alt_m] — offset from target origin."""
+    if not sim_active:
+        logger.warning("SIMGR ignored: SIM ACTIVATE required first")
+        return
+    if not _has_release_target():
+        logger.warning("SIMGR ignored: TC (target coordinate) must be set first")
+        return
+    parts = [x.strip() for x in data.split(",") if x.strip() != ""]
+    if len(parts) not in (4, 5):
+        logger.warning("SIMGR: expected east_m,north_m,course_deg,speed_m_s[,alt_m] got %r", data)
+        return
+    try:
+        east_m  = float(parts[0])
+        north_m = float(parts[1])
+        course  = float(parts[2])
+        speed   = float(parts[3])
+        alt     = float(parts[4]) if len(parts) == 5 else 80.0
+    except ValueError:
+        logger.warning("SIMGR: non-numeric fields %r", data)
+        return
+
+    ref_lat = float(prevstate.PREV_TARGET_LAT)
+    ref_lon = float(prevstate.PREV_TARGET_LON)
+    lat = ref_lat + north_m / 111111.0
+    lon = ref_lon + east_m / (111111.0 * math.cos(math.radians(ref_lat)))
+    lat = max(-90.0, min(90.0, lat))
+    lon = ((lon + 180.0) % 360.0) - 180.0
+
+    simg_data = f"{lat:.7f},{lon:.7f},{course},{speed},{alt}"
+    handle_simg(simg_data, main_queue)
+
+
 def handle_simp(data: str, main_queue) -> None:
     if not sim_active:
         return
@@ -554,6 +587,8 @@ def dispatch(msg: str, main_queue) -> None:
         handle_simp(unpacked.data, main_queue)
     elif mid == appargs.CommAppArg.MID_RouteCmd_SIMG:
         handle_simg(unpacked.data, main_queue)
+    elif mid == appargs.CommAppArg.MID_RouteCmd_SIMGR:
+        handle_simgr(unpacked.data, main_queue)
     elif mid == appargs.BarometerAppArg.MID_flight_alt:
         handle_barometer(unpacked.data, main_queue)
     elif mid == appargs.DistanceAppArg.MID_flight_dis:

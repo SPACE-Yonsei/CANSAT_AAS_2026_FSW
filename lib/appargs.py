@@ -35,6 +35,7 @@ class CommAppArg:
     MID_RouteCmd_MTR = 1201109
     MID_RouteCmd_FAC = 1201110
     MID_RouteCmd_CMC = 1201111  # Control Mode Command
+    MID_RouteCmd_SIMGR = 1201112  # SIM GPS Relative (east_m, north_m, course, speed[, alt])
 
 
 class BarometerAppArg:
