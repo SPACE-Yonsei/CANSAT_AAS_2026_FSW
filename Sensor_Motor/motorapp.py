@@ -402,13 +402,15 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
             _imu_heading_fallback_logged = True
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
-    cmd_dps   = config.IMU_HEADING_KP * error_deg
+    cmd_dps   = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
+                    min(config.IMU_HEADING_MAX_CMD_DEG_S,
+                        config.IMU_HEADING_KP * error_deg))
     return control.CtrlInput(
         angular_velocity_cmd_deg_s=cmd_dps,
         ground_speed_mps=0.0,
         valid=True,
         timestamp=now,
-        pid_enabled=True,
+        pid_enabled=False,
     )
 
 
