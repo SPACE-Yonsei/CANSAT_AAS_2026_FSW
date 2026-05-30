@@ -403,8 +403,8 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
 
     error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
     if abs(error_deg) > 90.0:
-        # 뒤쪽 반구(>±90°): 방향만 보고 최대출력 고정 — ±180° 경계 sign-flip 진동 방지
-        cmd_dps = math.copysign(config.IMU_HEADING_MAX_CMD_DEG_S, error_deg)
+        # 뒤쪽 반구(>±90°): 서보 물리 끝단 고정 — ±180° 경계 sign-flip 진동 방지
+        cmd_dps = math.copysign(config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS, error_deg)
     else:
         cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
                       min(config.IMU_HEADING_MAX_CMD_DEG_S,
