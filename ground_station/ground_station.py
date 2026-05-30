@@ -571,6 +571,10 @@ class GroundStation(tk.Tk):
         self._dist_graph_canvas: tk.Canvas | None = None
         self._dist_to_target_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
+        self._inject_gps_active = False
+        self._inject_baro_active = False
+        self._inject_gps_after_id: str | None = None
+        self._inject_baro_after_id: str | None = None
 
         self._build_ui()
         self._refresh_ports()
@@ -935,6 +939,39 @@ class GroundStation(tk.Tk):
             anchor="w",
         ).pack(side=tk.LEFT, padx=(8, 0))
 
+        ttk.Separator(cmd_box, orient="horizontal").grid(
+            row=4, column=0, columnspan=3, sticky="ew", padx=4, pady=(4, 2)
+        )
+
+        inject_box = ttk.Frame(cmd_box)
+        inject_box.grid(row=5, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 6))
+
+        ttk.Label(inject_box, text="신선도 주입:").pack(side=tk.LEFT)
+
+        self._gps_inject_btn = ttk.Button(
+            inject_box, text="GPS OFF", width=9,
+            command=self._toggle_inject_gps,
+        )
+        self._gps_inject_btn.pack(side=tk.LEFT, padx=(8, 2))
+
+        ttk.Label(inject_box, text="SIMGR:").pack(side=tk.LEFT)
+        self._inject_gps_var = tk.StringVar(value="0,0,0,5,100")
+        ttk.Entry(inject_box, textvariable=self._inject_gps_var, width=14).pack(
+            side=tk.LEFT, padx=(2, 12)
+        )
+
+        self._baro_inject_btn = ttk.Button(
+            inject_box, text="Baro OFF", width=9,
+            command=self._toggle_inject_baro,
+        )
+        self._baro_inject_btn.pack(side=tk.LEFT, padx=(0, 2))
+
+        ttk.Label(inject_box, text="SIMP:").pack(side=tk.LEFT)
+        self._inject_baro_var = tk.StringVar(value="100")
+        ttk.Entry(inject_box, textvariable=self._inject_baro_var, width=6).pack(
+            side=tk.LEFT, padx=2
+        )
+
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -1010,6 +1047,21 @@ class GroundStation(tk.Tk):
         self._release_action_enabled_remote = None
         self._egg_action_enabled_remote = None
         self._set_force_action_ui(None, None)
+        for after_id_attr, active_attr, btn_attr, off_text in (
+            ("_inject_gps_after_id",  "_inject_gps_active",  "_gps_inject_btn",  "GPS OFF"),
+            ("_inject_baro_after_id", "_inject_baro_active", "_baro_inject_btn", "Baro OFF"),
+        ):
+            aid = getattr(self, after_id_attr, None)
+            if aid is not None:
+                try:
+                    self.after_cancel(aid)
+                except tk.TclError:
+                    pass
+                setattr(self, after_id_attr, None)
+            setattr(self, active_attr, False)
+            btn = getattr(self, btn_attr, None)
+            if btn is not None:
+                btn.configure(text=off_text)
         self._close_csv()
         self._connect_btn.configure(text="Connect")
         self._status_var.set("Disconnected")
@@ -1174,6 +1226,46 @@ class GroundStation(tk.Tk):
             return
         if self._send_body(f"MTR,{cmd}"):
             self._motor_steer_var.set(f"manual steer: {cmd} (pending)")
+
+    def _toggle_inject_gps(self) -> None:
+        self._inject_gps_active = not self._inject_gps_active
+        if self._inject_gps_active:
+            self._gps_inject_btn.configure(text="GPS ●ON")
+            self._inject_gps_tick()
+        else:
+            self._gps_inject_btn.configure(text="GPS OFF")
+            if self._inject_gps_after_id is not None:
+                try:
+                    self.after_cancel(self._inject_gps_after_id)
+                except tk.TclError:
+                    pass
+                self._inject_gps_after_id = None
+
+    def _inject_gps_tick(self) -> None:
+        if not self._inject_gps_active:
+            return
+        self._send_body(f"SIMGR,{self._inject_gps_var.get().strip()}")
+        self._inject_gps_after_id = self.after(500, self._inject_gps_tick)
+
+    def _toggle_inject_baro(self) -> None:
+        self._inject_baro_active = not self._inject_baro_active
+        if self._inject_baro_active:
+            self._baro_inject_btn.configure(text="Baro ●ON")
+            self._inject_baro_tick()
+        else:
+            self._baro_inject_btn.configure(text="Baro OFF")
+            if self._inject_baro_after_id is not None:
+                try:
+                    self.after_cancel(self._inject_baro_after_id)
+                except tk.TclError:
+                    pass
+                self._inject_baro_after_id = None
+
+    def _inject_baro_tick(self) -> None:
+        if not self._inject_baro_active:
+            return
+        self._send_body(f"SIMP,{self._inject_baro_var.get().strip()}")
+        self._inject_baro_after_id = self.after(500, self._inject_baro_tick)
 
     def _send_body(self, body: str) -> bool:
         """Low-level CMD send. Does NOT reset the GPS trail; the caller decides."""
