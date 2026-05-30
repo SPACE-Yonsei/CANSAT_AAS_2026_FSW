@@ -68,6 +68,7 @@ TLM_FIELDS = [
     "current_heading_deg",
     "left_pulse_us", "right_pulse_us", "guidance_state", "motor_enabled", "force_action_enabled",
     "release_action_enabled", "egg_action_enabled",
+    "nav_distance_mm",
 ]
 
 LEGACY_TLM_FIELDS = 30

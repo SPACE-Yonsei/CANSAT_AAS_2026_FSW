@@ -304,7 +304,7 @@ def handle_simg(data: str, main_queue) -> None:
             main_queue,
             appargs.FlightlogicAppArg.AppID,
             appargs.CommAppArg.AppID,
-            appargs.DistanceAppArg.MID_comm_dis,
+            appargs.FlightlogicAppArg.MID_comm_nav_dis,
             f"{dist_mm:.1f}",
         )
 

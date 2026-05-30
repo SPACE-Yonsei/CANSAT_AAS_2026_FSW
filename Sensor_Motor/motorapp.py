@@ -47,6 +47,44 @@ _imu_heading_fallback_logged: bool = False
 _imu_heading_turn_dir: float = 0.0
 
 
+def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> None:
+    """motor 진단 패킷을 commapp으로 발행 (MID_comm_motor_diag)."""
+    if main_queue is None:
+        return
+    mi  = guidance._MISSION_t
+
+    s_lat = f"{mi.origin_lat:.6f}"  if (mi.origin_ready and math.isfinite(mi.origin_lat))  else "nan"
+    s_lon = f"{mi.origin_lon:.6f}"  if (mi.origin_ready and math.isfinite(mi.origin_lon))  else "nan"
+    t_lat = f"{mi._target_lat:.6f}" if math.isfinite(mi._target_lat)                        else "nan"
+    t_lon = f"{mi._target_lon:.6f}" if math.isfinite(mi._target_lon)                        else "nan"
+
+    imu = snap_t.latest_imu
+    if imu.yaw_rad is not None and math.isfinite(float(imu.yaw_rad)):
+        heading = f"{math.degrees(float(imu.yaw_rad)):.2f}"
+    else:
+        heading = "nan"
+
+    payload = (
+        f"{ctrl_out.left_pw},{ctrl_out.right_pw},"
+        f"{s_lat},{s_lon},"
+        f"{t_lat},{t_lon},"
+        f"nan,nan,"
+        f"{heading},"
+        f"{guidance_state},"
+        f"{int(bool(MOTOR_ENABLED))},"
+        f"0,"
+        f"{int(bool(RELEASE_ACTION_ENABLED))},"
+        f"{int(bool(EGG_ACTION_ENABLED))}"
+    )
+    msgstructure.send_msg(
+        main_queue,
+        appargs.MotorAppArg.AppID,
+        appargs.CommAppArg.AppID,
+        appargs.MotorAppArg.MID_comm_motor_diag,
+        payload,
+    )
+
+
 # ── 캐시 스냅샷 ───────────────────────────────────────────────────────────────
 
 def _cache_snapshot() -> _Cache:
@@ -467,7 +505,8 @@ def handle_mtr(data: str) -> None:
     _MANUAL_STEER_MODE = "" if mode == "NEUTRAL" else mode
     logger.info("MTR manual steer: %s → _MANUAL_STEER_MODE=%r", mode, _MANUAL_STEER_MODE)
     if mode == "NEUTRAL" and PI is not None:
-        control.WriteZero(PI)
+        PI.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  control.LEFT_NEUTRAL)
+        PI.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, control.RIGHT_NEUTRAL)
 
 
 def handle_fac(data: str) -> None:
@@ -558,6 +597,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         )
         control.MoveServo(PI, manual_out)
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, manual_out)
+        _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{MOTOR_CTRL_MODE}")
         return manual_out
 
     # ── [2] DETUMBLING ────────────────────────────────────────────────────────
@@ -571,6 +611,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
         control.MoveServo(PI, ctrl_out_t)
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
+        _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
     mode = guidance.DecideControlMode(now)
@@ -585,6 +626,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in, measured_dps, now)
             control.MoveServo(PI, ctrl_out_t)
             sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
+            _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
             return ctrl_out_t
         # IMU yaw 무효 → GPS/DR fallthrough
 
@@ -601,6 +643,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
+        _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
         return ctrl_out_t
 
     # ── [4] FAIL ─────────────────────────────────────────────────────────────

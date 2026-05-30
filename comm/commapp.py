@@ -77,6 +77,7 @@ class TelemetryData:
     force_action_enabled: int = -1
     release_action_enabled: int = -1
     egg_action_enabled: int = -1
+    nav_distance_mm: float = float("nan")  # GPS→타겟 haversine 거리 (mm)
     packet_count: int = 0
 
 
@@ -497,6 +498,8 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.distance = float(fields[0])
         elif mid == appargs.FlightlogicAppArg.MID_comm_state and len(fields) >= 1:
             tlm_data.state = fields[0]
+        elif mid == appargs.FlightlogicAppArg.MID_comm_nav_dis and len(fields) >= 1:
+            tlm_data.nav_distance_mm = float(fields[0])
         elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
             tlm_data.mode = fields[0]
             if fields[0].strip().upper() == "F":
@@ -622,7 +625,8 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{_fmt_opt_float(tlm_data.carrot_lat, '.6f')},{_fmt_opt_float(tlm_data.carrot_lon, '.6f')},"
         f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},"
         f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state},{motor_enabled_s},{force_action_enabled_s},"
-        f"{release_action_enabled_s},{egg_action_enabled_s}\n"
+        f"{release_action_enabled_s},{egg_action_enabled_s},"
+        f"{_fmt_opt_float(tlm_data.nav_distance_mm, '.1f')}\n"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if ok:

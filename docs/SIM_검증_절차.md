@@ -1,206 +1,223 @@
-# GCS SIM 모드 검증 절차 — GPS 신선도 · 모터 Fallback
+# GCS SIM 모드 검증 절차 — GPS 신선도 · Fallback
 
-> **대상 버전:** mag 브랜치 (2026-05-31 기준)
-> **목적:** GCS GPS 신선도 조절 기능(주입/Null)을 이용해
-> motorapp의 fallback 전이와 모터 출력을 벤치에서 검증한다.
+> **대상 버전:** mag 브랜치 (2026-05-31)
+> **목적:** GCS GPS 신선도 조절(주입/Null)로 motorapp fallback 전이를 벤치에서 검증.
 
 ---
 
 ## 1. 사전 지식
 
-### 1.1 GPS 신선도 조작 버튼 위치
+### 1.1 GPS 신선도 조작
 
-GCS Command 패널 하단 `GPS 신선도:` 행:
+GCS Command 패널 `GPS 신선도:` 행:
 
-| 버튼 | 전송 커맨드 | FSW 내부 효과 |
-|------|------------|--------------|
-| **주입 (fresh)** | `SIMGR,{SIMGR 입력란 값}` | gpsapp `SIM_GPS_ACTIVE=True`, `pos_health=1` |
-| **Null (stale)** | `SIMGN` | gpsapp `pos_health=0` 강제 → motorapp GPS 즉시 무효 |
+| 버튼 / 명령창 입력 | FSW 효과 | GCS 효과 |
+|-------------------|---------|---------|
+| **주입 (fresh)** 버튼 또는 명령창 `SIMGR,...` | gpsapp `pos_health=1`, motion 유효 | `GPS: ●FRESH`, `_gps_null_mode=False`, CS 3s 선행 부스트 |
+| **Null (stale)** 버튼 또는 명령창 `SIMGN` | gpsapp `pos_health=0` | `GPS: ○STALE`, `_gps_null_mode=True`, location/CS = ∞ |
 
-SIMGR 입력란 기본값 `0,0,0,5,100` 형식: **`dE_m, dN_m, course_deg, speed_m/s, alt_m`**
-(타겟 좌표 기준 상대 오프셋. `0,0,0,5,100` = 타겟 위 0m, 고도 100m, 동쪽으로 5m/s)
+SIMGR 입력란 형식: `dE_m, dN_m, course_deg, speed_m/s, alt_m` (타겟 기준 상대 오프셋)
+- `0,0,0,5,100` = 타겟 정상, course 0°, 5 m/s, 고도 100 m
 
-> **주의 — TLM 상의 GPS 표시:** SIMGN 후에도 TLM의 `gps_lat/lon`은 마지막 값이
-> 동결 표시된다. `gps_time`도 계속 갱신되므로 TLM만 보면 GPS가 살아있는 것처럼
-> 보인다. 실제 pos_health=0 여부는 GCS `GPS: ○STALE` 레이블 및
-> `fallback(local)` 행의 `L:` 경과 시간으로 판단해야 한다.
+> **TLM 주의:** SIMGN 후에도 TLM `gps_lat/lon`은 마지막 값으로 동결 표시,
+> `gps_time`도 계속 갱신된다. 신선도는 `GPS: ○STALE` 레이블과
+> `fallback(local)` 행의 나이 숫자(`L: CS: G: A:`)로만 판단한다.
 
-### 1.2 ControlMode 결정 기준 (guidance.py `DecideControlMode`)
+### 1.2 GCS 로컬 Fallback 레벨
 
-| 모드 | 조건 |
-|------|------|
-| `GPS_TRACKING_CLOSED` | GPS 위치·속도 신선 + IMU gyrz 신선 |
-| `GPS_TRACKING_OPEN` | GPS 위치·속도 신선, gyrz 없음 |
-| `DR_TRACKING_CLOSED` | DR 앵커 유효 + gyrz 신선 |
-| `DR_TRACKING_OPEN` | DR 앵커 유효 + IMU yaw 신선 |
-| `FAIL` | 위 모두 해당 없음 → 모터 WriteOff |
-
-### 1.3 GCS 로컬 Fallback 레벨 (ground_station.py `GuidanceFallbackEstimator`)
-
-| 레벨 | 이름 | 주요 이유 |
+| 레벨 | 이름 | 전환 조건 |
 |------|------|----------|
-| L0 | `NORMAL_L1_PID` | 모든 센서 current |
-| L1 | `DEGRADED_L1_PID` | BMP stale / Location stale / CS stale |
-| L2 | `L1_FF_ONLY` | gyrz 없음 |
-| L3 | `TARGET_BEARING_HOLD` | course/speed 불확실 |
-| L4 | `YAW_DAMPING_ONLY` | GPS 없음, gyro만 |
+| L0 | `NORMAL_L1_PID` | location·CS·gyroZ·Alt 모두 current |
+| L1 | `DEGRADED_L1_PID` | location stale 또는 CS stale (1개 이상) |
+| L2 | `L1_FF_ONLY` | gyroZ 없음 |
+| L3 | `TARGET_BEARING_HOLD` | location fresh + CS stale |
+| L4 | `YAW_DAMPING_ONLY` | GPS 없음 (location ≥ 1s), gyroZ 유효 |
 | L5 | `SAFE_GLIDE_NEUTRAL` | 신뢰 센서 없음 |
 
-신선도 임계값 (`ground_station.py:147`):
-- Location current: **0.35s**, stale: **1.0s**
-- Course/Speed current: **0.50s**, stale: **1.0s**
-- GyroZ current: **0.35s**
-- BMP Alt current: **0.60s**
+신선도 임계값:
+| 센서 | current (≤) | stale (>) |
+|------|------------|-----------|
+| Location (GPS 위치) | 0.35 s | 1.0 s |
+| Course/Speed (GPS 속도) | 0.50 s | 1.0 s |
+| GyroZ (IMU) | 0.35 s | — |
+| BMP Alt | 0.60 s | — |
 
-복구 히스테리시스: 신선 상태 **3.0초** 유지 후 상위 레벨로 복구.
+**히스테리시스:** 악화(downgrade) 즉각 / 복구(upgrade)는 3.0 s 연속 안정 필요.
+
+### 1.3 벤치 환경 제약
+
+| 항목 | 벤치 (Pi 없음) | 실 하드웨어 |
+|------|---------------|------------|
+| Motor pulse TLM | 항상 `0,0` (pigpio 미초기화) | 실제 servo pulse |
+| guidance_state TLM | 공란 (motor output 없음) | 실제 모드 |
+| fallback(local) GCS 레이블 | **검증 가능** | 검증 가능 |
+
+벤치에서는 **`fallback(local)`** 레이블만 관찰 기준으로 삼는다.
+
+### 1.4 SIMGR 주입 후 복구 동작
+
+SIMGR은 FSW에 `motion_health=1` (course/speed 유효) 데이터를 제공하므로, GCS 추정기는
+주입 즉시 CS를 fresh로 간주한다 (`cs_ts = now + 3.0 s`). 이후 타임라인:
+
+| 경과 시간 | cs_s | raw 레벨 | level (히스테리시스 고려) |
+|----------|------|---------|------------------------|
+| 0 s | 0 | L0 | 복구 후보 시작 |
+| 3.0 s | 0 | L0 | **L0 복구 완료** |
+| 3.5 s | 0.5 | L1 | L0 → L1 즉각 하강 |
+| 4.5 s | 1.5 | L3 | L1 → L3 즉각 하강 |
 
 ---
 
-## 2. SIM 모드 진입 절차 (공통 선행 단계)
-
-> **이 단계를 건너뛰면 guidance_state, motor_enabled 등 TLM 뒷 컬럼이
-> 모두 공란으로 출력된다.** 특히 MEC,ON이 필수.
+## 2. SIM 모드 진입 (공통 선행 단계)
 
 ```
 1. SIM,ENABLE          → mode: F→A
 2. SIM,ACTIVATE        → mode: A→S
-3. SIMP,120            → altitude: 120.00
-4. TC,37.56,126.94     → 타겟 좌표 설정
-5. SS,3                → state: 0→3 (RELEASE)
-6. SIMGR,0,0,0,5,100   → GPS 주입 (타겟 위치, course=0, 5m/s, 100m)
-   또는 GCS "주입 (fresh)" 버튼 클릭
+3. SIMP,120            → altitude: 120.00  (fallback 테스트 시 생략 가능)
+4. TC,37.57,126.94     → 타겟 설정 (또는 원하는 좌표)
+5. SS,3                → state: 0→3
+6. SIMGR,0,0,0,5,100   → GPS 주입 / 또는 "주입 (fresh)" 버튼
 ```
 
-> **MEC,ON은 통상 불필요.** `prevstate.py`의 `PREV_MOTOR_ENABLED` 기본값이 `1`이므로
-> motorapp이 기동 시 `MOTOR_ENABLED=True`로 자동 시작된다. 직전 세션에서
-> `MEC,OFF`를 전송했다면 prevstate에 0이 저장되어 있으므로 이 경우에만 `MEC,ON` 필요.
+완료 확인:
+- TLM: `mode=S`, `state=3`
+- `GPS: ●FRESH`
+- `fallback(local): L0 NORMAL_L1_PID [L:0.0 CS:0.0 G:0.0 A:0.0s]`
 
-진입 완료 확인:
-- TLM: `mode=S, state=3, altitude=120.00, motor_enabled=1`
-- `guidance(fs):` → `GPS_TRACKING_CLOSED` 또는 `GPS_TRACKING_OPEN`
-- `fallback(local):` → `L0 NORMAL_L1_PID`
-- 좌/우 펄스 바: 1500 근방 (중립) 또는 타겟 방향 편향값
+> MEC,ON은 통상 불필요. `prevstate.PREV_MOTOR_ENABLED` 기본값=1이므로
+> motorapp 기동 시 자동 MOTOR_ENABLED=True. 직전 세션 MEC,OFF 이력이 있으면 필요.
 
 ---
 
-## 3. TC-1 — GPS → Stale 전이 (Null 버튼)
+## 3. TC-1 — GPS Null → 즉각 L4 전이
 
-**목적:** SIMGN 후 fallback 레벨 상승 및 모터 출력 변화 확인
+**검증:** SIMGN 후 fallback(local)이 첫 TLM에서 L4로 전환되는지 확인.
 
-### 3.1 GPS fresh 기준값 수집
+### 절차
 
-1. SIMGR 입력란에 `0,0,0,5,100` 입력 후 **주입 (fresh)** 클릭
-   - `GPS: ●FRESH` 표시
-   - `fallback(local): L0`, `guidance(fs): GPS_TRACKING_CLOSED`
-   - 좌/우 펄스 기록 (baseline)
+1. SIM 진입 완료 → `fallback(local): L0` 기준값 확인
+2. **Null (stale)** 클릭 (또는 명령창 `SIMGN`)
 
-### 3.2 Null → Stale 전이
+### 기대 동작
 
-2. **Null (stale)** 클릭 → `GPS: ○STALE`
-
-| 경과 시간 | GCS `fallback(local)` | `guidance(fs)` (TLM) | 좌/우 펄스 |
-|----------|----------------------|----------------------|-----------|
-| 즉시 (~첫 TLM) | **L4 (NAV_UNAVAILABLE_GYRO_ONLY)** | `GPS_TRACKING_*` → `DR_TRACKING_*` | 소폭 변화 가능 |
-| DR 앵커 소진 후 | **L5 (SAFE_GLIDE_NEUTRAL)** | `DR_TRACKING_*` → `FAIL` | **양쪽 0 또는 1500** |
-
-> **버그 수정 (2026-05-31):** SIMGN 후 TLM의 동결된 GPS lat/lon이 매 패킷마다
-> `_last_valid_location_ts`를 리셋해서 `location_s`가 0으로 유지되는 버그가 있었음.
-> 이로 인해 L1 전이가 일어나지 않고 L0 유지 또는 L3 직행 현상 발생.
->
-> **수정 후:** `SIMGN` → `_gps_null_mode=True` → TLM GPS로 인한 타임스탬프 리셋 차단
-> → `location_s=inf`, `course_speed_s=inf` → 첫 TLM에서 **즉시 L4** 진입.
-> `주입 (fresh)` 버튼 → `reactivate_gps()` → `_gps_null_mode=False` → 다음 TLM부터 추적 재개.
->
-> **실측 관찰 (2026-05-31 1차):** SIMGN ~12초 후 IMU filtered_yaw가 ~360° → ~326°로
-> 전환 (GPS course → DR+IMU heading 전환 시점). 2차 테스트에서 물리 이동 포함.
-
-### 3.3 합격 기준
-
-- [ ] SIMGN 후 **첫 TLM 수신 시** `fallback(local)` → **L4 이상**
-- [ ] `guidance(fs)` TLM이 `GPS_TRACKING_*` → `DR_*` → `FAIL` 순서로 전환
-- [ ] `FAIL` 전환 후 좌/우 펄스 = 1500(중립) 또는 0(WriteOff)
-- [ ] GCS `GPS: ○STALE` 레이블 즉시 전환
-
----
-
-## 4. TC-2 — Stale → Fresh 복구 (히스테리시스)
-
-**목적:** fresh 재주입 시 3초 복구 타이머 작동 확인
-
-TC-1 완료(stale 상태)에서 이어서 진행.
-
-1. **주입 (fresh)** 클릭 → `GPS: ●FRESH`
-2. 즉시 확인: fallback 레벨 **변화 없음** (히스테리시스 대기 중)
-3. 3.0초 경과 후: `fallback(local)` → **L0 NORMAL_L1_PID**
-4. `guidance(fs)` → `GPS_TRACKING_CLOSED`
+| 타이밍 | `fallback(local)` | `GPS: ` 레이블 |
+|--------|------------------|--------------|
+| 버튼 클릭 즉시 | L0 유지 (아직 TLM 미도착) | `GPS: ○STALE` |
+| 첫 TLM 수신 (~1 s) | **L4 NAV_UNAVAILABLE_GYRO_ONLY** | `GPS: ○STALE` |
+| `[L:-- CS:-- G:0.x A:0.xs]` | location·CS age = ∞ | — |
 
 ### 합격 기준
 
-- [ ] fresh 재주입 후 **3초 미만 시점에서 L0 복구 없음**
-- [ ] 3초 이상 안정 유지 후 L0 복구
-- [ ] 복구 후 모터 펄스가 타겟 방향으로 수렴
+- [ ] **Null 버튼 클릭 직후** `GPS: ○STALE` 레이블 즉시 전환
+- [ ] **첫 TLM 수신 시** `fallback(local)` → L4 이상
+- [ ] `L: --` `CS: --` (∞) 표시 (동결 GPS로 인한 false-fresh 없음)
+
+---
+
+## 4. TC-2 — SIMGR 재주입 → 3초 후 L0 복구
+
+**검증:** fresh 재주입 후 히스테리시스 3 s 타이머가 정상 작동하는지 확인.
+
+TC-1 완료 후 (L4 상태) 이어서 진행.
+
+### 절차
+
+1. **주입 (fresh)** 클릭 (또는 명령창 `SIMGR,0,0,0,5,100`)
+2. GCS 레이블 관찰: `GPS: ●FRESH`
+3. 타이머 시작 — 3 s 대기
+
+### 기대 동작
+
+| 경과 | `fallback(local)` |
+|------|------------------|
+| 0 s | L4 유지 (히스테리시스 대기) |
+| ~3 s | **L0 NORMAL_L1_PID** |
+| ~3.5 s | L1 DEGRADED (CS 자연 소멸) |
+
+### 합격 기준
+
+- [ ] 주입 후 **3 s 미만** 시점에서 L0 복구 없음
+- [ ] 주입 후 **3 s 경과** 시 L0 전환
+- [ ] 3.5 s 이후 L1 → L3 자연 하강 (CS 소멸 정상)
 
 ---
 
 ## 5. TC-3 — 빠른 주입/Null 반복 (히스테리시스 스트레스)
 
-**목적:** 3초 미만의 빠른 상태 반전에서 오복구 없는 것 확인
+**검증:** 1 s 간격 빠른 반복에서 L0 오복구 없음, 마지막 주입 후 3 s에 복구.
+
+### 절차 (TC-1 상태에서 시작)
 
 ```
-[주입] → 1초 대기 → [Null] → 1초 대기
-[주입] → 1초 대기 → [Null] → 1초 대기
-[주입] → 4초 대기 (복구 대기)
+주입 → 1 s 대기 → Null → 1 s 대기
+주입 → 1 s 대기 → Null → 1 s 대기
+주입 → 3 s 대기   ← 복구 대기
 ```
-
-### 합격 기준
-
-- [ ] 주입 후 1초 반복 구간에서 fallback L0 복구 **없음**
-- [ ] 마지막 주입 후 4초 대기 시 L0 복구
-- [ ] DR 앵커가 살아있는 동안 `DR_TRACKING_*` 모드 유지 (FAIL 조기 전환 금지)
-
----
-
-## 6. TC-4 — IMU_HEADING 모드에서의 Stale
-
-**목적:** GPS 없을 때 IMU_HEADING 모드가 heading 유지 fallback으로 작동하는지 확인
-
-1. SIM 진입 완료 후 `Ctrl mode` 버튼 클릭 → `IMU_HEADING` 선택 (`CMC,IMU_HEADING` TX)
-2. **주입 (fresh)** 클릭 → GPS+타겟 유효 시 bearing 계산, 유효하지 않으면 heading 유지
-3. **Null (stale)** 클릭
 
 ### 기대 동작
 
-- IMU_HEADING 모드는 GPS stale 후에도 IMU yaw 기반 heading으로 PID 유지
-- 좌/우 펄스 non-zero 유지 (GPS_GUIDED와 달리 DR 앵커 불필요)
-- `guidance(fs)` TLM → `FAIL` 전환 없이 IMU_HEADING 유지
+- 1 s 간격 구간: `주입 → L4` 진입 → `Null → L4 유지` (L0 복구 안 됨)
+  - 주입 직후 L0 raw 발생하지만 Null이 3 s 내에 들어오므로 복구 미완성
+- 마지막 주입 후 3 s: **L0 복구**
 
 ### 합격 기준
 
-- [ ] SIMGN 후 좌/우 펄스 0이 되지 않음 (GPS_GUIDED 와 구별)
-- [ ] filtered_yaw 연속 변화 (PID가 동작 중)
+- [ ] 1 s 반복 구간 중 L0 전환 **없음**
+- [ ] 마지막 주입 후 정확히 **3 s ± 1 TLM 주기**에 L0 전환
+- [ ] L0 직후 ~0.5 s 내 L1 하강 (CS 소멸 — 정상 동작)
+
+---
+
+## 6. TC-4 — IMU_HEADING 모드에서 Null
+
+**검증:** GPS stale 후에도 IMU heading 유지, fallback이 L4로 전환.
+
+### 절차
+
+1. SIM 진입 완료
+2. `Ctrl mode` 버튼 → `IMU_HEADING` (또는 명령창 `CMC,IMU_HEADING`)
+3. **주입 (fresh)** → `GPS: ●FRESH`, `fallback(local): L0`
+4. `filtered_yaw` 기준값 기록 (GCS heading 표시 또는 TLM 필드)
+5. **Null (stale)** 클릭
+
+### 기대 동작
+
+| 항목 | 기대값 |
+|------|--------|
+| `fallback(local)` | L4 전환 (L0→L4, TC-1과 동일) |
+| `filtered_yaw` | Null 전후 동일하게 유지 (IMU 기반) |
+| 실 하드웨어 motor pulse | 0이 되지 않음 (IMU_HEADING은 GPS 없어도 동작) |
+
+> **벤치 한계:** Pi 없으면 pulse = 0이므로 `filtered_yaw`의 연속성으로만 판단.
+
+### 합격 기준
+
+- [ ] Null 후 `fallback(local)` → L4 (TC-1과 동일)
+- [ ] `filtered_yaw` 연속 변화 없음 (heading 유지)
+- [ ] (실 하드웨어) GPS_GUIDED의 L4 후 WriteOff(0)와 달리 pulse non-zero
 
 ---
 
 ## 7. 관찰 체크리스트
 
 ```
-□  mode=S, state=3 확인 후 MEC,ON 전송
-□  GPS: ●FRESH 확인 (주입 버튼 또는 수동 SIMGR)
-□  fallback(local) L0, guidance(fs) GPS_TRACKING_CLOSED 기준값 확인
-□  Null 클릭 → 1.0s 이내 fallback L 상승 확인
-□  12~15s 후 guidance(fs) → FAIL 전환, 펄스 변화 확인
-□  주입 재클릭 → 3s 후 L0 복구 확인
-□  TC-3 빠른 반복 시 조기 복구 없음 확인
+□  mode=S, state=3, GPS: ●FRESH 확인
+□  fallback(local) L0 기준값 확인
+□  TC-1: Null → 첫 TLM 내 L4 전환 확인
+□  TC-2: 주입 후 3 s에 L0 복구 확인
+□  TC-3: 1 s 반복 중 L0 오복구 없음, 마지막 주입 3 s 후 복구
+□  TC-4: IMU_HEADING + Null → L4, filtered_yaw 유지
 ```
 
 ---
 
-## 8. 알려진 동작 특이사항
+## 8. 알려진 특이사항
 
 | 현상 | 원인 | 확인 방법 |
 |------|------|----------|
-| SIMGN 후 TLM gps_lat/lon 동결 표시 | gpsapp이 pos_health=0으로 보내지만 lat/lon 값 자체는 유지 | GCS `GPS: ○STALE` 레이블 및 `L:` 경과 시간 확인 |
-| gps_time이 SIMGN 후에도 계속 갱신 | gpsapp의 GPS 메시지 타임스탬프는 계속 발행 | 신선도는 pos_health=0 여부로만 판단 |
-| filtered_yaw가 SIMGN 후 ~12초 뒤 급변 | guidance가 GPS course → DR+IMU heading으로 전환되는 시점 | 정상 동작. 예상 전환 시간: DR anchor time-out 이후 |
-| MEC,ON 없어도 motorapp이 MOTOR_ENABLED=True로 기동 | prevstate `PREV_MOTOR_ENABLED` 기본값=1, 직전 세션 MEC,OFF 시엔 0 복원 | TLM `motor_enabled` 확인; 0이면 MEC,ON 전송 |
-| guidance_state, motor_enabled TLM 공란 | SS,3 이전이거나 GPS origin 미확정 시 ctrl_cycle FAIL 조기 반환 | SS,3 + SIMGR 주입 후 확인 |
+| SIMGN 후 TLM `gps_lat/lon` 동결 표시 | gpsapp이 last fix 유지하며 `pos_health=0`만 변경 | `GPS: ○STALE` 레이블 및 `L: --` 확인 |
+| `gps_time` SIMGN 후에도 계속 갱신 | gpsapp GPS 타임스탬프는 pos_health 무관하게 발행 | 정상 동작 |
+| 벤치에서 motor pulse 항상 `0,0` | pigpio 미초기화 (PI=None) → WriteOff/WriteZero 호출 skip | 실 Pi에서 재검증 필요 |
+| `guidance_state` TLM 항상 공란 | motor output 없는 상태에서 commapp이 필드 미발행 | 실 Pi 또는 상태 확인 |
+| L0 복구 후 즉시 L1으로 하강 | CS 부스트 만료 (3.5 s 후) — 정상 동작 | SIMGR 재주입으로 L0 유지 |
+| prevstate에 MEC,OFF 이력 있으면 motor 비활성 | `PREV_MOTOR_ENABLED=0` 복원 | TLM `motor_enabled` 확인, `MEC,ON` 전송 |

@@ -18,6 +18,7 @@ class FlightlogicAppArg:
 
     MID_comm_state = 1101201
     MID_comm_sim = 1101202
+    MID_comm_nav_dis = 1101203  # GPS→타겟 haversine 거리 (mm)
 
 
 class CommAppArg:
