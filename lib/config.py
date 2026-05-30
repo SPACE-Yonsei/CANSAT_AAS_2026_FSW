@@ -228,6 +228,8 @@ MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
 MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
 MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
 
+MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
+
 # IMU_HEADING 모드 파라미터
 IMU_HEADING_TARGET_DEG    = 0.0   # 목표 방위각 (0=북쪽, GPS 없을 때 fallback)
 IMU_HEADING_KP            = 1.5   # bearing 오차(deg) → angular_velocity_cmd(deg/s) P게인
