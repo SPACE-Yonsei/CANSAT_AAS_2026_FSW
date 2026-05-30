@@ -45,6 +45,8 @@ MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
 _imu_heading_fallback_logged: bool = False
 # IMU_HEADING: |error|>90° 구간 방향 고정 (히스테리시스) — +1.0=우, -1.0=좌, 0.0=미결정
 _imu_heading_turn_dir: float = 0.0
+# IMU_HEADING: GPS 유실 시 마지막으로 유효했던 bearing (IMU 프레임, deg)
+_imu_heading_last_bearing_deg: float | None = None
 
 
 def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> None:
@@ -404,8 +406,7 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
     GPS/타겟이 없으면 현재 heading 유지 (error=0).
     |error|>90°: 서보 끝단 고정. 방향은 첫 진입 시 결정 후 |error|<70°까지 유지 (히스테리시스).
     """
-    global _imu_heading_fallback_logged, _imu_heading_turn_dir
-    target_heading_deg = math.degrees(yaw_rad)
+    global _imu_heading_fallback_logged, _imu_heading_turn_dir, _imu_heading_last_bearing_deg
 
     gps     = snap.latest_gps
     t_lat   = snap.target_lat
@@ -426,6 +427,7 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
         abs_bearing_rad    = math.atan2(y_b, x_b)
         yaw_off            = snap.latest_imu.yaw_offset_deg
         target_heading_deg = math.degrees(abs_bearing_rad) + yaw_off
+        _imu_heading_last_bearing_deg = target_heading_deg
         if _imu_heading_fallback_logged:
             logger.info(
                 "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
@@ -435,10 +437,14 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
             )
             _imu_heading_fallback_logged = False
     else:
+        if _imu_heading_last_bearing_deg is not None:
+            target_heading_deg = _imu_heading_last_bearing_deg
+        else:
+            target_heading_deg = math.degrees(yaw_rad)
         if not _imu_heading_fallback_logged:
             logger.info(
-                "IMU_HEADING fallback (holding heading): gps_lat=%s gps_lon=%s t_lat=%s t_lon=%s",
-                gps_lat, gps_lon, t_lat, t_lon,
+                "IMU_HEADING fallback (last bearing=%.1f°): gps_lat=%s gps_lon=%s t_lat=%s t_lon=%s",
+                target_heading_deg, gps_lat, gps_lon, t_lat, t_lon,
             )
             _imu_heading_fallback_logged = True
 
