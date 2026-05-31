@@ -163,14 +163,32 @@ def _should_detumble(snap_t: _Cache, now: float) -> bool:
 
 # ── 가속도계 중력 제거 ────────────────────────────────────────────────────────
 
-_RAW_ACC_MAX_MPS2 = 15.0
+_RAW_ACC_MAX_MPS2 = getattr(config, "RAW_ACC_NORM_MAX_MPS2", 15.0)
+
+
+@dataclass(frozen=True)
+class LinearAccResult:
+    x: float
+    y: float
+    z: float
+    valid: bool
+    reject_reason: str
+    raw_norm: float
+    gravity_x: float
+    gravity_y: float
+    gravity_z: float
+    xy_mag: float
 
 def _compute_linear_acc(
     roll_deg: float,
     pitch_deg: float,
     ax: float, ay: float, az: float,
+    gyrx_deg_s: float = 0.0,
+    gyry_deg_s: float = 0.0,
+    gyrz_deg_s: float = 0.0,
+    sample_age_s: float = 0.0,
     g: float = 9.81,
-) -> tuple:
+) -> LinearAccResult:
     """body-frame 가속도에서 중력 성분 제거.
 
     NED z-down 기준 중력 body frame:
@@ -181,16 +199,47 @@ def _compute_linear_acc(
     raw acc magnitude가 _RAW_ACC_MAX_MPS2를 초과하면 BNO085 spike로 간주,
     (nan, nan, nan) 반환하여 lin_acc_valid=False 처리.
     """
+    nan = float("nan")
+    inputs = (roll_deg, pitch_deg, ax, ay, az)
+    try:
+        inputs_ok = all(math.isfinite(float(v)) for v in inputs)
+    except (TypeError, ValueError):
+        inputs_ok = False
+    if not inputs_ok:
+        return LinearAccResult(
+            nan, nan, nan, False, "MISSING_ATTITUDE_OR_ACC",
+            nan, nan, nan, nan, nan
+        )
+
     raw_mag = math.sqrt(ax * ax + ay * ay + az * az)
-    if raw_mag > _RAW_ACC_MAX_MPS2:
-        return float("nan"), float("nan"), float("nan")
     roll  = math.radians(roll_deg)
     pitch = math.radians(pitch_deg)
     cp    = math.cos(pitch)
     g_x   = -math.sin(pitch) * g
     g_y   =  cp * math.sin(roll) * g
     g_z   =  cp * math.cos(roll) * g
-    return ax - g_x, ay - g_y, az - g_z
+    lin_x = ax - g_x
+    lin_y = ay - g_y
+    lin_z = az - g_z
+    xy_mag = math.hypot(lin_x, lin_y)
+
+    reason = "OK"
+    if math.isfinite(sample_age_s) and sample_age_s > getattr(config, "LIN_ACC_SAMPLE_MAX_AGE_S", 0.10):
+        reason = "IMU_STALE"
+    elif raw_mag > getattr(config, "RAW_ACC_NORM_MAX_MPS2", _RAW_ACC_MAX_MPS2):
+        reason = "RAW_ACC_SPIKE"
+    else:
+        gyr_vals = (gyrx_deg_s, gyry_deg_s, gyrz_deg_s)
+        if any(math.isfinite(float(v)) and abs(float(v)) > getattr(config, "ACC_GYR_REJECT_DPS", config.ACC_GYRZ_REJECT_DPS)
+               for v in gyr_vals):
+            reason = "GYRO_TOO_FAST"
+        elif xy_mag > getattr(config, "LIN_ACC_XY_MAX_MPS2", config.ACC_LIMIT_MPS2):
+            reason = "LIN_ACC_TOO_LARGE"
+
+    return LinearAccResult(
+        lin_x, lin_y, lin_z, reason == "OK", reason,
+        raw_mag, g_x, g_y, g_z, xy_mag
+    )
 
 
 # ── 센서 핸들러 ───────────────────────────────────────────────────────────────
@@ -261,12 +310,10 @@ def handle_imu(data: str) -> None:
         except (ValueError, IndexError):
             return
 
-        lin_ax, lin_ay, lin_az = _compute_linear_acc(
-            roll_deg, pitch_deg, accx_mps2, accy_mps2, accz_mps2
+        lin = _compute_linear_acc(
+            roll_deg, pitch_deg, accx_mps2, accy_mps2, accz_mps2,
+            gyrx_deg_s, gyry_deg_s, gyrz_deg_s, rx_ts - sample_ts,
         )
-        lin_valid = (math.isfinite(lin_ax)
-                     and math.isfinite(lin_ay)
-                     and math.isfinite(lin_az))
         imu = _ImuFromApp(
             roll_rad=math.radians(roll_deg),
             pitch_rad=math.radians(pitch_deg),
@@ -280,10 +327,16 @@ def handle_imu(data: str) -> None:
             gyrz_rad_s=math.radians(-gyrz_deg_s),
             ts=sample_ts,
             rx_ts=rx_ts,
-            lin_acc_x=lin_ax if lin_valid else None,
-            lin_acc_y=lin_ay if lin_valid else None,
-            lin_acc_z=lin_az if lin_valid else None,
-            lin_acc_valid=lin_valid,
+            lin_acc_x=lin.x if math.isfinite(lin.x) else None,
+            lin_acc_y=lin.y if math.isfinite(lin.y) else None,
+            lin_acc_z=lin.z if math.isfinite(lin.z) else None,
+            lin_acc_valid=lin.valid,
+            lin_acc_reject_reason=lin.reject_reason,
+            raw_acc_norm_mps2=lin.raw_norm if math.isfinite(lin.raw_norm) else None,
+            gravity_body_x_mps2=lin.gravity_x if math.isfinite(lin.gravity_x) else None,
+            gravity_body_y_mps2=lin.gravity_y if math.isfinite(lin.gravity_y) else None,
+            gravity_body_z_mps2=lin.gravity_z if math.isfinite(lin.gravity_z) else None,
+            lin_acc_xy_mag_mps2=lin.xy_mag if math.isfinite(lin.xy_mag) else None,
             health=1,
             yaw_offset_deg=yaw_offset_deg,
         )

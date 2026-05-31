@@ -481,9 +481,12 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     # ② heading 추정 (IMU stale 시 anchor_course 유지)
     course_est = dr_estimate_course(dr, st_t.imu)
 
-    # ③ 속도 유지
-    V_dr = dr.anchor_V
-    V_dr = max(0.0, V_dr)
+    # ③ 속도: baro_sink가 유효하면 동적 갱신, 아니면 anchor 유지
+    if st_t.baro.valid and isfinite(st_t.baro.sink_rate) and st_t.baro.sink_rate > 0.0:
+        V_dr = _clamp(st_t.baro.sink_rate, config.V_MIN_MPS, config.V_MAX_DR_MPS)
+        dr.anchor_V = V_dr
+    else:
+        V_dr = max(0.0, dr.anchor_V)
 
     # ④ EN 속도
     vE = V_dr * math.sin(course_est)

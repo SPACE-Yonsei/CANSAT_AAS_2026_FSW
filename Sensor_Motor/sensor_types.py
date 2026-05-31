@@ -47,6 +47,12 @@ class _ImuFromApp:
     lin_acc_y:     Optional[float] = None   # 중력 제거된 우측 가속도 (m/s²)
     lin_acc_z:     Optional[float] = None
     lin_acc_valid:  bool  = False
+    lin_acc_reject_reason: str = ""
+    raw_acc_norm_mps2: Optional[float] = None
+    gravity_body_x_mps2: Optional[float] = None
+    gravity_body_y_mps2: Optional[float] = None
+    gravity_body_z_mps2: Optional[float] = None
+    lin_acc_xy_mag_mps2: Optional[float] = None
     health:         int   = 0
     yaw_offset_deg: float = 0.0
 

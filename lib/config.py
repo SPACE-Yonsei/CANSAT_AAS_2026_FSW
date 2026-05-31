@@ -111,7 +111,7 @@ INTEGRAL_DECAY_RATE    = 0.95    # ?�이�??�을 ???�분???�이?�당 
 # ?�?� ControlConfig 기본�?(control.py ?�용) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 5.0    # FF 명령 ?�드밴드
 CTRL_DELTA_MIN_EFFECTIVE_DEG         = 5.0    # FF 최소 ?�효 deflection
-CTRL_EXPO                            = 1.15   # FF ?�스??커브 지??
+CTRL_EXPO                            = 1.5    # 큰 오차에서 응답 가파르게
 CTRL_ERROR_DEADBAND_DEG_S            = 5.0    # PID ?�러 ?�드밴드
 CTRL_K_I                             = 0.0    # PID ?�분 게인 (PID OFF: 0?�원�???0.01)
 CTRL_I_LIMIT_DEG                     = 15.0   # PID ?�분 ?�화 ?�계
@@ -136,17 +136,17 @@ DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
 # ?�?� L1 homing guidance tuning ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 # L_GAIN_M 12??0: ?�유?�하 로그 V??-7 m/s 기�? ?�답?�정??L/(2V) ??0.7-1s.
 # ?��? ?��?반경 5m 진입 ???�답??강화.
-L_GAIN_M     = 17.0
+L_GAIN_M     = 12.0
 V_MIN_MPS    = 0.5
 V_MAX_MPS    = 15.0
-V_MAX_DR_MPS = 3.0    # DR 모드 ?�용 ?�도 ?�한 ??GPS보다 보수?�으�??�화 nu ?�제
+V_MAX_DR_MPS = 7.0    # 20260531: baro_sink 초기 5.04→3.0 캡으로 L1 출력 약화. 7.0으로 확대
 
 # ?�?� nu ?�드밴드: ??각도 ?�내�?yaw_rate_cmd=0 ??모터 중립 ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 # ?�진??방�?. |nu| < NU_DEADBAND_DEG ?????�직임 ?�음.
 NU_DEADBAND_DEG = 5.0
 
 # ?�?� Sensor freshness thresholds ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
-GPS_FRESH_MAX_AGE_S         = 15.0
+GPS_FRESH_MAX_AGE_S         = 5.0
 GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias
 IMU_FRESH_MAX_AGE_S         = 3.0   # 1.5??.0: reinit(~2s) ?�료 ??stale ?�환 방�?
 BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8??.0: 10Hz 바로미터??8??miss 만에 stale ??GPS 기�?�??�일
@@ -159,25 +159,29 @@ USE_ACC_DOUBLE_INTEGRATION = True
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
 ACC_BLEND_WEIGHT           = 0.15
+RAW_ACC_NORM_MAX_MPS2      = 15.0
+LIN_ACC_XY_MAX_MPS2        = ACC_LIMIT_MPS2
+LIN_ACC_SAMPLE_MAX_AGE_S   = 0.10
 # |gyrz| > ACC_GYRZ_REJECT_DPS 시 acc 데이터 거부 (BNO085 acc/Euler 비동기 방지)
 # 실측: |gyrz|>80 dps 구간에서 lin_acc mag 3.1~19.1 m/s² 이상값 집중
 ACC_GYRZ_REJECT_DPS        = 80.0
+ACC_GYR_REJECT_DPS         = ACC_GYRZ_REJECT_DPS
 
 # DR confidence scaling
 # DR remains available while the anchor is valid; confidence only scales L1 yaw-rate.
 # 실측(20260531) State3+4 비행시간 52.7s. AGE_3=20s는 비행 중반에 confidence=0 소진.
 # Schedule: 0-5s: 1.0, 5-20s: 1.0→0.5, 20-60s: 0.5→0.0, >60s: 0.0
 DR_CONF_AGE_1_S = 5.0
-DR_CONF_AGE_2_S = 20.0
+DR_CONF_AGE_2_S = 30.0
 DR_CONF_AGE_3_S = 60.0
 
 TARGET_RADIUS_M = 5.0
 
 # ?�?� Yaw rate limits per control mode (deg/s) ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 # 35??0: ?�상비행 spin 분포가 35 근처??권한 ?�간 ?�향
-GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 40.0
-GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 25.0
-DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 20.0
+GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 60.0
+GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 35.0
+DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 50.0
 # 12??5: 12??과도?�게 보수??
 DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
 DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
