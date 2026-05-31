@@ -447,14 +447,13 @@ def _imu_heading_target_deg(yaw_rad: float, snap: _Cache) -> float:
 
 
 def _imu_heading_direct_output(
-    now: float, yaw_rad: float, snap: _Cache, ctl: control.Ctrler
+    now: float, yaw_rad: float, snap: _Cache,
 ) -> control.CtrlOutput:
     """IMU_HEADING 직접 매핑: error_deg → 서보 delta 선형 보간.
 
     deadband ±5°: 서보 중립.
     |error| ≥ 90°: DELTA_ARM_MAX_DEG 포화.
     5° < |error| < 90°: 선형 보간.
-    slew-rate 적용으로 포화→선형 전환 구간 부드럽게 처리.
     """
     target_deg = _imu_heading_target_deg(yaw_rad, snap)
     error_deg  = (target_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
@@ -471,21 +470,7 @@ def _imu_heading_direct_output(
         delta = math.copysign(t * control.DELTA_ARM_MAX_DEG, error_deg)
         saturated = False
 
-    _, _, left_des, right_des, delta_arm = control.ConnectRoMo(delta)
-
-    dt       = max(0.01, min(0.2, now - ctl.pid.prev_time)) if ctl.pid.prev_time > 0 else 0.05
-    max_step = ctl.config.MAX_ARM_RATE_DEG_S * dt
-    left_angle  = max(ctl.prev_left_angle_deg  - max_step, min(ctl.prev_left_angle_deg  + max_step, left_des))
-    right_angle = max(ctl.prev_right_angle_deg - max_step, min(ctl.prev_right_angle_deg + max_step, right_des))
-
-    left_pw  = int(max(control.LEFT_MIN_PULSE,  min(control.LEFT_MAX_PULSE,
-                       control.LEFT_ZERO  - left_angle  * control.PULSE_PER_DEG)))
-    right_pw = int(max(control.RIGHT_MIN_PULSE, min(control.RIGHT_MAX_PULSE,
-                       control.RIGHT_ZERO + right_angle * control.PULSE_PER_DEG)))
-
-    ctl.prev_left_angle_deg  = left_angle
-    ctl.prev_right_angle_deg = right_angle
-    ctl.pid.prev_time        = now
+    left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(delta)
 
     return control.CtrlOutput(
         timestamp=now,
@@ -648,7 +633,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
         yaw = snap_t.latest_imu.yaw_rad
         if yaw is not None and math.isfinite(float(yaw)):
-            ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t, _CTRLER_t)
+            ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t)
             control.MoveServo(PI, ctrl_out_t)
             sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
             _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
