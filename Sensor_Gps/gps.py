@@ -348,13 +348,18 @@ def gps_readdata(pi):
 
 if __name__ == "__main__":
     pi = init_gps()
+    last_gga_ts = None
     try:
         while True:
             gps_data = gps_readdata(pi)
-            print(gps_data)
             if gps_data is None:
                 print("No GPS data")
-                time.sleep(0.05)
+            else:
+                current_ts = gps_data[9]  # gga_sample_ts
+                if current_ts != last_gga_ts:
+                    print(gps_data)
+                    last_gga_ts = current_ts
+            time.sleep(0.05)
     except KeyboardInterrupt:
         print("Stop")
     finally:
