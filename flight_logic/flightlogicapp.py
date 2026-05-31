@@ -46,6 +46,7 @@ cnt_landed = 0
 cnt_egg_drop = 0
 solenoid_count = 0
 solenoid_done = False
+egg_fired = False
 release_predictor = ReleasePredictorState()
 release_reason = "TRIGGER"
 
@@ -87,11 +88,12 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
-    global max_alt, solenoid_count, solenoid_done
+    global max_alt, solenoid_count, solenoid_done, egg_fired
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     solenoid_count = 0
     solenoid_done = False
+    egg_fired = False
     prevstate.update_solenoid_state(solenoid_count, solenoid_done)
     reset_release_predictor(release_predictor)
     _set_state(main_queue, 0, force=force)
@@ -156,6 +158,22 @@ def to_egg(main_queue, force: bool = False) -> None:
             appargs.FlightlogicAppArg.MID_motor_TargetCor,
             f"{prevstate.PREV_TARGET_LAT},{prevstate.PREV_TARGET_LON}",
         )
+
+
+def _fire_egg(main_queue) -> None:
+    """에그 소레노이드 1회 발사. 중복 발사 방지."""
+    global egg_fired
+    if egg_fired:
+        return
+    egg_fired = True
+    logger.info("Egg drop fired")
+    msgstructure.send_msg(
+        main_queue,
+        appargs.FlightlogicAppArg.AppID,
+        appargs.MotorAppArg.AppID,
+        appargs.FlightlogicAppArg.MID_motor_EggDrop,
+        "",
+    )
 
 
 def to_landed(main_queue, force: bool = False) -> None:
@@ -400,6 +418,8 @@ def handle_distance(data: str, main_queue) -> None:
             distance_health = 0
     else:
         distance_health = 1
+    if state == 4 and SOLENOID_MIN_MM < distance_mm <= 3000.0:
+        _fire_egg(main_queue)
 
 
 def handle_ss(data: str, main_queue) -> None:
@@ -531,6 +551,9 @@ def barometer_logic(main_queue, alt: float) -> None:
             _reset_transition_counters()
             to_egg(main_queue)
     elif state == 4:
+        cnt_egg_drop = cnt_egg_drop + 1 if alt <= 5 else 0
+        if cnt_egg_drop >= 3:
+            _fire_egg(main_queue)
         cnt_landed = cnt_landed + 1 if alt <= 10 else 0
         if cnt_landed >= 100:
             _reset_transition_counters()
