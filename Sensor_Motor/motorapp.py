@@ -43,10 +43,11 @@ MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
 
 # IMU_HEADING: GPS+target 없을 때 로그 중복 방지 플래그
 _imu_heading_fallback_logged: bool = False
-# IMU_HEADING: |error|>90° 구간 방향 고정 (히스테리시스) — +1.0=우, -1.0=좌, 0.0=미결정
-_imu_heading_turn_dir: float = 0.0
 # IMU_HEADING: GPS 유실 시 마지막으로 유효했던 bearing (IMU 프레임, deg)
 _imu_heading_last_bearing_deg: float | None = None
+
+_IMU_HEADING_DEADBAND_DEG: float = 5.0   # ±5° 이내 → 서보 중립
+_IMU_HEADING_MAX_ERR_DEG:  float = 90.0  # ±90° 이상 → 최대 deflection
 
 
 def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> None:
@@ -398,15 +399,9 @@ def handle_mec(data: str) -> None:
             control.WriteZero(PI)
 
 
-def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control.CtrlInput:
-    """IMU_HEADING 모드 CtrlInput 생성.
-
-    GPS 위치 + 타겟 좌표가 유효하면 지리 bearing을 계산해 IMU yaw 프레임으로 변환.
-    yaw_offset_deg는 해당 사이클 IMU 메시지에서 직접 수신 (매 사이클 일관성 보장).
-    GPS/타겟이 없으면 현재 heading 유지 (error=0).
-    |error|>90°: 서보 끝단 고정. 방향은 첫 진입 시 결정 후 |error|<70°까지 유지 (히스테리시스).
-    """
-    global _imu_heading_fallback_logged, _imu_heading_turn_dir, _imu_heading_last_bearing_deg
+def _imu_heading_target_deg(yaw_rad: float, snap: _Cache) -> float:
+    """GPS bearing → IMU 프레임 target heading (deg). GPS 없으면 마지막 bearing 유지."""
+    global _imu_heading_fallback_logged, _imu_heading_last_bearing_deg
 
     gps     = snap.latest_gps
     t_lat   = snap.target_lat
@@ -426,8 +421,8 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
         x_b  = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
         abs_bearing_rad    = math.atan2(y_b, x_b)
         yaw_off            = snap.latest_imu.yaw_offset_deg
-        target_heading_deg = math.degrees(abs_bearing_rad) + yaw_off
-        _imu_heading_last_bearing_deg = target_heading_deg
+        target_deg         = math.degrees(abs_bearing_rad) + yaw_off
+        _imu_heading_last_bearing_deg = target_deg
         if _imu_heading_fallback_logged:
             logger.info(
                 "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
@@ -436,45 +431,72 @@ def _imu_heading_ctrl_input(now: float, yaw_rad: float, snap: _Cache) -> control
                 math.degrees(abs_bearing_rad), yaw_off,
             )
             _imu_heading_fallback_logged = False
+        return target_deg
     else:
         if _imu_heading_last_bearing_deg is not None:
-            target_heading_deg = _imu_heading_last_bearing_deg
+            target_deg = _imu_heading_last_bearing_deg
         else:
-            target_heading_deg = math.degrees(yaw_rad)
+            target_deg = math.degrees(yaw_rad)
         if not _imu_heading_fallback_logged:
             logger.info(
                 "IMU_HEADING fallback (last bearing=%.1f°): gps_lat=%s gps_lon=%s t_lat=%s t_lon=%s",
-                target_heading_deg, gps_lat, gps_lon, t_lat, t_lon,
+                target_deg, gps_lat, gps_lon, t_lat, t_lon,
             )
             _imu_heading_fallback_logged = True
+        return target_deg
 
-    error_deg = (target_heading_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
-    abs_err = abs(error_deg)
-    if abs_err > 90.0:
-        # 진입: 처음 90° 초과 시 방향 결정, 이후 노이즈로 부호 반전돼도 유지
-        if _imu_heading_turn_dir == 0.0:
-            _imu_heading_turn_dir = math.copysign(1.0, error_deg)
-        cmd_dps = _imu_heading_turn_dir * config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
-    elif abs_err < 70.0:
-        # 해제: 70° 미만으로 내려와야만 히스테리시스 종료 → 90° 경계 chattering 방지
-        _imu_heading_turn_dir = 0.0
-        cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
-                      min(config.IMU_HEADING_MAX_CMD_DEG_S,
-                          config.IMU_HEADING_KP * error_deg))
+
+def _imu_heading_direct_output(
+    now: float, yaw_rad: float, snap: _Cache, ctl: control.Ctrler
+) -> control.CtrlOutput:
+    """IMU_HEADING 직접 매핑: error_deg → 서보 delta 선형 보간.
+
+    deadband ±5°: 서보 중립.
+    |error| ≥ 90°: DELTA_ARM_MAX_DEG 포화.
+    5° < |error| < 90°: 선형 보간.
+    slew-rate 적용으로 포화→선형 전환 구간 부드럽게 처리.
+    """
+    target_deg = _imu_heading_target_deg(yaw_rad, snap)
+    error_deg  = (target_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
+    abs_err    = abs(error_deg)
+
+    if abs_err <= _IMU_HEADING_DEADBAND_DEG:
+        delta     = 0.0
+        saturated = False
+    elif abs_err >= _IMU_HEADING_MAX_ERR_DEG:
+        delta     = math.copysign(control.DELTA_ARM_MAX_DEG, error_deg)
+        saturated = True
     else:
-        # 전환 구간 70°~90°: 이미 방향이 잡혀있으면 끝단 유지, 아니면 비례제어
-        if _imu_heading_turn_dir != 0.0:
-            cmd_dps = _imu_heading_turn_dir * config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
-        else:
-            cmd_dps = max(-config.IMU_HEADING_MAX_CMD_DEG_S,
-                          min(config.IMU_HEADING_MAX_CMD_DEG_S,
-                              config.IMU_HEADING_KP * error_deg))
-    return control.CtrlInput(
-        angular_velocity_cmd_deg_s=cmd_dps,
-        ground_speed_mps=0.0,
-        valid=True,
+        t     = (abs_err - _IMU_HEADING_DEADBAND_DEG) / (_IMU_HEADING_MAX_ERR_DEG - _IMU_HEADING_DEADBAND_DEG)
+        delta = math.copysign(t * control.DELTA_ARM_MAX_DEG, error_deg)
+        saturated = False
+
+    _, _, left_des, right_des, delta_arm = control.ConnectRoMo(delta)
+
+    dt       = max(0.01, min(0.2, now - ctl.pid.prev_time)) if ctl.pid.prev_time > 0 else 0.05
+    max_step = ctl.config.MAX_ARM_RATE_DEG_S * dt
+    left_angle  = max(ctl.prev_left_angle_deg  - max_step, min(ctl.prev_left_angle_deg  + max_step, left_des))
+    right_angle = max(ctl.prev_right_angle_deg - max_step, min(ctl.prev_right_angle_deg + max_step, right_des))
+
+    left_pw  = int(max(control.LEFT_MIN_PULSE,  min(control.LEFT_MAX_PULSE,
+                       control.LEFT_ZERO  - left_angle  * control.PULSE_PER_DEG)))
+    right_pw = int(max(control.RIGHT_MIN_PULSE, min(control.RIGHT_MAX_PULSE,
+                       control.RIGHT_ZERO + right_angle * control.PULSE_PER_DEG)))
+
+    ctl.prev_left_angle_deg  = left_angle
+    ctl.prev_right_angle_deg = right_angle
+    ctl.pid.prev_time        = now
+
+    return control.CtrlOutput(
         timestamp=now,
-        pid_enabled=False,
+        left_pw=left_pw,
+        right_pw=right_pw,
+        left_angle_deg=left_angle,
+        right_angle_deg=right_angle,
+        delta_arm_deg=delta_arm,
+        delta_ff_deg=delta,
+        saturated=saturated,
+        valid=True,
     )
 
 
@@ -626,10 +648,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
         yaw = snap_t.latest_imu.yaw_rad
         if yaw is not None and math.isfinite(float(yaw)):
-            gyrz = snap_t.latest_imu.gyrz_rad_s
-            measured_dps = math.degrees(float(gyrz)) if (gyrz is not None and math.isfinite(float(gyrz))) else float("nan")
-            ctrl_in    = _imu_heading_ctrl_input(now, float(yaw), snap_t)
-            ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in, measured_dps, now)
+            ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t, _CTRLER_t)
             control.MoveServo(PI, ctrl_out_t)
             sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
             _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
