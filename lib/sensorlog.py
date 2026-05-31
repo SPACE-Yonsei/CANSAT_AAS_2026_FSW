@@ -7,6 +7,7 @@ import math
 import os
 import re
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Tuple
@@ -20,6 +21,7 @@ _session_dir: Optional[Path] = None
 ENV_SENSORLOG_SESSION = "FSW_SENSORLOG_SESSION"
 _raw_writers: Dict[str, Tuple[Any, csv.writer]] = {}
 _raw_lock = threading.Lock()
+_motor_control_writer: Optional[Tuple[Any, csv.writer]] = None
 
 _GPS_RAW_FIELDS = [
     "gps_time",
@@ -237,10 +239,20 @@ def log_distance_raw(range_mm: float) -> None:
 
 _MOTOR_RAW_HEADER = [
     "timestamp",
+    "monotonic_s",
+    "event",
     "flight_state",
     "motor_enabled",
     "motor_ctrl_mode",
     "control_mode",
+    "output_valid",
+    "l1_valid",
+    "l1_nominal",
+    "l1_reason",
+    "dr_method",
+    "confidence_scale",
+    "pid_enabled",
+    "yaw_rate_limit_dps",
     "pos_N",
     "pos_E",
     "target_N",
@@ -258,8 +270,35 @@ _MOTOR_RAW_HEADER = [
     "delta_arm_deg",
     "angular_velocity_cmd_deg_s",
     "angular_velocity_meas_deg_s",
+    "angular_velocity_error_deg_s",
+    "motor_cmd",
     "saturated",
     "sensor_valid",
+    "gyro_rejected",
+    "gps_lat",
+    "gps_lon",
+    "gps_course_deg",
+    "gps_speed_mps",
+    "gps_pos_health",
+    "gps_motion_health",
+    "gps_pos_age_s",
+    "gps_motion_age_s",
+    "imu_roll_deg",
+    "imu_pitch_deg",
+    "imu_yaw_deg",
+    "imu_gyrz_deg_s",
+    "imu_health",
+    "imu_age_s",
+    "lin_acc_x_mps2",
+    "lin_acc_y_mps2",
+    "lin_acc_z_mps2",
+    "lin_acc_valid",
+    "baro_alt_m",
+    "baro_sink_rate_mps",
+    "baro_health",
+    "baro_age_s",
+    "target_lat",
+    "target_lon",
 ]
 
 
@@ -276,6 +315,59 @@ def _motor_deg(obj, attr):
     return math.degrees(v) if math.isfinite(v) else float("nan")
 
 
+def _motor_i(obj, attr, default: int = 0) -> int:
+    try:
+        return int(getattr(obj, attr, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _motor_bool(obj, attr) -> int:
+    return int(bool(getattr(obj, attr, False)))
+
+
+def _motor_age(now: float, ts) -> float:
+    try:
+        ts_f = float(ts)
+    except (TypeError, ValueError):
+        return float("nan")
+    return now - ts_f if math.isfinite(ts_f) else float("nan")
+
+
+def _motor_session_stamp() -> str:
+    root = _raw_session_dir()
+    if root is not None and root.name.startswith("run_"):
+        return root.name[4:]
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _get_motor_control_writer(header: list[str]) -> Optional[csv.writer]:
+    """Dedicated motor-control CSV in motorlogs/, independent of sensorlogs."""
+    global _motor_control_writer
+    with _raw_lock:
+        if _motor_control_writer is not None:
+            return _motor_control_writer[1]
+        root = Path("motorlogs")
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"motor_control_{_motor_session_stamp()}.csv"
+        fp = path.open("a", encoding="utf-8", newline="")
+        writer = csv.writer(fp)
+        writer.writerow(header)
+        fp.flush()
+        _motor_control_writer = (fp, writer)
+        return writer
+
+
+def _flush_motor_control() -> None:
+    with _raw_lock:
+        pair = _motor_control_writer
+        if pair:
+            try:
+                pair[0].flush()
+            except Exception:
+                pass
+
+
 def log_motor_raw(
     flight_state: int,
     motor_enabled: bool,
@@ -283,18 +375,36 @@ def log_motor_raw(
     ctrl_out,
     l1_out=None,
     snap=None,
+    event: str = "",
 ) -> None:
     """패러포일 제어 사이클 1회 출력 + guidance 상태."""
     try:
-        w = _get_raw_writer("motor", _MOTOR_RAW_HEADER)
-        if w is None:
+        raw_w = _get_raw_writer("motor", _MOTOR_RAW_HEADER)
+        motor_w = _get_motor_control_writer(_MOTOR_RAW_HEADER)
+        if raw_w is None and motor_w is None:
             return
-        w.writerow([
+
+        now = time.monotonic()
+        gps = getattr(snap, "latest_gps", None)
+        imu = getattr(snap, "latest_imu", None)
+        baro = getattr(snap, "latest_baro", None)
+
+        row = [
             datetime.now().isoformat(timespec="milliseconds"),
+            _motor_f(ctrl_out, "timestamp", now),
+            str(event),
             int(flight_state),
             int(bool(motor_enabled)),
             str(motor_ctrl_mode),
             str(getattr(ctrl_out, "control_mode", "")),
+            _motor_bool(ctrl_out, "valid"),
+            _motor_bool(l1_out, "control_valid"),
+            _motor_bool(l1_out, "nominal"),
+            str(getattr(l1_out, "reason", "")),
+            str(getattr(l1_out, "dr_method", "")),
+            _motor_f(l1_out, "confidence"),
+            _motor_bool(l1_out, "pid_enabled"),
+            _motor_f(l1_out, "yaw_rate_limit_dps"),
             _motor_f(l1_out, "pos_N"),
             _motor_f(l1_out, "pos_E"),
             _motor_f(l1_out, "target_N"),
@@ -312,10 +422,45 @@ def log_motor_raw(
             _motor_f(ctrl_out, "delta_arm_deg"),
             _motor_f(ctrl_out, "angular_velocity_cmd_deg_s"),
             _motor_f(ctrl_out, "angular_velocity_meas_deg_s"),
+            _motor_f(ctrl_out, "angular_velocity_error_deg_s"),
+            _motor_f(ctrl_out, "motor_cmd"),
             int(bool(getattr(ctrl_out, "saturated", False))),
             int(bool(getattr(ctrl_out, "sensor_valid", False))),
-        ])
-        _flush_raw("motor")
+            int(bool(getattr(ctrl_out, "gyro_rejected", False))),
+            _motor_f(gps, "lat"),
+            _motor_f(gps, "lon"),
+            _motor_deg(gps, "course_rad"),
+            _motor_f(gps, "speed_mps"),
+            _motor_i(gps, "pos_health"),
+            _motor_i(gps, "motion_health"),
+            _motor_age(now, getattr(gps, "pos_ts", None)),
+            _motor_age(now, getattr(gps, "motion_ts", None)),
+            _motor_deg(imu, "roll_rad"),
+            _motor_deg(imu, "pitch_rad"),
+            _motor_deg(imu, "yaw_rad"),
+            _motor_deg(imu, "gyrz_rad_s"),
+            _motor_i(imu, "health"),
+            _motor_age(now, getattr(imu, "ts", None)),
+            _motor_f(imu, "lin_acc_x"),
+            _motor_f(imu, "lin_acc_y"),
+            _motor_f(imu, "lin_acc_z"),
+            int(bool(getattr(imu, "lin_acc_valid", False))),
+            _motor_f(baro, "alt_m"),
+            _motor_f(baro, "sink_rate"),
+            _motor_i(baro, "health"),
+            _motor_age(now, getattr(baro, "rx_ts", None)),
+            _motor_f(snap, "target_lat"),
+            _motor_f(snap, "target_lon"),
+        ]
+
+        if raw_w is not None:
+            raw_w.writerow(row)
+            _flush_raw("motor")
+        if motor_w is not None:
+            motor_w.writerow(row)
+            _flush_motor_control()
+        return
+
     except Exception:
         pass
 
@@ -363,7 +508,7 @@ def log_bus_message(msg) -> None:
 
 
 def shutdown_sensorlog() -> None:
-    global _writers, _session_dir, _raw_writers
+    global _writers, _session_dir, _raw_writers, _motor_control_writer
     for fp, _ in list(_writers.values()):
         try:
             fp.flush()
@@ -379,4 +524,11 @@ def shutdown_sensorlog() -> None:
             except Exception:
                 pass
         _raw_writers.clear()
+        if _motor_control_writer is not None:
+            try:
+                _motor_control_writer[0].flush()
+                _motor_control_writer[0].close()
+            except Exception:
+                pass
+            _motor_control_writer = None
     _session_dir = None

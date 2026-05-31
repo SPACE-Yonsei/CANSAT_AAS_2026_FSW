@@ -586,12 +586,31 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     if not motor_enabled or state < 3:
         if PI is not None:
             control.WriteZero(PI)
+        zero_out = control.CtrlOutput(
+            timestamp=now,
+            left_pw=control.LEFT_ZERO_PULSE,
+            right_pw=control.RIGHT_ZERO_PULSE,
+            left_angle_deg=control.ARM_MIN_DEG,
+            right_angle_deg=control.ARM_MIN_DEG,
+            valid=False,
+            control_mode=guidance.ControlMode.FAIL,
+        )
+        event = "MOTOR_DISABLED" if not motor_enabled else "STATE_BELOW_3"
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, zero_out, snap=snap_t, event=event)
         return None
 
     # 착지 후
     if state == 5:
         if PI is not None:
             control.WriteOff(PI)
+        off_out = control.CtrlOutput(
+            timestamp=now,
+            left_pw=0,
+            right_pw=0,
+            valid=False,
+            control_mode=guidance.ControlMode.FAIL,
+        )
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, off_out, snap=snap_t, event="LANDED_OFF")
         return None
 
     # ── 컨트롤러 지연 초기화 ─────────────────────────────────────────────────
@@ -625,7 +644,10 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             control_mode=guidance.ControlMode.FAIL,
         )
         control.MoveServo(PI, manual_out)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, manual_out, snap=snap_t)
+        sensorlog.log_motor_raw(
+            state, motor_enabled, MOTOR_CTRL_MODE, manual_out,
+            snap=snap_t, event=f"MANUAL_{_MANUAL_STEER_MODE}"
+        )
         _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{MOTOR_CTRL_MODE}")
         return manual_out
 
@@ -639,7 +661,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _CTRLER_t.prev_left_angle_deg = ctrl_out_t.left_angle_deg
         _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t)
+        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t, event="DETUMBLING")
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
@@ -651,7 +673,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         if yaw is not None and math.isfinite(float(yaw)):
             ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t)
             control.MoveServo(PI, ctrl_out_t)
-            sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t)
+            sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t, event="IMU_HEADING")
             _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
             return ctrl_out_t
         # IMU yaw 무효 → GPS/DR fallthrough
@@ -668,7 +690,10 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
         ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t, snap=snap_t)
+        sensorlog.log_motor_raw(
+            state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t,
+            snap=snap_t, event=guidance._STATE_t.nav.control_mode.value
+        )
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
         return ctrl_out_t
 
@@ -679,13 +704,23 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     if yaw_fb is not None and math.isfinite(float(yaw_fb)):
         ctrl_out_t = _imu_heading_direct_output(now, float(yaw_fb), snap_t)
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, "FAIL_IMU_FALLBACK", ctrl_out_t)
+        sensorlog.log_motor_raw(
+            state, motor_enabled, "FAIL_IMU_FALLBACK", ctrl_out_t,
+            snap=snap_t, event="FAIL_IMU_FALLBACK"
+        )
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "FAIL_IMU_FALLBACK")
         return ctrl_out_t
 
     if PI is not None:
         control.WriteOff(PI)
-    sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, None)
+    off_out = control.CtrlOutput(
+        timestamp=now,
+        left_pw=0,
+        right_pw=0,
+        valid=False,
+        control_mode=guidance.ControlMode.FAIL,
+    )
+    sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, off_out, snap=snap_t, event="FAIL_OFF")
     return None
 
 
