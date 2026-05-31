@@ -490,9 +490,13 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     vN = V_dr * math.cos(course_est)
 
     # ⑤ 가속도계 보정 (선택적)
+    # 고속 spin 시 BNO085 acc/Euler 비동기로 중력 제거 오차 급증 → gyrz gate 추가
     method = DRMethod.GYRO_INTEGRATION
+    gyrz_too_fast = (st_t.imu.gyrz_valid
+                     and abs(st_t.imu.gyr_z) > math.radians(config.ACC_GYRZ_REJECT_DPS))
     if (config.USE_ACC_DOUBLE_INTEGRATION
-            and imu_fresh and st_t.imu.lin_acc_valid):
+            and imu_fresh and st_t.imu.lin_acc_valid
+            and not gyrz_too_fast):
         lax = st_t.imu.lin_acc_x * config.ACC_X_SIGN
         lay = st_t.imu.lin_acc_y * config.ACC_Y_SIGN
         if math.hypot(lax, lay) <= config.ACC_LIMIT_MPS2:

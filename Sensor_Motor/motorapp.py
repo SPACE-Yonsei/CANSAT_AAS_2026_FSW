@@ -163,6 +163,8 @@ def _should_detumble(snap_t: _Cache, now: float) -> bool:
 
 # ── 가속도계 중력 제거 ────────────────────────────────────────────────────────
 
+_RAW_ACC_MAX_MPS2 = 15.0
+
 def _compute_linear_acc(
     roll_deg: float,
     pitch_deg: float,
@@ -175,7 +177,13 @@ def _compute_linear_acc(
         g_x = -sin(pitch)*g
         g_y =  cos(pitch)*sin(roll)*g
         g_z =  cos(pitch)*cos(roll)*g
+
+    raw acc magnitude가 _RAW_ACC_MAX_MPS2를 초과하면 BNO085 spike로 간주,
+    (nan, nan, nan) 반환하여 lin_acc_valid=False 처리.
     """
+    raw_mag = math.sqrt(ax * ax + ay * ay + az * az)
+    if raw_mag > _RAW_ACC_MAX_MPS2:
+        return float("nan"), float("nan"), float("nan")
     roll  = math.radians(roll_deg)
     pitch = math.radians(pitch_deg)
     cp    = math.cos(pitch)
