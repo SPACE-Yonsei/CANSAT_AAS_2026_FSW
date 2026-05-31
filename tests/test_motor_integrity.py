@@ -301,9 +301,9 @@ class TestHandleCmc(unittest.TestCase):
         _reset_motorapp()
 
     def test_valid_modes_no_crash(self):
-        for m in (config.test_MOTOR_CTRL_MODE_GPS_GUIDED,
-                  config.test_MOTOR_CTRL_MODE_GPS_ONLY,
-                  config.test_MOTOR_CTRL_MODE_IMU_HEADING):
+        for m in (config.MOTOR_CTRL_MODE_GPS_GUIDED,
+                  config.MOTOR_CTRL_MODE_GPS_ONLY,
+                  config.MOTOR_CTRL_MODE_IMU_HEADING):
             motorapp.handle_cmc(m)   # should not raise
 
     def test_unknown_mode_no_crash(self):

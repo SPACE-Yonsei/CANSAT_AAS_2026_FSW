@@ -394,11 +394,11 @@ def cmd_cam(option: str, main_queue) -> bool:
 
 def cmd_cmc(option: str, main_queue) -> bool:
     aliases = {
-        "GPS":         config.test_MOTOR_CTRL_MODE_GPS_GUIDED,
-        "GPS_GUIDED":  config.test_MOTOR_CTRL_MODE_GPS_GUIDED,
-        "GPS_ONLY":    config.test_MOTOR_CTRL_MODE_GPS_ONLY,
-        "IMU":         config.test_MOTOR_CTRL_MODE_IMU_HEADING,
-        "IMU_HEADING": config.test_MOTOR_CTRL_MODE_IMU_HEADING,
+        "GPS":         config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_GUIDED":  config.MOTOR_CTRL_MODE_GPS_GUIDED,
+        "GPS_ONLY":    config.MOTOR_CTRL_MODE_GPS_ONLY,
+        "IMU":         config.MOTOR_CTRL_MODE_IMU_HEADING,
+        "IMU_HEADING": config.MOTOR_CTRL_MODE_IMU_HEADING,
     }
     mode = aliases.get(option.strip().upper())
     if mode is None:
