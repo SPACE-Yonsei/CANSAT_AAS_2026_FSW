@@ -675,6 +675,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     # ── [4] FAIL ─────────────────────────────────────────────────────────────
     if PI is not None:
         control.WriteOff(PI)
+    sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, None)
     return None
 
 
