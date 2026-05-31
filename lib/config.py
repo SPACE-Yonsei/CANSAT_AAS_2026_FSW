@@ -232,5 +232,5 @@ MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
 
 # IMU_HEADING 모드 파라미터
 IMU_HEADING_TARGET_DEG    = 0.0   # 목표 방위각 (0=북쪽, GPS 없을 때 fallback)
-IMU_HEADING_KP            = 1.5   # bearing 오차(deg) → angular_velocity_cmd(deg/s) P게인
+IMU_HEADING_KP            = 2.5   # bearing 오차(deg) → angular_velocity_cmd(deg/s) P게인
 IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 상한 (deg/s)
