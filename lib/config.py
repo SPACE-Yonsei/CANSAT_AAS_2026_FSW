@@ -112,7 +112,7 @@ INTEGRAL_DECAY_RATE    = 0.95    # ?�이�??�을 ???�분???�이?�당 
 CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 5.0    # FF 명령 ?�드밴드
 CTRL_DELTA_MIN_EFFECTIVE_DEG         = 5.0    # FF 최소 ?�효 deflection
 CTRL_EXPO                            = 1.15   # FF ?�스??커브 지??
-CTRL_ERROR_DEADBAND_DEG_S            = 2.0    # PID ?�러 ?�드밴드
+CTRL_ERROR_DEADBAND_DEG_S            = 5.0    # PID ?�러 ?�드밴드
 CTRL_K_I                             = 0.0    # PID ?�분 게인 (PID OFF: 0?�원�???0.01)
 CTRL_I_LIMIT_DEG                     = 15.0   # PID ?�분 ?�화 ?�계
 
@@ -186,8 +186,8 @@ FAIL_YAW_RATE_LIMIT_DPS                = 0.0
 # 100 dps(p95 근방)로 낮춰 실제 spin 구간에서 진입 가능하게 수정.
 # EXIT 30→20: 출구 히스테리시스 확대로 chattering 방지.
 DETUMBLE_ENABLE             = True
-DETUMBLE_GYRZ_THRESHOLD_DPS = 100.0
-DETUMBLE_EXIT_THRESHOLD_DPS = 50.0   # 30→50: 비행 데이터 기준 달성 가능한 수준으로 완화
+DETUMBLE_GYRZ_THRESHOLD_DPS = 200.0
+DETUMBLE_EXIT_THRESHOLD_DPS = 150.0   # 30→50: 비행 데이터 기준 달성 가능한 수준으로 완화
 DETUMBLE_EXIT_HOLD_S        = 0.1    # 1.0→0.4: 실측 최장 연속 구간(0.45s) 기반
 
 # ?�?� Sensor sign conventions ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
