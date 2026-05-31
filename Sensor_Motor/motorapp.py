@@ -538,21 +538,26 @@ def handle_fac(data: str) -> None:
     else:
         return
 
-    enabled = state == "ON"
-    if actor in {"ALL", "REL"}:
-        try:
-            from . import Motor_Release
-            if hasattr(Motor_Release, "set_burnwire"):
-                Motor_Release.set_burnwire(enabled)
-        except Exception:
-            pass
-    if actor in {"ALL", "EGG"}:
-        try:
-            from . import Motor_Egg
-            if hasattr(Motor_Egg, "set_solenoid"):
-                Motor_Egg.set_solenoid(enabled)
-        except Exception:
-            pass
+    if state == "ON":
+        if actor in {"ALL", "REL"}:
+            handle_release("TRIGGER")
+        if actor in {"ALL", "EGG"}:
+            handle_egg_drop()
+    else:
+        if actor in {"ALL", "REL"}:
+            try:
+                from . import Motor_Release
+                if hasattr(Motor_Release, "set_burnwire"):
+                    Motor_Release.set_burnwire(False)
+            except Exception:
+                pass
+        if actor in {"ALL", "EGG"}:
+            try:
+                from . import Motor_Egg
+                if hasattr(Motor_Egg, "set_solenoid"):
+                    Motor_Egg.set_solenoid(False)
+            except Exception:
+                pass
 
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 
