@@ -523,8 +523,10 @@ def handle_mtr(data: str) -> None:
 
 
 def handle_fac(data: str) -> None:
-    """FAC 명령: 릴리즈/에그 액추에이터 활성화 제어.
+    """FAC 명령: 릴리즈/에그 액추에이터 직접 트리거 또는 비활성화.
 
+    ON  → 해당 액추에이터 즉시 발동 (GPIO 직접 구동).
+    OFF → 비행 로직에 의한 자동 트리거 차단 플래그 설정.
     형식: "ON"/"OFF" (둘 다) 또는 "ALL|REL|EGG,ON|OFF".
     """
     global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
@@ -539,9 +541,15 @@ def handle_fac(data: str) -> None:
 
     enabled = state == "ON"
     if actor in {"ALL", "REL"}:
-        RELEASE_ACTION_ENABLED = enabled
+        if enabled:
+            handle_release("GCS_DIRECT")
+        else:
+            RELEASE_ACTION_ENABLED = False
     if actor in {"ALL", "EGG"}:
-        EGG_ACTION_ENABLED = enabled
+        if enabled:
+            handle_egg_drop()
+        else:
+            EGG_ACTION_ENABLED = False
 
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 

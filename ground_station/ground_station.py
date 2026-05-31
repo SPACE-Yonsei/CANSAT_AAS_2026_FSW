@@ -906,14 +906,14 @@ class GroundStation(tk.Tk):
         ttk.Label(force_box, text="Force action:").pack(side=tk.LEFT)
         self._force_release_btn = ttk.Button(
             force_box,
-            text="Rel(20) OFF",
+            text="Rel FIRE",
             width=12,
             command=self._toggle_release_action,
         )
         self._force_release_btn.pack(side=tk.LEFT, padx=(8, 4))
         self._force_egg_btn = ttk.Button(
             force_box,
-            text="Egg(6) OFF",
+            text="Egg FIRE",
             width=10,
             command=self._toggle_egg_action,
         )
@@ -1196,35 +1196,13 @@ class GroundStation(tk.Tk):
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        cur = self._release_action_enabled_remote
-        next_enabled = not bool(cur)
-        cmd = "FAC,REL,ON" if next_enabled else "FAC,REL,OFF"
-        if self._send_body(cmd):
-            self._release_action_enabled_remote = next_enabled
-            self._set_force_action_ui(
-                self._release_action_enabled_remote,
-                self._egg_action_enabled_remote,
-            )
-            self._force_state_var.set(
-                f"R:{'ON' if next_enabled else 'OFF'} E:{'ON' if self._egg_action_enabled_remote else 'OFF' if self._egg_action_enabled_remote is False else '--'} (pending)"
-            )
+        self._send_body("FAC,REL,ON")
 
     def _toggle_egg_action(self) -> None:
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        cur = self._egg_action_enabled_remote
-        next_enabled = not bool(cur)
-        cmd = "FAC,EGG,ON" if next_enabled else "FAC,EGG,OFF"
-        if self._send_body(cmd):
-            self._egg_action_enabled_remote = next_enabled
-            self._set_force_action_ui(
-                self._release_action_enabled_remote,
-                self._egg_action_enabled_remote,
-            )
-            self._force_state_var.set(
-                f"R:{'ON' if self._release_action_enabled_remote else 'OFF' if self._release_action_enabled_remote is False else '--'} E:{'ON' if next_enabled else 'OFF'} (pending)"
-            )
+        self._send_body("FAC,EGG,ON")
 
     _CMC_MODES = ("GPS_GUIDED", "GPS_ONLY", "IMU_HEADING")
 
