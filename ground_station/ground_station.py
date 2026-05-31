@@ -1196,13 +1196,21 @@ class GroundStation(tk.Tk):
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        self._send_body("FAC,REL,ON")
+        next_on = not bool(self._release_action_enabled_remote)
+        cmd = "FAC,REL,ON" if next_on else "FAC,REL,OFF"
+        if self._send_body(cmd):
+            self._release_action_enabled_remote = next_on
+            self._force_release_btn.config(text=f"Rel {'ON' if next_on else 'OFF'}")
 
     def _toggle_egg_action(self) -> None:
         if self._ser is None:
             messagebox.showwarning("Not connected", "먼저 포트에 연결하세요.")
             return
-        self._send_body("FAC,EGG,ON")
+        next_on = not bool(self._egg_action_enabled_remote)
+        cmd = "FAC,EGG,ON" if next_on else "FAC,EGG,OFF"
+        if self._send_body(cmd):
+            self._egg_action_enabled_remote = next_on
+            self._force_egg_btn.config(text=f"Egg {'ON' if next_on else 'OFF'}")
 
     _CMC_MODES = ("GPS_GUIDED", "GPS_ONLY", "IMU_HEADING")
 

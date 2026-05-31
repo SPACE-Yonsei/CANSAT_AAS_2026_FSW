@@ -130,6 +130,16 @@ def activate_burnwire() -> None:
         logger.info("Burnwire DEACTIVATE (relay safe)")
 
 
+def set_burnwire(active: bool) -> None:
+    """GPIO를 즉시 ON/OFF. 타이머 없이 호출한 쪽이 직접 제어."""
+    if not BURNWIRE_READY:
+        init_burnwire()
+    gpio = _load_gpio()
+    level = _RELEASE_ACTIVATE_LEVEL if active else _RELEASE_DEACTIVATE_LEVEL
+    gpio.output(BURNWIRE_GPIO, level)
+    logger.info("Burnwire SET %s (GPIO %d = %d)", "ON" if active else "OFF", BURNWIRE_GPIO, level)
+
+
 def terminate_burnwire() -> None:
     """Deactivate relay and release GPIO resources. Idempotent."""
     global BURNWIRE_READY

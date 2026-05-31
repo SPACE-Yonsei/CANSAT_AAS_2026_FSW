@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass, field
+from dataclasses import dataclass, field
 import logging
 import math
 import threading
@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 # ── 비행 전역 상태 ────────────────────────────────────────────────────────────
 STATE:            int  = 0
-MOTOR_ENABLED:    bool = False
+test_MOTOR_ENABLED:    bool = False
 MOTORAPP_RUNSTATUS: bool = True
 
-RELEASE_ACTION_ENABLED: bool = True
-EGG_ACTION_ENABLED:     bool = True
+test_RELEASE_ACTION_ENABLED: bool = True
+test_EGG_ACTION_ENABLED:     bool = True
 
 PI = None  # pigpio handle
 
@@ -36,10 +36,10 @@ _DETUMBLE_ACTIVE: bool = False
 _DETUMBLE_EXIT_START: float = math.nan
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
-_MANUAL_STEER_MODE: str = ""
+test__MANUAL_STEER_MODE: str = ""
 
 # 모터 제어 소스 모드 (CMC 명령으로 변경)
-MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
+test_MOTOR_CTRL_MODE: str = config.test_MOTOR_CTRL_MODE_GPS_GUIDED
 
 # IMU_HEADING: GPS+target 없을 때 로그 중복 방지 플래그
 _imu_heading_fallback_logged: bool = False
@@ -74,10 +74,10 @@ def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> No
         f"nan,nan,"
         f"{heading},"
         f"{guidance_state},"
-        f"{int(bool(MOTOR_ENABLED))},"
+        f"{int(bool(test_MOTOR_ENABLED))},"
         f"0,"
-        f"{int(bool(RELEASE_ACTION_ENABLED))},"
-        f"{int(bool(EGG_ACTION_ENABLED))}"
+        f"{int(bool(test_RELEASE_ACTION_ENABLED))},"
+        f"{int(bool(test_EGG_ACTION_ENABLED))}"
     )
     msgstructure.send_msg(
         main_queue,
@@ -356,7 +356,7 @@ def handle_flight_state(data: str) -> None:
 
 
 def handle_release(data: str = "TRIGGER") -> None:
-    if not RELEASE_ACTION_ENABLED:
+    if not test_RELEASE_ACTION_ENABLED:
         return
     try:
         from . import Motor_Release
@@ -371,7 +371,7 @@ def handle_release(data: str = "TRIGGER") -> None:
 
 
 def handle_egg_drop() -> None:
-    if not EGG_ACTION_ENABLED:
+    if not test_EGG_ACTION_ENABLED:
         return
     try:
         from . import Motor_Egg
@@ -387,13 +387,13 @@ def handle_egg_drop() -> None:
 
 def handle_mec(data: str) -> None:
     """MEC 명령: 모터 활성/비활성 토글 + prevstate 저장."""
-    global MOTOR_ENABLED
+    global test_MOTOR_ENABLED
     cmd = data.strip().upper()
     if cmd == "ON":
-        MOTOR_ENABLED = True
+        test_MOTOR_ENABLED = True
         prevstate.update_motor_enabled(True)
     elif cmd == "OFF":
-        MOTOR_ENABLED = False
+        test_MOTOR_ENABLED = False
         prevstate.update_motor_enabled(False)
         if PI is not None:
             control.WriteZero(PI)
@@ -484,19 +484,18 @@ def _imu_heading_direct_output(
         valid=True,
     )
 
-
 def handle_cmc(data: str) -> None:
-    global MOTOR_CTRL_MODE
+    global test_MOTOR_CTRL_MODE
     mode = str(data or "").strip().upper()
     valid = {
-        config.MOTOR_CTRL_MODE_GPS_GUIDED,
-        config.MOTOR_CTRL_MODE_GPS_ONLY,
-        config.MOTOR_CTRL_MODE_IMU_HEADING,
+        config.test_MOTOR_CTRL_MODE_GPS_GUIDED,
+        config.test_MOTOR_CTRL_MODE_GPS_ONLY,
+        config.test_MOTOR_CTRL_MODE_IMU_HEADING,
     }
     if mode not in valid:
         logger.debug("CMC: rejected unknown mode %r", mode)
         return
-    MOTOR_CTRL_MODE = mode
+    test_MOTOR_CTRL_MODE = mode
     logger.info("CMC: switched to %s", mode)
 
 
@@ -506,7 +505,7 @@ def handle_mtr(data: str) -> None:
     LEFT/RIGHT → 고정 deflection(±MANUAL_STEER_DELTA_DEG) 유지.
     NEUTRAL    → 서보 중립 고정 후 auto(L1 guidance)로 복귀.
     """
-    global _MANUAL_STEER_MODE
+    global test__MANUAL_STEER_MODE
     aliases = {
         "L": "LEFT", "LEFT": "LEFT",
         "N": "NEUTRAL", "NEUTRAL": "NEUTRAL",
@@ -515,8 +514,8 @@ def handle_mtr(data: str) -> None:
     mode = aliases.get(data.strip().upper())
     if mode is None:
         return
-    _MANUAL_STEER_MODE = "" if mode == "NEUTRAL" else mode
-    logger.info("MTR manual steer: %s → _MANUAL_STEER_MODE=%r", mode, _MANUAL_STEER_MODE)
+    test__MANUAL_STEER_MODE = "" if mode == "NEUTRAL" else mode
+    logger.info("MTR manual steer: %s → test__MANUAL_STEER_MODE=%r", mode, test__MANUAL_STEER_MODE)
     if mode == "NEUTRAL" and PI is not None:
         PI.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  control.LEFT_NEUTRAL)
         PI.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, control.RIGHT_NEUTRAL)
@@ -529,7 +528,7 @@ def handle_fac(data: str) -> None:
     OFF → 비행 로직에 의한 자동 트리거 차단 플래그 설정.
     형식: "ON"/"OFF" (둘 다) 또는 "ALL|REL|EGG,ON|OFF".
     """
-    global RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
+    global test_RELEASE_ACTION_ENABLED, test_EGG_ACTION_ENABLED
     raw = data.strip().upper().replace(" ", "")
     parts = [p for p in raw.split(",") if p]
     if len(parts) == 1 and parts[0] in {"ON", "OFF"}:
@@ -541,15 +540,19 @@ def handle_fac(data: str) -> None:
 
     enabled = state == "ON"
     if actor in {"ALL", "REL"}:
-        if enabled:
-            handle_release("GCS_DIRECT")
-        else:
-            RELEASE_ACTION_ENABLED = False
+        try:
+            from . import Motor_Release
+            if hasattr(Motor_Release, "set_burnwire"):
+                Motor_Release.set_burnwire(enabled)
+        except Exception:
+            pass
     if actor in {"ALL", "EGG"}:
-        if enabled:
-            handle_egg_drop()
-        else:
-            EGG_ACTION_ENABLED = False
+        try:
+            from . import Motor_Egg
+            if hasattr(Motor_Egg, "set_solenoid"):
+                Motor_Egg.set_solenoid(enabled)
+        except Exception:
+            pass
 
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 
@@ -570,12 +573,12 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     global _CTRLER_t, _ORIGIN_SAVED
 
     with _UPDATE_LOCK:
-        motor_enabled = MOTOR_ENABLED
+        test_motor_enabled = test_MOTOR_ENABLED
         state         = STATE
         snap_t        = _cache_snapshot()
 
     # 비활성 또는 비행 전 상태
-    if not motor_enabled or state < 3:
+    if not test_motor_enabled or state < 3:
         if PI is not None:
             control.WriteZero(PI)
         return None
@@ -600,12 +603,12 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _ORIGIN_SAVED = True
 
     # ── [1] MANUAL STEER override ────────────────────────────────────────────
-    if _MANUAL_STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
+    if test__MANUAL_STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
         _delta = {
             "LEFT":    -config.MANUAL_STEER_DELTA_DEG,
             "RIGHT":   +config.MANUAL_STEER_DELTA_DEG,
             "NEUTRAL":  0.0,
-        }[_MANUAL_STEER_MODE]
+        }[test__MANUAL_STEER_MODE]
         lp, rp, la, ra, _da = control.ConnectRoMo(_delta)
         manual_out = control.CtrlOutput(
             timestamp=now,
@@ -617,8 +620,8 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             control_mode=guidance.ControlMode.FAIL,
         )
         control.MoveServo(PI, manual_out)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, manual_out)
-        _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{MOTOR_CTRL_MODE}")
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, manual_out)
+        _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{test_MOTOR_CTRL_MODE}")
         return manual_out
 
     # ── [2] DETUMBLING ────────────────────────────────────────────────────────
@@ -631,20 +634,20 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _CTRLER_t.prev_left_angle_deg = ctrl_out_t.left_angle_deg
         _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
     mode = guidance.DecideControlMode(now)
 
     # ── [3] IMU_HEADING 모드 ──────────────────────────────────────────────────
-    if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
+    if test_MOTOR_CTRL_MODE == config.test_MOTOR_CTRL_MODE_IMU_HEADING:
         yaw = snap_t.latest_imu.yaw_rad
         if yaw is not None and math.isfinite(float(yaw)):
             ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t)
             control.MoveServo(PI, ctrl_out_t)
-            sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t)
-            _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
+            sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
+            _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.test_MOTOR_CTRL_MODE_IMU_HEADING)
             return ctrl_out_t
         # IMU yaw 무효 → GPS/DR fallthrough
 
@@ -660,7 +663,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
         ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
         return ctrl_out_t
 
@@ -728,7 +731,7 @@ def dispatch(msg: str) -> None:
 
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
-    global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
+    global PI, test_MOTOR_ENABLED, test_RELEASE_ACTION_ENABLED, test_EGG_ACTION_ENABLED
     global _CTRLER_t, _ORIGIN_SAVED, STATE
     global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
 
@@ -736,9 +739,9 @@ def init() -> None:
     # Restore flight state so _ctrl_cycle is not blocked on the first cycle.
     # Without this, STATE stays 0 until flightlogicapp sends MID_motor_state.
     STATE = prevstate.PREV_STATE
-    MOTOR_ENABLED = prevstate.is_motor_enabled()
-    RELEASE_ACTION_ENABLED = True
-    EGG_ACTION_ENABLED = True
+    test_MOTOR_ENABLED = prevstate.is_motor_enabled()
+    test_RELEASE_ACTION_ENABLED = True
+    test_EGG_ACTION_ENABLED = True
     _DETUMBLE_ACTIVE = False
     _DETUMBLE_EXIT_START = math.nan
 
@@ -790,7 +793,7 @@ def init() -> None:
     except Exception:
         pass
 
-    logger.info("motorapp init complete: MOTOR_ENABLED=%s", MOTOR_ENABLED)
+    logger.info("motorapp init complete: test_MOTOR_ENABLED=%s", test_MOTOR_ENABLED)
 
 
 def motorapp_main(main_queue, main_pipe=None) -> None:

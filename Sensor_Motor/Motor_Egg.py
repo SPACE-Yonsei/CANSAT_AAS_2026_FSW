@@ -124,6 +124,16 @@ def activate_solenoid() -> None:
     logger.info("Solenoid DEACTIVATE (relay safe)")
 
 
+def set_solenoid(active: bool) -> None:
+    """GPIO를 즉시 ON/OFF. 타이머 없이 호출한 쪽이 직접 제어."""
+    if not SOLENOID_READY:
+        init_solenoid()
+    gpio = _load_gpio()
+    level = _EGG_ACTIVATE_LEVEL if active else _EGG_DEACTIVATE_LEVEL
+    gpio.output(SOLENOID_GPIO, level)
+    logger.info("Solenoid SET %s (GPIO %d = %d)", "ON" if active else "OFF", SOLENOID_GPIO, level)
+
+
 def terminate_solenoid() -> None:
     """Deactivate relay and release GPIO resources. Idempotent."""
     global SOLENOID_READY
