@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 # GPIO map
-BURNWIRE_GPIO = 5
+BURNWIRE_GPIO = 20
 EGG_SOLENOID_GPIO = 6
 PARAFOIL_RIGHT_GPIO = 12
 PARAFOIL_LEFT_GPIO = 13
