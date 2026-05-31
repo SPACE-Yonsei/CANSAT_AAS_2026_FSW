@@ -561,12 +561,12 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     global _CTRLER_t, _ORIGIN_SAVED
 
     with _UPDATE_LOCK:
-        motor_enabled = test_MOTOR_ENABLED
+        test_motor_enabled = test_MOTOR_ENABLED
         state         = STATE
         snap_t        = _cache_snapshot()
 
     # 비활성 또는 비행 전 상태
-    if not motor_enabled or state < 3:
+    if not test_motor_enabled or state < 3:
         if PI is not None:
             control.WriteZero(PI)
         return None
@@ -608,7 +608,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             control_mode=guidance.ControlMode.FAIL,
         )
         control.MoveServo(PI, manual_out)
-        sensorlog.log_motor_raw(state, motor_enabled, test_MOTOR_CTRL_MODE, manual_out)
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, manual_out)
         _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{test_MOTOR_CTRL_MODE}")
         return manual_out
 
@@ -622,7 +622,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _CTRLER_t.prev_left_angle_deg = ctrl_out_t.left_angle_deg
         _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
@@ -634,7 +634,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         if yaw is not None and math.isfinite(float(yaw)):
             ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t)
             control.MoveServo(PI, ctrl_out_t)
-            sensorlog.log_motor_raw(state, motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
+            sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t)
             _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.test_MOTOR_CTRL_MODE_IMU_HEADING)
             return ctrl_out_t
         # IMU yaw 무효 → GPS/DR fallthrough
@@ -651,7 +651,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
         ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
+        sensorlog.log_motor_raw(state, test_motor_enabled, test_MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t)
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
         return ctrl_out_t
 
