@@ -672,7 +672,17 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
         return ctrl_out_t
 
-    # ── [4] FAIL ─────────────────────────────────────────────────────────────
+    # ── [4] FAIL → IMU heading fallback ─────────────────────────────────────
+    # GPS/DR 모두 FAIL이어도 IMU yaw가 유효하면 목표 방위각 추종을 유지한다.
+    # GPS dropout(번와이어 EMI, 신호 차단) 시 heading 제어 단절 방지.
+    yaw_fb = snap_t.latest_imu.yaw_rad
+    if yaw_fb is not None and math.isfinite(float(yaw_fb)):
+        ctrl_out_t = _imu_heading_direct_output(now, float(yaw_fb), snap_t)
+        control.MoveServo(PI, ctrl_out_t)
+        sensorlog.log_motor_raw(state, motor_enabled, "FAIL_IMU_FALLBACK", ctrl_out_t)
+        _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "FAIL_IMU_FALLBACK")
+        return ctrl_out_t
+
     if PI is not None:
         control.WriteOff(PI)
     sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, None)
@@ -799,6 +809,10 @@ def init() -> None:
     except Exception:
         pass
 
+    if not MOTOR_ENABLED:
+        logger.warning(
+            "MOTOR DISABLED (prevstate). 서보 출력 없음 — 비행 전 'MEC ON' 명령 필요."
+        )
     logger.info("motorapp init complete: MOTOR_ENABLED=%s", MOTOR_ENABLED)
 
 

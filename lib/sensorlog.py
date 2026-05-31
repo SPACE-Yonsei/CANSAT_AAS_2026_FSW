@@ -282,6 +282,7 @@ def log_motor_raw(
     motor_ctrl_mode: str,
     ctrl_out,
     l1_out=None,
+    snap=None,
 ) -> None:
     """패러포일 제어 사이클 1회 출력 + guidance 상태."""
     try:

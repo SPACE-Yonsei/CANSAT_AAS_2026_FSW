@@ -535,10 +535,17 @@ def ProduceL1Input(now: float) -> L1Input:
             course0 = st_t.imu.yaw
             imu_yaw = st_t.imu.yaw
             if isfinite(st_t.gps.E) and isfinite(st_t.gps.N) and isfinite(course0):
-                dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, 0.0, course0, imu_yaw, now)
+                # V=0 anchor는 yaw_rate_cmd=2*0/L*sin(nu)=0으로 L1 유도를 완전히 비활성화함.
+                # GPS velocity(motion_health)가 없을 때는 baro 하강속도를 fallback으로 사용.
+                baro_sink = getattr(st_t.baro, "sink_rate", nan)
+                if st_t.baro.valid and isfinite(baro_sink) and baro_sink > 0.0:
+                    v0 = _clamp(baro_sink, config.V_MIN_MPS, config.V_MAX_DR_MPS)
+                else:
+                    v0 = config.V_MIN_MPS
+                dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, v0, course0, imu_yaw, now)
                 logger.info(
-                    "DR anchor init (pos-only): E=%.1f N=%.1f course=%.1f°",
-                    st_t.gps.E, st_t.gps.N, math.degrees(course0),
+                    "DR anchor init (pos-only): E=%.1f N=%.1f course=%.1f° V=%.2f m/s",
+                    st_t.gps.E, st_t.gps.N, math.degrees(course0), v0,
                 )
         else:
             # IMU도 stale → heading 추정 불가
