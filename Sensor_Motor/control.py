@@ -385,11 +385,10 @@ def ProduceDetumbleOutput(
     now: float,
     angular_velocity_meas_deg_s: float = float("nan"),
 ) -> CtrlOutput:
-    """DETUMBLING mode output.
+    """DETUMBLING mode output — 비례 제동.
 
-    Neutral=80deg 기준 +/-DELTA_ARM_MAX_DEG 최대 제동.
-    left rotation  (gyrz < 0) -> delta=+DELTA_ARM_MAX  left=NEUTRAL-MAX/2  right=NEUTRAL+MAX/2
-    right rotation (gyrz > 0) -> delta=-DELTA_ARM_MAX  left=NEUTRAL+MAX/2  right=NEUTRAL-MAX/2
+    KP_DETUMBLE > 0: delta = -KP * omega_z, ±DELTA_ARM_MAX_DEG 포화.
+    KP_DETUMBLE = 0: legacy bang-bang (이전 동작 유지).
     """
     out_t = CtrlOutput(timestamp=now, control_mode=ControlMode.DETUMBLING)
     out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
@@ -403,7 +402,12 @@ def ProduceDetumbleOutput(
         out_t.valid = True
         return out_t
 
-    delta = -math.copysign(DELTA_ARM_MAX_DEG, angular_velocity_meas_deg_s)
+    if config.KP_DETUMBLE > 0.0:
+        raw = -config.KP_DETUMBLE * angular_velocity_meas_deg_s
+        delta = max(-DELTA_ARM_MAX_DEG, min(DELTA_ARM_MAX_DEG, raw))
+    else:
+        delta = -math.copysign(DELTA_ARM_MAX_DEG, angular_velocity_meas_deg_s)
+
     left_pw, right_pw, left_angle, right_angle, delta_arm = ConnectRoMo(delta)
     out_t.angular_velocity_error_deg_s = -angular_velocity_meas_deg_s
     out_t.delta_arm_deg = delta_arm

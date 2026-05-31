@@ -187,8 +187,8 @@ FAIL_YAW_RATE_LIMIT_DPS                = 0.0
 # EXIT 30→20: 출구 히스테리시스 확대로 chattering 방지.
 DETUMBLE_ENABLE             = True
 DETUMBLE_GYRZ_THRESHOLD_DPS = 100.0
-DETUMBLE_EXIT_THRESHOLD_DPS = 30.0
-DETUMBLE_EXIT_HOLD_S        = 1.0
+DETUMBLE_EXIT_THRESHOLD_DPS = 50.0   # 30→50: 비행 데이터 기준 달성 가능한 수준으로 완화
+DETUMBLE_EXIT_HOLD_S        = 0.1    # 1.0→0.4: 실측 최장 연속 구간(0.45s) 기반
 
 # ?�?� Sensor sign conventions ?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�
 # Body?�NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).
@@ -213,8 +213,9 @@ KP_DR_CLOSED   = 0.0
 KFF_GPS_OPEN = 0.10
 KFF_DR_OPEN  = 0.05
 
-# Legacy detumble PID gain. Detumbling uses fixed min/max arm angles.
-KP_DETUMBLE = 0.0
+# Proportional gain for DETUMBLING: delta_arm_deg = -KP_DETUMBLE * omega_z_dps
+# 0.0 = legacy bang-bang (max deflection). >0 = proportional braking.
+KP_DETUMBLE = 0.8
 
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0

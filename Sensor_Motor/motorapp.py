@@ -45,6 +45,9 @@ MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
 _imu_heading_fallback_logged: bool = False
 # IMU_HEADING: GPS 유실 시 마지막으로 유효했던 bearing (IMU 프레임, deg)
 _imu_heading_last_bearing_deg: float | None = None
+# IMU_HEADING: GPS pos_health가 0이어도 bearing 계산에 쓸 마지막 유효 GPS 위치
+_imu_last_valid_gps_lat: float = math.nan
+_imu_last_valid_gps_lon: float = math.nan
 
 _IMU_HEADING_DEADBAND_DEG: float = 5.0   # ±5° 이내 → 서보 중립
 _IMU_HEADING_MAX_ERR_DEG:  float = 90.0  # ±90° 이상 → 최대 deflection
@@ -400,14 +403,30 @@ def handle_mec(data: str) -> None:
 
 
 def _imu_heading_target_deg(yaw_rad: float, snap: _Cache) -> float:
-    """GPS bearing → IMU 프레임 target heading (deg). GPS 없으면 마지막 bearing 유지."""
+    """GPS bearing → IMU 프레임 target heading (deg). GPS 없으면 마지막 bearing 유지.
+
+    GPS pos_health=0이어도 마지막으로 유효했던 GPS 위치(_imu_last_valid_gps_lat/lon)로
+    bearing을 계산한다. GPS dropout 시 조향이 완전히 끊기는 현상 방지.
+    """
     global _imu_heading_fallback_logged, _imu_heading_last_bearing_deg
+    global _imu_last_valid_gps_lat, _imu_last_valid_gps_lon
 
     gps     = snap.latest_gps
     t_lat   = snap.target_lat
     t_lon   = snap.target_lon
     gps_lat = gps.lat if gps is not None else None
     gps_lon = gps.lon if gps is not None else None
+
+    # 유효한 GPS 위치가 들어오면 캐시 갱신
+    if (gps_lat is not None and math.isfinite(gps_lat)
+            and gps_lon is not None and math.isfinite(gps_lon)):
+        _imu_last_valid_gps_lat = gps_lat
+        _imu_last_valid_gps_lon = gps_lon
+
+    # 현재 GPS가 없으면 캐시로 대체
+    if not (gps_lat is not None and math.isfinite(gps_lat)):
+        gps_lat = _imu_last_valid_gps_lat if math.isfinite(_imu_last_valid_gps_lat) else None
+        gps_lon = _imu_last_valid_gps_lon if math.isfinite(_imu_last_valid_gps_lon) else None
 
     if (gps_lat is not None and math.isfinite(gps_lat)
             and gps_lon is not None and math.isfinite(gps_lon)
@@ -665,6 +684,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
+    guidance.TryInitStateFromPosOnly(now)
     mode = guidance.DecideControlMode(now)
 
     # ── [3] IMU_HEADING 모드 ──────────────────────────────────────────────────
