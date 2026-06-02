@@ -28,12 +28,12 @@ _ORIGIN_SAVED: bool = False
 _CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레드가 씀)
 _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
-_CTRLER_t: Optional[control.Ctrler] = None  # PID 상태
-_CTRL_LOCK = threading.Lock()               # _CTRLER_t reset 동시성
+_CTRLER_t: Optional[control.Ctrler] = None  # PID 상태 (init()에서 생성)
 
 _PREV_STATE: int = 0
 _DETUMBLE_ACTIVE: bool = False
 _DETUMBLE_EXIT_START: float = math.nan
+_DO_CTRL_RESET: bool = False
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _MANUAL_STEER_MODE: str = ""
@@ -394,7 +394,7 @@ def handle_target_coord(data: str) -> None:
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
     global STATE, _PREV_STATE, _CTRLER_t, _ORIGIN_SAVED
-    global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
+    global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START, _DO_CTRL_RESET
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -402,21 +402,20 @@ def handle_flight_state(data: str) -> None:
     if new_state == STATE:
         return
 
-    do_ctrl_reset = False
+    _DO_CTRL_RESET = False
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE       = new_state
         if new_state < 3:
             prevstate.clear_start_point()
             guidance.reset()
-            do_ctrl_reset = True
+            _DO_CTRL_RESET = True
             _ORIGIN_SAVED = False   # guidance.reset()이 origin 초기화 → 재동기화 허용
             _DETUMBLE_ACTIVE = False
             _DETUMBLE_EXIT_START = math.nan
 
-    if do_ctrl_reset and _CTRLER_t is not None:
-        with _CTRL_LOCK:
-            control.controller_reset(_CTRLER_t)
+    if _DO_CTRL_RESET:
+        control.controller_reset(_CTRLER_t)
 
 
 def handle_release(data: str = "TRIGGER") -> None:
@@ -692,12 +691,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         )
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, off_out, snap=snap_t, event="LANDED_OFF")
         return None
-
-    # ── 컨트롤러 지연 초기화 ─────────────────────────────────────────────────
-    if _CTRLER_t is None:
-        with _CTRL_LOCK:
-            if _CTRLER_t is None:
-                _CTRLER_t = control.MakeCtrler()
 
     # ── 항법 파이프라인 ───────────────────────────────────────────────────────
     guidance.UpdateRaws(snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
