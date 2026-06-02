@@ -193,15 +193,16 @@ def cmd_simp(option: str, main_queue) -> bool:
     except ValueError:
         return False
     alt_m = _pressure_pa_to_alt_m(pressure_pa)
-    _simp_tlm_alt_hold = alt_m
-    tlm_data.altitude = alt_m
-    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa
+    alt_relative = alt_m - prevstate.PREV_ALT_CAL  # 해발 절대고도 → 발사대 기준 상대고도
+    _simp_tlm_alt_hold = alt_relative
+    tlm_data.altitude = alt_relative
+    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa (절대기압 그대로)
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_SIMP,
-        f"{alt_m}",
+        f"{alt_relative}",
     )
 
 
@@ -280,16 +281,37 @@ def cmd_cal(option: str, main_queue) -> bool:
 
 
 def cmd_mec(option: str, main_queue) -> bool:
-    option = option.strip().upper()
-    if option not in {"ON", "OFF"}:
+    # Spec: MEC,<DEVICE>,<ON|OFF>
+    # DEVICE: MOTOR | RELEASE | EGG
+    parts = [p.strip().upper() for p in option.split(",") if p.strip()]
+    if len(parts) == 2:
+        device, state = parts
+    elif len(parts) == 1:
+        # 하위 호환: MEC,ON|OFF (DEVICE 생략 시 MOTOR로 간주)
+        device, state = "MOTOR", parts[0]
+    else:
         return False
-    return msgstructure.send_msg(
-        main_queue,
-        appargs.CommAppArg.AppID,
-        appargs.MotorAppArg.AppID,
-        appargs.CommAppArg.MID_RouteCmd_MEC,
-        option,
-    )
+
+    if state not in {"ON", "OFF"}:
+        return False
+
+    if device == "MOTOR":
+        return msgstructure.send_msg(
+            main_queue,
+            appargs.CommAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.CommAppArg.MID_RouteCmd_MEC,
+            state,
+        )
+    if device in {"RELEASE", "EGG"}:
+        return msgstructure.send_msg(
+            main_queue,
+            appargs.CommAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.CommAppArg.MID_RouteCmd_FAC,
+            f"{device},{state}",
+        )
+    return False
 
 
 def cmd_fac(option: str, main_queue) -> bool:
@@ -696,7 +718,7 @@ def _dispatch_command(line: str, main_queue) -> bool:
         return False
     cmd = m.group(1).upper()
     option = (m.group(2) or "").strip()
-    set_cmdecho(cmd)
+    set_cmdecho(cmd + option.replace(",", ""))
 
     if cmd == "CX":
         return cmd_cx(option, main_queue)
