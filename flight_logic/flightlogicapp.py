@@ -450,6 +450,14 @@ def handle_target_coord(data: str, main_queue) -> None:
     if lat == 0.0 and lon == 0.0:
         logger.warning("Rejected zero target coordinate for safety policy")
         return
+    if getattr(prevstate, "FIX_TARGET_GPS", False):
+        fixed_lat, fixed_lon = prevstate.get_target_gps()
+        logger.info(
+            "Ignoring target command because prevstate target is fixed: lat=%.6f lon=%.6f",
+            fixed_lat,
+            fixed_lon,
+        )
+        return
     prevstate.update_target_gps(lat, lon)
     msgstructure.send_msg(
         main_queue,
