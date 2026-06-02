@@ -10,9 +10,12 @@ from math import isfinite, nan, radians
 
 from Sensor_Motor import guidance
 from Sensor_Motor.sensor_types import _BaroFromApp, _GpsFromApp, _ImuFromApp
+from lib import config
 
 
 NOW = 100.0
+# baro sink=3.0 → 추정 수평속도 = sink * gain, V_MAX_DR로 clamp (gain 튜닝에 무관하게)
+SINK_V = min(3.0 * config.DR_SINK_TO_HSPEED_GAIN, config.V_MAX_DR_MPS)
 
 
 def _prepare_mission():
@@ -103,7 +106,7 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertEqual(l1.E, guidance._STATE_t.gps.E)
         self.assertEqual(l1.N, guidance._STATE_t.gps.N)
         self.assertAlmostEqual(math.degrees(l1.course), 80.0, delta=2.0)
-        self.assertAlmostEqual(l1.V, 3.0, delta=0.2)
+        self.assertAlmostEqual(l1.V, SINK_V, delta=0.2)
         self.assertEqual(l1.dr_method, guidance.DRMethod.GYRO_INTEGRATION)
 
     # ── Case C: DR_M_YB_OPEN — P=GPS, course=yaw, V=baro ─────────────────────
@@ -114,7 +117,7 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertTrue(l1.valid, l1.reason)
         self.assertEqual(l1.E, guidance._STATE_t.gps.E)
         self.assertAlmostEqual(math.degrees(l1.course), 90.0, delta=2.0)
-        self.assertAlmostEqual(l1.V, 3.0, delta=0.2)
+        self.assertAlmostEqual(l1.V, SINK_V, delta=0.2)
 
     # ── Case D: DR_PM_GBA_CLOSED — propagate P, acc-blended ──────────────────
     def test_case_d_dr_pm_gba_closed(self):

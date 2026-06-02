@@ -140,7 +140,10 @@ LIN_ACC_SAMPLE_MAX_AGE_S   = 0.10
 ACC_GYRZ_REJECT_DPS        = 80.0
 ACC_GYR_REJECT_DPS         = ACC_GYRZ_REJECT_DPS
 YAW_GYRO_BLEND_MAX_DEG     = 45.0
-DR_SINK_TO_HSPEED_GAIN     = 1.0
+# 1.0→2.2: 닭 2차 실측 glide ratio (gps_speed 4.97 / baro sink 2.2 ≈ 2.26).
+# gain=1.0(수평=수직 가정)은 DR 수평속도를 ~절반으로 과소추정 → L1 yaw_rate_cmd(∝V)가
+# 둔해짐. 실측 활공비로 보정. (gps_speed 표본 제한적 → bench 재확인 권장)
+DR_SINK_TO_HSPEED_GAIN     = 2.2
 
 # DR confidence scaling
 # DR remains available while the anchor is valid; confidence only scales L1 yaw-rate.
@@ -205,12 +208,12 @@ DR_MIN_CONFIDENCE_FOR_CONTROL          = 0.15
 # 100 dps(p95 근방)로 낮춰 실제 spin 구간에서 진입 가능하게 수정.
 # EXIT 30→20: 출구 히스테리시스 확대로 chattering 방지.
 DETUMBLE_ENABLE             = True
-# 20260531 실측 gyrz max=224 dps, p95≈140 dps.
-# 진입 120 dps → 5~10회 발동 목표 (기존 200에서 2회 발동)
-# 출구 100 dps + hold 0.05s → 짧게 제동 후 즉시 복귀
-DETUMBLE_GYRZ_THRESHOLD_DPS = 120.0
-DETUMBLE_EXIT_THRESHOLD_DPS = 100.0
-DETUMBLE_EXIT_HOLD_S        = 0.05
+# 닭 1·2차 실측: |gyrz| p50≈57~61, p90≈153~162, max≈217~224 dps.
+# 진입 120은 정상 spin(p50~60, p90~155) 한복판이라 1차에서 디텀블 747회 채터링.
+# 진입 120→150(≈p90, 진짜 텀블만), 이탈 100→80, hold 0.05→0.3s로 히스테리시스 확대.
+DETUMBLE_GYRZ_THRESHOLD_DPS = 150.0
+DETUMBLE_EXIT_THRESHOLD_DPS = 80.0
+DETUMBLE_EXIT_HOLD_S        = 0.3
 
 # Sensor sign conventions
 # Body→NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).

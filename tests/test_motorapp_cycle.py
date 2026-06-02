@@ -31,7 +31,7 @@ def _valid_l1out(mode):
 
 class TestMotorappCycle(unittest.TestCase):
     def setUp(self):
-        motorapp.STATE = 3
+        motorapp.STATE = 4   # 제어 활성 상태 (state<4 = PAYLOAD_RELEASE 이전 → 서보 중립)
         motorapp.MOTOR_ENABLED = True
         motorapp.PI = None
         motorapp._STEER_MODE = ""
