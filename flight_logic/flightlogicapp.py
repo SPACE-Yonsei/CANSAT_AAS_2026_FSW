@@ -415,7 +415,7 @@ def handle_distance(data: str, main_queue) -> None:
             distance_health = 0
     else:
         distance_health = 1
-    if state == 4 and SOLENOID_MIN_MM < distance_mm <= 3000.0:
+    if state == 5 and SOLENOID_MIN_MM < distance_mm <= 3000.0:   # PROBE_RELEASE
         _send_egg_drop(main_queue)
 
 
