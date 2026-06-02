@@ -3,7 +3,7 @@
     "decoder": 0,
     "frameDetection": 0,
     "frameEnd": "\r",
-    "frameParser": "/**\n * Splits a data frame into an array of elements using a comma separator.\n * Handles empty fields and trims whitespace safely.\n *\n * @param[in]  frame   A string containing the data frame.\n *                     Example: \"value1,value2,value3\"\n *\n * @return     An array of strings with the split elements.\n *             Example: [\"value1\", \"value2\", \"value3\"]\n *\n * @note Empty fields are preserved as empty strings.\n */\nfunction parse(frame) {\n    try {\n        // Safety check: ensure frame is a string\n        if (typeof frame !== 'string') {\n            return [];\n        }\n        // Remove trailing CR/LF\n        frame = frame.replace(/[\\r\\n]+$/, '');\n        // CANSAT TLM lines start with \"$\" (e.g. \"$1070,...\")\n        if (frame.length > 0 && frame.charAt(0) === '$') {\n            frame = frame.substring(1);\n        }\n        // Split by comma and return array\n        var result = frame.split(',');\n        // Trim whitespace from each element and ensure all elements are strings\n        for (var i = 0; i < result.length; i++) {\n            result[i] = String(result[i] || '').trim();\n        }\n        return result;\n    } catch (e) {\n        // Return empty array on any error to prevent crash\n        return [];\n    }\n}\n",
+    "frameParser": "// Lost-packet tracker (closure, persists across frames)\nvar _prevPktCount = -1;\nvar _lostCount = 0;\n\nfunction parse(frame) {\n    try {\n        if (typeof frame !== 'string') return [];\n        frame = frame.replace(/[\\r\\n]+$/, '');\n        if (frame.length > 0 && frame.charAt(0) === '$') {\n            frame = frame.substring(1);\n        }\n        var result = frame.split(',');\n        for (var i = 0; i < result.length; i++) {\n            result[i] = String(result[i] || '').trim();\n        }\n        // PACKET_COUNT is field index 2 (0-based after $ strip)\n        // Calculate lost = gaps in PACKET_COUNT sequence\n        try {\n            var cur = parseInt(result[2], 10);\n            if (!isNaN(cur)) {\n                if (_prevPktCount < 0 || cur <= _prevPktCount) {\n                    // 최초 수신 또는 CAL 리셋 감지\n                    _lostCount = 0;\n                } else if (cur > _prevPktCount + 1) {\n                    _lostCount += cur - _prevPktCount - 1;\n                }\n                _prevPktCount = cur;\n            }\n        } catch(e) {}\n        result.push(String(_lostCount));\n        return result;\n    } catch (e) {\n        return [];\n    }\n}\n",
     "frameStart": "",
     "groups": [
         {
@@ -313,6 +313,23 @@
                     "title": "Current",
                     "units": "A",
                     "value": "--.--",
+                    "widget": ""
+                },
+                {
+                    "alarm": 0,
+                    "fft": false,
+                    "fftSamples": 256,
+                    "fftSamplingRate": 100,
+                    "graph": false,
+                    "index": 100,
+                    "led": false,
+                    "ledHigh": 1,
+                    "log": false,
+                    "max": 0,
+                    "min": 0,
+                    "title": "Lost Packets",
+                    "units": "",
+                    "value": "0",
                     "widget": ""
                 }
             ],
