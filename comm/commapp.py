@@ -84,6 +84,15 @@ class TelemetryData:
 tlm_data = TelemetryData()
 TEAM_ID = "1070"
 
+_STATE_NAMES: dict[str, str] = {
+    "0": "LAUNCH_PAD",
+    "1": "ASCENT",
+    "2": "APOGEE",
+    "3": "PROBE_RELEASE",
+    "4": "PAYLOAD_RELEASE",
+    "5": "LANDED",
+}
+
 
 # Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX).
 _comm_serial: Optional[object] = None
@@ -634,7 +643,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
     line = (
         # ── Required fields (spec 3.1.1.1, fields 1-22) ──────────────────────
         f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
-        f"{tlm_data.mode},{tlm_data.state},"
+        f"{tlm_data.mode},{_STATE_NAMES.get(str(tlm_data.state), tlm_data.state)},"
         f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure / 10.0:.1f},"  # pressure hPa→kPa
         f"{tlm_data.voltage:.3f},{tlm_data.current:.2f},"                                       # current 0.01A res
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
@@ -652,7 +661,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},"
         f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state},{motor_enabled_s},{force_action_enabled_s},"
         f"{release_action_enabled_s},{egg_action_enabled_s},"
-        f"{_fmt_opt_float(tlm_data.nav_distance_mm, '.1f')}\n"
+        f"{_fmt_opt_float(tlm_data.nav_distance_mm, '.1f')}\r"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if ok:
