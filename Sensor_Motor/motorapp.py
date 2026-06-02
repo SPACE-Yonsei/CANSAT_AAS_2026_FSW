@@ -36,7 +36,7 @@ _DETUMBLE_EXIT_START: float = math.nan
 _DO_CTRL_RESET: bool = False
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
-_MANUAL_STEER_MODE: str = ""
+_STEER_MODE: str = ""
 
 # 모터 제어 소스 모드 (CMC 명령으로 변경)
 MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
@@ -585,7 +585,7 @@ def handle_mtr(data: str) -> None:
     LEFT/RIGHT → 고정 deflection(±MANUAL_STEER_DELTA_DEG) 유지.
     NEUTRAL    → 서보 중립 고정 후 auto(L1 guidance)로 복귀.
     """
-    global _MANUAL_STEER_MODE
+    global _STEER_MODE
     aliases = {
         "L": "LEFT", "LEFT": "LEFT",
         "N": "NEUTRAL", "NEUTRAL": "NEUTRAL",
@@ -594,8 +594,8 @@ def handle_mtr(data: str) -> None:
     mode = aliases.get(data.strip().upper())
     if mode is None:
         return
-    _MANUAL_STEER_MODE = "" if mode == "NEUTRAL" else mode
-    logger.info("MTR manual steer: %s → _MANUAL_STEER_MODE=%r", mode, _MANUAL_STEER_MODE)
+    _STEER_MODE = "" if mode == "NEUTRAL" else mode
+    logger.info("MTR manual steer: %s → _MANUAL_STEER_MODE=%r", mode, _STEER_MODE)
     if mode == "NEUTRAL" and PI is not None:
         PI.set_servo_pulsewidth(control.PARAFOIL_LEFT_MOTOR_PIN,  control.LEFT_NEUTRAL)
         PI.set_servo_pulsewidth(control.PARAFOIL_RIGHT_MOTOR_PIN, control.RIGHT_NEUTRAL)
@@ -700,12 +700,12 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _ORIGIN_SAVED = True
 
     # ── [1] MANUAL STEER override ────────────────────────────────────────────
-    if _MANUAL_STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
+    if _STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
         _delta = {
             "LEFT":    -config.MANUAL_STEER_DELTA_DEG,
             "RIGHT":   +config.MANUAL_STEER_DELTA_DEG,
             "NEUTRAL":  0.0,
-        }[_MANUAL_STEER_MODE]
+        }[_STEER_MODE]
         lp, rp, la, ra, _da = control.ConnectRoMo(_delta)
         manual_out = control.CtrlOutput(
             timestamp=now,
@@ -719,7 +719,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         control.MoveServo(PI, manual_out)
         sensorlog.log_motor_raw(
             state, motor_enabled, MOTOR_CTRL_MODE, manual_out,
-            snap=snap_t, event=f"MANUAL_{_MANUAL_STEER_MODE}"
+            snap=snap_t, event=f"MANUAL_{_STEER_MODE}"
         )
         _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{MOTOR_CTRL_MODE}")
         return manual_out
