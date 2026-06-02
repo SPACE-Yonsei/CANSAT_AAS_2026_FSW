@@ -192,8 +192,31 @@ DR_YB_YAW_RATE_LIMIT_DPS               = 20.0
 DR_Y_YAW_RATE_LIMIT_DPS                = 15.0
 # 12→15: 12 dps는 과도하게 보수적
 DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
+
+# Per-mode yaw-rate limits for the GBA/GB/G · YBA/YB/Y source taxonomy (deg/s).
+# DR_M_* (position from GPS, motion estimated) is trusted slightly more than the
+# corresponding DR_PM_* (position dead-reckoned). Gyro(G) sources allow higher
+# rates than yaw(Y) sources; baro(B) and acc(A) richness adds margin.
+DR_M_GBA_YAW_RATE_LIMIT_DPS            = 50.0
+DR_M_GB_YAW_RATE_LIMIT_DPS             = 45.0
+DR_M_G_YAW_RATE_LIMIT_DPS              = 35.0
+DR_M_YBA_YAW_RATE_LIMIT_DPS            = 25.0
+DR_M_YB_YAW_RATE_LIMIT_DPS             = 20.0
+DR_M_Y_YAW_RATE_LIMIT_DPS             = 15.0
+DR_PM_GBA_YAW_RATE_LIMIT_DPS           = 45.0
+DR_PM_GB_YAW_RATE_LIMIT_DPS            = 40.0
+DR_PM_G_YAW_RATE_LIMIT_DPS             = 30.0
+DR_PM_YBA_YAW_RATE_LIMIT_DPS           = 20.0
+DR_PM_YB_YAW_RATE_LIMIT_DPS            = 15.0
+DR_PM_Y_YAW_RATE_LIMIT_DPS             = 10.0
+
 DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
 FAIL_YAW_RATE_LIMIT_DPS                = 0.0
+
+# DR control gate: below this confidence, L1 output is treated as untrustworthy
+# (control invalidated and yaw_rate_cmd zeroed) so the parafoil holds neutral
+# rather than steering on a stale dead-reckoned estimate.
+DR_MIN_CONFIDENCE_FOR_CONTROL          = 0.15
 
 # Detumbling
 # 실측(20260531) State3+4 |gyr_z| p99=141 dps, max=159 dps.

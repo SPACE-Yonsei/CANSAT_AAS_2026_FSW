@@ -120,7 +120,11 @@ class NavState:
     N: float = nan
     course: float = nan
     V: float = nan
+    vE: float = nan
+    vN: float = nan
     confidence: float = 0.0
+    valid: bool = False
+    timestamp: float = nan
     control_mode: ControlMode = ControlMode.FAIL
 
 
@@ -166,6 +170,8 @@ class L1Input:
     N: float = nan
     V: float = nan
     course: float = nan
+    vE: float = nan
+    vN: float = nan
     target_E: float = nan
     target_N: float = nan
 
@@ -179,7 +185,7 @@ class L1Output:
     control_mode: ControlMode = ControlMode.FAIL
     dr_method: DRMethod = DRMethod.NONE
     confidence: float = 0.0
-    yaw_rate_cmd: float = 0.0
+    yaw_rate_cmd: float = 0.0          # rad/s (control.py converts to deg/s)
     yaw_rate_limit_dps: float = 0.0
     nu: float = nan
     target_bearing: float = nan
@@ -190,6 +196,16 @@ class L1Output:
     target_N: float = nan
     ground_speed_mps: float = 0.0
     pid_enabled: bool = False
+
+    # Spec aliases / debug mirrors (kept alongside the legacy names above so
+    # control.py and sensorlog continue to read the originals unchanged).
+    valid: bool = False               # mirror of control_valid
+    yaw_rate_limit: float = 0.0       # rad/s (same limit as yaw_rate_limit_dps)
+    dist_to_target: float = nan       # mirror of distance_to_target
+    nav_E: float = nan                # mirror of pos_E
+    nav_N: float = nan                # mirror of pos_N
+    V: float = 0.0                    # mirror of ground_speed_mps (L1Input.V)
+    course: float = nan               # vehicle course (rad) from L1Input
 
 
 _MISSION_t = MissionFrame()
@@ -303,6 +319,26 @@ def _mode_uses_gyro_feedback(mode) -> bool:
     return mode == ControlMode.GPS_TRACKING_CLOSED or (
         value.startswith("DR_") and value.endswith("_CLOSED")
     )
+
+
+def _mode_estimates_position(mode) -> bool:
+    return isinstance(mode, ControlMode) and _mode_value(mode).startswith("DR_PM_")
+
+
+def _mode_estimates_motion(mode) -> bool:
+    value = _mode_value(mode)
+    return isinstance(mode, ControlMode) and (
+        value.startswith("DR_M_") or value.startswith("DR_PM_")
+    )
+
+
+def _safe_dt(now: float, previous: float, max_dt: float = 0.5) -> float:
+    if not isfinite(now) or not isfinite(previous):
+        return 0.0
+    dt = now - previous
+    if dt < 0.0:
+        return 0.0
+    return min(dt, max_dt)
 
 
 def dr_estimate_course(
@@ -487,7 +523,11 @@ def FillNav(flags: SensorFreshFlags, now: float) -> None:
         st_t.nav.N = st_t.gps.N
         st_t.nav.V = st_t.gps.V
         st_t.nav.course = st_t.gps.course
+        st_t.nav.vE = st_t.gps.V * math.sin(st_t.gps.course)
+        st_t.nav.vN = st_t.gps.V * math.cos(st_t.gps.course)
         st_t.nav.confidence = 1.0
+        st_t.nav.valid = True
+        st_t.nav.timestamp = now
         flags.nav_valid = True
 
 
@@ -598,6 +638,11 @@ def TryInitStateFromPosOnly(now: float) -> None:
 
 
 def _update_state_from_dead_reckoning(now: float) -> None:
+    """DEPRECATED: superseded by _fill_nav_for_dr_m_mode / _fill_nav_for_dr_pm_mode.
+
+    No longer called by ProduceL1Input. Kept temporarily for reference; remove
+    once downstream tooling/docs no longer reference it.
+    """
     st_t = _STATE_t
     dr = st_t.dr
     flags = st_t.flags
@@ -684,59 +729,344 @@ def _update_state_from_dead_reckoning(now: float) -> None:
     st_t.flags.dr_current_valid = dr_current_valid(dr)
 
 
+def _estimate_course_for_mode(mode: ControlMode, now: float, dt: float):
+    """Estimate course (rad) for a DR mode from gyro and/or yaw.
+
+    Returns (valid, course_rad, reason). G modes integrate gyro_z onto the
+    anchor course and blend yaw when both agree; Y modes propagate yaw delta
+    from the anchor. A mode whose declared source is no longer fresh is
+    defensively rejected with NO_COURSE_SOURCE.
+    """
+    st_t = _STATE_t
+    dr = st_t.dr
+    imu = st_t.imu
+    flags = st_t.flags
+
+    if _mode_uses_gyro(mode):
+        if not (flags.imu_gyrz_fresh and isfinite(imu.gyr_z)):
+            return (False, nan, "NO_COURSE_SOURCE")
+        dr.gyro_integral += imu.gyr_z * config.GYRZ_SIGN * dt
+        base = dr.anchor_course if isfinite(dr.anchor_course) else dr.current_course
+        if not isfinite(base):
+            return (False, nan, "NO_COURSE_SOURCE")
+        course_gyro = _wrap_pi(base + dr.gyro_integral)
+        if (flags.imu_yaw_fresh and isfinite(imu.yaw)
+                and isfinite(dr.yaw_at_anchor) and isfinite(dr.anchor_course)):
+            course_yaw = _wrap_pi(dr.anchor_course + _wrap_pi(imu.yaw - dr.yaw_at_anchor))
+            limit = math.radians(getattr(config, "YAW_GYRO_BLEND_MAX_DEG", 45.0))
+            if abs(_wrap_pi(course_yaw - course_gyro)) <= limit:
+                return (True, _circular_mean(course_yaw, course_gyro), "COURSE_GYRO_YAW")
+        return (True, course_gyro, "COURSE_GYRO")
+
+    if _mode_uses_yaw(mode):
+        if not (flags.imu_yaw_fresh and isfinite(imu.yaw)):
+            return (False, nan, "NO_COURSE_SOURCE")
+        if isfinite(dr.yaw_at_anchor) and isfinite(dr.anchor_course):
+            course = _wrap_pi(dr.anchor_course + _wrap_pi(imu.yaw - dr.yaw_at_anchor))
+        else:
+            course = _wrap_pi(imu.yaw)
+        return (True, course, "COURSE_YAW")
+
+    return (False, nan, "NO_COURSE_SOURCE")
+
+
+def _estimate_speed_for_mode(mode: ControlMode):
+    """Estimate ground speed (m/s) for a DR mode.
+
+    Returns (valid, V_mps, reason). B modes derive speed from baro sink rate;
+    non-B modes fall back to the last known velocity (current_V else anchor_V).
+    """
+    st_t = _STATE_t
+    dr = st_t.dr
+    flags = st_t.flags
+    v_min = config.V_MIN_MPS
+    v_max = config.V_MAX_DR_MPS
+
+    if _mode_uses_baro(mode):
+        if (flags.baro_sink_fresh and isfinite(st_t.baro.sink_rate)
+                and st_t.baro.sink_rate > 0.0):
+            gain = getattr(config, "DR_SINK_TO_HSPEED_GAIN", 1.0)
+            return (True, _clamp(st_t.baro.sink_rate * gain, v_min, v_max), "SPEED_BARO")
+        v = _last_v(dr)
+        if isfinite(v):
+            return (True, _clamp(v, v_min, v_max), "SPEED_LASTV_FALLBACK")
+        return (False, nan, "NO_SPEED_SOURCE")
+
+    v = _last_v(dr)
+    if not isfinite(v):
+        return (False, nan, "NO_SPEED_SOURCE")
+    return (True, _clamp(v, v_min, v_max), "SPEED_LASTV")
+
+
+def _apply_acc_correction_if_needed(mode: ControlMode, course: float, V: float, dt: float):
+    """Build the NE velocity vector from (course, V), optionally weak-corrected by lin-acc.
+
+    Returns (vE, vN, reason). Linear acceleration is used only as a weak blend
+    (ACC_BLEND_WEIGHT), never double-integrated, and is rejected on fast spin or
+    out-of-range magnitude. The resulting magnitude is conservatively capped at
+    V_MAX_DR_MPS along its own direction.
+    """
+    st_t = _STATE_t
+    flags = st_t.flags
+    imu = st_t.imu
+    vE = V * math.sin(course)
+    vN = V * math.cos(course)
+
+    if not _mode_uses_acc(mode):
+        return (vE, vN, "NO_ACC")
+
+    acc_enabled = getattr(config, "USE_ACC_BLEND_CORRECTION", config.USE_ACC_DOUBLE_INTEGRATION)
+    if not (acc_enabled and flags.acc_fresh
+            and isfinite(imu.lin_acc_x) and isfinite(imu.lin_acc_y)):
+        return (vE, vN, "ACC_NOT_FRESH")
+
+    if flags.imu_gyrz_fresh and abs(imu.gyr_z) > math.radians(config.ACC_GYRZ_REJECT_DPS):
+        return (vE, vN, "ACC_GYRZ_REJECT")
+
+    lax = imu.lin_acc_x * config.ACC_X_SIGN
+    lay = imu.lin_acc_y * config.ACC_Y_SIGN
+    if math.hypot(lax, lay) > config.ACC_LIMIT_MPS2:
+        return (vE, vN, "ACC_LIMIT")
+
+    yaw_for_acc = imu.yaw if (flags.imu_yaw_fresh and isfinite(imu.yaw)) else course
+    aE = lax * math.sin(yaw_for_acc) + lay * math.cos(yaw_for_acc)
+    aN = lax * math.cos(yaw_for_acc) - lay * math.sin(yaw_for_acc)
+    vE += config.ACC_BLEND_WEIGHT * aE * dt
+    vN += config.ACC_BLEND_WEIGHT * aN * dt
+
+    mag = math.hypot(vE, vN)
+    if mag > config.V_MAX_DR_MPS and mag > 1e-9:
+        scale = config.V_MAX_DR_MPS / mag
+        vE *= scale
+        vN *= scale
+    return (vE, vN, "ACC_BLEND")
+
+
+def _dr_method_for(mode: ControlMode, acc_applied: bool) -> DRMethod:
+    if _mode_uses_gyro(mode):
+        return DRMethod.GYRO_ACC_BLEND if acc_applied else DRMethod.GYRO_INTEGRATION
+    if _mode_uses_yaw(mode):
+        return DRMethod.YAW_ACC_BLEND if acc_applied else DRMethod.YAW_DELTA
+    return DRMethod.NONE
+
+
+def _fill_nav_for_dr_m_mode(mode: ControlMode, now: float):
+    """DR_M_*: GPS position is fresh, only motion is estimated.
+
+    P = GPS position, M = estimated course/speed (+optional acc blend).
+    Position is never integrated here. Returns (ok, reason).
+    """
+    st_t = _STATE_t
+    dr = st_t.dr
+    flags = st_t.flags
+
+    if not flags.gps_pos_fresh:
+        return (False, "GPS_POS_STALE")
+    if not (isfinite(st_t.gps.E) and isfinite(st_t.gps.N)):
+        return (False, "GPS_POS_NAN")
+
+    previous = (dr.last_step_time if isfinite(dr.last_step_time)
+                else dr.current_time if isfinite(dr.current_time) else now)
+    dt = _safe_dt(now, previous)
+
+    cok, course, creason = _estimate_course_for_mode(mode, now, dt)
+    if not cok:
+        return (False, creason)
+    sok, V, sreason = _estimate_speed_for_mode(mode)
+    if not sok:
+        return (False, sreason)
+    vE, vN, acc_reason = _apply_acc_correction_if_needed(mode, course, V, dt)
+
+    nav = st_t.nav
+    nav.E = st_t.gps.E
+    nav.N = st_t.gps.N
+    nav.course = course
+    nav.V = math.hypot(vE, vN)
+    nav.vE = vE
+    nav.vN = vN
+    nav.valid = True
+    nav.timestamp = now
+
+    dr.current_E = nav.E
+    dr.current_N = nav.N
+    dr.current_V = nav.V
+    dr.current_course = nav.course
+    dr.current_time = now
+    dr.last_step_time = now
+    dr.method = _dr_method_for(mode, acc_reason == "ACC_BLEND")
+    dr.confidence = (_compute_dr_confidence(now - dr.anchor_time)
+                     if isfinite(dr.anchor_time) else 1.0)
+    nav.confidence = dr.confidence
+    flags.dr_current_valid = dr_current_valid(dr)
+    return (True, mode.value)
+
+
+def _fill_nav_for_dr_pm_mode(mode: ControlMode, now: float):
+    """DR_PM_*: GPS position is stale — true dead reckoning.
+
+    P and M are both propagated/estimated from dr.current. The entry check is
+    position-focused (E/N/course/time); speed is validated separately so a
+    missing speed source surfaces as NO_SPEED_SOURCE. Returns (ok, reason).
+    """
+    st_t = _STATE_t
+    dr = st_t.dr
+    nav = st_t.nav
+    flags = st_t.flags
+
+    if not (isfinite(dr.current_E) and isfinite(dr.current_N)
+            and isfinite(dr.current_course) and isfinite(dr.current_time)):
+        return (False, "NO_DR_CURRENT")
+
+    previous = dr.last_step_time if isfinite(dr.last_step_time) else dr.current_time
+    dt = _safe_dt(now, previous)
+
+    cok, course, creason = _estimate_course_for_mode(mode, now, dt)
+    if not cok:
+        return (False, creason)
+    sok, V, sreason = _estimate_speed_for_mode(mode)
+    if not sok:
+        return (False, sreason)
+    vE, vN, acc_reason = _apply_acc_correction_if_needed(mode, course, V, dt)
+
+    dr.current_E += vE * dt
+    dr.current_N += vN * dt
+    dr.current_V = math.hypot(vE, vN)
+    dr.current_course = course
+    dr.current_time = now
+    dr.last_step_time = now
+    dr.method = _dr_method_for(mode, acc_reason == "ACC_BLEND")
+    dr.confidence = (_compute_dr_confidence(now - dr.anchor_time)
+                     if isfinite(dr.anchor_time) else 1.0)
+
+    nav.E = dr.current_E
+    nav.N = dr.current_N
+    nav.V = dr.current_V
+    nav.course = dr.current_course
+    nav.vE = vE
+    nav.vN = vN
+    nav.valid = True
+    nav.timestamp = now
+    nav.confidence = dr.confidence
+    flags.dr_current_valid = dr_current_valid(dr)
+    return (True, mode.value)
+
+
+def _make_l1input_from_nav(mode: ControlMode, reason: str) -> L1Input:
+    """Build an L1Input from the filled NavState, validating finiteness/readiness.
+
+    confidence is 1.0 for GPS tracking and dr.confidence for DR modes. Any
+    non-finite nav/target field, V below V_MIN_MPS, or missing origin/target
+    yields an invalid L1Input (reason NAV_INVALID).
+    """
+    st_t = _STATE_t
+    mi_t = _MISSION_t
+    nav = st_t.nav
+
+    if _is_gps_tracking_mode(mode):
+        confidence = 1.0
+        dr_method = DRMethod.NONE
+    else:
+        confidence = st_t.dr.confidence if isfinite(st_t.dr.confidence) else 1.0
+        dr_method = st_t.dr.method
+
+    vE = nav.vE
+    vN = nav.vN
+    if not (isfinite(vE) and isfinite(vN)) and isfinite(nav.V) and isfinite(nav.course):
+        vE = nav.V * math.sin(nav.course)
+        vN = nav.V * math.cos(nav.course)
+
+    valid = (
+        isfinite(nav.E) and isfinite(nav.N)
+        and isfinite(nav.V) and nav.V >= config.V_MIN_MPS
+        and isfinite(nav.course)
+        and isfinite(mi_t.target_E) and isfinite(mi_t.target_N)
+        and mi_t.target_ready and mi_t.origin_ready
+    )
+    if not valid:
+        return L1Input(valid=False, reason="NAV_INVALID", control_mode=mode,
+                       dr_method=dr_method, confidence=confidence)
+
+    return L1Input(
+        valid=True, reason=reason, control_mode=mode, dr_method=dr_method,
+        confidence=confidence,
+        E=nav.E, N=nav.N, V=nav.V, course=nav.course, vE=vE, vN=vN,
+        target_E=mi_t.target_E, target_N=mi_t.target_N,
+    )
+
+
 def ProduceL1Input(now: float) -> L1Input:
     st_t = _STATE_t
     mi_t = _MISSION_t
+    mode = st_t.nav.control_mode
+
+    if mode == ControlMode.FAIL:
+        return L1Input(valid=False, reason="FAIL", control_mode=mode)
+    if mode == ControlMode.DETUMBLING:
+        return L1Input(valid=False, reason="DETUMBLING", control_mode=mode)
 
     if not mi_t.origin_ready:
-        return L1Input(valid=False, reason="NO_ORIGIN")
+        return L1Input(valid=False, reason="NO_ORIGIN", control_mode=mode)
     if not mi_t.target_ready:
-        return L1Input(valid=False, reason="NO_TARGET")
+        return L1Input(valid=False, reason="NO_TARGET", control_mode=mode)
 
-    mode = st_t.nav.control_mode
     if _is_gps_tracking_mode(mode):
         if not (isfinite(st_t.nav.E) and isfinite(st_t.nav.N)
                 and isfinite(st_t.nav.V) and isfinite(st_t.nav.course)):
-            return L1Input(valid=False, reason="GPS_NAN")
-        return L1Input(
-            valid=True, reason="GPS_TRACKING",
-            control_mode=mode, dr_method=DRMethod.NONE, confidence=1.0,
-            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
-            target_E=mi_t.target_E, target_N=mi_t.target_N,
-        )
+            return L1Input(valid=False, reason="GPS_NAV_INVALID", control_mode=mode)
+        return _make_l1input_from_nav(mode, reason="GPS_NAV")
 
-    if _is_dr_mode(mode):
-        if not dr_current_valid(st_t.dr):
-            return L1Input(valid=False, reason="NO_DR_CURRENT", control_mode=mode)
-        _update_state_from_dead_reckoning(now)
-        return L1Input(
-            valid=True, reason=mode.value,
-            control_mode=mode, dr_method=st_t.dr.method,
-            confidence=st_t.dr.confidence,
-            E=st_t.nav.E, N=st_t.nav.N, V=st_t.nav.V, course=st_t.nav.course,
-            target_E=mi_t.target_E, target_N=mi_t.target_N,
-        )
+    if _mode_value(mode).startswith("DR_M_"):
+        ok, reason = _fill_nav_for_dr_m_mode(mode, now)
+        if not ok:
+            return L1Input(valid=False, reason=reason, control_mode=mode)
+        return _make_l1input_from_nav(mode, reason=reason)
 
-    return L1Input(valid=False, reason="FAIL")
+    if _mode_value(mode).startswith("DR_PM_"):
+        ok, reason = _fill_nav_for_dr_pm_mode(mode, now)
+        if not ok:
+            return L1Input(valid=False, reason=reason, control_mode=mode)
+        return _make_l1input_from_nav(mode, reason=reason)
+
+    return L1Input(valid=False, reason="UNKNOWN_MODE", control_mode=mode)
 
 
+# Per-mode yaw-rate limit (deg/s) keyed by ControlMode.value. Missing modes
+# (DETUMBLING/FAIL/unknown) fall through to 0.0.
+_YAW_RATE_LIMIT_DPS_BY_MODE = {
+    ControlMode.GPS_TRACKING_CLOSED.value: "GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS",
+    ControlMode.GPS_TRACKING_OPEN.value:   "GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_GBA_CLOSED.value:     "DR_M_GBA_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_GB_CLOSED.value:      "DR_M_GB_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_G_CLOSED.value:       "DR_M_G_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_YBA_OPEN.value:       "DR_M_YBA_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_YB_OPEN.value:        "DR_M_YB_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_M_Y_OPEN.value:         "DR_M_Y_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_GBA_CLOSED.value:    "DR_PM_GBA_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_GB_CLOSED.value:     "DR_PM_GB_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_G_CLOSED.value:      "DR_PM_G_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_YBA_OPEN.value:      "DR_PM_YBA_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_YB_OPEN.value:       "DR_PM_YB_YAW_RATE_LIMIT_DPS",
+    ControlMode.DR_PM_Y_OPEN.value:        "DR_PM_Y_YAW_RATE_LIMIT_DPS",
+    ControlMode.DETUMBLING.value:          "DETUMBLING_YAW_RATE_LIMIT_DPS",
+    ControlMode.FAIL.value:                "FAIL_YAW_RATE_LIMIT_DPS",
+}
+
+
+def _choose_yaw_rate_limit_rad_s(mode: ControlMode) -> float:
+    """Return the per-mode yaw-rate limit in rad/s (0.0 for unknown modes)."""
+    attr = _YAW_RATE_LIMIT_DPS_BY_MODE.get(_mode_value(mode))
+    if attr is None:
+        return 0.0
+    return math.radians(getattr(config, attr, 0.0))
+
+
+# Backward-compatible alias (older call sites expect this name, rad/s).
 def _choose_yaw_rate_limit(mode: ControlMode) -> float:
-    if mode == ControlMode.GPS_TRACKING_CLOSED:
-        return math.radians(config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS)
-    if mode == ControlMode.GPS_TRACKING_OPEN:
-        return math.radians(config.GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS)
-    if _is_dr_mode(mode):
-        if _mode_uses_gyro(mode) and _mode_uses_baro(mode):
-            return math.radians(getattr(config, "DR_GB_YAW_RATE_LIMIT_DPS", 50.0))
-        if _mode_uses_gyro(mode):
-            return math.radians(getattr(config, "DR_G_YAW_RATE_LIMIT_DPS", 35.0))
-        if _mode_uses_yaw(mode) and _mode_uses_baro(mode):
-            return math.radians(getattr(config, "DR_YB_YAW_RATE_LIMIT_DPS", 20.0))
-        if _mode_uses_yaw(mode):
-            return math.radians(getattr(config, "DR_Y_YAW_RATE_LIMIT_DPS", 15.0))
-    if mode == ControlMode.DETUMBLING:
-        return math.radians(config.DETUMBLING_YAW_RATE_LIMIT_DPS)
-    return math.radians(config.FAIL_YAW_RATE_LIMIT_DPS)
+    return _choose_yaw_rate_limit_rad_s(mode)
+
+
+def _target_reached_radius_m() -> float:
+    return getattr(config, "TARGET_RADIUS_M", 0.0)
 
 
 def ProduceL1Output(l1in: L1Input) -> L1Output:
@@ -745,55 +1075,85 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
         dr_method=l1in.dr_method,
         confidence=l1in.confidence,
         pos_E=l1in.E, pos_N=l1in.N,
+        nav_E=l1in.E, nav_N=l1in.N,
         target_E=l1in.target_E, target_N=l1in.target_N,
+        course=l1in.course,
         ground_speed_mps=l1in.V if _ok(l1in.V) else 0.0,
+        V=l1in.V if _ok(l1in.V) else 0.0,
     )
 
-    if not l1in.valid:
+    def _invalid(reason: str) -> L1Output:
         output_t.control_valid = False
+        output_t.valid = False
         output_t.nominal = False
-        output_t.reason = l1in.reason
+        output_t.reason = reason
+        output_t.yaw_rate_cmd = 0.0
         return output_t
 
+    if not l1in.valid:
+        return _invalid(l1in.reason)
+
+    if l1in.control_mode == ControlMode.FAIL:
+        return _invalid("FAIL")
+
     if l1in.control_mode == ControlMode.DETUMBLING:
-        lim = _choose_yaw_rate_limit(ControlMode.DETUMBLING)
+        lim = _choose_yaw_rate_limit_rad_s(ControlMode.DETUMBLING)
         output_t.control_valid = True
+        output_t.valid = True
         output_t.nominal = False
         output_t.reason = "DETUMBLING"
         output_t.pid_enabled = False
+        output_t.yaw_rate_cmd = 0.0
+        output_t.yaw_rate_limit = lim
         output_t.yaw_rate_limit_dps = math.degrees(lim)
         return output_t
 
     for v in (l1in.E, l1in.N, l1in.target_E, l1in.target_N, l1in.course, l1in.V):
         if not _ok(v):
-            output_t.control_valid = False
-            output_t.reason = "NAN_NAV_STATE"
-            return output_t
+            return _invalid("NAN_NAV_STATE")
+
+    if l1in.V < config.V_MIN_MPS:
+        return _invalid("V_TOO_SMALL")
+
+    if _is_dr_mode(l1in.control_mode):
+        conf = _clamp(l1in.confidence, 0.0, 1.0)
+        if conf < getattr(config, "DR_MIN_CONFIDENCE_FOR_CONTROL", 0.15):
+            return _invalid("LOW_CONFIDENCE")
+    else:
+        conf = 1.0
 
     dE = l1in.target_E - l1in.E
     dN = l1in.target_N - l1in.N
     dist = math.hypot(dE, dN)
     output_t.distance_to_target = dist
+    output_t.dist_to_target = dist
+
+    if dist <= _target_reached_radius_m():
+        output_t.target_bearing = _wrap_pi(math.atan2(dE, dN))
+        return _invalid("TARGET_REACHED")
 
     target_bearing = _wrap_pi(math.atan2(dE, dN))
     nu = _wrap_pi(target_bearing - l1in.course)
+    nu_clamped = _clamp(nu, -pi / 2.0, pi / 2.0)
     if abs(nu) < math.radians(config.NU_DEADBAND_DEG):
         sin_nu_eff = 0.0
     else:
-        sin_nu_eff = math.sin(_clamp(nu, -pi / 2.0, pi / 2.0))
+        sin_nu_eff = math.sin(nu_clamped)
 
     _v_max = config.V_MAX_DR_MPS if _is_dr_mode(l1in.control_mode) else config.V_MAX_MPS
     V_eff = _clamp(l1in.V, config.V_MIN_MPS, _v_max)
     yaw_rate_cmd = 2.0 * V_eff / config.L_GAIN_M * sin_nu_eff
-    yaw_rate_cmd *= l1in.confidence
-    lim = _choose_yaw_rate_limit(l1in.control_mode)
+    yaw_rate_cmd *= conf  # confidence scaling: 1.0 for GPS, dr.confidence for DR
+    lim = _choose_yaw_rate_limit_rad_s(l1in.control_mode)
     yaw_rate_cmd = _clamp(yaw_rate_cmd, -lim, lim)
 
     output_t.target_bearing = target_bearing
     output_t.nu = nu
     output_t.yaw_rate_cmd = yaw_rate_cmd
+    output_t.yaw_rate_limit = lim
     output_t.yaw_rate_limit_dps = math.degrees(lim)
     output_t.control_valid = True
+    output_t.valid = True
     output_t.nominal = True
     output_t.reason = l1in.reason
     output_t.pid_enabled = _mode_uses_gyro_feedback(l1in.control_mode)
