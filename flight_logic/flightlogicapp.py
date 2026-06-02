@@ -112,6 +112,10 @@ def to_apogee(main_queue, force: bool = False) -> None:
     _set_state(main_queue, 2, force=force)
 
 
+def to_descent(main_queue, force: bool = False) -> None:
+    _set_state(main_queue, 3, force=force)
+
+
 def _has_release_target() -> bool:
     lat = prevstate.PREV_TARGET_LAT
     lon = prevstate.PREV_TARGET_LON
@@ -126,7 +130,7 @@ def to_release(main_queue, force: bool = False, reason: str = "TRIGGER") -> None
     if not _has_release_target():
         logger.error("Release blocked: target coordinate must be set before release")
         return
-    _set_state(main_queue, 3, force=force)
+    _set_state(main_queue, 4, force=force)   # PAYLOAD_RELEASE (번와이어)
     burnwire_payload = f"TRIGGER:{reason}"
     msgstructure.send_msg(
         main_queue,
@@ -146,7 +150,7 @@ def to_release(main_queue, force: bool = False, reason: str = "TRIGGER") -> None
 
 
 def to_egg(main_queue, force: bool = False) -> None:
-    _set_state(main_queue, 4, force=force)
+    _set_state(main_queue, 5, force=force)   # PROBE_RELEASE (솔레노이드, 에그 2m)
     # SS,4 can skip SS,3; refresh motor target from prevstate so guidance is not TARGET_UNSET.
     if _has_release_target():
         msgstructure.send_msg(
@@ -170,7 +174,7 @@ def _send_egg_drop(main_queue) -> None:
 
 
 def to_landed(main_queue, force: bool = False) -> None:
-    _set_state(main_queue, 5, force=force)
+    _set_state(main_queue, 6, force=force)
 
 
 def _verify_inter_app_links(main_queue) -> None:
@@ -420,7 +424,9 @@ def handle_ss(data: str, main_queue) -> None:
         target = int(data)
     except ValueError:
         return
-    if target < 0 or target > 5:
+    # 0=LAUNCH_PAD 1=ASCENT 2=APOGEE 3=DESCENT
+    # 4=PAYLOAD_RELEASE(번와이어) 5=PROBE_RELEASE(솔레노이드) 6=LANDED
+    if target < 0 or target > 6:
         return
     if target == 0:
         to_launch_pad(main_queue, force=True)
@@ -429,10 +435,12 @@ def handle_ss(data: str, main_queue) -> None:
     elif target == 2:
         to_apogee(main_queue, force=True)
     elif target == 3:
-        to_release(main_queue, force=True, reason="SS_FORCE")
+        to_descent(main_queue, force=True)
     elif target == 4:
-        to_egg(main_queue, force=True)
+        to_release(main_queue, force=True, reason="SS_FORCE")
     elif target == 5:
+        to_egg(main_queue, force=True)
+    elif target == 6:
         to_landed(main_queue, force=True)
 
 
@@ -530,7 +538,12 @@ def barometer_logic(main_queue, alt: float) -> None:
         elif cnt_apogee >= 2:
             _reset_transition_counters()
             to_apogee(main_queue)
-    elif state == 2:
+    elif state == 2:   # APOGEE → DESCENT 자동 전환 (TLM에 APOGEE 확보 후)
+        cnt_apogee = cnt_apogee + 1
+        if cnt_apogee >= 15:   # ~1.5s: TLM 1~2 패킷 확보 후 DESCENT 진입
+            _reset_transition_counters()
+            to_descent(main_queue)
+    elif state == 3:   # DESCENT: 릴리즈 조건 감시
         rel_decision = _release_condition(filtered_alt, now_s)
         if rel_decision.trigger:
             release_reason = rel_decision.reason
@@ -538,12 +551,12 @@ def barometer_logic(main_queue, alt: float) -> None:
         if cnt_release >= 3:
             _reset_transition_counters()
             to_release(main_queue, reason=release_reason)
-    elif state == 3:
+    elif state == 4:   # PAYLOAD_RELEASE (번와이어): 에그 방출 고도 감시
         cnt_release = cnt_release + 1 if alt <= 50 else 0
         if cnt_release >= 3:
             _reset_transition_counters()
             to_egg(main_queue)
-    elif state == 4:
+    elif state == 5:   # PROBE_RELEASE (솔레노이드, ~2m): 착지 감시
         cnt_egg_drop = cnt_egg_drop + 1 if alt <= 5 else 0
         if cnt_egg_drop >= 3:
             _send_egg_drop(main_queue)

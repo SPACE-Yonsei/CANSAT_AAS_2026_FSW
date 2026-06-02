@@ -405,15 +405,15 @@ def handle_flight_state(data: str) -> None:
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE       = new_state
-        if new_state < 3:
+        if new_state < 4:   # PAYLOAD_RELEASE(4) 이전: 가이던스 리셋
             prevstate.clear_start_point()
             guidance.reset()   # origin_ready=False 포함 → handle_gps가 재잠금 가능
             _DO_CTRL_RESET = True
             _DETUMBLE_ACTIVE = False
             _DETUMBLE_EXIT_START = math.nan
 
-    # State 3 진입 시각 기록 + candidate origin으로 즉시 lock 시도 (origin 지연 단축).
-    if new_state >= 3:
+    # PAYLOAD_RELEASE(4) 진입 시각 기록 + candidate origin으로 즉시 lock 시도.
+    if new_state >= 4:
         _now = time.monotonic()
         guidance.note_state3_entry(_now)
         if not guidance._MISSION_t.origin_ready:
@@ -575,7 +575,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         snap_t        = _cache_snapshot()
 
     # 비활성 또는 비행 전 상태
-    if not motor_enabled or state < 3:
+    if not motor_enabled or state < 4:   # PAYLOAD_RELEASE(4) 이전: 서보 중립
         if PI is not None:
             control.WriteZero(PI)
         zero_out = control.CtrlOutput(
@@ -587,12 +587,12 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
             valid=False,
             control_mode=guidance.ControlMode.FAIL,
         )
-        event = "MOTOR_DISABLED" if not motor_enabled else "STATE_BELOW_3"
+        event = "MOTOR_DISABLED" if not motor_enabled else "STATE_BELOW_4"
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, zero_out, snap=snap_t, event=event)
         return None
 
-    # 착지 후
-    if state == 5:
+    # 착지 후 (state 6 = LANDED)
+    if state == 6:
         if PI is not None:
             control.WriteOff(PI)
         off_out = control.CtrlOutput(
