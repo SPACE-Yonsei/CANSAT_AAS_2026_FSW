@@ -155,6 +155,7 @@ BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 HISTORY_WINDOW_S  = 3.0
 # Accelerometer-aided DR
 USE_ACC_DOUBLE_INTEGRATION = True
+USE_ACC_BLEND_CORRECTION   = True
 # 20260531 실측: lin_acc XY mag mean=1.32, 누적 velocity error 최대 3.6 m/s
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
@@ -166,6 +167,8 @@ LIN_ACC_SAMPLE_MAX_AGE_S   = 0.10
 # 실측: |gyrz|>80 dps 구간에서 lin_acc mag 3.1~19.1 m/s² 이상값 집중
 ACC_GYRZ_REJECT_DPS        = 80.0
 ACC_GYR_REJECT_DPS         = ACC_GYRZ_REJECT_DPS
+YAW_GYRO_BLEND_MAX_DEG     = 45.0
+DR_SINK_TO_HSPEED_GAIN     = 1.0
 
 # DR confidence scaling
 # DR remains available while the anchor is valid; confidence only scales L1 yaw-rate.
@@ -182,6 +185,11 @@ TARGET_RADIUS_M = 5.0
 GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 60.0
 GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 35.0
 DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 50.0
+DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
+DR_GB_YAW_RATE_LIMIT_DPS               = 50.0
+DR_G_YAW_RATE_LIMIT_DPS                = 35.0
+DR_YB_YAW_RATE_LIMIT_DPS               = 20.0
+DR_Y_YAW_RATE_LIMIT_DPS                = 15.0
 # 12→15: 12 dps는 과도하게 보수적
 DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
 DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
