@@ -27,6 +27,11 @@ distance_health = 0
 sim_enable = False
 sim_active = False
 
+# 발사 감지 기준선: 부팅/CAL 직후 첫 고도값을 저장해
+# abs 30m가 아닌 "기준선 대비 +30m" 상승을 ASCENT 조건으로 사용.
+# CAL 후 고도가 ~0m로 리셋되면 None으로 초기화 → 재샘플링.
+_ascent_baseline_alt: Optional[float] = None
+
 # Solenoid lower bound: reject "sensor dead" 0 mm; slight slack under TF-Luna min valid (200 mm).
 SOLENOID_MIN_MM = 100.0
 
@@ -477,10 +482,11 @@ def handle_target_coord(data: str, main_queue) -> None:
 
 
 def handle_reset_alt(_data: str, _main_queue) -> None:
-    global max_alt, recent_alt
+    global max_alt, recent_alt, _ascent_baseline_alt
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     recent_alt = []
+    _ascent_baseline_alt = None   # CAL 후 재샘플링 → 새 기준선 확립
     reset_release_predictor(release_predictor)
 
 
@@ -527,7 +533,11 @@ def barometer_logic(main_queue, alt: float) -> None:
         prevstate.update_maxalt(max_alt)
 
     if state == 0:
-        cnt_ascent = cnt_ascent + 1 if alt > 30 else 0
+        global _ascent_baseline_alt
+        if _ascent_baseline_alt is None:
+            _ascent_baseline_alt = alt   # 부팅/CAL 후 첫 샘플을 기준선으로
+        risen = alt - _ascent_baseline_alt
+        cnt_ascent = cnt_ascent + 1 if risen > 100 else 0
         if cnt_ascent >= 3:
             _reset_transition_counters()
             reset_release_predictor(release_predictor)
