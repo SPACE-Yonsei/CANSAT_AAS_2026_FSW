@@ -182,12 +182,16 @@ class TestGuidanceCommandFromL1(unittest.TestCase):
 
 class TestControllerUpdate(unittest.TestCase):
     @staticmethod
-    def _cmd(angular_velocity_deg_s=0.0, ts=100.0, speed=0.0):
+    def _cmd(angular_velocity_deg_s=0.0, ts=100.0, speed=0.0,
+             control_mode=guidance.ControlMode.GPS_TRACKING_CLOSED):
+        # New ControlMode taxonomy: FAIL now short-circuits to neutral in step(),
+        # so a real steering mode is used as the default for controller tests.
         return control.CtrlInput(
             angular_velocity_cmd_deg_s=angular_velocity_deg_s,
             ground_speed_mps=speed,
             valid=True,
             timestamp=ts,
+            control_mode=control_mode,
         )
 
     def _ctl(self, **kwargs):
@@ -233,7 +237,7 @@ class TestControllerUpdate(unittest.TestCase):
     def test_no_gyro_preserves_guidance_control_mode(self):
         self._ctl()
         out = control.step(self._cmd(10.0), float("nan"), 100.0)
-        self.assertEqual(out.control_mode, guidance.ControlMode.FAIL)
+        self.assertEqual(out.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
         self.assertFalse(out.sensor_valid)
         self.assertAlmostEqual(out.delta_pid_deg, 0.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
@@ -241,7 +245,7 @@ class TestControllerUpdate(unittest.TestCase):
     def test_valid_gyro_closed_loop(self):
         self._ctl()
         out = control.step(self._cmd(10.0), 5.0, 100.0)
-        self.assertEqual(out.control_mode, guidance.ControlMode.FAIL)
+        self.assertEqual(out.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
         self.assertTrue(out.sensor_valid)
 
     def test_command_timestamp_does_not_neutralize(self):

@@ -33,19 +33,9 @@ _DO_CTRL_RESET: bool = False
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _STEER_MODE: str = ""
 
-# 모터 제어 소스 모드 (CMC 명령으로 변경)
+# 모터 제어 소스 선호 (CMC 명령으로 변경). 최종 control mode는 guidance가 결정하며
+# 이 값은 로깅/소스 선호 표식으로만 쓰인다. (IMU_HEADING 독립 출력 분기는 제거됨)
 MOTOR_CTRL_MODE: str = config.MOTOR_CTRL_MODE_GPS_GUIDED
-
-# IMU_HEADING: GPS+target 없을 때 로그 중복 방지 플래그
-_imu_heading_fallback_logged: bool = False
-# IMU_HEADING: GPS 유실 시 마지막으로 유효했던 bearing (IMU 프레임, deg)
-_imu_heading_last_bearing_deg: float | None = None
-# IMU_HEADING: GPS pos_health가 0이어도 bearing 계산에 쓸 마지막 유효 GPS 위치
-_imu_last_valid_gps_lat: float = math.nan
-_imu_last_valid_gps_lon: float = math.nan
-
-_IMU_HEADING_DEADBAND_DEG: float = 5.0   # ±5° 이내 → 서보 중립
-_IMU_HEADING_MAX_ERR_DEG:  float = 90.0  # ±90° 이상 → 최대 deflection
 
 
 def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> None:
@@ -273,12 +263,19 @@ def handle_gps(data: str) -> None:
     with _UPDATE_LOCK:
         _CACHE_t.latest_gps = sample
 
-    # origin lock: 비행 중(state >= 3) 첫 유효 GPS 수신 시 1회
-    if (pos_health and STATE >= 3
-            and not guidance._MISSION_t.origin_ready
-            and math.isfinite(lat) and math.isfinite(lon)):
-        guidance.lock_origin(lat, lon)
-        prevstate.update_start_point(lat, lon, True)
+    # candidate origin: state 무관(< 3 포함)하게 유효 GPS position을 저장해 둔다.
+    # gpsapp의 pos_health가 expected-area/jump gate를 이미 통과한 표본만 true.
+    if pos_health and math.isfinite(lat) and math.isfinite(lon):
+        guidance.update_candidate_origin(lat, lon, pos_ts)
+
+    # origin lock: state >= 3이고 아직 origin_ready가 아니면 candidate로 lock 시도.
+    # candidate가 state3 진입 전 표본이면 PRE_RELEASE_GPS, 이후면 LATE_GPS.
+    if STATE >= 3 and not guidance._MISSION_t.origin_ready:
+        src = guidance.try_lock_origin_from_candidate(time.monotonic())
+        if src and math.isfinite(guidance._MISSION_t.origin_lat):
+            prevstate.update_start_point(
+                guidance._MISSION_t.origin_lat,
+                guidance._MISSION_t.origin_lon, True)
 
 
 def handle_imu(data: str) -> None:
@@ -415,6 +412,17 @@ def handle_flight_state(data: str) -> None:
             _DETUMBLE_ACTIVE = False
             _DETUMBLE_EXIT_START = math.nan
 
+    # State 3 진입 시각 기록 + candidate origin으로 즉시 lock 시도 (origin 지연 단축).
+    if new_state >= 3:
+        _now = time.monotonic()
+        guidance.note_state3_entry(_now)
+        if not guidance._MISSION_t.origin_ready:
+            src = guidance.try_lock_origin_from_candidate(_now)
+            if src and math.isfinite(guidance._MISSION_t.origin_lat):
+                prevstate.update_start_point(
+                    guidance._MISSION_t.origin_lat,
+                    guidance._MISSION_t.origin_lon, True)
+
     if _DO_CTRL_RESET:
         control.reset()
 
@@ -461,108 +469,6 @@ def handle_mec(data: str) -> None:
         prevstate.update_motor_enabled(False)
         if PI is not None:
             control.WriteZero(PI)
-
-
-def _imu_heading_target_deg(yaw_rad: float, snap: _Cache) -> float:
-    """GPS bearing → IMU 프레임 target heading (deg). GPS 없으면 마지막 bearing 유지.
-
-    GPS pos_health=0이어도 마지막으로 유효했던 GPS 위치(_imu_last_valid_gps_lat/lon)로
-    bearing을 계산한다. GPS dropout 시 조향이 완전히 끊기는 현상 방지.
-    """
-    global _imu_heading_fallback_logged, _imu_heading_last_bearing_deg
-    global _imu_last_valid_gps_lat, _imu_last_valid_gps_lon
-
-    gps     = snap.latest_gps
-    t_lat   = snap.target_lat
-    t_lon   = snap.target_lon
-    gps_lat = gps.lat if gps is not None else None
-    gps_lon = gps.lon if gps is not None else None
-
-    # 유효한 GPS 위치가 들어오면 캐시 갱신
-    if (gps_lat is not None and math.isfinite(gps_lat)
-            and gps_lon is not None and math.isfinite(gps_lon)):
-        _imu_last_valid_gps_lat = gps_lat
-        _imu_last_valid_gps_lon = gps_lon
-
-    # 현재 GPS가 없으면 캐시로 대체
-    if not (gps_lat is not None and math.isfinite(gps_lat)):
-        gps_lat = _imu_last_valid_gps_lat if math.isfinite(_imu_last_valid_gps_lat) else None
-        gps_lon = _imu_last_valid_gps_lon if math.isfinite(_imu_last_valid_gps_lon) else None
-
-    if (gps_lat is not None and math.isfinite(gps_lat)
-            and gps_lon is not None and math.isfinite(gps_lon)
-            and t_lat is not None and math.isfinite(t_lat)
-            and t_lon is not None and math.isfinite(t_lon)
-            and abs(t_lat) > 1e-9 and abs(t_lon) > 1e-9):
-        dlon = math.radians(t_lon - gps_lon)
-        lat1 = math.radians(gps_lat)
-        lat2 = math.radians(t_lat)
-        y_b  = math.sin(dlon) * math.cos(lat2)
-        x_b  = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-        abs_bearing_rad    = math.atan2(y_b, x_b)
-        yaw_off            = snap.latest_imu.yaw_offset_deg
-        target_deg         = math.degrees(abs_bearing_rad) + yaw_off
-        _imu_heading_last_bearing_deg = target_deg
-        if _imu_heading_fallback_logged:
-            logger.info(
-                "IMU_HEADING: bearing restored — gps=(%.5f,%.5f) target=(%.5f,%.5f)"
-                " bearing=%.1f° yaw_off=%.1f°",
-                gps_lat, gps_lon, t_lat, t_lon,
-                math.degrees(abs_bearing_rad), yaw_off,
-            )
-            _imu_heading_fallback_logged = False
-        return target_deg
-    else:
-        if _imu_heading_last_bearing_deg is not None:
-            target_deg = _imu_heading_last_bearing_deg
-        else:
-            target_deg = math.degrees(yaw_rad)
-        if not _imu_heading_fallback_logged:
-            logger.info(
-                "IMU_HEADING fallback (last bearing=%.1f°): gps_lat=%s gps_lon=%s t_lat=%s t_lon=%s",
-                target_deg, gps_lat, gps_lon, t_lat, t_lon,
-            )
-            _imu_heading_fallback_logged = True
-        return target_deg
-
-
-def _imu_heading_direct_output(
-    now: float, yaw_rad: float, snap: _Cache,
-) -> control.CtrlOutput:
-    """IMU_HEADING 직접 매핑: error_deg → 서보 delta 선형 보간.
-
-    deadband ±5°: 서보 중립.
-    |error| ≥ 90°: DELTA_ARM_MAX_DEG 포화.
-    5° < |error| < 90°: 선형 보간.
-    """
-    target_deg = _imu_heading_target_deg(yaw_rad, snap)
-    error_deg  = (target_deg - math.degrees(yaw_rad) + 180.0) % 360.0 - 180.0
-    abs_err    = abs(error_deg)
-
-    if abs_err <= _IMU_HEADING_DEADBAND_DEG:
-        delta     = 0.0
-        saturated = False
-    elif abs_err >= _IMU_HEADING_MAX_ERR_DEG:
-        delta     = math.copysign(control.DELTA_ARM_MAX_DEG, error_deg)
-        saturated = True
-    else:
-        t     = (abs_err - _IMU_HEADING_DEADBAND_DEG) / (_IMU_HEADING_MAX_ERR_DEG - _IMU_HEADING_DEADBAND_DEG)
-        delta = math.copysign(t * control.DELTA_ARM_MAX_DEG, error_deg)
-        saturated = False
-
-    left_pw, right_pw, left_angle, right_angle, delta_arm = control.ConnectRoMo(delta)
-
-    return control.CtrlOutput(
-        timestamp=now,
-        left_pw=left_pw,
-        right_pw=right_pw,
-        left_angle_deg=left_angle,
-        right_angle_deg=right_angle,
-        delta_arm_deg=delta_arm,
-        delta_ff_deg=delta,
-        saturated=saturated,
-        valid=True,
-    )
 
 
 def handle_cmc(data: str) -> None:
@@ -642,6 +548,25 @@ def handle_fac(data: str) -> None:
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 
 
+def _emit_neutral(main_queue, state, motor_enabled, snap_t, now, *,
+                  event: str, reason: str,
+                  l1_in=None, l1_out=None) -> control.CtrlOutput:
+    """중립 서보 출력 + 로그. guidance mode가 FAIL이거나 파이프라인이 invalid일 때 사용.
+
+    motorapp은 자체 control mode/fallback을 만들지 않는다. event는 guidance mode
+    문자열, reason은 invalid 세부 사유를 그대로 전달한다.
+    """
+    neutral_out = control.WriteNeutral(now, guidance._STATE_t.nav.control_mode)
+    neutral_out.reason = reason
+    control.MoveServo(PI, neutral_out)
+    sensorlog.log_motor_raw(
+        state, motor_enabled, MOTOR_CTRL_MODE, neutral_out, l1_out,
+        snap=snap_t, event=event, l1_in=l1_in,
+    )
+    _publish_motor_diag(main_queue, neutral_out, snap_t, event)
+    return neutral_out
+
+
 def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     """한 사이클 제어 계산. 반환값은 진단용 (None이면 액션 없음)."""
     with _UPDATE_LOCK:
@@ -718,50 +643,37 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
+    # ── guidance 기반 자율 추종 (유일한 제어 경로) ───────────────────────────
+    # 모든 control mode는 guidance.DecideControlMode만 만든다. motorapp은 자체
+    # control mode나 fallback/heading 분기를 만들지 않는다. FAIL이면 ProduceL1Input이
+    # invalid를 반환하고 곧장 neutral로 간다 (event=mode.value, reason=세부 사유).
     mode = guidance.DecideControlMode(
         snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
+    event = mode.value
 
-    # ── [3] IMU_HEADING 모드 ──────────────────────────────────────────────────
-    if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
-        yaw = snap_t.latest_imu.yaw_rad
-        if yaw is not None and math.isfinite(float(yaw)):
-            ctrl_out_t = _imu_heading_direct_output(now, float(yaw), snap_t)
-            control.MoveServo(PI, ctrl_out_t)
-            sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t, event="IMU_HEADING")
-            _publish_motor_diag(main_queue, ctrl_out_t, snap_t, config.MOTOR_CTRL_MODE_IMU_HEADING)
-            return ctrl_out_t
-        # IMU yaw 무효 → GPS/DR fallthrough
+    l1_in_t = guidance.ProduceL1Input(now)
+    if not l1_in_t.valid:
+        return _emit_neutral(main_queue, state, motor_enabled, snap_t, now,
+                             event=event, reason=l1_in_t.reason, l1_in=l1_in_t)
 
-    # ── [4] GPS/DR 자율 추종 ─────────────────────────────────────────────────
-    if guidance.is_guidance_mode(mode):
-        l1_in_t  = guidance.ProduceL1Input(now)
-        l1_out_t = guidance.ProduceL1Output(l1_in_t)
-        gz_meas  = snap_t.latest_imu.gyrz_rad_s or 0.0
-        gz_meas  = math.degrees(float(gz_meas))   # rad/s → deg/s (ProduceCtrlOutput 기대 단위)
-        ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
-        ctrl_out_t = control.step(ctrl_in_t, gz_meas, now)
-        control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(
-            state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t,
-            snap=snap_t, event=guidance._STATE_t.nav.control_mode.value
-        )
-        _publish_motor_diag(main_queue, ctrl_out_t, snap_t, guidance._STATE_t.nav.control_mode.value)
-        return ctrl_out_t
+    l1_out_t = guidance.ProduceL1Output(l1_in_t)
+    if not l1_out_t.valid:
+        return _emit_neutral(main_queue, state, motor_enabled, snap_t, now,
+                             event=event, reason=l1_out_t.reason,
+                             l1_in=l1_in_t, l1_out=l1_out_t)
 
-    # ── [4] FAIL → IMU heading fallback ─────────────────────────────────────
-    # GPS/DR 모두 FAIL이어도 IMU yaw가 유효하면 목표 방위각 추종을 유지한다.
-    # GPS dropout(번와이어 EMI, 신호 차단) 시 heading 제어 단절 방지.
-    if PI is not None:
-        control.WriteOff(PI)
-    off_out = control.CtrlOutput(
-        timestamp=now,
-        left_pw=0,
-        right_pw=0,
-        valid=False,
-        control_mode=guidance.ControlMode.FAIL,
+    gz_meas = snap_t.latest_imu.gyrz_rad_s or 0.0
+    gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s (control.step 기대 단위)
+    ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
+    ctrl_out_t = control.step(ctrl_in_t, gz_meas, now)
+    # control invalid이면 step이 neutral 펄스를 반환하므로 MoveServo가 곧 neutral이다.
+    control.MoveServo(PI, ctrl_out_t)
+    sensorlog.log_motor_raw(
+        state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t,
+        snap=snap_t, event=event, l1_in=l1_in_t,
     )
-    sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, off_out, snap=snap_t, event="FAIL_OFF")
-    return None
+    _publish_motor_diag(main_queue, ctrl_out_t, snap_t, event)
+    return ctrl_out_t
 
 
 def _sleep_for_period(cycle_start: float, period: float) -> None:

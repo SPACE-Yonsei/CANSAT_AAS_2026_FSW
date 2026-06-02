@@ -67,14 +67,12 @@ state_events = [
 
 mode_colors = {
     'ControlMode.FAIL':                '#555577',
-    'ControlMode.FAIL_IMU_FALLBACK':   '#e74c3c',
     'ControlMode.DR_TRACKING_CLOSED':  '#1abc9c',
     'ControlMode.DETUMBLING':          '#f39c12',
     'ControlMode.GPS_TRACKING_CLOSED': '#3498db',
 }
 mode_labels = {
     'ControlMode.FAIL':                'FAIL',
-    'ControlMode.FAIL_IMU_FALLBACK':   'FAIL_IMU_FALLBACK',
     'ControlMode.DR_TRACKING_CLOSED':  'DR_TRACKING_CLOSED',
     'ControlMode.DETUMBLING':          'DETUMBLING',
     'ControlMode.GPS_TRACKING_CLOSED': 'GPS_TRACKING_CLOSED',

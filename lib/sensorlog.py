@@ -306,6 +306,43 @@ _MOTOR_RAW_HEADER = [
     "baro_age_s",
     "target_lat",
     "target_lon",
+    # ── guidance/control mode + reason 체인 (확장) ──
+    "mode_reason",
+    "l1input_valid",
+    "l1input_reason",
+    "l1output_valid",
+    "l1output_reason",
+    "ctrl_valid",
+    "ctrl_reason",
+    # ── sensor fresh flags ──
+    "gps_pos_fresh",
+    "gps_motion_fresh",
+    "imu_gyrz_fresh",
+    "imu_yaw_fresh",
+    "baro_sink_fresh",
+    "acc_fresh",
+    # ── DR validity ──
+    "dr_anchor_valid",
+    "dr_current_valid",
+    "dr_confidence",
+    "dr_age_s",
+    # ── navigation ──
+    "nav_E",
+    "nav_N",
+    "nav_V",
+    "nav_course_deg",
+    "nav_vE",
+    "nav_vN",
+    # ── DR current state ──
+    "dr_current_E",
+    "dr_current_N",
+    "dr_current_V",
+    "dr_current_course_deg",
+    # ── L1 / control 추가 ──
+    "yaw_rate_cmd_dps",
+    "kp_used",
+    "ff_scale",
+    "d_total",
 ]
 
 
@@ -383,6 +420,7 @@ def log_motor_raw(
     l1_out=None,
     snap=None,
     event: str = "",
+    l1_in=None,
 ) -> None:
     """패러포일 제어 사이클 1회 출력 + guidance 상태."""
     try:
@@ -395,6 +433,21 @@ def log_motor_raw(
         gps = getattr(snap, "latest_gps", None)
         imu = getattr(snap, "latest_imu", None)
         baro = getattr(snap, "latest_baro", None)
+
+        # guidance 내부 상태(flags/dr/nav)는 로깅 편의를 위해 지연 임포트로 읽는다.
+        # guidance는 sensorlog를 임포트하지 않으므로 순환 임포트가 없다.
+        flags = dr = nav = None
+        try:
+            from Sensor_Motor import guidance as _g
+            _st = _g._STATE_t
+            flags, dr, nav = _st.flags, _st.dr, _st.nav
+        except Exception:
+            pass
+        try:
+            _anchor_t = float(getattr(dr, "anchor_time", float("nan")))
+            dr_age_s = now - _anchor_t if math.isfinite(_anchor_t) else float("nan")
+        except (TypeError, ValueError):
+            dr_age_s = float("nan")
 
         row = [
             datetime.now().isoformat(timespec="milliseconds"),
@@ -465,6 +518,43 @@ def log_motor_raw(
             _motor_age(now, getattr(baro, "rx_ts", None)),
             _motor_f(snap, "target_lat"),
             _motor_f(snap, "target_lon"),
+            # ── guidance/control mode + reason 체인 ──
+            str(getattr(nav, "fail_reason", "")),
+            _motor_bool(l1_in, "valid"),
+            str(getattr(l1_in, "reason", "")),
+            _motor_bool(l1_out, "valid"),
+            str(getattr(l1_out, "reason", "")),
+            _motor_bool(ctrl_out, "valid"),
+            str(getattr(ctrl_out, "reason", "")),
+            # ── sensor fresh flags ──
+            _motor_bool(flags, "gps_pos_fresh"),
+            _motor_bool(flags, "gps_motion_fresh"),
+            _motor_bool(flags, "imu_gyrz_fresh"),
+            _motor_bool(flags, "imu_yaw_fresh"),
+            _motor_bool(flags, "baro_sink_fresh"),
+            _motor_bool(flags, "acc_fresh"),
+            # ── DR validity ──
+            _motor_bool(flags, "dr_anchor_valid"),
+            _motor_bool(flags, "dr_current_valid"),
+            _motor_f(dr, "confidence"),
+            dr_age_s,
+            # ── navigation ──
+            _motor_f(nav, "E"),
+            _motor_f(nav, "N"),
+            _motor_f(nav, "V"),
+            _motor_deg(nav, "course"),
+            _motor_f(nav, "vE"),
+            _motor_f(nav, "vN"),
+            # ── DR current state ──
+            _motor_f(dr, "current_E"),
+            _motor_f(dr, "current_N"),
+            _motor_f(dr, "current_V"),
+            _motor_deg(dr, "current_course"),
+            # ── L1 / control 추가 ──
+            _motor_deg(l1_out, "yaw_rate_cmd"),
+            _motor_f(ctrl_out, "kp_used"),
+            _motor_f(ctrl_out, "ff_scale"),
+            _motor_f(ctrl_out, "delta_total_deg"),
         ]
 
         if raw_w is not None:

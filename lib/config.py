@@ -120,19 +120,6 @@ CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
 
 
-# New GNC control mode string constants
-CONTROL_MODE_GPS_TRACKING_CLOSED = "GPS_TRACKING_CLOSED"
-CONTROL_MODE_GPS_TRACKING_OPEN   = "GPS_TRACKING_OPEN"
-CONTROL_MODE_DR_TRACKING_CLOSED  = "DR_TRACKING_CLOSED"
-CONTROL_MODE_DR_TRACKING_OPEN    = "DR_TRACKING_OPEN"
-CONTROL_MODE_DETUMBLING          = "DETUMBLING"
-
-# Dead-reckoning method string constants
-DR_METHOD_NONE                   = "NONE"
-DR_METHOD_GYRO_INTEGRATION       = "GYRO_INTEGRATION"
-DR_METHOD_ACC_DOUBLE_INTEGRATION = "ACC_DOUBLE_INTEGRATION"
-DR_METHOD_GYRO_ACC_BLEND         = "GYRO_ACC_BLEND"
-
 # L1 homing guidance tuning
 # L_GAIN_M=12: 자유낙하 로그 V≈-7 m/s 기준 응답 시정수 L/(2V) ≈ 0.7-1s.
 # 목표 반경 5m 진입 시 응답을 강화.
@@ -153,9 +140,11 @@ BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터가 8회 miss�
 BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
 HISTORY_WINDOW_S  = 3.0
-# Accelerometer-aided DR
-USE_ACC_DOUBLE_INTEGRATION = True
+# Accelerometer-aided DR.
+# 내부 로직은 USE_ACC_BLEND_CORRECTION만 사용한다 (acc는 weak blend, double
+# integration 아님). USE_ACC_DOUBLE_INTEGRATION은 backward-compat alias로만 유지.
 USE_ACC_BLEND_CORRECTION   = True
+USE_ACC_DOUBLE_INTEGRATION = USE_ACC_BLEND_CORRECTION  # deprecated alias
 # 20260531 실측: lin_acc XY mag mean=1.32, 누적 velocity error 최대 3.6 m/s
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
@@ -178,20 +167,31 @@ DR_CONF_AGE_1_S = 5.0
 DR_CONF_AGE_2_S = 30.0
 DR_CONF_AGE_3_S = 60.0
 
+# ── Candidate origin policy ──────────────────────────────────────────────────
+# State 1~2에서도 GPS position을 candidate origin으로 저장해두고, State 3 진입 시
+# candidate age가 MAX_AGE 이하이면 origin으로 lock한다. State 3 이후 첫 GPS가
+# 늦게 들어와도 late lock을 허용하여 DR anchor 생성 지연을 줄인다.
+CANDIDATE_ORIGIN_MAX_AGE_S = 30.0
+ALLOW_LATE_ORIGIN_LOCK     = True
+
+# ── DR safety guards ─────────────────────────────────────────────────────────
+# DR_MAX_AGE_S: anchor가 이보다 오래되면 DR을 신뢰하지 않고 FAIL (reason DR_TIMEOUT).
+# DR_MAX_POSITION_JUMP_M: 한 사이클 위치 전파가 이보다 크면 reject (DR_POSITION_JUMP).
+# DR_MAX_YAW_RATE_DPS_FOR_CONTROL: gyrz가 이보다 크면 정상 guidance에 G를 쓰지 않는다.
+# DR_BARO_SINK_MAX_MPS: sink_rate 스파이크 거부 임계값 (BARO_SINK_SPIKE).
+# DR_MAX_SPEED_MPS: 속도 상한 (기존 V_MAX_DR_MPS 재사용).
+DR_MAX_AGE_S                    = 60.0
+DR_MAX_POSITION_JUMP_M          = 100.0
+DR_MAX_YAW_RATE_DPS_FOR_CONTROL = 120.0
+DR_BARO_SINK_MAX_MPS            = 15.0
+DR_MAX_SPEED_MPS                = V_MAX_DR_MPS   # alias; speed clamp는 V_MAX_DR_MPS 사용
+
 TARGET_RADIUS_M = 5.0
 
 # Yaw rate limits per control mode (deg/s)
 # 35→60: 정상비행 spin 분포가 35 dps 근처까지 올라와 제어 여유를 확보하기 위해 상향
 GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS = 60.0
 GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS   = 35.0
-DR_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS  = 50.0
-DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
-DR_GB_YAW_RATE_LIMIT_DPS               = 50.0
-DR_G_YAW_RATE_LIMIT_DPS                = 35.0
-DR_YB_YAW_RATE_LIMIT_DPS               = 20.0
-DR_Y_YAW_RATE_LIMIT_DPS                = 15.0
-# 12→15: 12 dps는 과도하게 보수적
-DR_TRACKING_OPEN_YAW_RATE_LIMIT_DPS    = 15.0
 
 # Per-mode yaw-rate limits for the GBA/GB/G · YBA/YB/Y source taxonomy (deg/s).
 # DR_M_* (position from GPS, motion estimated) is trusted slightly more than the
@@ -243,16 +243,27 @@ ACC_X_SIGN     = 1.0
 ACC_Y_SIGN     = 1.0
 
 # Yaw-rate controller gains
-KFF_GPS_CLOSED = 0.0
 # 20260531 실측 angular_velocity_err 평균 -38.85 dps → 폐루프 보정 활성
 KP_GPS_CLOSED  = 0.35
 
-KFF_DR_CLOSED  = 0.0
-# DR 모드: 위치 불확실성 감안해 GPS보다 보수적으로
-KP_DR_CLOSED   = 0.20
+# Per-mode PID gains for the new ControlMode taxonomy (yaw-rate loop, deg/s).
+# GPS uses the existing KP_GPS_CLOSED. DR_M (position from GPS) is slightly
+# weaker; DR_PM (position dead-reckoned) is the most conservative.
+# KI/KD default to 0.0 (P-only loop) — kept explicit so they can be tuned per mode.
+KI_GPS_CLOSED   = 0.0
+KD_GPS_CLOSED   = 0.0
+KP_DR_M_CLOSED  = 0.25
+KI_DR_M_CLOSED  = 0.0
+KD_DR_M_CLOSED  = 0.0
+KP_DR_PM_CLOSED = 0.18
+KI_DR_PM_CLOSED = 0.0
+KD_DR_PM_CLOSED = 0.0
 
-KFF_GPS_OPEN = 0.10
-KFF_DR_OPEN  = 0.05
+# Feedforward scale per mode. GPS=1.0; DR rides the FF curve at reduced
+# authority since its rate command is less trustworthy.
+DR_M_FF_SCALE    = 0.8
+DR_PM_FF_SCALE   = 0.6
+DR_OPEN_FF_SCALE = 0.7
 
 # Proportional gain for DETUMBLING: delta_arm_deg = -KP_DETUMBLE * omega_z_dps
 # 0.0 = legacy bang-bang (max deflection). >0 = proportional braking.
@@ -261,19 +272,14 @@ KP_DETUMBLE = 0.8
 KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
 
-# Motor control source mode
-# GPS_GUIDED  : GPS L1 가이던스 + 자이로 PID (기본값)
-# GPS_ONLY    : GPS L1 가이던스, 자이로 피드백 없음 (피드포워드 전용)
-# IMU_HEADING : IMU 자력계 방위각만으로 목표 헤딩 추종 (GPS 불필요)
-
-
+# Motor control source preference (operator-selectable tag, CMC 명령으로 변경).
+# 최종 control mode는 항상 guidance.DecideControlMode가 결정한다. 이 값은 더 이상
+# motorapp에서 별도 제어 분기를 만들지 않으며, 로깅/소스 선호 표식으로만 쓰인다.
+# IMU_HEADING은 더 이상 독립 출력 모드가 아니다. 선택돼도 guidance 파이프라인이
+# 그대로 돌고, yaw만 fresh한 구간은 DR_M_Y*/DR_PM_Y*, 아니면 FAIL로 매핑된다.
+# (MOTOR_CTRL_MODE_IMU_HEADING 상수는 commapp CMC 매핑이 참조하므로 유지한다.)
 MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
 MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
 MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
 
 MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
-
-# IMU_HEADING 모드 파라미터
-IMU_HEADING_TARGET_DEG    = 0.0   # 목표 방위각 (0=북쪽, GPS 없을 때 fallback)
-IMU_HEADING_KP            = 2.5   # bearing 오차(deg) → angular_velocity_cmd(deg/s) P게인
-IMU_HEADING_MAX_CMD_DEG_S = 20.0  # angular_velocity_cmd 상한 (deg/s)

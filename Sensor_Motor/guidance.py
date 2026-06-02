@@ -85,11 +85,22 @@ class MissionFrame:
     origin_lat: float = nan
     origin_lon: float = nan
     origin_ready: bool = False
+    origin_lock_source: str = ""   # "PRE_RELEASE_GPS" | "RELEASE_GPS" | "LATE_GPS"
     target_E: float = nan
     target_N: float = nan
     target_ready: bool = False
     _target_lat: float = nan
     _target_lon: float = nan
+
+    # Candidate origin (State 1~2부터 저장, State 3 진입 시 lock 후보)
+    candidate_origin_lat: float = nan
+    candidate_origin_lon: float = nan
+    candidate_origin_E: float = 0.0
+    candidate_origin_N: float = 0.0
+    candidate_origin_ts: float = nan
+    candidate_origin_quality: float = 0.0
+    candidate_origin_valid: bool = False
+    _state3_entry_ts: float = nan
 
 
 @dataclass
@@ -126,6 +137,9 @@ class NavState:
     valid: bool = False
     timestamp: float = nan
     control_mode: ControlMode = ControlMode.FAIL
+    fail_reason: str = "FAIL"     # SelectControlMode/guard가 FAIL 사유를 담는다
+    speed_clamped: bool = False   # DR speed가 V_MAX_DR_MPS로 clamp되었는지
+    baro_sink_spike: bool = False # 직전 사이클 baro sink 스파이크 거부 여부
 
 
 @dataclass
@@ -280,15 +294,6 @@ def is_guidance_mode(mode) -> bool:
     return _is_gps_tracking_mode(mode) or _is_dr_mode(mode)
 
 
-def _mode_estimates_P(mode) -> bool:
-    return "_PM_" in _mode_value(mode)
-
-
-def _mode_estimates_M(mode) -> bool:
-    value = _mode_value(mode)
-    return "_M_" in value or "_PM_" in value
-
-
 def _dr_source_field(mode) -> str:
     if not _is_dr_mode(mode):
         return ""
@@ -341,37 +346,6 @@ def _safe_dt(now: float, previous: float, max_dt: float = 0.5) -> float:
     return min(dt, max_dt)
 
 
-def dr_estimate_course(
-    dr: DRState,
-    imu: ImuAnchor,
-    use_gyro: bool | None = None,
-    use_yaw: bool | None = None,
-) -> float:
-    base = dr.anchor_course
-    if not isfinite(base):
-        return nan
-    if use_gyro is None:
-        use_gyro = bool(imu.gyrz_valid)
-    if use_yaw is None:
-        use_yaw = bool(imu.yaw_valid)
-
-    course_gyro = _wrap_pi(base + dr.gyro_integral) if use_gyro else None
-    course_yaw = (
-        _wrap_pi(base + _wrap_pi(imu.yaw - dr.yaw_at_anchor))
-        if (use_yaw and isfinite(imu.yaw) and isfinite(dr.yaw_at_anchor)) else None
-    )
-    if course_gyro is not None and course_yaw is not None:
-        limit = math.radians(getattr(config, "YAW_GYRO_BLEND_MAX_DEG", 45.0))
-        if abs(_wrap_pi(course_yaw - course_gyro)) < limit:
-            return _circular_mean(course_yaw, course_gyro)
-        return course_gyro
-    if course_gyro is not None:
-        return course_gyro
-    if course_yaw is not None:
-        return course_yaw
-    return base
-
-
 def _compute_dr_confidence(age: float) -> float:
     if not isfinite(age) or age < 0.0:
         return 1.0
@@ -389,20 +363,97 @@ def _compute_dr_confidence(age: float) -> float:
     return _clamp(conf, 0.0, 1.0)
 
 
-def lock_origin(lat: float, lon: float) -> None:
+def lock_origin(lat: float, lon: float, source: str = "") -> None:
     mi_t = _MISSION_t
     mi_t.origin_lat = float(lat)
     mi_t.origin_lon = float(lon)
     mi_t.origin_ready = True
+    if source:
+        mi_t.origin_lock_source = source
     _STATE_t.gps.E = 0.0
     _STATE_t.gps.N = 0.0
-    logger.info("Origin locked: lat=%.6f lon=%.6f", lat, lon)
+    logger.info("Origin locked: lat=%.6f lon=%.6f source=%s", lat, lon, source or "?")
     if _ok(mi_t._target_lat) and _ok(mi_t._target_lon):
         tN, tE = latlon_to_ne(mi_t._target_lat, mi_t._target_lon, lat, lon)
         mi_t.target_E = tE
         mi_t.target_N = tN
         mi_t.target_ready = True
         logger.info("Target projected on lock: E=%.1f N=%.1f", tE, tN)
+
+
+def _in_expected_area(lat: float, lon: float) -> bool:
+    """config GPS_EXPECTED_* 박스 안인지. center/radius가 없으면 항상 통과."""
+    try:
+        clat = config.GPS_EXPECTED_LAT_CENTER_DEG
+        clon = config.GPS_EXPECTED_LON_CENTER_DEG
+        rlat = config.GPS_EXPECTED_LAT_RADIUS_DEG
+        rlon = config.GPS_EXPECTED_LON_RADIUS_DEG
+    except AttributeError:
+        return True
+    return abs(lat - clat) <= rlat and abs(lon - clon) <= rlon
+
+
+def update_candidate_origin(lat: float, lon: float, ts: float,
+                            quality: float = 1.0) -> bool:
+    """유효한 GPS position을 candidate origin으로 저장 (state 무관, < 3에서도 가능).
+
+    pos_health가 true인 표본만 호출해야 한다(호출측 책임). expected-area gate를
+    추가로 통과해야 저장한다. origin_ready여도 candidate는 갱신하지만(진단용),
+    lock된 origin은 절대 덮어쓰지 않는다.
+    """
+    mi_t = _MISSION_t
+    if not (_ok(lat) and _ok(lon) and _ok(ts)):
+        return False
+    if not _in_expected_area(float(lat), float(lon)):
+        return False
+    mi_t.candidate_origin_lat = float(lat)
+    mi_t.candidate_origin_lon = float(lon)
+    mi_t.candidate_origin_ts = float(ts)
+    mi_t.candidate_origin_quality = float(quality)
+    mi_t.candidate_origin_valid = True
+    return True
+
+
+def note_state3_entry(now: float) -> None:
+    """State 3 최초 진입 시각 기록 (origin_lock_source 분류용)."""
+    mi_t = _MISSION_t
+    if not isfinite(mi_t._state3_entry_ts):
+        mi_t._state3_entry_ts = float(now)
+
+
+def try_lock_origin_from_candidate(now: float) -> str | None:
+    """State 3 이상에서 candidate origin으로 origin을 lock 시도.
+
+    이미 origin_ready이면 덮어쓰지 않고 None 반환. candidate age가
+    CANDIDATE_ORIGIN_MAX_AGE_S 이하일 때만 lock한다. lock하면 origin_lock_source
+    문자열을 반환한다. ALLOW_LATE_ORIGIN_LOCK=False면 state3 진입 이후 취득한
+    candidate(late)는 lock하지 않는다.
+    """
+    mi_t = _MISSION_t
+    if mi_t.origin_ready:
+        return None
+    if not mi_t.candidate_origin_valid:
+        return None
+    cts = mi_t.candidate_origin_ts
+    if not isfinite(cts):
+        return None
+    age = now - cts
+    if age < 0.0 or age > config.CANDIDATE_ORIGIN_MAX_AGE_S:
+        return None
+
+    s3 = mi_t._state3_entry_ts
+    if isfinite(s3) and cts < s3 - 1e-6:
+        source = "PRE_RELEASE_GPS"
+    elif isfinite(s3) and cts <= s3 + 2.0:
+        source = "RELEASE_GPS"
+    else:
+        source = "LATE_GPS"
+
+    if source == "LATE_GPS" and not getattr(config, "ALLOW_LATE_ORIGIN_LOCK", True):
+        return None
+
+    lock_origin(mi_t.candidate_origin_lat, mi_t.candidate_origin_lon, source=source)
+    return source
 
 
 def _is_fresh(valid: bool, ts: float, now: float, max_age: float) -> bool:
@@ -494,6 +545,16 @@ def ComputeFreshFlags(now: float) -> SensorFreshFlags:
         now,
         config.BARO_FRESH_MAX_AGE_S,
     )
+    # DR safety guard #4: baro sink 스파이크 거부. |sink| > 임계값이면 이 사이클
+    # baro_sink_fresh=False로 강등하고 nav에 플래그를 남긴다 (reason BARO_SINK_SPIKE).
+    sink_max = getattr(config, "DR_BARO_SINK_MAX_MPS", float("inf"))
+    sink_spike = (
+        flags.baro_sink_fresh and isfinite(st_t.baro.sink_rate)
+        and abs(st_t.baro.sink_rate) > sink_max
+    )
+    if sink_spike:
+        flags.baro_sink_fresh = False
+    st_t.nav.baro_sink_spike = bool(sink_spike)
     flags.acc_fresh = (
         imu_base_fresh
         and st_t.imu.lin_acc_valid
@@ -577,21 +638,41 @@ def FillDRAnchor(flags: SensorFreshFlags, now: float) -> None:
     st_t.flags = flags
 
 
+def _fail(reason: str) -> ControlMode:
+    _STATE_t.nav.fail_reason = reason
+    return ControlMode.FAIL
+
+
 def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
     mi_t = _MISSION_t
     st_t = _STATE_t
+    st_t.nav.fail_reason = "FAIL"
     if not mi_t.origin_ready or not mi_t.target_ready:
-        return ControlMode.FAIL
+        return _fail("NO_ORIGIN" if not mi_t.origin_ready else "NO_TARGET")
+
+    # DR safety guard #5: gyrz가 과도하면 정상 guidance에 G(gyro)를 쓰지 않는다.
+    # (DETUMBLING은 motorapp이 별도 선점한다.) gyro_ok=False면 GPS도 OPEN으로 간다.
+    gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", float("inf"))
+    gyro_ok = flags.imu_gyrz_fresh and (
+        not isfinite(st_t.imu.gyr_z)
+        or abs(math.degrees(st_t.imu.gyr_z)) <= gyrz_max
+    )
 
     if flags.gps_pos_fresh and flags.gps_motion_fresh:
-        return ControlMode.GPS_TRACKING_CLOSED if flags.imu_gyrz_fresh else ControlMode.GPS_TRACKING_OPEN
+        return ControlMode.GPS_TRACKING_CLOSED if gyro_ok else ControlMode.GPS_TRACKING_OPEN
+
+    # DR safety guard #1: anchor가 너무 오래되면 DR을 신뢰하지 않는다.
+    dr_age = now - st_t.dr.anchor_time if isfinite(st_t.dr.anchor_time) else float("inf")
+    dr_too_old = dr_age > getattr(config, "DR_MAX_AGE_S", float("inf"))
 
     if flags.gps_pos_fresh and flags.gps_motion_stale and flags.dr_current_valid:
-        if flags.imu_gyrz_fresh and flags.baro_sink_fresh and flags.acc_fresh:
+        if dr_too_old:
+            return _fail("DR_TIMEOUT")
+        if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
             return ControlMode.DR_M_GBA_CLOSED
-        if flags.imu_gyrz_fresh and flags.baro_sink_fresh:
+        if gyro_ok and flags.baro_sink_fresh:
             return ControlMode.DR_M_GB_CLOSED
-        if flags.imu_gyrz_fresh and last_v_valid(st_t.dr):
+        if gyro_ok and last_v_valid(st_t.dr):
             return ControlMode.DR_M_G_CLOSED
         if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
             return ControlMode.DR_M_YBA_OPEN
@@ -601,11 +682,13 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
             return ControlMode.DR_M_Y_OPEN
 
     if flags.dr_current_valid:
-        if flags.imu_gyrz_fresh and flags.baro_sink_fresh and flags.acc_fresh:
+        if dr_too_old:
+            return _fail("DR_TIMEOUT")
+        if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
             return ControlMode.DR_PM_GBA_CLOSED
-        if flags.imu_gyrz_fresh and flags.baro_sink_fresh:
+        if gyro_ok and flags.baro_sink_fresh:
             return ControlMode.DR_PM_GB_CLOSED
-        if flags.imu_gyrz_fresh and last_v_valid(st_t.dr):
+        if gyro_ok and last_v_valid(st_t.dr):
             return ControlMode.DR_PM_G_CLOSED
         if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
             return ControlMode.DR_PM_YBA_OPEN
@@ -614,7 +697,7 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
         if flags.imu_yaw_fresh and last_v_valid(st_t.dr):
             return ControlMode.DR_PM_Y_OPEN
 
-    return ControlMode.FAIL
+    return _fail("NO_GUIDANCE_SOURCE")
 
 
 def DecideControlMode(gps=None, imu=None, baro=None, now: float | None = None) -> ControlMode:
@@ -635,98 +718,6 @@ def DecideControlMode(gps=None, imu=None, baro=None, now: float | None = None) -
 def TryInitStateFromPosOnly(now: float) -> None:
     flags = ComputeFreshFlags(now)
     FillDRAnchor(flags, now)
-
-
-def _update_state_from_dead_reckoning(now: float) -> None:
-    """DEPRECATED: superseded by _fill_nav_for_dr_m_mode / _fill_nav_for_dr_pm_mode.
-
-    No longer called by ProduceL1Input. Kept temporarily for reference; remove
-    once downstream tooling/docs no longer reference it.
-    """
-    st_t = _STATE_t
-    dr = st_t.dr
-    flags = st_t.flags
-    mode = st_t.nav.control_mode
-
-    if isfinite(dr.last_step_time):
-        dt = now - dr.last_step_time
-    elif isfinite(dr.current_time):
-        dt = now - dr.current_time
-    elif isfinite(dr.anchor_time):
-        dt = now - dr.anchor_time
-    else:
-        dt = 0.0
-    dt = _clamp(dt, 0.0, 0.5)
-
-    if not dr_current_valid(dr) and dr_anchor_valid(dr):
-        dr.current_E = dr.anchor_E
-        dr.current_N = dr.anchor_N
-        dr.current_V = dr.anchor_V
-        dr.current_course = dr.anchor_course
-        dr.current_time = dr.anchor_time
-
-    if _mode_uses_gyro(mode) and flags.imu_gyrz_fresh:
-        dr.gyro_integral += st_t.imu.gyr_z * config.GYRZ_SIGN * dt
-
-    course_est = dr_estimate_course(
-        dr,
-        st_t.imu,
-        use_gyro=_mode_uses_gyro(mode) and flags.imu_gyrz_fresh,
-        use_yaw=_mode_uses_yaw(mode) and flags.imu_yaw_fresh,
-    )
-    if not isfinite(course_est):
-        course_est = dr.current_course if isfinite(dr.current_course) else dr.anchor_course
-
-    if _mode_uses_baro(mode) and flags.baro_sink_fresh:
-        gain = getattr(config, "DR_SINK_TO_HSPEED_GAIN", 1.0)
-        V_dr = _clamp(st_t.baro.sink_rate * gain, config.V_MIN_MPS, config.V_MAX_DR_MPS)
-    else:
-        V_dr = _last_v(dr)
-        if not isfinite(V_dr):
-            V_dr = config.V_MIN_MPS
-
-    vE = V_dr * math.sin(course_est)
-    vN = V_dr * math.cos(course_est)
-    method = DRMethod.GYRO_INTEGRATION if _mode_uses_gyro(mode) else DRMethod.YAW_DELTA
-
-    gyrz_too_fast = (
-        flags.imu_gyrz_fresh
-        and abs(st_t.imu.gyr_z) > math.radians(config.ACC_GYRZ_REJECT_DPS)
-    )
-    acc_enabled = getattr(config, "USE_ACC_BLEND_CORRECTION", config.USE_ACC_DOUBLE_INTEGRATION)
-    if acc_enabled and _mode_uses_acc(mode) and flags.acc_fresh and not gyrz_too_fast:
-        lax = st_t.imu.lin_acc_x * config.ACC_X_SIGN
-        lay = st_t.imu.lin_acc_y * config.ACC_Y_SIGN
-        if math.hypot(lax, lay) <= config.ACC_LIMIT_MPS2:
-            aE = lax * math.sin(course_est) + lay * math.cos(course_est)
-            aN = lax * math.cos(course_est) - lay * math.sin(course_est)
-            vE += config.ACC_BLEND_WEIGHT * aE * dt
-            vN += config.ACC_BLEND_WEIGHT * aN * dt
-            method = DRMethod.GYRO_ACC_BLEND if _mode_uses_gyro(mode) else DRMethod.YAW_ACC_BLEND
-
-    if _mode_estimates_P(mode):
-        dr.current_E += vE * dt
-        dr.current_N += vN * dt
-    elif _mode_value(mode).startswith("DR_M_") and flags.gps_pos_fresh:
-        dr.current_E = st_t.gps.E
-        dr.current_N = st_t.gps.N
-    else:
-        dr.current_E += vE * dt
-        dr.current_N += vN * dt
-
-    dr.current_V = V_dr
-    dr.current_course = course_est
-    dr.current_time = now
-    dr.method = method
-    dr.last_step_time = now
-    dr.confidence = _compute_dr_confidence(now - dr.anchor_time)
-
-    st_t.nav.E = dr.current_E
-    st_t.nav.N = dr.current_N
-    st_t.nav.V = dr.current_V
-    st_t.nav.course = dr.current_course
-    st_t.nav.confidence = dr.confidence
-    st_t.flags.dr_current_valid = dr_current_valid(dr)
 
 
 def _estimate_course_for_mode(mode: ControlMode, now: float, dt: float):
@@ -782,20 +773,26 @@ def _estimate_speed_for_mode(mode: ControlMode):
     v_min = config.V_MIN_MPS
     v_max = config.V_MAX_DR_MPS
 
+    def _clamped(v_raw, reason):
+        # DR safety guard #3: V를 V_MAX_DR_MPS로 clamp하고 nav.speed_clamped 기록.
+        v_out = _clamp(v_raw, v_min, v_max)
+        st_t.nav.speed_clamped = bool(v_raw > v_max or v_raw < v_min)
+        return (True, v_out, reason)
+
     if _mode_uses_baro(mode):
         if (flags.baro_sink_fresh and isfinite(st_t.baro.sink_rate)
                 and st_t.baro.sink_rate > 0.0):
             gain = getattr(config, "DR_SINK_TO_HSPEED_GAIN", 1.0)
-            return (True, _clamp(st_t.baro.sink_rate * gain, v_min, v_max), "SPEED_BARO")
+            return _clamped(st_t.baro.sink_rate * gain, "SPEED_BARO")
         v = _last_v(dr)
         if isfinite(v):
-            return (True, _clamp(v, v_min, v_max), "SPEED_LASTV_FALLBACK")
+            return _clamped(v, "SPEED_LASTV_FALLBACK")
         return (False, nan, "NO_SPEED_SOURCE")
 
     v = _last_v(dr)
     if not isfinite(v):
         return (False, nan, "NO_SPEED_SOURCE")
-    return (True, _clamp(v, v_min, v_max), "SPEED_LASTV")
+    return _clamped(v, "SPEED_LASTV")
 
 
 def _apply_acc_correction_if_needed(mode: ControlMode, course: float, V: float, dt: float):
@@ -815,7 +812,7 @@ def _apply_acc_correction_if_needed(mode: ControlMode, course: float, V: float, 
     if not _mode_uses_acc(mode):
         return (vE, vN, "NO_ACC")
 
-    acc_enabled = getattr(config, "USE_ACC_BLEND_CORRECTION", config.USE_ACC_DOUBLE_INTEGRATION)
+    acc_enabled = config.USE_ACC_BLEND_CORRECTION
     if not (acc_enabled and flags.acc_fresh
             and isfinite(imu.lin_acc_x) and isfinite(imu.lin_acc_y)):
         return (vE, vN, "ACC_NOT_FRESH")
@@ -928,8 +925,16 @@ def _fill_nav_for_dr_pm_mode(mode: ControlMode, now: float):
         return (False, sreason)
     vE, vN, acc_reason = _apply_acc_correction_if_needed(mode, course, V, dt)
 
-    dr.current_E += vE * dt
-    dr.current_N += vN * dt
+    # DR safety guard #6: 한 사이클 위치 전파가 DR_MAX_POSITION_JUMP_M보다 크면
+    # 비정상으로 보고 update를 reject한다 (current 미갱신, reason DR_POSITION_JUMP).
+    step_E = vE * dt
+    step_N = vN * dt
+    jump_max = getattr(config, "DR_MAX_POSITION_JUMP_M", float("inf"))
+    if math.hypot(step_E, step_N) > jump_max:
+        return (False, "DR_POSITION_JUMP")
+
+    dr.current_E += step_E
+    dr.current_N += step_N
     dr.current_V = math.hypot(vE, vN)
     dr.current_course = course
     dr.current_time = now
@@ -1000,7 +1005,8 @@ def ProduceL1Input(now: float) -> L1Input:
     mode = st_t.nav.control_mode
 
     if mode == ControlMode.FAIL:
-        return L1Input(valid=False, reason="FAIL", control_mode=mode)
+        return L1Input(valid=False, reason=st_t.nav.fail_reason or "FAIL",
+                       control_mode=mode)
     if mode == ControlMode.DETUMBLING:
         return L1Input(valid=False, reason="DETUMBLING", control_mode=mode)
 
@@ -1118,7 +1124,7 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     if _is_dr_mode(l1in.control_mode):
         conf = _clamp(l1in.confidence, 0.0, 1.0)
         if conf < getattr(config, "DR_MIN_CONFIDENCE_FOR_CONTROL", 0.15):
-            return _invalid("LOW_CONFIDENCE")
+            return _invalid("LOW_DR_CONFIDENCE")
     else:
         conf = 1.0
 
@@ -1180,12 +1186,28 @@ def set_target(lat: float, lon: float) -> None:
         logger.info("set_target: saved (lat=%.6f lon=%.6f), waiting for origin", lat, lon)
 
 
-def reset() -> None:
+def reset(keep_candidate_origin: bool = True) -> None:
+    """origin/nav/DR을 초기화. target lat/lon과 candidate origin은 보존한다.
+
+    candidate origin은 State 1~2 pre-release 구간에서 취득해 두는 값이라,
+    State 전이마다 호출되는 reset이 이를 지우면 candidate origin 정책이 무력화된다.
+    그래서 기본적으로 보존한다(keep_candidate_origin=False로 완전 초기화 가능).
+    """
     global _MISSION_t, _STATE_t
-    saved_lat = _MISSION_t._target_lat
-    saved_lon = _MISSION_t._target_lon
+    prev = _MISSION_t
+    saved_lat = prev._target_lat
+    saved_lon = prev._target_lon
     _MISSION_t = MissionFrame()
     _MISSION_t._target_lat = saved_lat
     _MISSION_t._target_lon = saved_lon
+    if keep_candidate_origin and prev.candidate_origin_valid:
+        _MISSION_t.candidate_origin_lat = prev.candidate_origin_lat
+        _MISSION_t.candidate_origin_lon = prev.candidate_origin_lon
+        _MISSION_t.candidate_origin_E = prev.candidate_origin_E
+        _MISSION_t.candidate_origin_N = prev.candidate_origin_N
+        _MISSION_t.candidate_origin_ts = prev.candidate_origin_ts
+        _MISSION_t.candidate_origin_quality = prev.candidate_origin_quality
+        _MISSION_t.candidate_origin_valid = True
     _STATE_t = GuidanceState()
-    logger.info("guidance.reset(): origin/nav/DR cleared, target lat/lon preserved")
+    logger.info("guidance.reset(): origin/nav/DR cleared; target%s preserved",
+                "+candidate" if keep_candidate_origin else "")
