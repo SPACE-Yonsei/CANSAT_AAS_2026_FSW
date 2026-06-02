@@ -128,24 +128,22 @@ class TestMeasuredYawRateDps(unittest.TestCase):
         self.assertAlmostEqual(result, 30.0 * config.GYRZ_SIGN, places=4)
 
 
-class TestSyncOriginToPrevstate(unittest.TestCase):
+class TestLockOrigin(unittest.TestCase):
+    """guidance.lock_origin이 origin을 올바르게 확정하는지 검증."""
     def setUp(self):
-        _reset_motorapp()
+        from Sensor_Motor import guidance as g
+        g.reset()
 
-    def test_origin_not_ready_returns_false(self):
-        with mock.patch.object(motorapp.prevstate, "update_start_point") as m:
-            self.assertFalse(motorapp._sync_origin_to_prevstate())
-            m.assert_not_called()
+    def test_lock_sets_origin_ready(self):
+        from Sensor_Motor import guidance as g
+        g.lock_origin(37.55, 126.95)
+        self.assertTrue(g._MISSION_t.origin_ready)
+        self.assertAlmostEqual(g._MISSION_t.origin_lat, 37.55)
+        self.assertAlmostEqual(g._MISSION_t.origin_lon, 126.95)
 
-    def test_origin_ready_syncs_cache_and_prevstate(self):
-        motorapp._GUIDANCE_STATE.origin_ready = True
-        motorapp._GUIDANCE_STATE.origin_lat = 37.55
-        motorapp._GUIDANCE_STATE.origin_lon = 126.95
-        with mock.patch.object(motorapp.prevstate, "update_start_point") as m:
-            self.assertTrue(motorapp._sync_origin_to_prevstate())
-            m.assert_called_once_with(37.55, 126.95, True)
-        self.assertAlmostEqual(motorapp._START_LAT, 37.55)
-        self.assertAlmostEqual(motorapp._START_LON, 126.95)
+    def test_lock_origin_not_ready_before_call(self):
+        from Sensor_Motor import guidance as g
+        self.assertFalse(g._MISSION_t.origin_ready)
 
 
 class TestSleepForPeriod(unittest.TestCase):

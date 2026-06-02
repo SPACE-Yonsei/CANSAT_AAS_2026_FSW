@@ -21,9 +21,6 @@ EGG_ACTION_ENABLED:     bool = True
 
 PI = None  # pigpio handle
 
-# guidance origin → prevstate 저장 완료 여부 (1회만 저장)
-_ORIGIN_SAVED: bool = False
-
 # ── 스레드 공유 변수 ──────────────────────────────────────────────────────────
 _CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레드가 씀)
 _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
@@ -276,6 +273,13 @@ def handle_gps(data: str) -> None:
     with _UPDATE_LOCK:
         _CACHE_t.latest_gps = sample
 
+    # origin lock: 비행 중(state >= 3) 첫 유효 GPS 수신 시 1회
+    if (pos_health and STATE >= 3
+            and not guidance._MISSION_t.origin_ready
+            and math.isfinite(lat) and math.isfinite(lon)):
+        guidance.lock_origin(lat, lon)
+        prevstate.update_start_point(lat, lon, True)
+
 
 def handle_imu(data: str) -> None:
     """IMU 페이로드 파싱 후 _CACHE_t 갱신.
@@ -391,7 +395,7 @@ def handle_target_coord(data: str) -> None:
 
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
-    global STATE, _PREV_STATE, _ORIGIN_SAVED
+    global STATE, _PREV_STATE
     global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START, _DO_CTRL_RESET
     try:
         new_state = int(data.split(",")[0])
@@ -406,9 +410,8 @@ def handle_flight_state(data: str) -> None:
         STATE       = new_state
         if new_state < 3:
             prevstate.clear_start_point()
-            guidance.reset()
+            guidance.reset()   # origin_ready=False 포함 → handle_gps가 재잠금 가능
             _DO_CTRL_RESET = True
-            _ORIGIN_SAVED = False   # guidance.reset()이 origin 초기화 → 재동기화 허용
             _DETUMBLE_ACTIVE = False
             _DETUMBLE_EXIT_START = math.nan
 
@@ -638,22 +641,9 @@ def handle_fac(data: str) -> None:
 
 # ── 제어 루프 ─────────────────────────────────────────────────────────────────
 
-def _sync_origin_to_prevstate() -> bool:
-    """guidance origin이 확정되면 prevstate에 1회 저장. 저장 시 True 반환."""
-    mi_t = guidance._MISSION_t
-    if not mi_t.origin_ready:
-        return False
-    lat = float(mi_t.origin_lat)
-    lon = float(mi_t.origin_lon)
-    prevstate.update_start_point(lat, lon, True)
-    logger.info("Origin synced to prevstate: lat=%.6f lon=%.6f", lat, lon)
-    return True
-
 
 def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     """한 사이클 제어 계산. 반환값은 진단용 (None이면 액션 없음)."""
-    global _ORIGIN_SAVED
-
     with _UPDATE_LOCK:
         motor_enabled = MOTOR_ENABLED
         state         = STATE
@@ -689,13 +679,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         )
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, off_out, snap=snap_t, event="LANDED_OFF")
         return None
-
-    # ── 항법 파이프라인 ───────────────────────────────────────────────────────
-    guidance.UpdateRaws(snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
-
-    # origin 확정 시 prevstate에 1회 저장
-    if not _ORIGIN_SAVED and _sync_origin_to_prevstate():
-        _ORIGIN_SAVED = True
 
     # ── [1] MANUAL STEER override ────────────────────────────────────────────
     if _STEER_MODE in ("LEFT", "RIGHT", "NEUTRAL"):
@@ -735,8 +718,8 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
         return ctrl_out_t
 
-    guidance.TryInitStateFromPosOnly(now)
-    mode = guidance.DecideControlMode(now)
+    mode = guidance.DecideControlMode(
+        snap_t.latest_gps, snap_t.latest_imu, snap_t.latest_baro, now)
 
     # ── [3] IMU_HEADING 모드 ──────────────────────────────────────────────────
     if MOTOR_CTRL_MODE == config.MOTOR_CTRL_MODE_IMU_HEADING:
@@ -854,7 +837,7 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global _ORIGIN_SAVED, STATE
+    global STATE
     global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
 
     prevstate.init_prevstate()
@@ -875,28 +858,15 @@ def init() -> None:
         guidance.set_target(float(t_lat), float(t_lon))
 
     # origin 복원 (PREV_START_LOCKED==1일 때만 반환)
+    # lock_origin()이 target 재투영까지 처리한다.
     start = prevstate.get_start_point()
     if start is not None:
         lat, lon = start
         if (-90.0 <= float(lat) <= 90.0
                 and -180.0 <= float(lon) <= 180.0
                 and not (lat == 0.0 and lon == 0.0)):
-            mi_t = guidance._MISSION_t
-            mi_t.origin_lat   = float(lat)
-            mi_t.origin_lon   = float(lon)
-            mi_t.origin_ready = True
-            mi_t._raw_lat     = float(lat)
-            mi_t._raw_lon     = float(lon)
-            _ORIGIN_SAVED = True
+            guidance.lock_origin(float(lat), float(lon))
             logger.info("Origin restored from prevstate: lat=%.6f lon=%.6f", lat, lon)
-            # set_target이 _target_lat/lon을 저장한 경우 즉시 투영
-            if math.isfinite(mi_t._target_lat) and math.isfinite(mi_t._target_lon):
-                tN, tE = guidance.latlon_to_ne(mi_t._target_lat, mi_t._target_lon,
-                                               mi_t.origin_lat, mi_t.origin_lon)
-                mi_t.target_E     = tE
-                mi_t.target_N     = tN
-                mi_t.target_ready = True
-                logger.info("Target re-projected on init: E=%.1f N=%.1f", tE, tN)
 
     control.reset()
     PI = control.init_control()

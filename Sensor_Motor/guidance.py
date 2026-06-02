@@ -93,8 +93,6 @@ class MissionFrame:
     # 임시 보관용 (투영 전 raw 값, 투영 후에도 삭제하지 않음)
     _target_lat:  float = nan
     _target_lon:  float = nan
-    _raw_lat:     float = nan   # 마지막으로 수신한 GPS lat (origin 획득용)
-    _raw_lon:     float = nan
 
 
 # ── DRState (GPS dropout 이후 적분 상태) ─────────────────────────────────────
@@ -274,18 +272,44 @@ def _compute_dr_confidence(age: float) -> float:
 
 # ── UpdateRaws (매 사이클, 반환값 없음) ────────────────────────────────────
 
-def UpdateRaws(gps, imu, baro, now: float) -> None:
-    """raw 센서 객체(duck-typed)에서 앵커를 갱신한다.
+# ── lock_origin (handle_gps에서 1회 호출) ────────────────────────────────────
+
+def lock_origin(lat: float, lon: float) -> None:
+    """origin을 확정하고 target을 투영한다. handle_gps에서 1회만 호출."""
+    mi_t = _MISSION_t
+    mi_t.origin_lat   = float(lat)
+    mi_t.origin_lon   = float(lon)
+    mi_t.origin_ready = True
+    _STATE_t.gps.E    = 0.0
+    _STATE_t.gps.N    = 0.0
+    logger.info("Origin locked: lat=%.6f lon=%.6f", lat, lon)
+    if _ok(mi_t._target_lat) and _ok(mi_t._target_lon):
+        tN, tE = latlon_to_ne(mi_t._target_lat, mi_t._target_lon, lat, lon)
+        mi_t.target_E     = tE
+        mi_t.target_N     = tN
+        mi_t.target_ready = True
+        logger.info("Target projected on lock: E=%.1f N=%.1f", tE, tN)
+
+
+# ── DecideControlMode ────────────────────────────────────────────────────────
+
+def DecideControlMode(gps, imu, baro, now: float) -> ControlMode:
+    """센서 raw 수신 → nav/DR 채우기 → 모드 결정을 한 번에 수행.
 
     Args:
-        gps  : _GpsFromApp 또는 동일 attribute를 가진 객체
-        imu  : _ImuFromApp 또는 동일 attribute를 가진 객체
-        baro : _BaroFromApp 또는 동일 attribute를 가진 객체
+        gps, imu, baro : duck-typed 센서 객체 (_GpsFromApp 등)
+        now            : monotonic 타임스탬프 (float)
+
+    Pipeline:
+        [UpdateRaws]  raw 센서 → _STATE_t 갱신
+        [FillNav]     pos+vel 신선 → nav 상태 채움
+        [FillDr]      DR anchor 갱신 또는 bootstrap
+        [Decide]      freshness 기반 ControlMode 반환
     """
     st_t = _STATE_t
     mi_t = _MISSION_t
 
-    # ── GPS ──────────────────────────────────────────────────────────────────
+    # ── [UpdateRaws] raw 센서 → _STATE_t ────────────────────────────────────
     pos_health    = getattr(gps, "pos_health",    0)
     motion_health = getattr(gps, "motion_health", 0)
 
@@ -294,17 +318,11 @@ def UpdateRaws(gps, imu, baro, now: float) -> None:
         lon    = getattr(gps, "lon",    None)
         pos_ts = getattr(gps, "pos_ts", None)
         if lat is not None and lon is not None and _ok(lat) and _ok(lon) and _ok(pos_ts):
-            # 항상 raw lat/lon 저장 (origin 획득용)
-            mi_t._raw_lat = float(lat)
-            mi_t._raw_lon = float(lon)
-
             if mi_t.origin_ready:
-                # origin 확보된 경우만 E/N 투영
                 N, E = latlon_to_ne(float(lat), float(lon),
                                     mi_t.origin_lat, mi_t.origin_lon)
                 st_t.gps.E = E
                 st_t.gps.N = N
-
             st_t.gps.pos_ts    = float(pos_ts)
             st_t.gps.pos_valid = True
 
@@ -318,7 +336,6 @@ def UpdateRaws(gps, imu, baro, now: float) -> None:
             st_t.gps.motion_ts    = float(motion_ts)
             st_t.gps.motion_valid = True
 
-    # ── IMU ──────────────────────────────────────────────────────────────────
     imu_health = getattr(imu, "health", 0)
     imu_ts     = getattr(imu, "ts",     None)
     if imu_health and _ok(imu_ts):
@@ -327,7 +344,6 @@ def UpdateRaws(gps, imu, baro, now: float) -> None:
         lax    = getattr(imu, "lin_acc_x",  None)
         lay    = getattr(imu, "lin_acc_y",  None)
         lin_ok = bool(getattr(imu, "lin_acc_valid", False))
-
         st_t.imu.ts = float(imu_ts)
         if _ok(yaw_r):
             st_t.imu.yaw       = float(yaw_r)
@@ -340,7 +356,6 @@ def UpdateRaws(gps, imu, baro, now: float) -> None:
             st_t.imu.lin_acc_y     = float(lay)
             st_t.imu.lin_acc_valid = True
 
-    # ── Barometer ────────────────────────────────────────────────────────────
     baro_health = getattr(baro, "health", 0)
     baro_ts     = getattr(baro, "rx_ts",  None)
     alt_m       = getattr(baro, "alt_m",  None)
@@ -352,100 +367,60 @@ def UpdateRaws(gps, imu, baro, now: float) -> None:
         if _ok(sink):
             st_t.baro.sink_rate = float(sink)
 
-
-# ── TryInitStateFromPosOnly (매 사이클, UpdateRaws 직후 호출) ─────────────────
-
-def TryInitStateFromPosOnly(now: float) -> None:
-    """GPS pos + IMU yaw만으로 origin과 DR anchor를 초기화.
-
-    UpdateRaws() 직후, DecideControlMode() 전에 호출한다.
-    GPS motion(vel)이 없어도 DR_TRACKING에 진입할 수 있도록
-    데드락을 해소하는 것이 목적이다.
-    """
-    st_t = _STATE_t
-    mi_t = _MISSION_t
-
-    pos_fresh = (st_t.gps.pos_valid
-                 and isfinite(st_t.gps.pos_ts)
-                 and (now - st_t.gps.pos_ts) <= config.GPS_FRESH_MAX_AGE_S)
-    imu_fresh = (isfinite(st_t.imu.ts)
-                 and (now - st_t.imu.ts) <= config.IMU_FRESH_MAX_AGE_S)
-
-    if not pos_fresh:
-        return
-
-    # ── origin 초기화 ─────────────────────────────────────────────────────────
-    if not mi_t.origin_ready:
-        if _ok(mi_t._raw_lat) and _ok(mi_t._raw_lon):
-            mi_t.origin_lat   = mi_t._raw_lat
-            mi_t.origin_lon   = mi_t._raw_lon
-            mi_t.origin_ready = True
-            st_t.gps.E = 0.0
-            st_t.gps.N = 0.0
-            logger.info("Origin set: lat=%.6f lon=%.6f", mi_t.origin_lat, mi_t.origin_lon)
-            if _ok(mi_t._target_lat) and _ok(mi_t._target_lon):
-                tN, tE = latlon_to_ne(mi_t._target_lat, mi_t._target_lon,
-                                      mi_t.origin_lat, mi_t.origin_lon)
-                mi_t.target_E = tE
-                mi_t.target_N = tN
-                mi_t.target_ready = True
-                logger.info("Target projected: E=%.1f N=%.1f", tE, tN)
-
-    # ── DR anchor 초기화 (pos-only) ───────────────────────────────────────────
-    if (not dr_is_valid(st_t.dr)
-            and imu_fresh and st_t.imu.yaw_valid
-            and isfinite(st_t.gps.E) and isfinite(st_t.gps.N)):
-        baro_sink = getattr(st_t.baro, "sink_rate", nan)
-        if st_t.baro.valid and isfinite(baro_sink) and baro_sink > 0.0:
-            v0 = _clamp(baro_sink, config.V_MIN_MPS, config.V_MAX_DR_MPS)
-        else:
-            v0 = config.V_MIN_MPS
-        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, v0,
-                st_t.imu.yaw, st_t.imu.yaw, now)
-        logger.info(
-            "DR anchor init (pos-only): E=%.1f N=%.1f course=%.1f° V=%.2f m/s",
-            st_t.gps.E, st_t.gps.N, math.degrees(st_t.imu.yaw), v0,
-        )
-
-
-# ── DecideControlMode (매 사이클, freshness inline 계산) ─────────────────────
-
-def DecideControlMode(now: float) -> ControlMode:
-    """_STATE_t 기반으로 ControlMode를 결정하고 st_t.nav.control_mode에 저장."""
-    st_t = _STATE_t
-
+    # ── freshness 1회 계산 ───────────────────────────────────────────────────
     pos_fresh  = (st_t.gps.pos_valid
                   and isfinite(st_t.gps.pos_ts)
-                  and (now - st_t.gps.pos_ts) <= config.GPS_FRESH_MAX_AGE_S)
+                  and (now - st_t.gps.pos_ts)    <= config.GPS_FRESH_MAX_AGE_S)
     vel_fresh  = (st_t.gps.motion_valid
                   and isfinite(st_t.gps.motion_ts)
-                  and (now - st_t.gps.motion_ts) <= config.GPS_FRESH_MAX_AGE_S)
+                  and (now - st_t.gps.motion_ts)  <= config.GPS_FRESH_MAX_AGE_S)
     imu_fresh  = (isfinite(st_t.imu.ts)
-                  and (now - st_t.imu.ts) <= config.IMU_FRESH_MAX_AGE_S)
+                  and (now - st_t.imu.ts)          <= config.IMU_FRESH_MAX_AGE_S)
     gyrz_fresh = imu_fresh and st_t.imu.gyrz_valid
     yaw_fresh  = imu_fresh and st_t.imu.yaw_valid
 
-    # 1. GPS_TRACKING_CLOSED
+    # ── [FillNav] GPS pos+vel 신선 → nav 상태 채움 ───────────────────────────
+    if pos_fresh and vel_fresh:
+        st_t.nav.E          = st_t.gps.E
+        st_t.nav.N          = st_t.gps.N
+        st_t.nav.V          = st_t.gps.V
+        st_t.nav.course     = st_t.gps.course
+        st_t.nav.confidence = 1.0
+
+    # ── [FillDr] DR anchor 유지 ──────────────────────────────────────────────
+    imu_yaw = st_t.imu.yaw if st_t.imu.yaw_valid else nan
+
+    if pos_fresh and vel_fresh:
+        # Case 1: GPS 완전 → 매 사이클 anchor 갱신
+        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N,
+                st_t.gps.V, st_t.gps.course, imu_yaw, now)
+    elif (pos_fresh and not dr_is_valid(st_t.dr)
+              and yaw_fresh
+              and isfinite(st_t.gps.E) and isfinite(st_t.gps.N)):
+        # Case 2: pos-only bootstrap (anchor 없을 때 1회)
+        baro_sink = getattr(st_t.baro, "sink_rate", nan)
+        v0 = (_clamp(baro_sink, config.V_MIN_MPS, config.V_MAX_DR_MPS)
+              if st_t.baro.valid and isfinite(baro_sink) and baro_sink > 0.0
+              else config.V_MIN_MPS)
+        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, v0, imu_yaw, imu_yaw, now)
+        logger.info(
+            "DR anchor bootstrap: E=%.1f N=%.1f course=%.1f° V=%.2f m/s",
+            st_t.gps.E, st_t.gps.N, math.degrees(imu_yaw), v0,
+        )
+
+    # ── [Decide] 모드 결정 ───────────────────────────────────────────────────
     if pos_fresh and vel_fresh and gyrz_fresh:
         st_t.nav.control_mode = ControlMode.GPS_TRACKING_CLOSED
         return ControlMode.GPS_TRACKING_CLOSED
-
-    # 2. GPS_TRACKING_OPEN
     if pos_fresh and vel_fresh:
         st_t.nav.control_mode = ControlMode.GPS_TRACKING_OPEN
         return ControlMode.GPS_TRACKING_OPEN
-
-    # 3. DR_TRACKING_CLOSED
     if dr_is_valid(st_t.dr) and gyrz_fresh:
         st_t.nav.control_mode = ControlMode.DR_TRACKING_CLOSED
         return ControlMode.DR_TRACKING_CLOSED
-
-    # 4. DR_TRACKING_OPEN
     if dr_is_valid(st_t.dr) and yaw_fresh:
         st_t.nav.control_mode = ControlMode.DR_TRACKING_OPEN
         return ControlMode.DR_TRACKING_OPEN
-
-    # 5. FAIL
     st_t.nav.control_mode = ControlMode.FAIL
     return ControlMode.FAIL
 
@@ -526,10 +501,10 @@ def _update_state_from_dead_reckoning(now: float) -> None:
 # ── ProduceL1Input ────────────────────────────────────────────────────────────
 
 def ProduceL1Input(now: float) -> L1Input:
-    """_STATE_t + _MISSION으로 L1Input을 생성.
+    """DecideControlMode 이후 호출. nav 상태를 읽어 L1Input을 생성.
 
-    이 함수는 내부 nav 상태를 갱신하는 부수 효과가 있다.
-    origin/DR 초기화는 TryInitStateFromPosOnly()가 담당한다.
+    nav 채우기와 DR anchor 갱신은 DecideControlMode(FillNav/FillDr)가 담당.
+    DR_TRACKING 시에만 _update_state_from_dead_reckoning으로 nav를 전파한다.
     """
     st_t = _STATE_t
     mi_t = _MISSION_t
@@ -541,21 +516,11 @@ def ProduceL1Input(now: float) -> L1Input:
 
     mode = st_t.nav.control_mode
 
-    # ── GPS_TRACKING (pos+vel 신선) ───────────────────────────────────────────
+    # ── GPS_TRACKING: nav는 FillNav에서 이미 채워짐 ──────────────────────────
     if mode in (ControlMode.GPS_TRACKING_CLOSED, ControlMode.GPS_TRACKING_OPEN):
-        if not (isfinite(st_t.gps.E) and isfinite(st_t.gps.N)
-                and isfinite(st_t.gps.V) and isfinite(st_t.gps.course)):
+        if not (isfinite(st_t.nav.E) and isfinite(st_t.nav.N)
+                and isfinite(st_t.nav.V) and isfinite(st_t.nav.course)):
             return L1Input(valid=False, reason="GPS_NAN")
-
-        st_t.nav.E          = st_t.gps.E
-        st_t.nav.N          = st_t.gps.N
-        st_t.nav.course     = st_t.gps.course
-        st_t.nav.V          = st_t.gps.V
-        st_t.nav.confidence = 1.0
-
-        # DR 앵커 갱신
-        imu_yaw = st_t.imu.yaw if st_t.imu.yaw_valid else nan
-        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, st_t.gps.V, st_t.gps.course, imu_yaw, now)
 
         return L1Input(
             valid=True, reason="GPS_TRACKING",
