@@ -133,6 +133,17 @@ def _alt_m_to_pressure_hpa(alt_m: float) -> float:
         return 1013.25
 
 
+def _pressure_pa_to_alt_m(p_pa: float) -> float:
+    """ISA 표준 대기: 기압(Pa) → 고도(m)."""
+    try:
+        ratio = float(p_pa) / 101325.0
+        if ratio <= 0.0:
+            return 0.0
+        return (1.0 - ratio ** (1.0 / 5.25588)) / 2.25577e-5
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
 def cmd_cx(option: str, _main_queue) -> bool:
     global TELEMETRY_ENABLE
     upper = option.strip().upper()
@@ -169,18 +180,19 @@ def cmd_sim(option: str, main_queue) -> bool:
 def cmd_simp(option: str, main_queue) -> bool:
     global _simp_tlm_alt_hold
     try:
-        value = float(option)
+        pressure_pa = float(option)
     except ValueError:
         return False
-    _simp_tlm_alt_hold = value
-    tlm_data.altitude = value
-    tlm_data.pressure = _alt_m_to_pressure_hpa(value)
+    alt_m = _pressure_pa_to_alt_m(pressure_pa)
+    _simp_tlm_alt_hold = alt_m
+    tlm_data.altitude = alt_m
+    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_SIMP,
-        f"{value}",
+        f"{alt_m}",
     )
 
 

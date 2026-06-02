@@ -7,7 +7,7 @@ Receives telemetry from XBee (USB serial), parses the CANSAT TLM CSV emitted by
 SIM mode (bench / map rehearsal) — send in order:
   1. CMD,1070,SIM,ENABLE     — prepare (TLM mode column A)
   2. CMD,1070,SIM,ACTIVATE  — SIM on (TLM S); required before SIMP/SIMG
-  3. CMD,1070,SIMP,<alt_m>  — simulated baro altitude for flight logic / state machine
+  3. CMD,1070,SIMP,<pressure_Pa>  — simulated baro pressure (Pa) for flight logic / state machine
   4. CMD,1070,SIMG,lat,lon,course_deg,speed_m_s[,alt_m] — simulated GPS fix (course: ground track deg, speed: m/s)
   5. CMD,1070,TC,lat,lon    — release target (required: SS,3 is blocked if prevstate target is unset)
   6. CMD,1070,SS,3          — jump to RELEASE (commands are case-insensitive: ss,3 works)
@@ -485,7 +485,7 @@ COMMAND_PRESETS = [
     ("SIM,ENABLE",   "SIM mode enable"),
     ("SIM,ACTIVATE", "SIM mode activate"),
     ("SIM,DISABLE",  "SIM mode disable"),
-    ("SIMP,120",     "SIM baro altitude (m)"),
+    ("SIMP,99877",   "SIM baro pressure (Pa, ≈120 m)"),
     ("SIMG,37.56,126.93,90,8.5", "SIM GPS lat,lon,course°,speed_m/s"),
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
     ("SIMGR,0,0,0,5,100",       "SIM GPS 상대 타겟기준 동(+E)/북(+N) m, course°,speed,alt"),
@@ -614,7 +614,7 @@ class GroundStation(tk.Tk):
         self._gps_fresh_state: bool | None = None  # True=주입, False=Null, None=미설정
 
         # SIM 기압 파일 플레이어
-        self._sim_player_values: list[float] = []   # 고도(m) 값 목록
+        self._sim_player_values: list[float] = []   # 기압(Pa) 값 목록
         self._sim_player_idx: int = 0
         self._sim_player_running: bool = False
         self._sim_player_after_id: str | None = None
@@ -1320,7 +1320,7 @@ class GroundStation(tk.Tk):
             header_skipped = True
             # 10000 Pa 이상이면 Pa 단위로 간주, 이하면 hPa
             p_pa = val if val > 10000.0 else val * 100.0
-            alt_values.append(_pressure_pa_to_alt_m(p_pa))
+            alt_values.append(p_pa)
 
         if not alt_values:
             messagebox.showwarning("파일 오류", "유효한 기압 데이터가 없습니다.")
@@ -1361,8 +1361,8 @@ class GroundStation(tk.Tk):
             self._sim_progress_var.set("완료")
             self._append_console("[SIM] 기압 재생 완료", "ok")
             return
-        alt_m = self._sim_player_values[self._sim_player_idx]
-        self._send_body(f"SIMP,{alt_m:.2f}")
+        p_pa = self._sim_player_values[self._sim_player_idx]
+        self._send_body(f"SIMP,{p_pa:.0f}")
         self._sim_player_idx += 1
         total = len(self._sim_player_values)
         self._sim_progress_var.set(f"{self._sim_player_idx}/{total}")
