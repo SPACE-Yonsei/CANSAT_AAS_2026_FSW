@@ -131,6 +131,107 @@ sudo systemctl start cansat-fsw.service
 sudo systemctl status cansat-fsw.service
 ```
 
+## 발사 전 절차 (Pre-Launch Checklist)
+
+### XBee 사전 설정 (XCTU)
+- PAN ID = `1070`
+- 브로드캐스트 금지: GCS XBee MAC 주소를 페이로드 XBee의 DH/DL에 설정 (유니캐스트)
+
+### 발사대 설치 후 순서
+
+```
+① 캔샛 전원 ON
+   └─ 카메라 녹화 자동 시작 (FSW 부팅과 동시)
+
+② CMD,1070,CX,ON          — 텔레메트리 활성화, 패킷 흐름 확인
+
+③ CMD,1070,ST,GPS          — GPS로 UTC 시간 동기화
+   └─ GPS 수신 불가 시: CMD,1070,ST,HH:MM:SS
+
+④ CMD,1070,TC,<lat>,<lon>  — 대회장 타겟 좌표 입력 (prevstate에 저장됨)
+
+⑤ CMD,1070,CAL             — ★ 발사 직전 마지막 명령
+   └─ 고도 → 0m 영점 (발사대 기준)
+   └─ PACKET_COUNT → 0 리셋
+   └─ prevstate 동기화 (비행 중 리셋 복구 기준점 확정)
+
+⑥ 발사
+```
+
+> **주의:** CAL 이후 추가 명령을 보내면 패킷 카운트가 올라간 채로 비행이 시작됩니다.
+
+---
+
+## 커맨드 목록 (Command Reference)
+
+모든 명령 형식: `CMD,1070,<CMD>,<OPTION>` (팀 ID = 1070)
+
+### 필수 명령 (AAS 스펙 3.1.2)
+
+| 커맨드 | 형식 | 기능 | CMD_ECHO 예시 |
+|---|---|---|---|
+| **CX** | `CX,ON\|OFF` | 텔레메트리 ON/OFF | `CXON` / `CXOFF` |
+| **ST** | `ST,GPS\|HH:MM:SS` | 미션 시간 설정 | `STGPS` / `ST13:35:59` |
+| **SIM** | `SIM,ENABLE\|ACTIVATE\|DISABLE` | 시뮬레이션 모드 제어 | `SIMENABLE` 등 |
+| **SIMP** | `SIMP,<Pa>` | 시뮬 기압 주입 (해수면 절대 기압, SIM ACTIVATE 이후에만 유효) | `SIMP101325` |
+| **CAL** | `CAL` | 고도 영점 + PACKET_COUNT 0 리셋 | `CAL` |
+| **MEC** | `MEC,<DEVICE>,ON\|OFF` | 메커니즘 작동 | `MECMOTORON` |
+
+**MEC DEVICE 정의:**
+
+| DEVICE | 대상 |
+|---|---|
+| `MOTOR` | 모터(서보) 활성/비활성 |
+| `RELEASE` | 릴리즈 릴레이 |
+| `EGG` | 에그 솔레노이드 |
+
+### 팀 선택 명령 (Optional)
+
+| 커맨드 | 형식 | 기능 |
+|---|---|---|
+| **TC** | `TC,<lat>,<lon>` | 타겟 GPS 좌표 설정 (prevstate 저장, 리셋 복구) |
+| **SS** | `SS,0~6` | 비행 상태 강제 점프 (0=LAUNCH_PAD … 6=LANDED) |
+| **FAC** | `FAC,REL\|EGG,ON\|OFF` | 릴리즈/에그 직접 제어 |
+| **MTR** | `MTR,LEFT\|NEUTRAL\|RIGHT` | 서보 수동 조향 |
+| **CMC** | `CMC,GPS_GUIDED\|GPS_ONLY\|IMU_HEADING` | 제어 모드 전환 |
+| **CAM** | `CAM,ON\|OFF` | 카메라 수동 제어 |
+| **RBT** | `RBT,<token>[,<seq>[,<nonce>]]` | 인증된 시스템 리부팅 |
+| **XRST** | `XRST,NOW` | XBee 하드웨어 리셋 |
+| **SIMG** | `SIMG,<lat>,<lon>,<course°>,<speed_m/s>[,<alt_m>]` | SIM GPS 주입 |
+| **SIMGR** | `SIMGR,<east_m>,<north_m>,<course°>,<speed>[,<alt>]` | SIM GPS 타겟 기준 상대좌표 주입 |
+| **SIMGN** | `SIMGN` | SIM GPS 강제 stale |
+
+### CMD_ECHO 규칙
+
+CMD_ECHO = 커맨드명 + 옵션을 **콤마 없이** 붙여쓴 값. TLM 패킷이 CSV이므로 콤마 금지.
+
+| 수신 | CMD_ECHO |
+|---|---|
+| `CMD,1070,CX,ON` | `CXON` |
+| `CMD,1070,SIMP,101325` | `SIMP101325` |
+| `CMD,1070,MEC,MOTOR,ON` | `MECMOTORON` |
+| `CMD,1070,CAL` | `CAL` |
+| `CMD,1070,ST,13:35:59` | `ST13:35:59` |
+
+---
+
+## 시뮬레이션 모드 운용
+
+```
+① CMD,1070,CX,ON
+② CMD,1070,ST,GPS
+③ CMD,1070,TC,<lat>,<lon>
+④ CMD,1070,CAL              ← 반드시 CAL 먼저 (절대고도 → 상대고도 변환 기준)
+⑤ CMD,1070,SIM,ENABLE
+⑥ CMD,1070,SIM,ACTIVATE
+⑦ Serial Studio 또는 GCS에서 SIMP 파일 1Hz 재생
+⑧ (완료 후) CMD,1070,SIM,DISABLE
+```
+
+> **주의:** CAL 없이 SIMP를 사용하면 SIMP 값(해수면 절대기압)이 발사대 오프셋 보정 없이 그대로 고도로 해석됩니다. 해발 500m 대회장에서 CAL 미실행 시 SIMP 최초값이 ~500m로 해석되어 즉시 ASCENT 상태로 진입합니다.
+
+---
+
 ## Test
 
 ### Full test suite
