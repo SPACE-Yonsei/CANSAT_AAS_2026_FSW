@@ -691,11 +691,11 @@ def send_tlm(serial_instance) -> None:
 def _dispatch_command(line: str, main_queue) -> bool:
     # Normalize command "CMD,1070,<body>"
     line = line.strip()
-    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Za-z]+),(.*)", line, re.IGNORECASE)
+    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Za-z]+)(?:,(.*))?$", line, re.IGNORECASE)
     if not m:
         return False
     cmd = m.group(1).upper()
-    option = m.group(2).strip()
+    option = (m.group(2) or "").strip()
     set_cmdecho(cmd)
 
     if cmd == "CX":
@@ -713,6 +713,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
     if cmd == "SIMGN":
         return cmd_simgn(option, main_queue)
     if cmd == "CAL":
+        tlm_data.packet_count = 0
+        prevstate.update_packet_count(0)
         return cmd_cal(option, main_queue)
     if cmd == "MEC":
         return cmd_mec(option, main_queue)
