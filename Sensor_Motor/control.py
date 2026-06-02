@@ -84,6 +84,80 @@ def _as_control_mode(value) -> ControlMode:
         return ControlMode.FAIL
 
 
+# ── ControlMode 문자열 호환 헬퍼 ──────────────────────────────────────────────
+# Enum / 문자열 어느 쪽이 와도 안전하게 분류한다.
+
+def _mode_str(mode) -> str:
+    if hasattr(mode, "value"):
+        return mode.value
+    return str(mode)
+
+
+def _is_fail_mode(mode) -> bool:
+    return _mode_str(mode) == "FAIL"
+
+
+def _is_gps_closed(mode) -> bool:
+    return _mode_str(mode) == "GPS_TRACKING_CLOSED"
+
+
+def _is_gps_open(mode) -> bool:
+    return _mode_str(mode) == "GPS_TRACKING_OPEN"
+
+
+def _is_dr_closed(mode) -> bool:
+    s = _mode_str(mode)
+    return s.startswith("DR_") and s.endswith("_CLOSED")
+
+
+def _is_dr_open(mode) -> bool:
+    s = _mode_str(mode)
+    return s.startswith("DR_") and s.endswith("_OPEN")
+
+
+def _is_dr_m(mode) -> bool:
+    return _mode_str(mode).startswith("DR_M_")
+
+
+def _is_dr_pm(mode) -> bool:
+    return _mode_str(mode).startswith("DR_PM_")
+
+
+def _select_pid_gains(mode, kp_override):
+    """모드별 (kp, ki, kd) 반환. kp_override가 있으면 kp만 대체.
+
+    GPS_CLOSED → KP_GPS_CLOSED, DR_M_*_CLOSED → KP_DR_M_CLOSED,
+    DR_PM_*_CLOSED → KP_DR_PM_CLOSED. PID는 *_CLOSED 모드에서만 활성이므로
+    open 모드에서 호출돼도 결과는 사용되지 않는다.
+    """
+    if _is_dr_pm(mode):
+        kp = config.KP_DR_PM_CLOSED
+        ki = getattr(config, "KI_DR_PM_CLOSED", 0.0)
+        kd = getattr(config, "KD_DR_PM_CLOSED", 0.0)
+    elif _is_dr_m(mode):
+        kp = config.KP_DR_M_CLOSED
+        ki = getattr(config, "KI_DR_M_CLOSED", 0.0)
+        kd = getattr(config, "KD_DR_M_CLOSED", 0.0)
+    else:  # GPS_CLOSED 및 fallback
+        kp = config.KP_GPS_CLOSED
+        ki = getattr(config, "KI_GPS_CLOSED", config.CTRL_K_I)
+        kd = getattr(config, "KD_GPS_CLOSED", config.KD_YAW_RATE)
+    if kp_override is not None:
+        kp = float(kp_override)
+    return kp, ki, kd
+
+
+def _ff_scale_for_mode(mode) -> float:
+    """피드포워드 권한 스케일. GPS=1.0, DR_M=0.8, DR_PM=0.6, 그 외=0.0."""
+    if _is_gps_closed(mode) or _is_gps_open(mode):
+        return 1.0
+    if _is_dr_pm(mode):
+        return getattr(config, "DR_PM_FF_SCALE", 0.6)
+    if _is_dr_m(mode):
+        return getattr(config, "DR_M_FF_SCALE", 0.8)
+    return 0.0
+
+
 # ── Dataclass 정의 ────────────────────────────────────────────────────────────
 
 @dataclass
@@ -108,6 +182,7 @@ class CtrlOutput:
     delta_arm_deg:   float = 0.0
     delta_ff_deg:    float = 0.0
     delta_pid_deg:   float = 0.0
+    delta_total_deg: float = 0.0          # d_ff + d_pid, 합산 클램핑 전 (디버그)
     angular_velocity_cmd_deg_s:   float = 0.0
     angular_velocity_meas_deg_s:  float = float("nan")
     angular_velocity_error_deg_s: float = 0.0
@@ -117,6 +192,10 @@ class CtrlOutput:
     gyro_rejected: bool  = False
     valid:         bool  = False
     control_mode:  ControlMode = ControlMode.FAIL
+    # 진단/단위 추적용 (모두 deg 또는 deg/s 단위; 무차원 스케일 제외)
+    kp_used:       float = 0.0
+    ff_scale:      float = 1.0
+    reason:        str   = "INIT"
 
 
 # ── 모듈 레벨 제어 상태 ───────────────────────────────────────────────────────
@@ -229,13 +308,20 @@ def step(
     control_mode = _as_control_mode(cmd.control_mode)
     out_t = CtrlOutput(timestamp=now, control_mode=control_mode)
 
+    # ── FAIL 모드 → 중립 ─────────────────────────────────────────────────────
+    if _is_fail_mode(control_mode):
+        out_t.reason = "FAIL"
+        return out_t
+
     # ── 유효하지 않은 명령 → 중립 ────────────────────────────────────────────
     if not cmd.valid:
+        out_t.reason = "INVALID_CMD"
         return out_t
 
     # ── NaN 명령 → 중립 ──────────────────────────────────────────────────────
     angular_velocity_cmd_deg_s = float(cmd.angular_velocity_cmd_deg_s)
     if not math.isfinite(angular_velocity_cmd_deg_s):
+        out_t.reason = "NAN_CMD"
         return out_t
     raw_cmd = angular_velocity_cmd_deg_s
 
@@ -253,8 +339,10 @@ def step(
     # PID + slew 공유 dt
     dt = _clamp_dt(now, _prev_time, 0.1, 0.01, 0.2)
 
-    # ── 피드포워드 ────────────────────────────────────────────────────────────
-    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s)
+    # ── 피드포워드 (모드별 권한 스케일 적용) ─────────────────────────────────
+    ff_scale = _ff_scale_for_mode(control_mode)
+    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s) * ff_scale
+    out_t.ff_scale = ff_scale
 
     # ── Gyro 스파이크 거부 ────────────────────────────────────────────────────
     gyro_finite  = math.isfinite(angular_velocity_meas_deg_s)
@@ -285,12 +373,13 @@ def step(
             _integral_deg + error * dt,
             -config.CTRL_I_LIMIT_DEG, config.CTRL_I_LIMIT_DEG,
         )
-        kp = float(cmd.kp_override) if cmd.kp_override is not None else config.KP_GPS_CLOSED
+        kp, ki, kd = _select_pid_gains(control_mode, cmd.kp_override)
         delta_pid = _clamp(
-            kp * error + config.CTRL_K_I * integral_candidate + config.KD_YAW_RATE * derivative,
+            kp * error + ki * integral_candidate + kd * derivative,
             -DELTA_ARM_MAX_DEG, DELTA_ARM_MAX_DEG,
         )
         integral = integral_candidate
+        out_t.kp_used = kp
         out_t.angular_velocity_error_deg_s = error
         delta_sum = delta_ff + delta_pid
 
@@ -323,6 +412,7 @@ def step(
 
     out_t.delta_ff_deg    = delta_ff
     out_t.delta_pid_deg   = delta_pid
+    out_t.delta_total_deg = delta_sum
     out_t.delta_arm_deg   = delta_arm
     out_t.motor_cmd       = delta_arm
     out_t.left_angle_deg  = left_angle
@@ -330,6 +420,7 @@ def step(
     out_t.left_pw         = left_pw
     out_t.right_pw        = right_pw
     out_t.valid           = True
+    out_t.reason          = "SATURATED" if saturated else "OK"
 
     # ── PID 상태 업데이트 ─────────────────────────────────────────────────────
     if pid_active:

@@ -76,7 +76,7 @@ class TestProduceL1Output(unittest.TestCase):
                   confidence=config.DR_MIN_CONFIDENCE_FOR_CONTROL - 0.05))
         self.assertFalse(out.valid)
         self.assertFalse(out.control_valid)
-        self.assertEqual(out.reason, "LOW_CONFIDENCE")
+        self.assertEqual(out.reason, "LOW_DR_CONFIDENCE")
         self.assertEqual(out.yaw_rate_cmd, 0.0)
 
     # ── Case 6: nu > 90deg → clamped in command ─────────────────────────────
