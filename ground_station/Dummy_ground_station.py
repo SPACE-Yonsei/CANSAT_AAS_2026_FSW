@@ -7,7 +7,7 @@ Receives telemetry from XBee (USB serial), parses the CANSAT TLM CSV emitted by
 SIM mode (bench / map rehearsal) — send in order:
   1. CMD,1070,SIM,ENABLE     — prepare (TLM mode column A)
   2. CMD,1070,SIM,ACTIVATE  — SIM on (TLM S); required before SIMP/SIMG
-  3. CMD,1070,SIMP,<alt_m>  — simulated baro altitude for flight logic / state machine
+  3. CMD,1070,SIMP,<pressure_Pa>  — simulated baro pressure (Pa) for flight logic / state machine
   4. CMD,1070,SIMG,lat,lon,course_deg,speed_m_s[,alt_m] — simulated GPS fix (course: ground track deg, speed: m/s)
   5. CMD,1070,TC,lat,lon    — release target (required: SS,3 is blocked if prevstate target is unset)
   6. CMD,1070,SS,3          — jump to RELEASE (commands are case-insensitive: ss,3 works)
@@ -234,7 +234,7 @@ COMMAND_PRESETS = [
     ("SIM,ENABLE",   "SIM mode enable"),
     ("SIM,ACTIVATE", "SIM mode activate"),
     ("SIM,DISABLE",  "SIM mode disable"),
-    ("SIMP,120",     "SIM baro altitude (m)"),
+    ("SIMP,99877",   "SIM baro pressure (Pa, ≈120 m)"),
     ("SIMG,37.56,126.93,90,8.5", "SIM GPS lat,lon,course°,speed_m/s"),
     ("SIMG,37.56,126.93,90,8.5,100", "SIM GPS + alt_m"),
     ("TC,37.57,126.94", "Target lat,lon (release)"),
