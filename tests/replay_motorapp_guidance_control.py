@@ -366,7 +366,7 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
     if not samples:
         return {"name": name, "rows": 0}, []
     cache = motorapp._Cache()
-    ctl = control.MakeCtrler()
+    control.reset()
     rows: list[dict] = []
     pending = list(samples)
     idx = 0
@@ -430,7 +430,7 @@ def replay(samples: list[Sample], target: Optional[tuple[float, float]], name: s
                 guidance.SensorQuality.FRESHED,
             ):
                 meas = math.degrees(float(l1_input.gyrz))
-            cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, now), meas, now)
+            cmd = control.step(control.ProduceCtrlInput(g_out, now), meas, now)
         else:
             cmd = control.WriteNeutral(now, g_out.reason)
         rows.append(

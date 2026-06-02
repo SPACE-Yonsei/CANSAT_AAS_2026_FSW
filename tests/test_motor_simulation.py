@@ -58,7 +58,7 @@ def _reset_motorapp():
     motorapp.RELEASE_ACTION_ENABLED = True
     motorapp.EGG_ACTION_ENABLED = True
     motorapp.PI = None
-    motorapp._CONTROLLER = control.MakeCtrler()
+    control.reset()
     motorapp._CACHE = _Cache()
     motorapp._GUIDANCE_STATE = guidance.GuidanceState()
     motorapp._TARGET_LAT = None

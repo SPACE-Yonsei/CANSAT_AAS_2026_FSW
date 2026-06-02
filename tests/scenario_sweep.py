@@ -151,19 +151,16 @@ def run_scenario(params: ScenarioParams) -> ScenarioResult:
         now,
     )
 
-    ctl = control.MakeCtrler()
+    control.reset()
     ctrl_in = control.ProduceCtrlInput(g_out, now)
 
     # 1단계: 원하는 arm 각도 계산
-    cmd = control.ProduceCtrlOutput(ctl, ctrl_in, gyrz_meas, now)
+    cmd = control.step(ctrl_in, gyrz_meas, now)
     _, _, left_des, right_des, _ = control.ConnectRoMo(cmd.delta_arm_deg)
-    ctl.prev_left_angle_deg = left_des
-    ctl.prev_right_angle_deg = right_des
+    control.sync_prev_angles(left_des, right_des)
 
     # 2단계: arm이 원하는 위치에서 출발하는 정상 프레임
-    cmd = control.ProduceCtrlOutput(
-        ctl, ctrl_in, gyrz_meas, now + 1.0 / 20.0
-    )
+    cmd = control.step(ctrl_in, gyrz_meas, now + 1.0 / 20.0)
 
     return ScenarioResult(
         bearing_error_deg=params.bearing_error_deg,

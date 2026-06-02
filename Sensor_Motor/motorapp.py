@@ -28,8 +28,6 @@ _ORIGIN_SAVED: bool = False
 _CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레드가 씀)
 _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
-_CTRLER_t: Optional[control.Ctrler] = None  # PID 상태 (init()에서 생성)
-
 _PREV_STATE: int = 0
 _DETUMBLE_ACTIVE: bool = False
 _DETUMBLE_EXIT_START: float = math.nan
@@ -393,7 +391,7 @@ def handle_target_coord(data: str) -> None:
 
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
-    global STATE, _PREV_STATE, _CTRLER_t, _ORIGIN_SAVED
+    global STATE, _PREV_STATE, _ORIGIN_SAVED
     global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START, _DO_CTRL_RESET
     try:
         new_state = int(data.split(",")[0])
@@ -415,7 +413,7 @@ def handle_flight_state(data: str) -> None:
             _DETUMBLE_EXIT_START = math.nan
 
     if _DO_CTRL_RESET:
-        control.controller_reset(_CTRLER_t)
+        control.reset()
 
 
 def handle_release(data: str = "TRIGGER") -> None:
@@ -654,7 +652,7 @@ def _sync_origin_to_prevstate() -> bool:
 
 def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     """한 사이클 제어 계산. 반환값은 진단용 (None이면 액션 없음)."""
-    global _CTRLER_t, _ORIGIN_SAVED
+    global _ORIGIN_SAVED
 
     with _UPDATE_LOCK:
         motor_enabled = MOTOR_ENABLED
@@ -731,8 +729,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         if gz_meas is None:
             gz_meas = math.nan
         ctrl_out_t = control.ProduceDetumbleOutput(now, gz_meas)
-        _CTRLER_t.prev_left_angle_deg = ctrl_out_t.left_angle_deg
-        _CTRLER_t.prev_right_angle_deg = ctrl_out_t.right_angle_deg
+        control.sync_prev_angles(ctrl_out_t.left_angle_deg, ctrl_out_t.right_angle_deg)
         control.MoveServo(PI, ctrl_out_t)
         sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t, event="DETUMBLING")
         _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
@@ -762,7 +759,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         gz_meas  = snap_t.latest_imu.gyrz_rad_s or 0.0
         gz_meas  = math.degrees(float(gz_meas))   # rad/s → deg/s (ProduceCtrlOutput 기대 단위)
         ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
-        ctrl_out_t = control.ProduceCtrlOutput(_CTRLER_t, ctrl_in_t, gz_meas, now)
+        ctrl_out_t = control.step(ctrl_in_t, gz_meas, now)
         control.MoveServo(PI, ctrl_out_t)
         sensorlog.log_motor_raw(
             state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, l1_out_t,
@@ -857,7 +854,7 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global _CTRLER_t, _ORIGIN_SAVED, STATE
+    global _ORIGIN_SAVED, STATE
     global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
 
     prevstate.init_prevstate()
@@ -901,7 +898,7 @@ def init() -> None:
                 mi_t.target_ready = True
                 logger.info("Target re-projected on init: E=%.1f N=%.1f", tE, tN)
 
-    _CTRLER_t = control.MakeCtrler()
+    control.reset()
     PI = control.init_control()
 
     try:

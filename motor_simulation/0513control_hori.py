@@ -163,14 +163,9 @@ def run_single_case(case: SimulationCase, origin_lat: float, origin_lon: float,
     l1_output = guidance.ProduceL1Output(l1_input)
 
     ctrl_input = control.ProduceCtrlInput(l1_output, now)
-    ctrler = control.MakeCtrler()
-    ctrler.pid.prev_time = now - max(0.0, case.dt_s)
-    ctrl_output = control.ProduceCtrlOutput(
-        ctrler,
-        ctrl_input,
-        angular_velocity_meas_deg_s=case.gyrz_deg_s,
-        now=now,
-    )
+    control.reset()
+    control._prev_time = now - max(0.0, case.dt_s)
+    ctrl_output = control.step(ctrl_input, case.gyrz_deg_s, now)
 
     return SimulationResult(
         case=case,

@@ -87,7 +87,7 @@ def _configure_mission() -> tuple[float, float]:
 
 
 tE, tN = _configure_mission()
-ctrler = control.MakeCtrler()
+control.reset()
 
 
 if pi is not None:
@@ -142,7 +142,7 @@ def _steady_state(l1_in: L1Input, gyrz_dps: float, now_base: float):
 
     Returns: (ctrl_out_final, cycles_taken)
     """
-    ctl = control.MakeCtrler()   # 중립에서 시작 (별도 ctrler)
+    control.reset()
     prev_left  = control.NEUTRAL_ARM_DEG
     prev_right = control.NEUTRAL_ARM_DEG
     ctrl_out   = None
@@ -152,7 +152,7 @@ def _steady_state(l1_in: L1Input, gyrz_dps: float, now_base: float):
         now      = now_base + i * _BENCH_DT_S
         l1_out   = guidance.ProduceL1Output(l1_in)
         ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-        ctrl_out = control.ProduceCtrlOutput(ctl, ctrl_in, gyrz_dps, now)
+        ctrl_out = control.step(ctrl_in, gyrz_dps, now)
 
         # 수렴 판정
         if (abs(ctrl_out.left_angle_deg  - prev_left)  < _BENCH_CONV_DEG and
@@ -190,10 +190,10 @@ def _run_tracking_case(
     )
 
     # ── 1-사이클 즉시 출력 (단일 스텝, slew 제한 있음) ───────────────────────
-    control.controller_reset(ctrler)
+    control.reset()
     l1_out   = guidance.ProduceL1Output(l1_in)
     ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-    ctrl_out = control.ProduceCtrlOutput(ctrler, ctrl_in, gyrz_dps, now)
+    ctrl_out = control.step(ctrl_in, gyrz_dps, now)
 
     # ── 정상상태 시뮬레이션 (20Hz 다중 사이클, slew 수렴 후) ─────────────────
     ss_out, ss_in, ss_cycles = _steady_state(l1_in, gyrz_dps, now)
@@ -246,7 +246,7 @@ def _run_tracking_case(
 
 def _run_detumble_case(gyrz_dps: float) -> None:
     now = time.monotonic()
-    control.controller_reset(ctrler)
+    control.reset()
 
     # _ctrl_cycle에서 ProduceDetumbleOutput을 직접 호출하는 것과 동일
     out = control.ProduceDetumbleOutput(now, gyrz_dps)
@@ -288,8 +288,6 @@ def _nu_to_yaw_rate_dps(nu_deg: float, speed_mps: float, confidence: float = 1.0
 
 def _print_sensitivity_table(speed_mps: float, confidence: float = 1.0) -> None:
     """nu → yaw_rate_cmd → delta_ff → arm 각도 감도 테이블 출력."""
-    cfg = control.ControlConfig()
-
     header = (
         f"{'nu':>7}  {'yaw_rate':>10}  {'delta_ff':>10}  "
         f"{'left_arm':>10}  {'right_arm':>10}  {'left_pw':>8}  {'right_pw':>8}"
@@ -301,11 +299,11 @@ def _print_sensitivity_table(speed_mps: float, confidence: float = 1.0) -> None:
     sep = "-" * len(header)
 
     print(f"\n  V={speed_mps:.1f}m/s  L_GAIN={config.L_GAIN_M:.1f}m  confidence={confidence:.2f}")
-    print(f"  cmd_max={cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S:.1f}dps  "
-          f"deadband={cfg.ANGULAR_VELOCITY_DEADBAND_DEG_S:.1f}dps  "
-          f"expo={cfg.EXPO:.2f}  "
-          f"delta_ff_max={cfg.DELTA_FF_MAX_DEG:.0f}deg  "
-          f"delta_min_eff={cfg.DELTA_MIN_EFFECTIVE_DEG:.1f}deg")
+    print(f"  cmd_max={config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS:.1f}dps  "
+          f"deadband={config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S:.1f}dps  "
+          f"expo={config.CTRL_EXPO:.2f}  "
+          f"delta_ff_max={control.DELTA_ARM_MAX_DEG:.0f}deg  "
+          f"delta_min_eff={config.CTRL_DELTA_MIN_EFFECTIVE_DEG:.1f}deg")
     print(f"  {sep}")
     print(f"  {header}")
     print(f"  {unit}")
@@ -313,9 +311,9 @@ def _print_sensitivity_table(speed_mps: float, confidence: float = 1.0) -> None:
 
     for nu_deg in _NU_SWEEP_DEG:
         yaw_rate_dps = _nu_to_yaw_rate_dps(nu_deg, speed_mps, confidence)
-        delta_ff = control.angular_velocity_to_delta_ff(yaw_rate_dps, cfg)
+        delta_ff = control.angular_velocity_to_delta_ff(yaw_rate_dps)
         left_pw, right_pw, left_angle, right_angle, _ = control.ConnectRoMo(delta_ff)
-        clamped = abs(yaw_rate_dps) > cfg.ANGULAR_VELOCITY_CMD_MAX_DEG_S
+        clamped = abs(yaw_rate_dps) > config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
         clamp_mark = "*" if clamped else " "
         print(
             f"  {nu_deg:>+6.0f}°  {yaw_rate_dps:>+9.2f}{clamp_mark}  "

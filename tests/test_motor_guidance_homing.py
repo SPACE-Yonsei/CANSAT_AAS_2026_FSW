@@ -261,8 +261,8 @@ class TestFailMode(unittest.TestCase):
     def test_fail_l1input_motor_neutral(self):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
         g_out = produceL1output(l1)
-        cmd = control.ProduceCtrlOutput(
-            control.MakeCtrler(),
+        control.reset()
+        cmd = control.step(
             control.ProduceCtrlInput(g_out, time.monotonic()),
             float("nan"),
             time.monotonic(),
@@ -472,8 +472,8 @@ class TestMotorOutput(unittest.TestCase):
     def test_fail_gives_neutral_pwm(self):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
         g_out = produceL1output(l1)
-        cmd = control.ProduceCtrlOutput(
-            control.MakeCtrler(),
+        control.reset()
+        cmd = control.step(
             control.ProduceCtrlInput(g_out, _now()),
             float("nan"),
             _now(),
@@ -490,18 +490,17 @@ class TestMotorOutput(unittest.TestCase):
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
         self.assertFalse(g_out.pid_enabled)
-        ctl = control.MakeCtrler()
-        ctl.pid.integral_deg = 12.0
-        ctl.pid.prev_error_deg = 7.0
+        control.reset()
+        control._integral_deg = 12.0
+        control._prev_error_deg = 7.0
         measured_dps = 50.0
-        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
-                                         measured_dps, _now())
+        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), measured_dps, _now())
         self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_arm_deg, -config.DETUMBLE_BRAKE_DELTA_DEG)
-        self.assertAlmostEqual(ctl.pid.integral_deg, 12.0)
-        self.assertAlmostEqual(ctl.pid.prev_error_deg, 7.0)
+        self.assertAlmostEqual(control._integral_deg, 12.0)
+        self.assertAlmostEqual(control._prev_error_deg, 7.0)
 
     def test_detumbling_open_loop_reverses_with_gyro_sign(self):
         inp = guidance.L1Input()
@@ -510,9 +509,8 @@ class TestMotorOutput(unittest.TestCase):
         inp.confidence = 1.0
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
-        ctl = control.MakeCtrler()
-        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
-                                         -50.0, _now())
+        control.reset()
+        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), -50.0, _now())
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_arm_deg, config.DETUMBLE_BRAKE_DELTA_DEG)
@@ -524,9 +522,8 @@ class TestMotorOutput(unittest.TestCase):
         inp.confidence = 1.0
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
-        ctl = control.MakeCtrler()
-        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
-                                         float("nan"), _now())
+        control.reset()
+        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
         self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertFalse(cmd.sensor_valid)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
@@ -538,9 +535,8 @@ class TestMotorOutput(unittest.TestCase):
         l1 = self._make_gps_tracking_l1(closed=False)
         g_out = produceL1output(l1)
         # In open mode the controller still runs PID; pid_enabled is True for L1 modes.
-        ctl = control.MakeCtrler()
-        cmd = control.ProduceCtrlOutput(ctl, control.ProduceCtrlInput(g_out, _now()),
-                                         float("nan"), _now())
+        control.reset()
+        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertEqual(cmd.control_mode, ControlMode.GPS_TRACKING_OPEN)
 

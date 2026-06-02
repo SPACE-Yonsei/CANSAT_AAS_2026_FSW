@@ -236,9 +236,9 @@ def run_section_b() -> None:
         g_out = guidance.ProduceL1Output(l1_in)
 
         # Control (fresh controller per scenario to avoid PID accumulation)
-        ctl = control.MakeCtrler()
+        control.reset()
         ctrl_in = control.ProduceCtrlInput(g_out, now)
-        cmd = control.ProduceCtrlOutput(ctl, ctrl_in, math.nan, now)
+        cmd = control.step(ctrl_in, math.nan, now)
 
         actual = _turn_label(cmd.delta_arm_deg)
         result = _pass_fail(actual, sc["expected"])
@@ -294,7 +294,7 @@ def run_section_c(pi) -> None:
     print(f"  GPIO  Left={control.PARAFOIL_LEFT_MOTOR_PIN}  Right={control.PARAFOIL_RIGHT_MOTOR_PIN}")
     print(f"  부호 규약: angular_velocity > 0 → 우선회 / angular_velocity < 0 → 좌선회")
 
-    ctl = control.MakeCtrler()
+    control.reset()
 
     for step_name, yr, step_desc in LIVE_STEPS:
         now = time.monotonic()
@@ -305,7 +305,7 @@ def run_section_c(pi) -> None:
             valid=True,
             timestamp=now,
         )
-        cmd = control.ProduceCtrlOutput(ctl, ctrl_in, math.nan, now)
+        cmd = control.step(ctrl_in, math.nan, now)
 
         _block_open(f"STEP: {step_name}")
         _row("설명",            step_desc)

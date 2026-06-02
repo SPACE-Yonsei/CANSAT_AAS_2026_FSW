@@ -362,7 +362,7 @@ class Simulator:
     def reset_runtime(self) -> None:
         guidance.reset()
         motorapp._CACHE_t = motorapp._Cache()
-        motorapp._CTRLER_t = control.MakeCtrler()
+        control.reset()
         motorapp._ORIGIN_SAVED = True
         motorapp._PREV_STATE = 0
         motorapp.STATE = int(self.inputs["state"])

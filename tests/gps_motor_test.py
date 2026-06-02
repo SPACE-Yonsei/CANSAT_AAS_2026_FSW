@@ -235,9 +235,9 @@ def run() -> None:
         l1_out = guidance.ProduceL1Output(l1_in)
 
         # ── 3. Control 파이프라인 ─────────────────────────────────────────────
-        ctl      = control.MakeCtrler()
+        control.reset()
         ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-        cmd      = control.ProduceCtrlOutput(ctl, ctrl_in, math.nan, now)
+        cmd      = control.step(ctrl_in, math.nan, now)
 
         actual  = _turn_label(cmd.delta_arm_deg)
         verdict = _pass_fail(actual, sc["expected"])
