@@ -84,22 +84,9 @@ RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_
 SENSOR_QUALITY_FRESH = "FRESH"
 SENSOR_QUALITY_STALE = "STALE"
 
-CONTROL_MODE_FAIL = "FAIL"
-
-MOTOR_REASON_INIT = "INIT"
-MOTOR_REASON_IDLE = "IDLE"
-MOTOR_REASON_LANDED = "LANDED"
-MOTOR_REASON_GUIDANCE_INACTIVE = "GUIDANCE_INACTIVE"
-MOTOR_REASON_DISABLED = "DISABLED"
-MOTOR_REASON_ACTIVE = "ACTIVE"
-MOTOR_REASON_DEGRADED = "DEGRADED"
-MOTOR_REASON_MANUAL_PREFIX = "MANUAL_"
 MOTOR_MANUAL_LEFT = "LEFT"
 MOTOR_MANUAL_NEUTRAL = "NEUTRAL"
 MOTOR_MANUAL_RIGHT = "RIGHT"
-
-CTRL_FALLBACK_NONE = "NONE"
-CTRL_FALLBACK_GYRO_SPIKE = "GYRO_SPIKE"
 
 # Gyro spike / PID integral decay (used by control.py)
 # 250→1500: 자유낙하 로그에서 정상 spin이 1227 dps까지 도달했음.
@@ -134,17 +121,13 @@ NU_DEADBAND_DEG = 5.0
 
 # Sensor freshness thresholds
 GPS_FRESH_MAX_AGE_S         = 5.0
-GPS_CONTROL_FRESH_MAX_AGE_S = GPS_FRESH_MAX_AGE_S   # backward-compat alias
 IMU_FRESH_MAX_AGE_S         = 3.0   # 1.5→3.0: reinit(~2s) 완료 전 stale 전환 방지
 BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터가 8회 miss만으로 stale 처리되던 문제 완화
-BRO_FRESH_MAX_AGE_S         = BARO_FRESH_MAX_AGE_S  # spec alias
 
-HISTORY_WINDOW_S  = 3.0
 # Accelerometer-aided DR.
 # 내부 로직은 USE_ACC_BLEND_CORRECTION만 사용한다 (acc는 weak blend, double
-# integration 아님). USE_ACC_DOUBLE_INTEGRATION은 backward-compat alias로만 유지.
+# integration 아님).
 USE_ACC_BLEND_CORRECTION   = True
-USE_ACC_DOUBLE_INTEGRATION = USE_ACC_BLEND_CORRECTION  # deprecated alias
 # 20260531 실측: lin_acc XY mag mean=1.32, 누적 velocity error 최대 3.6 m/s
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
@@ -179,12 +162,10 @@ ALLOW_LATE_ORIGIN_LOCK     = True
 # DR_MAX_POSITION_JUMP_M: 한 사이클 위치 전파가 이보다 크면 reject (DR_POSITION_JUMP).
 # DR_MAX_YAW_RATE_DPS_FOR_CONTROL: gyrz가 이보다 크면 정상 guidance에 G를 쓰지 않는다.
 # DR_BARO_SINK_MAX_MPS: sink_rate 스파이크 거부 임계값 (BARO_SINK_SPIKE).
-# DR_MAX_SPEED_MPS: 속도 상한 (기존 V_MAX_DR_MPS 재사용).
 DR_MAX_AGE_S                    = 60.0
 DR_MAX_POSITION_JUMP_M          = 100.0
 DR_MAX_YAW_RATE_DPS_FOR_CONTROL = 120.0
 DR_BARO_SINK_MAX_MPS            = 15.0
-DR_MAX_SPEED_MPS                = V_MAX_DR_MPS   # alias; speed clamp는 V_MAX_DR_MPS 사용
 
 TARGET_RADIUS_M = 5.0
 
@@ -238,7 +219,6 @@ DETUMBLE_EXIT_HOLD_S        = 0.05
 # ACC_X_SIGN = 1.0: body x = forward, positive = forward acceleration.
 # ACC_Y_SIGN = 1.0: body y = right, positive = rightward acceleration.
 GYRZ_SIGN      = 1.0
-MOTOR_CMD_SIGN = 1.0
 ACC_X_SIGN     = 1.0
 ACC_Y_SIGN     = 1.0
 
@@ -263,13 +243,11 @@ KD_DR_PM_CLOSED = 0.0
 # authority since its rate command is less trustworthy.
 DR_M_FF_SCALE    = 0.8
 DR_PM_FF_SCALE   = 0.6
-DR_OPEN_FF_SCALE = 0.7
 
 # Proportional gain for DETUMBLING: delta_arm_deg = -KP_DETUMBLE * omega_z_dps
 # 0.0 = legacy bang-bang (max deflection). >0 = proportional braking.
 KP_DETUMBLE = 0.8
 
-KI_YAW_RATE = 0.0
 KD_YAW_RATE = 0.0
 
 # Motor control source preference (operator-selectable tag, CMC 명령으로 변경).
