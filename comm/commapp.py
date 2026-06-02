@@ -632,15 +632,19 @@ def _send_one_tlm_frame(serial_instance) -> None:
         egg_action_enabled_s = ""
 
     line = (
+        # ── Required fields (spec 3.1.1.1, fields 1-22) ──────────────────────
         f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
         f"{tlm_data.mode},{tlm_data.state},"
-        f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure:.2f},"
-        f"{tlm_data.voltage:.3f},{tlm_data.current:.3f},{tlm_data.power:.3f},"
+        f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure / 10.0:.1f},"  # pressure hPa→kPa
+        f"{tlm_data.voltage:.3f},{tlm_data.current:.2f},"                                       # current 0.01A res
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
         f"{tlm_data.acc_x:.3f},{tlm_data.acc_y:.3f},{tlm_data.acc_z:.3f},"
-        f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
         f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
-        f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
+        f"{tlm_data.cmd_echo},,"
+        # ── Optional fields (after blank field ,, per spec) ───────────────────
+        f"{tlm_data.power:.3f},"
+        f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
+        f"{tlm_data.distance:.1f},"
         f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f},"
         f"{s_lat_s},{s_lon_s},"
         f"{t_lat_s},{t_lon_s},"
