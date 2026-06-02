@@ -194,9 +194,11 @@ def cmd_simp(option: str, main_queue) -> bool:
         return False
     alt_m = _pressure_pa_to_alt_m(pressure_pa)
     alt_relative = alt_m - prevstate.PREV_ALT_CAL  # 해발 절대고도 → 발사대 기준 상대고도
-    _simp_tlm_alt_hold = alt_relative
-    tlm_data.altitude = alt_relative
-    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa (절대기압 그대로)
+    # TLM 덮어쓰기는 SIM ACTIVATE(mode S) 이후에만. mode A에서는 실 센서 유지.
+    if tlm_data.mode == "S":
+        _simp_tlm_alt_hold = alt_relative
+        tlm_data.altitude = alt_relative
+        tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa (절대기압 그대로)
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,
@@ -514,8 +516,9 @@ def command_handler(recv_msg: str) -> None:
                 except ValueError:
                     baro_health = 1
             tlm_data.temperature = float(fields[1])
-            if tlm_data.mode in {"A", "S"} and _simp_tlm_alt_hold is not None:
-                # SIMP-injected altitude and pressure win over hardware samples.
+            if tlm_data.mode == "S" and _simp_tlm_alt_hold is not None:
+                # SIM ACTIVATE 이후에만 SIMP 값이 하드웨어 바로미터를 대체.
+                # mode "A"(ENABLE only)에서는 실 센서 유지.
                 pass
             else:
                 tlm_data.pressure = float(fields[0])
