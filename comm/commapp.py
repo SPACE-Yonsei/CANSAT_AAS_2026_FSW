@@ -23,12 +23,13 @@ TELEMETRY_ENABLE = True
 ST_timedelta = timedelta(seconds=0)
 
 _LOG_TLM_TO_CONSOLE = os.environ.get("FSW_LOG_TLM", "1").strip() != "0"
+_force_send_event = threading.Event()   # 단명 상태 진입 시 즉시 TLM 강제 송신용
 _TLM_SEND_FAIL_LOGGED = False
 _LAST_TLM_FAIL_LOG_TS = 0.0
 
 _RBT_AUTH_TOKEN = os.environ.get("RBT_AUTH_TOKEN", "").strip()
 _RBT_REQUIRE_SEQ = os.environ.get("RBT_REQUIRE_SEQ", "1").strip() != "0"
-_RBT_SAFE_STATES = {x.strip() for x in os.environ.get("RBT_SAFE_STATES", "0,5").split(",") if x.strip()}
+_RBT_SAFE_STATES = {x.strip() for x in os.environ.get("RBT_SAFE_STATES", "0,6").split(",") if x.strip()}
 _RBT_LAST_SEQ = -1
 _RBT_RECENT_NONCES: list[str] = []
 _RBT_NONCE_WINDOW = 32
@@ -88,10 +89,14 @@ _STATE_NAMES: dict[str, str] = {
     "0": "LAUNCH_PAD",
     "1": "ASCENT",
     "2": "APOGEE",
-    "3": "PROBE_RELEASE",
-    "4": "PAYLOAD_RELEASE",
-    "5": "LANDED",
+    "3": "DESCENT",
+    "4": "PAYLOAD_RELEASE",   # 번와이어 → 패러포일 전개
+    "5": "PROBE_RELEASE",     # 솔레노이드 → 에그 방출 (~2m, 단명)
+    "6": "LANDED",
 }
+# PROBE_RELEASE(5)는 2m 고도에서 ~0.4초짜리 단명 상태.
+# 반드시 _force_send_event를 통해 즉시 1프레임 강제 송신.
+_FORCE_SEND_STATES = {"5"}   # PROBE_RELEASE 진입 시 즉시 송신
 
 
 # Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX).
@@ -370,7 +375,7 @@ def cmd_ss(option: str, main_queue) -> bool:
         state = int(option)
     except ValueError:
         return False
-    if state < 0 or state > 5:
+    if state < 0 or state > 6:
         return False
     return msgstructure.send_msg(
         main_queue,
@@ -554,6 +559,8 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.distance = float(fields[0])
         elif mid == appargs.FlightlogicAppArg.MID_comm_state and len(fields) >= 1:
             tlm_data.state = fields[0]
+            if fields[0] in _FORCE_SEND_STATES:
+                _force_send_event.set()
         elif mid == appargs.FlightlogicAppArg.MID_comm_nav_dis and len(fields) >= 1:
             tlm_data.nav_distance_mm = float(fields[0])
         elif mid == appargs.FlightlogicAppArg.MID_comm_sim and len(fields) >= 1:
@@ -773,11 +780,15 @@ def read_cmd(main_queue, serial_instance) -> None:
 
 
 # Telemetry transmit rate is fixed at 1 Hz (CanSat competition spec).
-# Do not change unless you are explicitly off-spec for ground testing.
+# _force_send_event가 set되면 1초를 기다리지 않고 즉시 추가 프레임 송신.
+# PROBE_RELEASE 같은 단명 상태(<1s)가 CSV에 반드시 남도록 보장.
 def _tlm_sender(serial_instance) -> None:
     while COMMAPP_RUNSTATUS:
         send_tlm(serial_instance)
-        time.sleep(1.0)
+        fired = _force_send_event.wait(timeout=1.0)
+        if fired:
+            _force_send_event.clear()
+            send_tlm(serial_instance)   # 상태 진입 즉시 추가 1프레임
 
 
 def commapp_main(main_queue, main_pipe) -> None:
