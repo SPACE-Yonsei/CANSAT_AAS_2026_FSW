@@ -20,13 +20,17 @@ from typing import Any, Dict, Optional
 
 _STATE_FILE = Path(__file__).with_name("prevstate.json")
 
+FIX_TARGET_GPS: bool = True
+DEFAULT_TARGET_LAT: float = 38.376000
+DEFAULT_TARGET_LON: float = -79.607872
+
 
 # Public state variables used by other modules
 PREV_STATE: int = 0
 PREV_ALT_CAL: float = 0.0
 PREV_MAX_ALT: float = 0.0
-PREV_TARGET_LAT: float = 0.0
-PREV_TARGET_LON: float = 0.0
+PREV_TARGET_LAT: float = DEFAULT_TARGET_LAT
+PREV_TARGET_LON: float = DEFAULT_TARGET_LON
 PREV_PACKET_COUNT: int = 0
 PREV_ST_TIMEDELTA: float = 0.0
 PREV_YAW_OFFSET: float = 0.0
@@ -40,8 +44,8 @@ PREV_BEARING: float = float("nan")
 STATE_OVERRIDE: Optional[int] = None
 
 # Backward-compatible aliases (prefer PREV_* fields in new code)
-Target_lat: float = 0.0
-Target_lon: float = 0.0
+Target_lat: float = DEFAULT_TARGET_LAT
+Target_lon: float = DEFAULT_TARGET_LON
 YAW_OFFSET: float = 0.0
 
 
@@ -50,6 +54,26 @@ def _sync_legacy_aliases() -> None:
     Target_lat = float(PREV_TARGET_LAT)
     Target_lon = float(PREV_TARGET_LON)
     YAW_OFFSET = float(PREV_YAW_OFFSET)
+
+
+def _target_defaults() -> tuple[float, float]:
+    return DEFAULT_TARGET_LAT, DEFAULT_TARGET_LON
+
+
+def _valid_target(lat: float, lon: float) -> bool:
+    return (-90.0 <= lat <= 90.0
+            and -180.0 <= lon <= 180.0
+            and not (abs(lat) < 1e-9 and abs(lon) < 1e-9))
+
+
+def _resolve_target(payload: Dict[str, Any]) -> tuple[float, float]:
+    if FIX_TARGET_GPS:
+        return _target_defaults()
+    lat = float(payload.get("PREV_TARGET_LAT", payload.get("Target_lat", DEFAULT_TARGET_LAT)))
+    lon = float(payload.get("PREV_TARGET_LON", payload.get("Target_lon", DEFAULT_TARGET_LON)))
+    if not _valid_target(lat, lon):
+        return _target_defaults()
+    return lat, lon
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -182,8 +206,7 @@ def _apply(payload: Dict[str, Any]) -> None:
     PREV_STATE = int(payload.get("PREV_STATE", 0))
     PREV_ALT_CAL = float(payload.get("PREV_ALT_CAL", 0.0))
     PREV_MAX_ALT = float(payload.get("PREV_MAX_ALT", 0.0))
-    PREV_TARGET_LAT = float(payload.get("PREV_TARGET_LAT", payload.get("Target_lat", 0.0)))
-    PREV_TARGET_LON = float(payload.get("PREV_TARGET_LON", payload.get("Target_lon", 0.0)))
+    PREV_TARGET_LAT, PREV_TARGET_LON = _resolve_target(payload)
     PREV_PACKET_COUNT = int(payload.get("PREV_PACKET_COUNT", 0))
     PREV_ST_TIMEDELTA = float(payload.get("PREV_ST_TIMEDELTA", 0.0))
     PREV_YAW_OFFSET = float(payload.get("PREV_YAW_OFFSET", payload.get("YAW_OFFSET", 0.0)))
@@ -249,6 +272,7 @@ def init_prevstate() -> None:
             _atomic_write(_serialize())
         else:
             _apply(payload)
+            _atomic_write(_serialize())
 
     # Environment override must win over persisted value when provided.
     refresh_runtime_overrides()
@@ -270,6 +294,8 @@ def update_maxalt(alt: float) -> None:
 
 
 def update_target_gps(lat: float, lon: float) -> None:
+    if FIX_TARGET_GPS:
+        lat, lon = _target_defaults()
     _atomic_update(
         {
             "PREV_TARGET_LAT": float(lat),
@@ -358,8 +384,7 @@ def reset_prevstate() -> None:
     PREV_STATE = 0
     PREV_ALT_CAL = 0.0
     PREV_MAX_ALT = 0.0
-    PREV_TARGET_LAT = 0.0
-    PREV_TARGET_LON = 0.0
+    PREV_TARGET_LAT, PREV_TARGET_LON = _target_defaults()
     PREV_PACKET_COUNT = 0
     PREV_ST_TIMEDELTA = 0.0
     PREV_YAW_OFFSET = 0.0

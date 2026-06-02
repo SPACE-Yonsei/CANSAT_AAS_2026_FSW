@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,8 +49,8 @@ class TestPrevState(unittest.TestCase):
         self.assertEqual(prevstate.PREV_STATE, 3)
         self.assertAlmostEqual(prevstate.PREV_ALT_CAL, 12.5)
         self.assertAlmostEqual(prevstate.PREV_MAX_ALT, 321.0)
-        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, 37.55)
-        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, 126.94)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, prevstate.DEFAULT_TARGET_LAT)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, prevstate.DEFAULT_TARGET_LON)
         self.assertEqual(prevstate.PREV_PACKET_COUNT, 99)
         self.assertAlmostEqual(prevstate.PREV_ST_TIMEDELTA, 123.4)
         self.assertAlmostEqual(prevstate.PREV_YAW_OFFSET, 12.5)
@@ -65,7 +66,34 @@ class TestPrevState(unittest.TestCase):
         prevstate.reset_prevstate()
         self.assertEqual(prevstate.PREV_STATE, 0)
         self.assertEqual(prevstate.PREV_PACKET_COUNT, 0)
-        self.assertEqual(prevstate.PREV_TARGET_LAT, 0.0)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, prevstate.DEFAULT_TARGET_LAT)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, prevstate.DEFAULT_TARGET_LON)
+
+    def test_init_repairs_target_to_fixed_drop_area(self):
+        prevstate._STATE_FILE.write_text(
+            json.dumps(
+                {
+                    "PREV_STATE": 3,
+                    "PREV_TARGET_LAT": 37.5,
+                    "PREV_TARGET_LON": 127.001,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        prevstate.init_prevstate()
+
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, prevstate.DEFAULT_TARGET_LAT)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, prevstate.DEFAULT_TARGET_LON)
+        payload = json.loads(prevstate._STATE_FILE.read_text(encoding="utf-8"))
+        self.assertAlmostEqual(payload["PREV_TARGET_LAT"], prevstate.DEFAULT_TARGET_LAT)
+        self.assertAlmostEqual(payload["PREV_TARGET_LON"], prevstate.DEFAULT_TARGET_LON)
+
+    def test_update_target_gps_keeps_fixed_drop_area(self):
+        prevstate.update_target_gps(37.55, 126.94)
+
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LAT, prevstate.DEFAULT_TARGET_LAT)
+        self.assertAlmostEqual(prevstate.PREV_TARGET_LON, prevstate.DEFAULT_TARGET_LON)
 
     def test_runtime_overrides_from_environment(self):
         os.environ["STATE_OVERRIDE"] = "4"

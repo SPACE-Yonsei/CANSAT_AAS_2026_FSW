@@ -387,6 +387,14 @@ def handle_target_coord(data: str) -> None:
         return
     if abs(lat) < 1e-9 and abs(lon) < 1e-9:
         return   # (0,0) sentinel 거부
+    if getattr(prevstate, "FIX_TARGET_GPS", False):
+        fixed_lat, fixed_lon = prevstate.get_target_gps()
+        logger.info(
+            "Ignoring target command because prevstate target is fixed: lat=%.6f lon=%.6f",
+            fixed_lat,
+            fixed_lon,
+        )
+        return
     guidance.set_target(lat, lon)
 
 
