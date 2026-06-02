@@ -585,6 +585,8 @@ class GroundStation(tk.Tk):
         self._packet_count = 0
         self._bad_packet_count = 0
         self._last_packet_ts: float | None = None
+        self._lost_packet_count = 0        # 손실 패킷: TLM count와 수신 count 차이
+        self._last_tlm_packet_count = -1   # 직전 수신 TLM의 PACKET_COUNT 값
         self._tlm_vars: dict[str, tk.StringVar] = {}
         self._track_points: list[tuple[float, float]] = []
         self._map_points: dict[str, tuple[float, float]] = {}
@@ -1929,6 +1931,18 @@ class GroundStation(tk.Tk):
                 parsed = self._parse_tlm(line)
                 if parsed is not None:
                     self._packet_count += 1
+                    # 손실 패킷 계산: TLM의 PACKET_COUNT vs GCS 수신 카운트
+                    try:
+                        tlm_cnt = int(parsed.get("packet_count", -1))
+                        if tlm_cnt >= 0:
+                            if self._last_tlm_packet_count < 0 or tlm_cnt <= self._last_tlm_packet_count:
+                                # 최초 수신 또는 CAL 리셋 감지 → 손실 카운터 초기화
+                                self._lost_packet_count = 0
+                            elif tlm_cnt > self._last_tlm_packet_count + 1:
+                                self._lost_packet_count += tlm_cnt - self._last_tlm_packet_count - 1
+                            self._last_tlm_packet_count = tlm_cnt
+                    except (ValueError, TypeError):
+                        pass
                     packet_ts = time.time()
                     self._last_packet_ts = packet_ts
                     self._ingest_tlm_track(parsed)
@@ -2034,8 +2048,8 @@ class GroundStation(tk.Tk):
         if self._ser is not None and self._last_packet_ts is not None:
             age = time.time() - self._last_packet_ts
             self._rate_var.set(
-                f"rx: {self._packet_count} / err: {self._bad_packet_count} / "
-                f"last: {age:.1f}s ago"
+                f"rx: {self._packet_count} / lost: {self._lost_packet_count} / "
+                f"err: {self._bad_packet_count} / last: {age:.1f}s ago"
             )
         else:
             self._rate_var.set(

@@ -239,7 +239,12 @@ def send_barometer_data(main_queue) -> None:
 def barometerapp_main(main_queue, main_pipe) -> None:
     global BAROMETER_OFFSET
     prevstate.init_prevstate()
-    BAROMETER_OFFSET = prevstate.PREV_ALT_CAL
+    # 비행 중 리셋(state > 0)이면 CAL 복원 → 비행 연속성 유지 (F8)
+    # 지상(state == 0)이면 0으로 시작 → 심사관이 CAL 전 미보정 고도 확인 가능 (⑤)
+    if prevstate.PREV_STATE > 0:
+        BAROMETER_OFFSET = prevstate.PREV_ALT_CAL
+    else:
+        BAROMETER_OFFSET = 0.0
     t1 = threading.Thread(target=read_barometer_data, daemon=True)
     t2 = threading.Thread(target=send_barometer_data, args=(main_queue,), daemon=True)
     t1.start()
