@@ -84,6 +84,15 @@ class TelemetryData:
 tlm_data = TelemetryData()
 TEAM_ID = "1070"
 
+_STATE_NAMES: dict[str, str] = {
+    "0": "LAUNCH_PAD",
+    "1": "ASCENT",
+    "2": "APOGEE",
+    "3": "PROBE_RELEASE",
+    "4": "PAYLOAD_RELEASE",
+    "5": "LANDED",
+}
+
 
 # Set in commapp_main — used so CX,OFF can emit one final TLM line (cmd_echo = CX).
 _comm_serial: Optional[object] = None
@@ -184,15 +193,16 @@ def cmd_simp(option: str, main_queue) -> bool:
     except ValueError:
         return False
     alt_m = _pressure_pa_to_alt_m(pressure_pa)
-    _simp_tlm_alt_hold = alt_m
-    tlm_data.altitude = alt_m
-    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa
+    alt_relative = alt_m - prevstate.PREV_ALT_CAL  # 해발 절대고도 → 발사대 기준 상대고도
+    _simp_tlm_alt_hold = alt_relative
+    tlm_data.altitude = alt_relative
+    tlm_data.pressure = pressure_pa / 100.0  # Pa → hPa (절대기압 그대로)
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,
         appargs.FlightlogicAppArg.AppID,
         appargs.CommAppArg.MID_RouteCmd_SIMP,
-        f"{alt_m}",
+        f"{alt_relative}",
     )
 
 
@@ -271,16 +281,37 @@ def cmd_cal(option: str, main_queue) -> bool:
 
 
 def cmd_mec(option: str, main_queue) -> bool:
-    option = option.strip().upper()
-    if option not in {"ON", "OFF"}:
+    # Spec: MEC,<DEVICE>,<ON|OFF>
+    # DEVICE: MOTOR | RELEASE | EGG
+    parts = [p.strip().upper() for p in option.split(",") if p.strip()]
+    if len(parts) == 2:
+        device, state = parts
+    elif len(parts) == 1:
+        # 하위 호환: MEC,ON|OFF (DEVICE 생략 시 MOTOR로 간주)
+        device, state = "MOTOR", parts[0]
+    else:
         return False
-    return msgstructure.send_msg(
-        main_queue,
-        appargs.CommAppArg.AppID,
-        appargs.MotorAppArg.AppID,
-        appargs.CommAppArg.MID_RouteCmd_MEC,
-        option,
-    )
+
+    if state not in {"ON", "OFF"}:
+        return False
+
+    if device == "MOTOR":
+        return msgstructure.send_msg(
+            main_queue,
+            appargs.CommAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.CommAppArg.MID_RouteCmd_MEC,
+            state,
+        )
+    if device in {"RELEASE", "EGG"}:
+        return msgstructure.send_msg(
+            main_queue,
+            appargs.CommAppArg.AppID,
+            appargs.MotorAppArg.AppID,
+            appargs.CommAppArg.MID_RouteCmd_FAC,
+            f"{device},{state}",
+        )
+    return False
 
 
 def cmd_fac(option: str, main_queue) -> bool:
@@ -632,15 +663,19 @@ def _send_one_tlm_frame(serial_instance) -> None:
         egg_action_enabled_s = ""
 
     line = (
+        # ── Required fields (spec 3.1.1.1, fields 1-22) ──────────────────────
         f"${TEAM_ID},{get_current_time()},{tlm_data.packet_count},"
-        f"{tlm_data.mode},{tlm_data.state},"
-        f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure:.2f},"
-        f"{tlm_data.voltage:.3f},{tlm_data.current:.3f},{tlm_data.power:.3f},"
+        f"{tlm_data.mode},{_STATE_NAMES.get(str(tlm_data.state), tlm_data.state)},"
+        f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure / 10.0:.1f},"  # pressure hPa→kPa
+        f"{tlm_data.voltage:.3f},{tlm_data.current:.2f},"                                       # current 0.01A res
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
         f"{tlm_data.acc_x:.3f},{tlm_data.acc_y:.3f},{tlm_data.acc_z:.3f},"
+        f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.4f},{-tlm_data.gps_lon:.4f},{tlm_data.gps_sats},"
+        f"{tlm_data.cmd_echo},,"
+        # ── Optional fields (after blank field ,, per spec) ───────────────────
+        f"{tlm_data.power:.3f},"
         f"{tlm_data.mag_roll:.3f},{tlm_data.mag_pitch:.3f},{tlm_data.mag_yaw:.3f},"
-        f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.6f},{tlm_data.gps_lon:.6f},{tlm_data.gps_sats},"
-        f"{tlm_data.distance:.1f},{tlm_data.cmd_echo},"
+        f"{tlm_data.distance:.1f},"
         f"{tlm_data.filtered_roll:.3f},{tlm_data.filtered_pitch:.3f},{tlm_data.filtered_yaw:.3f},"
         f"{s_lat_s},{s_lon_s},"
         f"{t_lat_s},{t_lon_s},"
@@ -648,7 +683,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{_fmt_opt_float(tlm_data.current_heading, '.2f')},"
         f"{tlm_data.left_pulse},{tlm_data.right_pulse},{tlm_data.guidance_state},{motor_enabled_s},{force_action_enabled_s},"
         f"{release_action_enabled_s},{egg_action_enabled_s},"
-        f"{_fmt_opt_float(tlm_data.nav_distance_mm, '.1f')}\n"
+        f"{_fmt_opt_float(tlm_data.nav_distance_mm, '.1f')}\r"
     )
     ok = uartserial.send_serial_data(serial_instance, line)
     if ok:
@@ -678,12 +713,12 @@ def send_tlm(serial_instance) -> None:
 def _dispatch_command(line: str, main_queue) -> bool:
     # Normalize command "CMD,1070,<body>"
     line = line.strip()
-    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Za-z]+),(.*)", line, re.IGNORECASE)
+    m = re.fullmatch(r"CMD,\s*1070,\s*([A-Za-z]+)(?:,(.*))?$", line, re.IGNORECASE)
     if not m:
         return False
     cmd = m.group(1).upper()
-    option = m.group(2).strip()
-    set_cmdecho(cmd)
+    option = (m.group(2) or "").strip()
+    set_cmdecho(cmd + option.replace(",", ""))
 
     if cmd == "CX":
         return cmd_cx(option, main_queue)
@@ -700,6 +735,8 @@ def _dispatch_command(line: str, main_queue) -> bool:
     if cmd == "SIMGN":
         return cmd_simgn(option, main_queue)
     if cmd == "CAL":
+        tlm_data.packet_count = 0
+        prevstate.update_packet_count(0)
         return cmd_cal(option, main_queue)
     if cmd == "MEC":
         return cmd_mec(option, main_queue)

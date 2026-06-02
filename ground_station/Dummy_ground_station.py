@@ -281,9 +281,11 @@ class SerialWorker(threading.Thread):
                 continue
             buf.extend(chunk)
             while True:
-                nl = buf.find(b"\n")
-                if nl < 0:
+                nr = buf.find(b"\r")
+                nn = buf.find(b"\n")
+                if nr < 0 and nn < 0:
                     break
+                nl = min(x for x in (nr, nn) if x >= 0)
                 raw = bytes(buf[:nl])
                 del buf[: nl + 1]
                 line = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()

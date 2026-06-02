@@ -533,11 +533,13 @@ class SerialWorker(threading.Thread):
             if not chunk:
                 continue
             buf.extend(chunk)
-            # 1) \n 기준으로 완성된 라인 추출
+            # 1) \r 또는 \n 기준으로 완성된 라인 추출 (spec: CR 단독)
             while True:
-                nl = buf.find(b"\n")
-                if nl < 0:
+                nr = buf.find(b"\r")
+                nn = buf.find(b"\n")
+                if nr < 0 and nn < 0:
                     break
+                nl = min(x for x in (nr, nn) if x >= 0)
                 raw = bytes(buf[:nl])
                 del buf[: nl + 1]
                 text = raw.decode("utf-8", errors="ignore").strip("\r\n").strip()
