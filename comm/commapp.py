@@ -125,6 +125,14 @@ def set_timedelta(timestr: str) -> bool:
     return True
 
 
+def _alt_m_to_pressure_hpa(alt_m: float) -> float:
+    """ISA 표준 대기: 고도(m) → 기압(hPa)."""
+    try:
+        return 1013.25 * (1.0 - 2.25577e-5 * float(alt_m)) ** 5.25588
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 1013.25
+
+
 def cmd_cx(option: str, _main_queue) -> bool:
     global TELEMETRY_ENABLE
     upper = option.strip().upper()
@@ -166,6 +174,7 @@ def cmd_simp(option: str, main_queue) -> bool:
         return False
     _simp_tlm_alt_hold = value
     tlm_data.altitude = value
+    tlm_data.pressure = _alt_m_to_pressure_hpa(value)
     return msgstructure.send_msg(
         main_queue,
         appargs.CommAppArg.AppID,
@@ -461,16 +470,17 @@ def command_handler(recv_msg: str) -> None:
                     baro_health = int(float(fields[3]))
                 except ValueError:
                     baro_health = 1
-            tlm_data.pressure = float(fields[0])
             tlm_data.temperature = float(fields[1])
             if tlm_data.mode in {"A", "S"} and _simp_tlm_alt_hold is not None:
-                # SIMP-injected altitude wins over a hardware sample (healthy or not).
+                # SIMP-injected altitude and pressure win over hardware samples.
                 pass
-            elif baro_health:
-                tlm_data.altitude = float(fields[2])
-            # baro_health == 0: hold last known altitude on the TLM line; do not
-            # overwrite with the synthetic 0.0 frame the driver emits when the
-            # BMP read fails.
+            else:
+                tlm_data.pressure = float(fields[0])
+                if baro_health:
+                    tlm_data.altitude = float(fields[2])
+                # baro_health == 0: hold last known altitude on the TLM line; do not
+                # overwrite with the synthetic 0.0 frame the driver emits when the
+                # BMP read fails.
         elif mid == appargs.ImuAppArg.MID_comm_euler and len(fields) >= 12:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])

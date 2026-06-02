@@ -34,7 +34,7 @@ import threading
 import time
 import tkinter as tk
 from datetime import datetime
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 try:
     import serial
@@ -219,6 +219,17 @@ def _is_meaningful_target_latlon(lat: float, lon: float) -> bool:
     if not _valid_gps_latlon(lat, lon):
         return False
     return abs(lat) > _MAP_NULL_LAT_TOL or abs(lon) > _MAP_NULL_LON_TOL
+
+
+def _pressure_pa_to_alt_m(p_pa: float) -> float:
+    """ISA 표준 대기: 기압(Pa) → 고도(m)."""
+    try:
+        ratio = p_pa / 101325.0
+        if ratio <= 0.0:
+            return 0.0
+        return (1.0 - ratio ** (1.0 / 5.25588)) / 2.25577e-5
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -601,6 +612,12 @@ class GroundStation(tk.Tk):
         self._dist_to_target_history: list[float] = []
         self._motor_ctrl_mode_idx: int = 0
         self._gps_fresh_state: bool | None = None  # True=주입, False=Null, None=미설정
+
+        # SIM 기압 파일 플레이어
+        self._sim_player_values: list[float] = []   # 고도(m) 값 목록
+        self._sim_player_idx: int = 0
+        self._sim_player_running: bool = False
+        self._sim_player_after_id: str | None = None
 
         self._build_ui()
         self._refresh_ports()
@@ -998,6 +1015,29 @@ class GroundStation(tk.Tk):
             side=tk.LEFT, padx=2
         )
 
+        ttk.Separator(cmd_box, orient="horizontal").grid(
+            row=6, column=0, columnspan=3, sticky="ew", padx=4, pady=(4, 2)
+        )
+
+        player_box = ttk.LabelFrame(cmd_box, text="SIM 기압 파일 재생 (1 Hz)")
+        player_box.grid(row=7, column=0, columnspan=3, sticky="ew", padx=6, pady=(0, 6))
+
+        ttk.Button(player_box, text="파일 열기", command=self._load_sim_pressure_file).pack(
+            side=tk.LEFT, padx=(4, 2), pady=4
+        )
+        self._sim_file_var = tk.StringVar(value="(파일 없음)")
+        ttk.Label(player_box, textvariable=self._sim_file_var, width=28, anchor="w").pack(
+            side=tk.LEFT, padx=4
+        )
+        self._sim_play_btn = ttk.Button(
+            player_box, text="▶ 재생", width=10, command=self._toggle_sim_player
+        )
+        self._sim_play_btn.pack(side=tk.LEFT, padx=4)
+        self._sim_progress_var = tk.StringVar(value="--/--")
+        ttk.Label(player_box, textvariable=self._sim_progress_var, width=10, anchor="w").pack(
+            side=tk.LEFT, padx=4
+        )
+
     def _build_status_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, padx=8, pady=(0, 6))
@@ -1048,6 +1088,7 @@ class GroundStation(tk.Tk):
         self._append_console(f"[connect] {port} @ {baud}", "ok")
 
     def _disconnect(self) -> None:
+        self._stop_sim_player()
         if self._map_redraw_after_id is not None:
             try:
                 self.after_cancel(self._map_redraw_after_id)
@@ -1245,6 +1286,98 @@ class GroundStation(tk.Tk):
         if self._send_body("SIMGN"):
             self._gps_fresh_label.set("GPS: ○STALE")
             self._fallback_estimator.invalidate_gps(time.time())
+
+    def _load_sim_pressure_file(self) -> None:
+        """CSV/텍스트 파일에서 기압 데이터(Pa 또는 hPa)를 읽어 고도(m)로 변환해 저장."""
+        path = filedialog.askopenfilename(
+            title="기압 데이터 파일 선택",
+            filetypes=[("CSV / 텍스트", "*.csv *.txt"), ("모든 파일", "*.*")],
+        )
+        if not path:
+            return
+        alt_values: list[float] = []
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except Exception as exc:
+            messagebox.showerror("파일 오류", f"파일을 열 수 없습니다:\n{exc}")
+            return
+
+        header_skipped = False
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # 첫 번째 토큰(콤마 기준)을 숫자로 파싱
+            token = line.split(",")[0].strip()
+            try:
+                val = float(token)
+            except ValueError:
+                if not header_skipped:
+                    header_skipped = True
+                    continue
+                continue
+            header_skipped = True
+            # 10000 Pa 이상이면 Pa 단위로 간주, 이하면 hPa
+            p_pa = val if val > 10000.0 else val * 100.0
+            alt_values.append(_pressure_pa_to_alt_m(p_pa))
+
+        if not alt_values:
+            messagebox.showwarning("파일 오류", "유효한 기압 데이터가 없습니다.")
+            return
+
+        self._stop_sim_player()
+        self._sim_player_values = alt_values
+        self._sim_player_idx = 0
+        fname = path.split("/")[-1].split("\\")[-1]
+        self._sim_file_var.set(fname)
+        self._sim_progress_var.set(f"0/{len(alt_values)}")
+        self._append_console(f"[SIM] 기압 파일 로드: {fname} ({len(alt_values)}개 값)", "ok")
+
+    def _toggle_sim_player(self) -> None:
+        if self._sim_player_running:
+            self._stop_sim_player()
+            return
+        if not self._sim_player_values:
+            messagebox.showwarning("파일 없음", "먼저 기압 데이터 파일을 열어주세요.")
+            return
+        if self._ser is None:
+            messagebox.showwarning("미연결", "먼저 포트에 연결하세요.")
+            return
+        self._sim_player_idx = 0
+        self._sim_player_running = True
+        self._sim_play_btn.configure(text="■ 정지")
+        self._append_console(
+            f"[SIM] 기압 재생 시작: {len(self._sim_player_values)}개, 1 Hz", "ok"
+        )
+        self._sim_player_tick()
+
+    def _sim_player_tick(self) -> None:
+        self._sim_player_after_id = None
+        if not self._sim_player_running:
+            return
+        if self._sim_player_idx >= len(self._sim_player_values):
+            self._stop_sim_player()
+            self._sim_progress_var.set("완료")
+            self._append_console("[SIM] 기압 재생 완료", "ok")
+            return
+        alt_m = self._sim_player_values[self._sim_player_idx]
+        self._send_body(f"SIMP,{alt_m:.2f}")
+        self._sim_player_idx += 1
+        total = len(self._sim_player_values)
+        self._sim_progress_var.set(f"{self._sim_player_idx}/{total}")
+        self._sim_player_after_id = self.after(1000, self._sim_player_tick)
+
+    def _stop_sim_player(self) -> None:
+        self._sim_player_running = False
+        if self._sim_player_after_id is not None:
+            try:
+                self.after_cancel(self._sim_player_after_id)
+            except tk.TclError:
+                pass
+            self._sim_player_after_id = None
+        if hasattr(self, "_sim_play_btn"):
+            self._sim_play_btn.configure(text="▶ 재생")
 
     def _send_body(self, body: str) -> bool:
         """Low-level CMD send. Does NOT reset the GPS trail; the caller decides."""
@@ -1909,6 +2042,7 @@ class GroundStation(tk.Tk):
         self.after(500, self._update_status)
 
     def destroy(self) -> None:  # type: ignore[override]
+        self._stop_sim_player()
         if self._map_redraw_after_id is not None:
             try:
                 self.after_cancel(self._map_redraw_after_id)
