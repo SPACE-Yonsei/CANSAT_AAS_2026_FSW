@@ -593,7 +593,7 @@ class TestEndToEndPipeline(unittest.TestCase):
         measured = motorapp._measured_yaw_rate_dps(g_out, fresh, snap.latest_imu)
         self.assertFalse(math.isnan(measured))   # PID-enabled + gyrz fresh
         ctrl_in = control.ProduceCtrlInput(g_out, now)
-        cmd = control.step(ctrl_in, measured, now)
+        cmd = control.ProduceCtrlOutput(ctrl_in, measured, now)
         self.assertTrue(cmd.valid)
         self.assertEqual(cmd.mode, control.CTRL_MODE_CLOSED_LOOP)
         self.assertGreaterEqual(cmd.left_pw,  control.LEFT_MIN_PULSE)

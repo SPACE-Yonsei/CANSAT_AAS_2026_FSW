@@ -152,7 +152,7 @@ def _steady_state(l1_in: L1Input, gyrz_dps: float, now_base: float):
         now      = now_base + i * _BENCH_DT_S
         l1_out   = guidance.ProduceL1Output(l1_in)
         ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-        ctrl_out = control.step(ctrl_in, gyrz_dps, now)
+        ctrl_out = control.ProduceCtrlOutput(ctrl_in, gyrz_dps, now)
 
         # 수렴 판정
         if (abs(ctrl_out.left_angle_deg  - prev_left)  < _BENCH_CONV_DEG and
@@ -193,7 +193,7 @@ def _run_tracking_case(
     control.reset()
     l1_out   = guidance.ProduceL1Output(l1_in)
     ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-    ctrl_out = control.step(ctrl_in, gyrz_dps, now)
+    ctrl_out = control.ProduceCtrlOutput(ctrl_in, gyrz_dps, now)
 
     # ── 정상상태 시뮬레이션 (20Hz 다중 사이클, slew 수렴 후) ─────────────────
     ss_out, ss_in, ss_cycles = _steady_state(l1_in, gyrz_dps, now)

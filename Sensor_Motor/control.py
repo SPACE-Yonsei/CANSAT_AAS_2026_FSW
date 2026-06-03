@@ -287,7 +287,7 @@ def ConnectRoMo(delta_arm_deg: float):
 
 # ── 메인 컨트롤러 스텝 ────────────────────────────────────────────────────────
 
-def step(
+def ProduceCtrlOutput(
     cmd: CtrlInput,
     angular_velocity_meas_deg_s: float,
     now: float,

@@ -237,7 +237,7 @@ def run() -> None:
         # ── 3. Control 파이프라인 ─────────────────────────────────────────────
         control.reset()
         ctrl_in  = control.ProduceCtrlInput(l1_out, now)
-        cmd      = control.step(ctrl_in, math.nan, now)
+        cmd      = control.ProduceCtrlOutput(ctrl_in, math.nan, now)
 
         actual  = _turn_label(cmd.delta_arm_deg)
         verdict = _pass_fail(actual, sc["expected"])

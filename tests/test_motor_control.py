@@ -199,7 +199,7 @@ class TestControllerUpdate(unittest.TestCase):
 
     def test_zero_cmd_neutral_angles(self):
         self._ctl()
-        out = control.step(self._cmd(0.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(0.0), float("nan"), 100.0)
         self.assertAlmostEqual(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertAlmostEqual(out.delta_arm_deg, 0.0)
@@ -207,7 +207,7 @@ class TestControllerUpdate(unittest.TestCase):
     def test_positive_angular_velocity_right_turn(self):
         """Positive cmd -> right turn: left_angle < NEUTRAL, right_angle > NEUTRAL."""
         self._ctl()
-        out = control.step(self._cmd(10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(10.0), float("nan"), 100.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
         self.assertLess(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertGreater(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
@@ -215,14 +215,14 @@ class TestControllerUpdate(unittest.TestCase):
     def test_negative_angular_velocity_left_turn(self):
         """Negative cmd -> left turn: left_angle > NEUTRAL, right_angle < NEUTRAL."""
         self._ctl()
-        out = control.step(self._cmd(-10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(-10.0), float("nan"), 100.0)
         self.assertLess(out.delta_arm_deg, 0.0)
         self.assertGreater(out.left_angle_deg, control.NEUTRAL_ARM_DEG)
         self.assertLess(out.right_angle_deg, control.NEUTRAL_ARM_DEG)
 
     def test_large_cmd_saturates_within_delta_max(self):
         self._ctl()
-        out = control.step(self._cmd(999.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(999.0), float("nan"), 100.0)
         self.assertLessEqual(abs(out.delta_arm_deg), control.DELTA_ARM_MAX_DEG)
         self.assertGreaterEqual(out.left_angle_deg, control.ARM_MIN_DEG)
         self.assertLessEqual(out.left_angle_deg, control.ARM_MAX_DEG)
@@ -231,12 +231,12 @@ class TestControllerUpdate(unittest.TestCase):
     def test_saturation_resets_integrator(self):
         self._ctl()
         for i in range(10):
-            control.step(self._cmd(999.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
+            control.ProduceCtrlOutput(self._cmd(999.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
         self.assertAlmostEqual(control._integral_deg, 0.0)
 
     def test_no_gyro_preserves_guidance_control_mode(self):
         self._ctl()
-        out = control.step(self._cmd(10.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(10.0), float("nan"), 100.0)
         self.assertEqual(out.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
         self.assertFalse(out.sensor_valid)
         self.assertAlmostEqual(out.delta_pid_deg, 0.0)
@@ -244,19 +244,19 @@ class TestControllerUpdate(unittest.TestCase):
 
     def test_valid_gyro_closed_loop(self):
         self._ctl()
-        out = control.step(self._cmd(10.0), 5.0, 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(10.0), 5.0, 100.0)
         self.assertEqual(out.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
         self.assertTrue(out.sensor_valid)
 
     def test_command_timestamp_does_not_neutralize(self):
         self._ctl()
-        out = control.step(self._cmd(10.0, ts=-9999.0), 0.0, 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(10.0, ts=-9999.0), 0.0, 100.0)
         self.assertTrue(out.valid)
         self.assertNotAlmostEqual(out.delta_arm_deg, 0.0)
 
     def test_command_timestamp_does_not_attenuate(self):
         self._ctl()
-        out = control.step(self._cmd(10.0, ts=-9999.0), 0.0, 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(10.0, ts=-9999.0), 0.0, 100.0)
         self.assertTrue(out.valid)
         self.assertFalse(out.gyro_rejected)
         self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 10.0)
@@ -265,13 +265,13 @@ class TestControllerUpdate(unittest.TestCase):
         # lat_acc fallback was removed (P8): control uses angular_velocity_cmd_deg_s as-is.
         # Guidance is responsible for converting lat_acc to angular_velocity.
         self._ctl()
-        out = control.step(self._cmd(angular_velocity_deg_s=0.0, speed=4.0), float("nan"), 100.0)
+        out = control.ProduceCtrlOutput(self._cmd(angular_velocity_deg_s=0.0, speed=4.0), float("nan"), 100.0)
         self.assertAlmostEqual(out.angular_velocity_cmd_deg_s, 0.0, places=5)
 
     def test_controller_reset_clears_pid(self):
         self._ctl()
         for i in range(5):
-            control.step(self._cmd(5.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
+            control.ProduceCtrlOutput(self._cmd(5.0, ts=100.0 + i * 0.1), 0.0, 100.0 + i * 0.1)
         control.reset()
         self.assertAlmostEqual(control._integral_deg, 0.0)
         self.assertAlmostEqual(control._prev_error_deg, 0.0)

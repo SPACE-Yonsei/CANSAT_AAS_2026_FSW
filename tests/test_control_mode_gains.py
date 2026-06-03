@@ -29,7 +29,7 @@ class TestControlModeGains(unittest.TestCase):
         control.reset()
 
     def _step(self, mode, *, pid_enabled, meas=0.0, valid=True, cmd_dps=CMD_DPS, now=1.0):
-        return control.step(_cmd(mode, pid_enabled=pid_enabled, valid=valid, cmd_dps=cmd_dps),
+        return control.ProduceCtrlOutput(_cmd(mode, pid_enabled=pid_enabled, valid=valid, cmd_dps=cmd_dps),
                             meas, now)
 
     # ── Case 1: GPS_TRACKING_CLOSED → FF + PID ──────────────────────────────

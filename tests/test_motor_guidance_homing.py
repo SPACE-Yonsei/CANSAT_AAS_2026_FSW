@@ -262,7 +262,7 @@ class TestFailMode(unittest.TestCase):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
         g_out = produceL1output(l1)
         control.reset()
-        cmd = control.step(
+        cmd = control.ProduceCtrlOutput(
             control.ProduceCtrlInput(g_out, time.monotonic()),
             float("nan"),
             time.monotonic(),
@@ -473,7 +473,7 @@ class TestMotorOutput(unittest.TestCase):
         l1 = guidance._fail_l1input("FAIL_TEST", GuidanceState(), FreshResult())
         g_out = produceL1output(l1)
         control.reset()
-        cmd = control.step(
+        cmd = control.ProduceCtrlOutput(
             control.ProduceCtrlInput(g_out, _now()),
             float("nan"),
             _now(),
@@ -494,7 +494,7 @@ class TestMotorOutput(unittest.TestCase):
         control._integral_deg = 12.0
         control._prev_error_deg = 7.0
         measured_dps = 50.0
-        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), measured_dps, _now())
+        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), measured_dps, _now())
         self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
@@ -510,7 +510,7 @@ class TestMotorOutput(unittest.TestCase):
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
         control.reset()
-        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), -50.0, _now())
+        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), -50.0, _now())
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertAlmostEqual(cmd.delta_arm_deg, config.DETUMBLE_BRAKE_DELTA_DEG)
@@ -523,7 +523,7 @@ class TestMotorOutput(unittest.TestCase):
         inp.dr_method = DRMethod.NONE
         g_out = produceL1output(inp)
         control.reset()
-        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
+        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
         self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
         self.assertFalse(cmd.sensor_valid)
         self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
@@ -536,7 +536,7 @@ class TestMotorOutput(unittest.TestCase):
         g_out = produceL1output(l1)
         # In open mode the controller still runs PID; pid_enabled is True for L1 modes.
         control.reset()
-        cmd = control.step(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
+        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
         self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
         self.assertEqual(cmd.control_mode, ControlMode.GPS_TRACKING_OPEN)
 

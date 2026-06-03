@@ -175,7 +175,7 @@ class TestGuidanceAndActuatorIntegration(unittest.TestCase):
             gcmd = control.CtrlInput(
                 angular_velocity_cmd_deg_s=10.0, valid=True, timestamp=time.monotonic()
             )
-            cmd = control.step(gcmd, float("nan"), time.monotonic())
+            cmd = control.ProduceCtrlOutput(gcmd, float("nan"), time.monotonic())
             control.MoveServo(pi, cmd)
             self.assertGreaterEqual(pi.pulses[control.PARAFOIL_LEFT_MOTOR_PIN],
                                     control.LEFT_MIN_PULSE)

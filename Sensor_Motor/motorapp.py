@@ -673,7 +673,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
     gz_meas = snap_t.latest_imu.gyrz_rad_s or 0.0
     gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s (control.step 기대 단위)
     ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)
-    ctrl_out_t = control.step(ctrl_in_t, gz_meas, now)
+    ctrl_out_t = control.ProduceCtrlOutput(ctrl_in_t, gz_meas, now)
     # control invalid이면 step이 neutral 펄스를 반환하므로 MoveServo가 곧 neutral이다.
     control.MoveServo(PI, ctrl_out_t)
     sensorlog.log_motor_raw(

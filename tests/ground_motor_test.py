@@ -238,7 +238,7 @@ def run_section_b() -> None:
         # Control (fresh controller per scenario to avoid PID accumulation)
         control.reset()
         ctrl_in = control.ProduceCtrlInput(g_out, now)
-        cmd = control.step(ctrl_in, math.nan, now)
+        cmd = control.ProduceCtrlOutput(ctrl_in, math.nan, now)
 
         actual = _turn_label(cmd.delta_arm_deg)
         result = _pass_fail(actual, sc["expected"])
@@ -305,7 +305,7 @@ def run_section_c(pi) -> None:
             valid=True,
             timestamp=now,
         )
-        cmd = control.step(ctrl_in, math.nan, now)
+        cmd = control.ProduceCtrlOutput(ctrl_in, math.nan, now)
 
         _block_open(f"STEP: {step_name}")
         _row("설명",            step_desc)

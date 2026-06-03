@@ -211,7 +211,7 @@ def replay(rows):
 
         # 서보 PWM 추정 (하드웨어 없음)
         ctrl_in = control.ProduceCtrlInput(l1out, now)
-        ctrl_out = control.step(ctrl_in, gyrz_dps if _fin(gyrz_dps) else float("nan"), now)
+        ctrl_out = control.ProduceCtrlOutput(ctrl_in, gyrz_dps if _fin(gyrz_dps) else float("nan"), now)
 
         fl = guidance._STATE_t.flags
         nav = guidance._STATE_t.nav
