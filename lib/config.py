@@ -14,22 +14,12 @@ GNSS_RESET_GPIO = 26
 
 # Servo arm geometry / PWM calibration (used by control.py)
 ARM_MIN_DEG         = 0.0              # 팔 최소 각도 (arm up)
-ARM_MAX_DEG         = 142.0            # 팔 최대 각도
-                                        # 실측: LEFT_ZERO=2480µs 기준 160°명령(702µs)에서
-                                        # 서보가 물리적 180°까지 과이동.
-                                        # PPD=11.11µs/deg 기준 물리적 160°에 대응하는
-                                        # 모델 각도 = (2480-900)/11.11 ≈ 142°.
-                                        # ARM_MAX=142 → LEFT_MIN_PULSE≈902µs → 물리적 ~160°.
+ARM_MAX_DEG         = 160.0            # 팔 최대 각도
+                             
 NEUTRAL_ARM_DEG     = 80.0             # 팔 중립 각도
 LEFT_SERVO_ZERO_US  = 2480             # 왼쪽 서보 0° PWM (µs)
 RIGHT_SERVO_ZERO_US = 636              # 오른쪽 서보 0° PWM (µs)
 SERVO_PULSE_PER_DEG = 2000.0 / 180.0  # µs/deg 변환 계수
-
-
-# Egg drop (flight state 4): rangefinder reading must be in
-# [rough validity floor .. EGG_STATE_DISTANCE_TRIGGER_MM] to arm solenoid pulses.
-# Typical: trigger when distance to ground <= 2500 mm with TF-Luna.
-EGG_STATE_DISTANCE_TRIGGER_MM = 2500
 
 # Relay logic levels (numeric for platform-agnostic GPIO compatibility)
 # Base polarity is active-low relay modules: ON=0, OFF=1.
@@ -56,6 +46,7 @@ XBEE_RATE_HZ = 10
 CAMERA_FPS = 30
 
 
+#must be deleted
 # GPS sanity gates.  Defaults are for the current Korea test area; update these
 # before operating at a distant site.
 # ±1 km radius from expected drop zone center, converted to degrees:
@@ -68,7 +59,7 @@ GPS_EXPECTED_LON_RADIUS_DEG = 2.0     # ±170 km
 GPS_MIN_SATS = 4
 GPS_MAX_VALID_SPEED_MPS = 40.0
 
-
+#must be deleted
 # Release timing tuning
 RELEASE_TARGET_RATIO = 0.8  # 80% max_alt: separation altitude target
 # Below this fraction of max_alt: start descent-rate history and the FORCE_90PCT_TIMEOUT timer.
@@ -78,11 +69,6 @@ RELEASE_BURNWIRE_DELAY_SEC = 10.0 # 기존 5초, 0519 ETD 때 10초로 늘림. 5
 RELEASE_PREDICT_TIME_MIN_SEC = 0.0
 RELEASE_PREDICT_TIME_MAX_SEC = 5.0
 RELEASE_FORCE_AFTER_SEC = 5.0  # seconds after band crossing before FORCE_90PCT_TIMEOUT
-
-
-# Motor guidance/control string constants
-SENSOR_QUALITY_FRESH = "FRESH"
-SENSOR_QUALITY_STALE = "STALE"
 
 MOTOR_MANUAL_LEFT = "LEFT"
 MOTOR_MANUAL_NEUTRAL = "NEUTRAL"
@@ -132,14 +118,10 @@ USE_ACC_BLEND_CORRECTION   = True
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
 ACC_BLEND_WEIGHT           = 0.15
-RAW_ACC_NORM_MAX_MPS2      = 15.0
 LIN_ACC_XY_MAX_MPS2        = ACC_LIMIT_MPS2
-LIN_ACC_SAMPLE_MAX_AGE_S   = 0.10
 # |gyrz| > ACC_GYRZ_REJECT_DPS 시 acc 데이터 거부 (BNO085 acc/Euler 비동기 방지)
 # 실측: |gyrz|>80 dps 구간에서 lin_acc mag 3.1~19.1 m/s² 이상값 집중
 ACC_GYRZ_REJECT_DPS        = 80.0
-ACC_GYR_REJECT_DPS         = ACC_GYRZ_REJECT_DPS
-YAW_GYRO_BLEND_MAX_DEG     = 45.0
 # 1.0→2.2: 닭 2차 실측 glide ratio (gps_speed 4.97 / baro sink 2.2 ≈ 2.26).
 # gain=1.0(수평=수직 가정)은 DR 수평속도를 ~절반으로 과소추정 → L1 yaw_rate_cmd(∝V)가
 # 둔해짐. 실측 활공비로 보정. (gps_speed 표본 제한적 → bench 재확인 권장)
@@ -159,18 +141,6 @@ DR_CONF_AGE_3_S = 60.0
 # 늦게 들어와도 late lock을 허용하여 DR anchor 생성 지연을 줄인다.
 CANDIDATE_ORIGIN_MAX_AGE_S = 30.0
 ALLOW_LATE_ORIGIN_LOCK     = True
-
-# ── DR safety guards ─────────────────────────────────────────────────────────
-# DR_MAX_AGE_S: anchor가 이보다 오래되면 DR을 신뢰하지 않고 FAIL (reason DR_TIMEOUT).
-# DR_MAX_POSITION_JUMP_M: 한 사이클 위치 전파가 이보다 크면 reject (DR_POSITION_JUMP).
-# DR_MAX_YAW_RATE_DPS_FOR_CONTROL: gyrz가 이보다 크면 정상 guidance에 G를 쓰지 않는다.
-# DR_BARO_SINK_MAX_MPS: sink_rate 스파이크 거부 임계값 (BARO_SINK_SPIKE).
-DR_MAX_AGE_S                    = 60.0
-DR_MAX_POSITION_JUMP_M          = 100.0
-DR_MAX_YAW_RATE_DPS_FOR_CONTROL = 120.0
-DR_BARO_SINK_MAX_MPS            = 15.0
-
-TARGET_RADIUS_M = 5.0
 
 # Yaw rate limits per control mode (deg/s)
 # 35→60: 정상비행 spin 분포가 35 dps 근처까지 올라와 제어 여유를 확보하기 위해 상향
@@ -194,14 +164,6 @@ DR_PM_YBA_YAW_RATE_LIMIT_DPS           = 20.0
 DR_PM_YB_YAW_RATE_LIMIT_DPS            = 15.0
 DR_PM_Y_YAW_RATE_LIMIT_DPS             = 10.0
 
-DETUMBLING_YAW_RATE_LIMIT_DPS          = 0.0
-FAIL_YAW_RATE_LIMIT_DPS                = 0.0
-
-# DR control gate: below this confidence, L1 output is treated as untrustworthy
-# (control invalidated and yaw_rate_cmd zeroed) so the parafoil holds neutral
-# rather than steering on a stale dead-reckoned estimate.
-DR_MIN_CONFIDENCE_FOR_CONTROL          = 0.15
-
 # Detumbling
 # 실측(20260531) State3+4 |gyr_z| p99=141 dps, max=159 dps.
 # 200 dps 임계값은 실제 비행에서 미도달 → DETUMBLE 미진입.
@@ -211,7 +173,7 @@ DETUMBLE_ENABLE             = True
 # 닭 1·2차 실측: |gyrz| p50≈57~61, p90≈153~162, max≈217~224 dps.
 # 진입 120은 정상 spin(p50~60, p90~155) 한복판이라 1차에서 디텀블 747회 채터링.
 # 진입 120→150(≈p90, 진짜 텀블만), 이탈 100→80, hold 0.05→0.3s로 히스테리시스 확대.
-DETUMBLE_GYRZ_THRESHOLD_DPS = 150.0
+DETUMBLE_GYRZ_THRESHOLD_DPS = 120.0
 DETUMBLE_EXIT_THRESHOLD_DPS = 80.0
 DETUMBLE_EXIT_HOLD_S        = 0.3
 
@@ -262,5 +224,3 @@ KD_YAW_RATE = 0.0
 MOTOR_CTRL_MODE_GPS_GUIDED  = "GPS_GUIDED"
 MOTOR_CTRL_MODE_GPS_ONLY    = "GPS_ONLY"
 MOTOR_CTRL_MODE_IMU_HEADING = "IMU_HEADING"
-
-MOTOR_CTRL_MODE = MOTOR_CTRL_MODE_GPS_GUIDED  # 시작 모드
