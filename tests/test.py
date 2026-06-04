@@ -27,11 +27,11 @@ def run_relay_loop() -> None:
         while True:
             print("Relay ON")
             GPIO.output(RELAY_PIN, GPIO.HIGH)
-            time.sleep(2)
+            time.sleep(1)
 
             print("Relay OFF")
             GPIO.output(RELAY_PIN, GPIO.LOW)
-            time.sleep(2)
+            time.sleep(1)
     finally:
         GPIO.cleanup()
 
