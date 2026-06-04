@@ -160,6 +160,9 @@ class CtrlInput:
     control_mode:  ControlMode     = ControlMode.FAIL
     dr_method:     Optional[str]   = None
     kp_override:   Optional[float] = None
+    # guidance가 mode별로 고른 yaw-rate limit(deg/s). FF 정규화·명령 클램핑의 기준.
+    # 기본값은 GPS_CLOSED limit(안전 fallback).
+    yaw_rate_limit_dps: float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
 
 
 @dataclass
@@ -185,6 +188,8 @@ class CtrlOutput:
     # 진단/단위 추적용 (모두 deg 또는 deg/s 단위; 무차원 스케일 제외)
     kp_used:       float = 0.0
     ff_scale:      float = 1.0
+    # 이 사이클에 실제로 적용된 mode별 yaw-rate limit(deg/s). 디버그/로그용.
+    yaw_rate_limit_dps: float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
     reason:        str   = "INIT"
 
 
@@ -214,6 +219,21 @@ def WriteNeutral(now: float, control_mode: ControlMode = ControlMode.FAIL) -> Ct
 
 # ── 입력 변환 (guidance → control 단위 변환) ─────────────────────────────────
 
+def _resolve_yaw_rate_limit_dps(limit_dps) -> float:
+    """유효한 yaw-rate limit(deg/s)을 반환한다.
+
+    값이 없거나(None) NaN/0 이하이면 GPS_CLOSED limit을 안전 기본값으로 쓴다.
+    이로써 mode별 limit이 비정상이어도 FF 정규화·클램핑이 항상 유효한 분모를 갖는다.
+    """
+    try:
+        v = float(limit_dps)
+    except (TypeError, ValueError):
+        return config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    if not math.isfinite(v) or v <= 0.0:
+        return config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    return v
+
+
 def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
     """L1Output(rad/s) → CtrlInput(deg/s) 변환."""
     is_valid = bool(
@@ -222,6 +242,9 @@ def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
     )
     rad = getattr(l1_output, "yaw_rate_cmd", 0.0)
     rad = float(rad or 0.0)
+
+    # guidance가 고른 mode별 limit을 그대로 전달한다(없거나 NaN이면 GPS_CLOSED fallback).
+    limit_dps = _resolve_yaw_rate_limit_dps(getattr(l1_output, "yaw_rate_limit_dps", None))
 
     return CtrlInput(
         angular_velocity_cmd_deg_s=math.degrees(rad),
@@ -232,22 +255,26 @@ def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
         control_mode=_as_control_mode(getattr(l1_output, "control_mode", ControlMode.FAIL)),
         dr_method=getattr(l1_output, "dr_method", None),
         kp_override=getattr(l1_output, "kp_override", None),
+        yaw_rate_limit_dps=limit_dps,
     )
 
 
 # ── 피드포워드 형상 + 믹서 ────────────────────────────────────────────────────
 
-def angular_velocity_to_delta_ff(cmd_dps: float) -> float:
+def angular_velocity_to_delta_ff(cmd_dps: float, limit_dps: Optional[float] = None) -> float:
     """yaw-rate 명령(deg/s) → 차동 arm 각도(deg).
 
     Expo 곡선 + 데드밴드 + 부호 보존 (양수=오른쪽 회전).
+
+    limit_dps: 이 mode의 yaw-rate limit(deg/s). FF curve 정규화의 분모로 쓴다.
+        None/NaN/0 이하이면 GPS_CLOSED limit을 안전 기본값으로 사용한다.
+        (구버전 1-인자 호출 backward compat: limit 생략 시 GPS_CLOSED 기준.)
     """
-    clamped = _clamp(cmd_dps,
-                     -config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS,
-                      config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS)
+    lim = _resolve_yaw_rate_limit_dps(limit_dps)
+    clamped = _clamp(cmd_dps, -lim, lim)
     if abs(clamped) < config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S:
         return 0.0
-    x = abs(clamped) / config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    x = abs(clamped) / lim
     delta = (config.CTRL_DELTA_MIN_EFFECTIVE_DEG
              + (DELTA_ARM_MAX_DEG - config.CTRL_DELTA_MIN_EFFECTIVE_DEG) * (x ** config.CTRL_EXPO))
     return math.copysign(delta, clamped)
@@ -309,11 +336,14 @@ def ProduceCtrlOutput(
         return out_t
     raw_cmd = angular_velocity_cmd_deg_s
 
-    # ── yaw-rate 명령 클램핑 ──────────────────────────────────────────────────
+    # ── yaw-rate 명령 클램핑 (mode별 limit 사용) ─────────────────────────────
+    # guidance가 mode별로 고른 limit을 그대로 쓴다. GPS_CLOSED limit으로 덮어쓰지 않는다.
+    yaw_rate_limit_dps = _resolve_yaw_rate_limit_dps(cmd.yaw_rate_limit_dps)
+    out_t.yaw_rate_limit_dps = yaw_rate_limit_dps
     angular_velocity_cmd_deg_s = _clamp(
         angular_velocity_cmd_deg_s,
-        -config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS,
-         config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS,
+        -yaw_rate_limit_dps,
+         yaw_rate_limit_dps,
     )
     command_clamped = not math.isclose(
         angular_velocity_cmd_deg_s, raw_cmd, rel_tol=0.0, abs_tol=1.0e-9
@@ -324,8 +354,15 @@ def ProduceCtrlOutput(
     dt = _clamp_dt(now, _prev_time, 0.1, 0.01, 0.2)
 
     # ── 피드포워드 (모드별 권한 스케일 적용) ─────────────────────────────────
+    # limit과 ff_scale은 서로 다른 역할이므로 중복 약화가 아니다:
+    #   - yaw_rate_limit_dps: 명령(yaw-rate)의 최대 크기. FF curve 정규화의 분모.
+    #     mode 신뢰도가 낮을수록 작은 limit → 같은 입력에서 더 완만한 곡선.
+    #   - ff_scale: 산출된 arm authority 자체를 DR 신뢰도에 따라 줄이는 출력 스케일.
+    # 즉 limit은 "얼마나 빠르게 돌라고 명령하나", ff_scale은 "그 명령에 팔을 얼마나
+    # 깊게 쓰나"를 정한다. limit이 이미 명령을 줄이지만, 추가로 ff_scale을 곱하는 것은
+    # DR mode에서 보수적 권한을 한 단계 더 두기 위한 의도된 설계다.
     ff_scale = _ff_scale_for_mode(control_mode)
-    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s) * ff_scale
+    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, yaw_rate_limit_dps) * ff_scale
     out_t.ff_scale = ff_scale
 
     # ── Gyro 스파이크 거부 ────────────────────────────────────────────────────

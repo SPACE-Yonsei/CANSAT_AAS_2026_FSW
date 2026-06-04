@@ -99,6 +99,20 @@ def _cache_snapshot() -> _Cache:
 
 _RAW_ACC_MAX_MPS2 = getattr(config, "RAW_ACC_NORM_MAX_MPS2", 15.0)
 
+_ACCEL_MODE_WARNED = False
+
+
+def _accel_input_mode() -> str:
+    """config.IMU_ACCEL_INPUT_MODE 정규화. RAW/LINEAR 외 값이면 RAW fallback(1회 warning)."""
+    global _ACCEL_MODE_WARNED
+    mode = str(getattr(config, "IMU_ACCEL_INPUT_MODE", "RAW")).strip().upper()
+    if mode in ("RAW", "LINEAR"):
+        return mode
+    if not _ACCEL_MODE_WARNED:
+        logger.warning("IMU_ACCEL_INPUT_MODE=%r unknown; falling back to RAW", mode)
+        _ACCEL_MODE_WARNED = True
+    return "RAW"
+
 
 @dataclass(frozen=True)
 class LinearAccResult:
@@ -123,12 +137,16 @@ def _compute_linear_acc(
     sample_age_s: float = 0.0,
     g: float = 9.81,
 ) -> LinearAccResult:
-    """body-frame 가속도에서 중력 성분 제거.
+    """body-frame 가속도 → linear acceleration.
 
-    NED z-down 기준 중력 body frame:
-        g_x = -sin(pitch)*g
-        g_y =  cos(pitch)*sin(roll)*g
-        g_z =  cos(pitch)*cos(roll)*g
+    config.IMU_ACCEL_INPUT_MODE에 따라 분기:
+      "RAW"    : ax/ay/az가 중력 포함 raw 가속도 → roll/pitch 기반 중력 제거.
+                 NED z-down 기준 body-frame 중력:
+                   g_x = -sin(pitch)*g
+                   g_y =  cos(pitch)*sin(roll)*g
+                   g_z =  cos(pitch)*cos(roll)*g
+      "LINEAR" : ax/ay/az가 이미 중력 제거된 linear acceleration → 그대로 사용
+                 (이중 중력 제거 버그 방지). gravity_*는 debug용 NaN.
 
     raw acc magnitude가 _RAW_ACC_MAX_MPS2를 초과하면 BNO085 spike로 간주,
     (nan, nan, nan) 반환하여 lin_acc_valid=False 처리.
@@ -146,19 +164,26 @@ def _compute_linear_acc(
         )
 
     raw_mag = math.sqrt(ax * ax + ay * ay + az * az)
-    roll  = math.radians(roll_deg)
-    pitch = math.radians(pitch_deg)
-    cp    = math.cos(pitch)
-    g_x   = -math.sin(pitch) * g
-    g_y   =  cp * math.sin(roll) * g
-    g_z   =  cp * math.cos(roll) * g
-    lin_x = ax - g_x
-    lin_y = ay - g_y
-    lin_z = az - g_z
+    if _accel_input_mode() == "LINEAR":
+        # 이미 중력 제거됨 → 추가 제거 금지.
+        lin_x, lin_y, lin_z = ax, ay, az
+        g_x = g_y = g_z = nan
+    else:  # RAW: roll/pitch 기반 중력 제거
+        roll  = math.radians(roll_deg)
+        pitch = math.radians(pitch_deg)
+        cp    = math.cos(pitch)
+        g_x   = -math.sin(pitch) * g
+        g_y   =  cp * math.sin(roll) * g
+        g_z   =  cp * math.cos(roll) * g
+        lin_x = ax - g_x
+        lin_y = ay - g_y
+        lin_z = az - g_z
     xy_mag = math.hypot(lin_x, lin_y)
 
     reason = "OK"
-    if math.isfinite(sample_age_s) and sample_age_s > getattr(config, "LIN_ACC_SAMPLE_MAX_AGE_S", 0.10):
+    _use_age_gate = bool(getattr(config, "LIN_ACC_USE_SAMPLE_AGE_GATE", True))
+    if (_use_age_gate and math.isfinite(sample_age_s)
+            and sample_age_s > getattr(config, "LIN_ACC_SAMPLE_MAX_AGE_S", 0.10)):
         reason = "IMU_STALE"
     elif raw_mag > getattr(config, "RAW_ACC_NORM_MAX_MPS2", _RAW_ACC_MAX_MPS2):
         reason = "RAW_ACC_SPIKE"

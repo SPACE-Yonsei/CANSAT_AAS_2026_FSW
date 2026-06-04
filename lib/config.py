@@ -88,10 +88,13 @@ MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
 # L1 homing guidance tuning
 # L_GAIN_M=12: 자유낙하 로그 V≈-7 m/s 기준 응답 시정수 L/(2V) ≈ 0.7-1s.
 # 목표 반경 5m 진입 시 응답을 강화.
+# 로그 기반 재튜닝 후보: 15~18 m (현재 12는 응답이 다소 공격적일 수 있음, 비행 로그로 확정)
 L_GAIN_M     = 12.0
 V_MIN_MPS    = 0.5
 V_MAX_MPS    = 15.0
-V_MAX_DR_MPS = 7.0    # 20260531: baro_sink 초기 5.04→3.0 캡으로 L1 출력 약화. 7.0으로 확대
+# 20260531: baro_sink 초기 5.04→3.0 캡으로 L1 출력 약화. 7.0으로 확대했으나
+# baro sink spike/EMA 필터 도입(아래 DR_BARO_SINK_* 참고)에 맞춰 보수적으로 6.5 시작.
+V_MAX_DR_MPS = 6.5
 
 # nu deadband: 작은 각도 오차에서는 yaw_rate_cmd=0 및 모터 중립 유지.
 # 미세 진동 방지. |nu| < NU_DEADBAND_DEG이면 움직임 없음.
@@ -101,6 +104,18 @@ NU_DEADBAND_DEG = 5.0
 GPS_FRESH_MAX_AGE_S         = 5.0
 IMU_FRESH_MAX_AGE_S         = 3.0   # 1.5→3.0: reinit(~2s) 완료 전 stale 전환 방지
 BARO_FRESH_MAX_AGE_S        = 2.0   # 0.8→2.0: 10Hz 바로미터가 8회 miss만으로 stale 처리되던 문제 완화
+
+# IMU 가속도 입력 모드 (motorapp._compute_linear_acc가 참조).
+#   "RAW"    : ax/ay/az가 중력 포함 raw 가속도 → roll/pitch 기반 중력 제거 수행.
+#   "LINEAR" : ax/ay/az가 이미 중력 제거된 linear acceleration → 그대로 사용(이중 제거 방지).
+# 현재 IMU app(imuapp.py)은 bno.acceleration(raw)을 송신하므로 기본값 "RAW"가 맞다.
+# BNO085 linear_acceleration으로 송신부를 바꾸면 "LINEAR"로 변경.
+IMU_ACCEL_INPUT_MODE = "RAW"
+# sample_ts(=IMU monotonic) 기반 노후 샘플 reject 사용 여부.
+#   True  : rx_ts - sample_ts > LIN_ACC_SAMPLE_MAX_AGE_S 면 lin_acc invalid.
+#   False : sample_age 기반 reject 끄고 rx_ts freshness만 사용(두 timebase가 다를 때).
+# 현재 sample_ts/rx_ts 모두 time.monotonic()이라 같은 timebase → True 적합.
+LIN_ACC_USE_SAMPLE_AGE_GATE = True
 
 # Accelerometer-aided DR.
 # 내부 로직은 USE_ACC_BLEND_CORRECTION만 사용한다 (acc는 weak blend, double
@@ -126,6 +141,27 @@ DR_SINK_TO_HSPEED_GAIN     = 2.2
 DR_CONF_AGE_1_S = 5.0
 DR_CONF_AGE_2_S = 30.0
 DR_CONF_AGE_3_S = 60.0
+
+# ── DR safety guards (명시적 상수: getattr fallback이 inf로 꺼지지 않도록 보장) ──
+# DR_PM 한 cycle 위치 적분이 이 거리를 넘으면 비정상으로 보고 update reject.
+DR_MAX_POSITION_JUMP_M          = 3.0
+# DR anchor가 이보다 오래되면 SelectControlMode가 DR_TIMEOUT으로 FAIL.
+DR_MAX_AGE_S                    = 45.0
+# DR confidence가 이보다 낮으면 ProduceL1Output이 LOW_DR_CONFIDENCE로 invalid.
+DR_MIN_CONFIDENCE_FOR_CONTROL   = 0.20
+# gyro yaw-rate가 이보다 크면 closed-loop gyro feedback을 쓰지 않고 OPEN/FAIL 경로로.
+DR_MAX_YAW_RATE_DPS_FOR_CONTROL = 120.0
+# yaw-gyro blend 시 두 코스 추정 차이가 이 각도를 넘으면 blend 거부(gyro-only fallback).
+YAW_GYRO_BLEND_MAX_DEG          = 45.0
+
+# ── baro sink 기반 DR speed 필터링 ───────────────────────────────────────────
+# |raw_sink| > DR_BARO_SINK_MAX_MPS 이면 spike로 거부(이번 cycle baro_sink_fresh=False).
+DR_BARO_SINK_MAX_MPS = 6.0
+# sink rate EMA 시정수(s). alpha = dt / (tau + dt).
+DR_SINK_EMA_TAU_S    = 0.7
+# sink_rate 부호 규약: True면 "하강 시 양수"(현 baro app 가정), DR speed에 그대로 사용.
+# False면 "하강 시 음수" → DR speed에 -sink_rate 사용.
+BARO_SINK_POSITIVE_DOWN = True
 
 # ── Origin lock policy ───────────────────────────────────────────────────────
 # candidate 없음. STATE >= 3(DESCENT 이상)에서 처음 들어오는 유효 GPS 좌표를

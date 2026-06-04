@@ -106,6 +106,9 @@ class ImuAnchor:
 @dataclass
 class BaroAnchor:
     alt_m:     float = nan
-    sink_rate: float = nan
+    sink_rate: float = nan   # raw sink rate (수신값 그대로, 로그/스파이크 판정용)
     ts:        float = nan   # rx 타임스탬프 (monotonic)
     valid:     bool  = False
+    # spike reject + EMA 후 "하강=양수" 기준 필터링된 sink (DR speed 추정에 사용)
+    filtered_sink_rate: float = nan
+    filtered_sink_ts:   float = nan

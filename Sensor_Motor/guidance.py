@@ -124,6 +124,8 @@ class NavState:
     fail_reason: str = "FAIL"     # SelectControlMode/guard가 FAIL 사유를 담는다
     speed_clamped: bool = False   # DR speed가 V_MAX_DR_MPS로 clamp되었는지
     baro_sink_spike: bool = False # 직전 사이클 baro sink 스파이크 거부 여부
+    baro_sink_filtered: float = nan  # EMA 필터링된 sink (하강=양수), 디버그/로그용
+    dr_speed_source: str = ""        # DR speed 출처: SPEED_BARO/SPEED_LASTV 등
 
 
 @dataclass
@@ -358,6 +360,18 @@ def _is_fresh(valid: bool, ts: float, now: float, max_age: float) -> bool:
     return bool(valid) and isfinite(ts) and 0.0 <= now - ts <= max_age
 
 
+def _descent_positive_sink(raw_sink: float) -> float:
+    """raw sink_rate를 '하강=양수' 기준으로 변환.
+
+    config.BARO_SINK_POSITIVE_DOWN:
+      True  → baro app이 하강 시 양수를 보냄(현 가정) → 그대로.
+      False → 하강 시 음수 → 부호 반전.
+    """
+    if getattr(config, "BARO_SINK_POSITIVE_DOWN", True):
+        return raw_sink
+    return -raw_sink
+
+
 def UpdateRaw(gps=None, imu=None, baro=None, now: float | None = None) -> None:
     st_t = _STATE_t
     mi_t = _MISSION_t
@@ -391,22 +405,50 @@ def UpdateRaw(gps=None, imu=None, baro=None, now: float | None = None) -> None:
         imu_health = getattr(imu, "health", 0)
         imu_ts = getattr(imu, "ts", None)
         if imu_health and _ok(imu_ts):
-            yaw_r = getattr(imu, "yaw_rad", None)
-            gyrz = getattr(imu, "gyrz_rad_s", None)
-            lax = getattr(imu, "lin_acc_x", None)
-            lay = getattr(imu, "lin_acc_y", None)
-            lin_ok = bool(getattr(imu, "lin_acc_valid", False))
             st_t.imu.ts = float(imu_ts)
+            # 각 채널은 현재 sample에서 유효한 값만 valid=True로 둔다. 무효하면
+            # valid=False + NaN clear → 오래된 acc/yaw/gyrz가 fresh처럼 남지 않게 한다.
+            # (이전 sample 값을 재사용하려면 DRState anchor/current를 쓰고, raw imu
+            #  field에는 남기지 않는다.)
+            yaw_r = getattr(imu, "yaw_rad", None)
             if _ok(yaw_r):
                 st_t.imu.yaw = float(yaw_r)
                 st_t.imu.yaw_valid = True
+            else:
+                st_t.imu.yaw = nan
+                st_t.imu.yaw_valid = False
+
+            gyrz = getattr(imu, "gyrz_rad_s", None)
             if _ok(gyrz):
                 st_t.imu.gyr_z = float(gyrz)
                 st_t.imu.gyrz_valid = True
+            else:
+                st_t.imu.gyr_z = nan
+                st_t.imu.gyrz_valid = False
+
+            lax = getattr(imu, "lin_acc_x", None)
+            lay = getattr(imu, "lin_acc_y", None)
+            lin_ok = bool(getattr(imu, "lin_acc_valid", False))
             if lin_ok and _ok(lax) and _ok(lay):
                 st_t.imu.lin_acc_x = float(lax)
                 st_t.imu.lin_acc_y = float(lay)
                 st_t.imu.lin_acc_valid = True
+            else:
+                st_t.imu.lin_acc_x = nan
+                st_t.imu.lin_acc_y = nan
+                st_t.imu.lin_acc_valid = False
+        else:
+            # health=False(하드웨어 이상) 또는 ts 무효: ts는 가능하면 갱신하되
+            # 모든 valid flag를 내리고 값을 NaN으로 clear한다.
+            if _ok(imu_ts):
+                st_t.imu.ts = float(imu_ts)
+            st_t.imu.yaw = nan
+            st_t.imu.yaw_valid = False
+            st_t.imu.gyr_z = nan
+            st_t.imu.gyrz_valid = False
+            st_t.imu.lin_acc_x = nan
+            st_t.imu.lin_acc_y = nan
+            st_t.imu.lin_acc_valid = False
 
     if baro is not None:
         baro_health = getattr(baro, "health", 0)
@@ -420,6 +462,28 @@ def UpdateRaw(gps=None, imu=None, baro=None, now: float | None = None) -> None:
             if _ok(sink):
                 st_t.baro.sink_rate = float(sink)
                 st_t.baro.valid = True
+                # 부호 규약 적용 → 하강=양수. spike 거부 후 EMA 필터링.
+                sink_dp = _descent_positive_sink(float(sink))
+                sink_max = getattr(config, "DR_BARO_SINK_MAX_MPS", 6.0)
+                if isfinite(sink_dp) and abs(sink_dp) <= sink_max:
+                    tau = getattr(config, "DR_SINK_EMA_TAU_S", 0.7)
+                    prev_f = st_t.baro.filtered_sink_rate
+                    prev_ts = st_t.baro.filtered_sink_ts
+                    if not (isfinite(prev_f) and isfinite(prev_ts)):
+                        filtered = sink_dp                       # 초기화: raw로 시작
+                    else:
+                        dt = st_t.baro.ts - prev_ts
+                        if not isfinite(dt) or dt <= 0.0:
+                            filtered = prev_f
+                        else:
+                            alpha = dt / (tau + dt)
+                            filtered = prev_f + alpha * (sink_dp - prev_f)
+                    st_t.baro.filtered_sink_rate = filtered
+                    st_t.baro.filtered_sink_ts = st_t.baro.ts
+                # spike이면 filtered 미갱신(이전 값 유지). baro_sink_fresh 강등은
+                # ComputeFreshFlags의 spike 가드가 처리한다.
+            else:
+                st_t.baro.valid = False
 
 
 def ComputeFreshFlags(now: float) -> SensorFreshFlags:
@@ -442,7 +506,8 @@ def ComputeFreshFlags(now: float) -> SensorFreshFlags:
     )
     # DR safety guard #4: baro sink 스파이크 거부. |sink| > 임계값이면 이 사이클
     # baro_sink_fresh=False로 강등하고 nav에 플래그를 남긴다 (reason BARO_SINK_SPIKE).
-    sink_max = getattr(config, "DR_BARO_SINK_MAX_MPS", float("inf"))
+    # config 누락 시 fallback을 inf가 아니라 추천값(6.0)으로 둬 guard가 꺼지지 않게 한다.
+    sink_max = getattr(config, "DR_BARO_SINK_MAX_MPS", 6.0)
     sink_spike = (
         flags.baro_sink_fresh and isfinite(st_t.baro.sink_rate)
         and abs(st_t.baro.sink_rate) > sink_max
@@ -450,6 +515,7 @@ def ComputeFreshFlags(now: float) -> SensorFreshFlags:
     if sink_spike:
         flags.baro_sink_fresh = False
     st_t.nav.baro_sink_spike = bool(sink_spike)
+    st_t.nav.baro_sink_filtered = st_t.baro.filtered_sink_rate  # 디버그/로그용
     flags.acc_fresh = (
         imu_base_fresh
         and st_t.imu.lin_acc_valid
@@ -503,7 +569,11 @@ def _bootstrap_speed(flags: SensorFreshFlags) -> float:
     st_t = _STATE_t
     if flags.baro_sink_fresh:
         gain = getattr(config, "DR_SINK_TO_HSPEED_GAIN", 1.0)
-        return _clamp(st_t.baro.sink_rate * gain, config.V_MIN_MPS, config.V_MAX_DR_MPS)
+        # raw가 아니라 spike-reject + EMA 필터링된 sink를 쓴다.
+        sink_used = st_t.baro.filtered_sink_rate
+        if not isfinite(sink_used):
+            sink_used = _descent_positive_sink(st_t.baro.sink_rate)
+        return _clamp(sink_used * gain, config.V_MIN_MPS, config.V_MAX_DR_MPS)
     v = _last_v(st_t.dr)
     if isfinite(v):
         return v
@@ -549,7 +619,8 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
 
     # DR safety guard #5: gyrz가 과도하면 정상 guidance에 G(gyro)를 쓰지 않는다.
     # gyro_ok=False sends GPS tracking through the OPEN path.
-    gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", float("inf"))
+    # config 누락 시 fallback을 inf가 아니라 추천값으로 둬 guard가 꺼지지 않게 한다.
+    gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", 120.0)
     gyro_ok = flags.imu_gyrz_fresh and (
         not isfinite(st_t.imu.gyr_z)
         or abs(math.degrees(st_t.imu.gyr_z)) <= gyrz_max
@@ -560,7 +631,7 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
 
     # DR safety guard #1: anchor가 너무 오래되면 DR을 신뢰하지 않는다.
     dr_age = now - st_t.dr.anchor_time if isfinite(st_t.dr.anchor_time) else float("inf")
-    dr_too_old = dr_age > getattr(config, "DR_MAX_AGE_S", float("inf"))
+    dr_too_old = dr_age > getattr(config, "DR_MAX_AGE_S", 45.0)
 
     if flags.gps_pos_fresh and flags.gps_motion_stale and flags.dr_current_valid:
         if dr_too_old:
@@ -669,13 +740,15 @@ def _estimate_speed_for_mode(mode: ControlMode):
         # DR safety guard #3: V를 V_MAX_DR_MPS로 clamp하고 nav.speed_clamped 기록.
         v_out = _clamp(v_raw, v_min, v_max)
         st_t.nav.speed_clamped = bool(v_raw > v_max or v_raw < v_min)
+        st_t.nav.dr_speed_source = reason
         return (True, v_out, reason)
 
     if _mode_uses_baro(mode):
-        if (flags.baro_sink_fresh and isfinite(st_t.baro.sink_rate)
-                and st_t.baro.sink_rate > 0.0):
+        # raw가 아니라 spike-reject + EMA 필터링된 sink(하강=양수)를 쓴다.
+        sink_used = st_t.baro.filtered_sink_rate
+        if flags.baro_sink_fresh and isfinite(sink_used) and sink_used > 0.0:
             gain = getattr(config, "DR_SINK_TO_HSPEED_GAIN", 1.0)
-            return _clamped(st_t.baro.sink_rate * gain, "SPEED_BARO")
+            return _clamped(sink_used * gain, "SPEED_BARO")
         v = _last_v(dr)
         if isfinite(v):
             return _clamped(v, "SPEED_LASTV_FALLBACK")
@@ -821,7 +894,7 @@ def _fill_nav_for_dr_pm_mode(mode: ControlMode, now: float):
     # 비정상으로 보고 update를 reject한다 (current 미갱신, reason DR_POSITION_JUMP).
     step_E = vE * dt
     step_N = vN * dt
-    jump_max = getattr(config, "DR_MAX_POSITION_JUMP_M", float("inf"))
+    jump_max = getattr(config, "DR_MAX_POSITION_JUMP_M", 3.0)
     if math.hypot(step_E, step_N) > jump_max:
         return (False, "DR_POSITION_JUMP")
 
@@ -968,6 +1041,12 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
         V=l1in.V if _ok(l1in.V) else 0.0,
     )
 
+    # mode별 yaw-rate limit을 즉시 채운다. invalid 경로(아래 _invalid)에서도
+    # control.py가 항상 finite한 limit을 읽도록 보장한다(yaw_rate_limit_dps 항상 finite).
+    lim = _choose_yaw_rate_limit_rad_s(l1in.control_mode)
+    output_t.yaw_rate_limit = lim
+    output_t.yaw_rate_limit_dps = math.degrees(lim)
+
     def _invalid(reason: str) -> L1Output:
         output_t.control_valid = False
         output_t.valid = False
@@ -991,7 +1070,8 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
 
     if _is_dr_mode(l1in.control_mode):
         conf = _clamp(l1in.confidence, 0.0, 1.0)
-        if conf < getattr(config, "DR_MIN_CONFIDENCE_FOR_CONTROL", 0.15):
+        # config 누락 시 fallback을 inf/0이 아니라 추천값(0.20)으로 둬 guard가 꺼지지 않게 한다.
+        if conf < getattr(config, "DR_MIN_CONFIDENCE_FOR_CONTROL", 0.20):
             return _invalid("LOW_DR_CONFIDENCE")
     else:
         conf = 1.0
@@ -1014,14 +1094,12 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     V_eff = _clamp(l1in.V, config.V_MIN_MPS, _v_max)
     yaw_rate_cmd = 2.0 * V_eff / config.L_GAIN_M * sin_nu_eff
     yaw_rate_cmd *= conf  # confidence scaling: 1.0 for GPS, dr.confidence for DR
-    lim = _choose_yaw_rate_limit_rad_s(l1in.control_mode)
+    # lim은 함수 진입부에서 mode 기준으로 이미 채워졌다(output_t.yaw_rate_limit).
     yaw_rate_cmd = _clamp(yaw_rate_cmd, -lim, lim)
 
     output_t.target_bearing = target_bearing
     output_t.nu = nu
     output_t.yaw_rate_cmd = yaw_rate_cmd
-    output_t.yaw_rate_limit = lim
-    output_t.yaw_rate_limit_dps = math.degrees(lim)
     output_t.control_valid = True
     output_t.valid = True
     output_t.nominal = True

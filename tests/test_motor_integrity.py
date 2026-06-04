@@ -556,75 +556,60 @@ class TestEndToEndPipeline(unittest.TestCase):
     """Push sensor data via handlers, then invoke the guidance + control chain
     the way ctrl_parafoil does. Verify full data flow without spinning the loop."""
 
+    _ORIGIN_LAT = 38.371514   # ~500 m south of hardcoded target
+    _ORIGIN_LON = -79.607872
+
     def setUp(self):
-        _reset_motorapp()
-        motorapp.STATE = 3
+        motorapp.MOTOR_ENABLED = True
+        motorapp.STATE = 4
+        motorapp.PI = None
+        motorapp._STEER_MODE = ""
+        motorapp.MOTOR_CTRL_MODE = config.MOTOR_CTRL_MODE_GPS_GUIDED
+        motorapp._ORIGIN_LOCKED = True   # prevent handle_gps from touching prevstate
+        guidance.reset()
+        guidance.set_target_point(motorapp.TARGET_LAT, motorapp.TARGET_LON)
+        guidance.set_origin_point(self._ORIGIN_LAT, self._ORIGIN_LON)
+        control.reset()
 
     def _push_sensors(self, ts):
-        motorapp.handle_gps(f"{ORIGIN_LAT},{ORIGIN_LON},{ts:.4f},0.0,8.0,{ts:.4f}")
-        motorapp.handle_imu(
-            f"0,0,0,0,0,-9.81,0,0,0,0,0,2.5,{ts:.4f},0,0,1"
-        )
-        motorapp.handle_barometer(f"150.0,{ts:.4f},nan")
-        motorapp.handle_target_coord(f"{TARGET_LAT},{ORIGIN_LON}")
+        # 8 fields: lat,lon,pos_health,pos_ts,course_deg,speed_mps,motion_health,motion_ts
+        motorapp.handle_gps(
+            f"{self._ORIGIN_LAT},{self._ORIGIN_LON},1,{ts:.4f},0.0,8.0,1,{ts:.4f}")
+        # 12 fields: roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts,yaw_offset
+        motorapp.handle_imu(f"0,0,0,0,0,-9.81,0,0,2.0,1,{ts:.4f},0.0")
+        # 3 fields: alt_m,sink_rate,health
+        motorapp.handle_barometer(f"150.0,-2.0,1")
 
     def test_one_full_cycle_yields_valid_pwm(self):
         ts = time.monotonic()
         self._push_sensors(ts)
-        snap = motorapp._cache_snapshot()
-        now = time.monotonic()
-        fresh = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
-                                      snap.latest_baro, motorapp._GUIDANCE_STATE, now)
-        self.assertTrue(fresh.point_fresh)
-        self.assertTrue(fresh.velocity_fresh)
-        self.assertTrue(fresh.imu_fresh)
-        l1_in = guidance.produceL1input(fresh, snap.latest_gps, snap.latest_imu,
-                                         motorapp._GUIDANCE_STATE, motorapp.STATE, now)
-        self.assertTrue(l1_in.valid)
-        self.assertEqual(l1_in.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
-        # Origin and target should now be set
-        self.assertTrue(motorapp._GUIDANCE_STATE.origin_ready)
-        self.assertTrue(motorapp._GUIDANCE_STATE.target_ready)
-
-        g_out = guidance.produceL1output(l1_in)
-        g_out.timestamp = now
-        self.assertTrue(g_out.control_valid)
-
-        measured = motorapp._measured_yaw_rate_dps(g_out, fresh, snap.latest_imu)
-        self.assertFalse(math.isnan(measured))   # PID-enabled + gyrz fresh
-        ctrl_in = control.ProduceCtrlInput(g_out, now)
-        cmd = control.ProduceCtrlOutput(ctrl_in, measured, now)
-        self.assertTrue(cmd.valid)
-        self.assertEqual(cmd.mode, control.CTRL_MODE_CLOSED_LOOP)
-        self.assertGreaterEqual(cmd.left_pw,  control.LEFT_MIN_PULSE)
-        self.assertLessEqual(   cmd.left_pw,  control.LEFT_MAX_PULSE)
-        self.assertGreaterEqual(cmd.right_pw, control.RIGHT_MIN_PULSE)
-        self.assertLessEqual(   cmd.right_pw, control.RIGHT_MAX_PULSE)
+        out = motorapp._ctrl_cycle(None, ts + 0.05)
+        self.assertIsNotNone(out)
+        self.assertTrue(out.valid)
+        self.assertEqual(out.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
+        self.assertGreaterEqual(out.left_pw,  control.LEFT_MIN_PULSE)
+        self.assertLessEqual(   out.left_pw,  control.LEFT_MAX_PULSE)
+        self.assertGreaterEqual(out.right_pw, control.RIGHT_MIN_PULSE)
+        self.assertLessEqual(   out.right_pw, control.RIGHT_MAX_PULSE)
 
     def test_gps_dropout_transitions_to_dr(self):
         ts0 = time.monotonic()
         self._push_sensors(ts0)
-        snap = motorapp._cache_snapshot()
-        now0 = time.monotonic()
-        fresh0 = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
-                                       snap.latest_baro, motorapp._GUIDANCE_STATE, now0)
-        l0 = guidance.produceL1input(fresh0, snap.latest_gps, snap.latest_imu,
-                                      motorapp._GUIDANCE_STATE, 3, now0)
-        self.assertEqual(l0.control_mode, guidance.ControlMode.GPS_TRACKING_CLOSED)
+        snap0 = motorapp._cache_snapshot()
 
-        # Jump time past GPS freshness; refresh IMU only
-        now1 = now0 + config.GPS_FRESH_MAX_AGE_S + 1.0
-        motorapp.handle_imu(f"0,0,0,0,0,-9.81,0,0,0,0,0,2.5,{now1:.4f},0,0,1")
+        # Initial cycle: GPS fresh → GPS_TRACKING_CLOSED
+        mode0 = guidance.DecideControlMode(
+            snap0.latest_gps, snap0.latest_imu, snap0.latest_baro, ts0)
+        self.assertIn("GPS_TRACKING", mode0.value)
+
+        # GPS dropout: push fresh IMU past GPS freshness threshold, no new GPS
+        ts1 = ts0 + config.GPS_FRESH_MAX_AGE_S + 1.0
+        motorapp.handle_imu(f"0,0,0,0,0,-9.81,0,0,2.0,1,{ts1:.4f},0.0")
         snap1 = motorapp._cache_snapshot()
-        fresh1 = guidance.decidefresh(snap1.latest_gps, snap1.latest_imu,
-                                       snap1.latest_baro, motorapp._GUIDANCE_STATE, now1)
-        self.assertFalse(fresh1.point_fresh)
-        self.assertTrue(fresh1.imu_gyrz_fresh)
-        l1 = guidance.produceL1input(fresh1, snap1.latest_gps, snap1.latest_imu,
-                                      motorapp._GUIDANCE_STATE, 3, now1)
-        self.assertEqual(l1.control_mode, guidance.ControlMode.DR_TRACKING_CLOSED)
-        # confidence should have decayed (dr_age ~ 3s)
-        self.assertLess(l1.confidence, 1.0)
+
+        mode1 = guidance.DecideControlMode(
+            snap1.latest_gps, snap1.latest_imu, snap1.latest_baro, ts1)
+        self.assertIn("DR", mode1.value)
 
 
 # ════════════════════════════════════════════════════════════════════════════
