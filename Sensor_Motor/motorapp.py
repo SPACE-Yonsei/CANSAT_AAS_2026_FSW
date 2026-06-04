@@ -27,7 +27,9 @@ _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
 _PREV_STATE: int = 0
 _ORIGIN_LOCKED: bool = False
-_TARGET_LOCKED: bool = False
+
+TARGET_LAT = 38.376017   # 38°22'33.66"N
+TARGET_LON = -79.607872  # 79°36'28.34"W
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _STEER_MODE: str = ""
@@ -316,33 +318,6 @@ def handle_barometer(data: str) -> None:
         _CACHE_t.latest_baro = baro
 
 
-def handle_target_coord(data: str) -> None:
-    """타겟 좌표 수신. 최초 유효 좌표만 guidance frame에 저장한다."""
-    global _TARGET_LOCKED
-    if _TARGET_LOCKED:
-        return
-    fields = data.split(",")
-    if len(fields) != 2:
-        return
-    try:
-        lat = float(fields[0])
-        lon = float(fields[1])
-    except (ValueError, IndexError):
-        return
-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        return
-    if abs(lat) < 1e-9 and abs(lon) < 1e-9:
-        return   # (0,0) sentinel 거부
-    if getattr(prevstate, "FIX_TARGET_GPS", False):
-        fixed_lat, fixed_lon = prevstate.get_target_gps()
-        logger.info(
-            "Ignoring target command because prevstate target is fixed: lat=%.6f lon=%.6f",
-            fixed_lat,
-            fixed_lon,
-        )
-        return
-    guidance.set_target_point(lat, lon)
-    _TARGET_LOCKED = True
 
 
 def handle_flight_state(data: str) -> None:
@@ -638,8 +613,6 @@ def dispatch(msg: str) -> None:
         handle_imu(unpacked.data)
     elif mid == appargs.BarometerAppArg.MID_motor_alt:
         handle_barometer(unpacked.data)
-    elif mid == appargs.FlightlogicAppArg.MID_motor_TargetCor:
-        handle_target_coord(unpacked.data)
     elif mid == appargs.FlightlogicAppArg.MID_motor_state:
         handle_flight_state(unpacked.data)
     elif mid == appargs.FlightlogicAppArg.MID_motor_burnwire:
@@ -661,7 +634,7 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global STATE, _ORIGIN_LOCKED, _TARGET_LOCKED
+    global STATE, _ORIGIN_LOCKED
 
     prevstate.init_prevstate()
     # Restore flight state so _ctrl_cycle is not blocked on the first cycle.
@@ -671,14 +644,7 @@ def init() -> None:
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
     _ORIGIN_LOCKED = False
-    _TARGET_LOCKED = False
-    # target 좌표 복원
-    t_lat, t_lon = prevstate.get_target_gps()
-    if (-90.0 <= float(t_lat) <= 90.0
-            and -180.0 <= float(t_lon) <= 180.0
-            and not (t_lat == 0.0 and t_lon == 0.0)):
-        guidance.set_target_point(float(t_lat), float(t_lon))
-        _TARGET_LOCKED = True
+    guidance.set_target_point(TARGET_LAT, TARGET_LON)
 
     # origin 복원 (PREV_START_LOCKED==1일 때만 반환)
     # set_origin_point()은 frame origin과 현재 GPS local point만 초기화한다.
