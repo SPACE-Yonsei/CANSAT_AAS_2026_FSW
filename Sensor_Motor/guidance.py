@@ -987,10 +987,6 @@ def _choose_yaw_rate_limit(mode: ControlMode) -> float:
     return _choose_yaw_rate_limit_rad_s(mode)
 
 
-def _target_reached_radius_m() -> float:
-    return getattr(config, "TARGET_RADIUS_M", 0.0)
-
-
 def ProduceL1Output(l1in: L1Input) -> L1Output:
     output_t = L1Output(
         control_mode=l1in.control_mode,
@@ -1037,10 +1033,6 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     dist = math.hypot(dE, dN)
     output_t.distance_to_target = dist
     output_t.dist_to_target = dist
-
-    if dist <= _target_reached_radius_m():
-        output_t.target_bearing = _wrap_pi(math.atan2(dE, dN))
-        return _invalid("TARGET_REACHED")
 
     target_bearing = _wrap_pi(math.atan2(dE, dN))
     nu = _wrap_pi(target_bearing - l1in.course)

@@ -22,7 +22,6 @@ class TestCurrentGuidanceOutput(unittest.TestCase):
 
         self.assertTrue(out.control_valid)
         self.assertTrue(out.pid_enabled)
-        self.assertNotEqual(out.reason, "TARGET_REACHED")
         self.assertAlmostEqual(out.distance_to_target, 2.5)
         self.assertAlmostEqual(math.degrees(out.nu), -180.0)
         self.assertLess(out.yaw_rate_cmd, 0.0)

@@ -26,7 +26,6 @@ _CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레�
 _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
 _PREV_STATE: int = 0
-_DO_CTRL_RESET: bool = False
 _ORIGIN_LOCKED: bool = False
 _TARGET_LOCKED: bool = False
 
@@ -347,9 +346,14 @@ def handle_target_coord(data: str) -> None:
 
 
 def handle_flight_state(data: str) -> None:
-    """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
+    """비행 상태 업데이트.
+
+    origin 재취득은 더 이상 state 전이에서 자동으로 하지 않는다. 다음 발사 전
+    prevstate.json의 PREV_START_LOCKED를 0으로 수동 클리어한 뒤 전원을 재투입하면,
+    init()이 origin을 복원하지 않고(_ORIGIN_LOCKED=False) handle_gps가 state≥3에서
+    첫 유효 GPS로 새 origin을 잠근다.
+    """
     global STATE, _PREV_STATE
-    global _DO_CTRL_RESET, _ORIGIN_LOCKED
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -357,19 +361,9 @@ def handle_flight_state(data: str) -> None:
     if new_state == STATE:
         return
 
-    _DO_CTRL_RESET = False
     with _UPDATE_LOCK:
         _PREV_STATE = STATE
         STATE       = new_state
-        if new_state < 4:   # PAYLOAD_RELEASE(4) 이전: 가이던스 리셋
-            prevstate.clear_start_point()
-            guidance.reset()   # origin point 초기화 → handle_gps가 재잠금 가능
-            _DO_CTRL_RESET = True
-            _ORIGIN_LOCKED = False
-
-    # PAYLOAD_RELEASE(4) 이상에서 origin lock은 handle_gps가 첫 유효 GPS로 수행한다.
-    if _DO_CTRL_RESET:
-        control.reset()
 
 
 def handle_release(data: str = "TRIGGER") -> None:

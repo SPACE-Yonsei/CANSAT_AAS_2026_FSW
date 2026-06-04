@@ -51,23 +51,6 @@ class TestStartPointLock(unittest.TestCase):
         self.assertFalse(math.isfinite(guidance._MISSION_t.origin_lat))
         mock_update.assert_not_called()
 
-    @patch.object(motorapp.prevstate, "clear_start_point")
-    @patch.object(motorapp.control, "reset")
-    def test_state_reset_unlocks_origin_only(self, _mock_control_reset, mock_clear) -> None:
-        motorapp._ORIGIN_LOCKED = True
-        motorapp._TARGET_LOCKED = True
-        guidance.set_origin_point(37.0, 127.0)
-        guidance.set_target_point(37.1, 127.1)
-        motorapp.STATE = 4
-
-        motorapp.handle_flight_state("2")
-
-        self.assertFalse(motorapp._ORIGIN_LOCKED)
-        self.assertTrue(motorapp._TARGET_LOCKED)
-        self.assertFalse(math.isfinite(guidance._MISSION_t.origin_lat))
-        self.assertTrue(math.isfinite(guidance._MISSION_t.target_lat))
-        mock_clear.assert_called_once()
-
     @patch.object(motorapp.prevstate, "FIX_TARGET_GPS", False)
     def test_target_coord_locks_first_valid_target(self) -> None:
         motorapp.handle_target_coord("37.500000,127.000000")

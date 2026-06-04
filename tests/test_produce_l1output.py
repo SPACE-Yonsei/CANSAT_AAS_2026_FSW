@@ -109,13 +109,5 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertFalse(out.valid)
         self.assertEqual(out.reason, "FAIL")
 
-    def test_target_reached(self):
-        out = guidance.ProduceL1Output(
-            _l1in(ControlMode.GPS_TRACKING_CLOSED, dist=config.TARGET_RADIUS_M - 1.0))
-        self.assertFalse(out.valid)
-        self.assertEqual(out.reason, "TARGET_REACHED")
-        self.assertEqual(out.yaw_rate_cmd, 0.0)
-
-
 if __name__ == "__main__":
     unittest.main()
