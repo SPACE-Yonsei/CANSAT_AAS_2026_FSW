@@ -186,11 +186,11 @@ def replay(rows):
         imu = _build_imu(row, now)
         baro = _build_baro(row, now)
 
-        # origin lock (motorapp.handle_gps 미러): STATE>=4 첫 유효 GPS를 origin으로.
-        if (state >= 4 and not guidance._MISSION_t.origin_ready
+        # origin lock (motorapp.handle_gps 미러): STATE>=3 첫 유효 GPS를 origin으로.
+        if (state >= 3 and not guidance._MISSION_t.origin_ready
                 and gps.pos_health and _fin(_f(row, "gps_lat"))):
             guidance.lock_origin(_f(row, "gps_lat"), _f(row, "gps_lon"),
-                                 source="STATE4_FIRST_GPS")
+                                 source="STATE3_FIRST_GPS")
 
         gyrz_dps = _f(row, "imu_gyrz_deg_s")
 

@@ -263,12 +263,12 @@ def handle_gps(data: str) -> None:
     with _UPDATE_LOCK:
         _CACHE_t.latest_gps = sample
 
-    # origin lock: candidate 없음. STATE >= 4(PAYLOAD_RELEASE 이상)에서 처음 들어오는
-    # 유효 GPS 좌표를 무조건 origin으로 잠근다. origin_ready면 덮어쓰지 않으므로
-    # "첫 유효 좌표"만 origin이 된다.
-    if (STATE >= 4 and not guidance._MISSION_t.origin_ready
+    # origin lock: candidate 없음. STATE >= 3(DESCENT 이상)에서 처음 들어오는 유효
+    # GPS 좌표를 무조건 origin으로 잠근다. origin_ready면 덮어쓰지 않으므로 DESCENT
+    # 진입 후 "첫 유효 좌표"만 origin이 된다.
+    if (STATE >= 3 and not guidance._MISSION_t.origin_ready
             and pos_health and math.isfinite(lat) and math.isfinite(lon)):
-        guidance.lock_origin(lat, lon, source="STATE4_FIRST_GPS")
+        guidance.lock_origin(lat, lon, source="STATE3_FIRST_GPS")
         prevstate.update_start_point(lat, lon, True)
 
 

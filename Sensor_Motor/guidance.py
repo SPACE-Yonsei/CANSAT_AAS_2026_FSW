@@ -85,7 +85,7 @@ class MissionFrame:
     origin_lat: float = nan
     origin_lon: float = nan
     origin_ready: bool = False
-    origin_lock_source: str = ""   # "STATE4_FIRST_GPS"
+    origin_lock_source: str = ""   # "STATE3_FIRST_GPS"
     target_E: float = nan
     target_N: float = nan
     target_ready: bool = False

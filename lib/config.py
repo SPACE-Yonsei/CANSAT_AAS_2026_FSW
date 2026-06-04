@@ -128,8 +128,8 @@ DR_CONF_AGE_2_S = 30.0
 DR_CONF_AGE_3_S = 60.0
 
 # ── Origin lock policy ───────────────────────────────────────────────────────
-# candidate 없음. STATE >= 4(PAYLOAD_RELEASE 이상)에서 처음 들어오는 유효 GPS
-# 좌표를 그대로 origin으로 lock한다(motorapp.handle_gps). 별도 튜닝 상수 없음.
+# candidate 없음. STATE >= 3(DESCENT 이상)에서 처음 들어오는 유효 GPS 좌표를
+# 그대로 origin으로 lock한다(motorapp.handle_gps). 별도 튜닝 상수 없음.
 
 # Yaw rate limits per control mode (deg/s)
 # 35→60: 정상비행 spin 분포가 35 dps 근처까지 올라와 제어 여유를 확보하기 위해 상향

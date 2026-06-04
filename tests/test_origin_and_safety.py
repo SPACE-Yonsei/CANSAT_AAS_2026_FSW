@@ -43,8 +43,8 @@ def _mission():
     mi.target_E, mi.target_N, mi.target_ready = 100.0, 0.0, True
 
 
-class TestStateFourOriginLock(unittest.TestCase):
-    """state>=4에서 처음 들어오는 유효 GPS가 무조건 origin이 된다 (candidate 없음)."""
+class TestDescentOriginLock(unittest.TestCase):
+    """DESCENT(state>=3) 진입 후 처음 들어오는 유효 GPS가 무조건 origin이 된다."""
 
     def setUp(self):
         guidance.reset()
@@ -56,26 +56,26 @@ class TestStateFourOriginLock(unittest.TestCase):
         motorapp.handle_gps(f"{lat},{lon},{pos},{ts:.4f},{course},{speed},1,{ts:.4f}")
 
     @patch.object(motorapp.prevstate, "update_start_point")
-    def test_no_lock_below_state4(self, mock_update):
-        motorapp.STATE = 3
+    def test_no_lock_below_state3(self, mock_update):
+        motorapp.STATE = 2          # APOGEE: 아직 origin 안 잡음
         self._send(37.5, 127.0)
         self.assertFalse(guidance._MISSION_t.origin_ready)
         mock_update.assert_not_called()
 
     @patch.object(motorapp.prevstate, "update_start_point")
-    def test_first_valid_fix_at_state4_locks(self, mock_update):
-        motorapp.STATE = 4
+    def test_first_valid_fix_at_descent_locks(self, mock_update):
+        motorapp.STATE = 3          # DESCENT 첫 유효 좌표
         self._send(38.86, -104.79)   # US site (any coordinate works)
         mi = guidance._MISSION_t
         self.assertTrue(mi.origin_ready)
         self.assertAlmostEqual(mi.origin_lat, 38.86)
         self.assertAlmostEqual(mi.origin_lon, -104.79)
-        self.assertEqual(mi.origin_lock_source, "STATE4_FIRST_GPS")
+        self.assertEqual(mi.origin_lock_source, "STATE3_FIRST_GPS")
         mock_update.assert_called_once()
 
     @patch.object(motorapp.prevstate, "update_start_point")
     def test_first_fix_wins_no_overwrite(self, mock_update):
-        motorapp.STATE = 4
+        motorapp.STATE = 3
         self._send(38.86, -104.79)
         self._send(40.00, -105.00)   # later fix must be ignored
         mi = guidance._MISSION_t
@@ -84,15 +84,23 @@ class TestStateFourOriginLock(unittest.TestCase):
         self.assertEqual(mock_update.call_count, 1)
 
     @patch.object(motorapp.prevstate, "update_start_point")
+    def test_origin_persists_into_release(self, mock_update):
+        motorapp.STATE = 3
+        self._send(38.86, -104.79)   # DESCENT에서 lock
+        motorapp.STATE = 4           # PAYLOAD_RELEASE 진입: 덮어쓰지 않음
+        self._send(40.00, -105.00)
+        self.assertAlmostEqual(guidance._MISSION_t.origin_lat, 38.86)
+
+    @patch.object(motorapp.prevstate, "update_start_point")
     def test_invalid_fix_does_not_lock(self, mock_update):
-        motorapp.STATE = 4
+        motorapp.STATE = 3
         self._send(37.5, 127.0, pos=0)   # pos_health=0 → not a valid fix
         self.assertFalse(guidance._MISSION_t.origin_ready)
         mock_update.assert_not_called()
 
     @patch.object(motorapp.prevstate, "update_start_point")
     def test_relock_after_reset(self, mock_update):
-        motorapp.STATE = 4
+        motorapp.STATE = 3
         self._send(38.86, -104.79)
         self.assertTrue(guidance._MISSION_t.origin_ready)
         guidance.reset()                 # state<4 전이 시 motorapp이 호출
