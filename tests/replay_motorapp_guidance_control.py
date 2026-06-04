@@ -93,8 +93,6 @@ def _valid_latlon(lat: Optional[float], lon: Optional[float]) -> bool:
         and -90.0 <= lat <= 90.0
         and -180.0 <= lon <= 180.0
         and not (abs(lat) <= 1.0e-4 and abs(lon) <= 1.0e-4)
-        and abs(lon - float(config.GPS_EXPECTED_LON_CENTER_DEG))
-        <= float(config.GPS_EXPECTED_LON_RADIUS_DEG)
     )
 
 

@@ -42,13 +42,13 @@ class TestCandidateOrigin(unittest.TestCase):
     def setUp(self):
         guidance.reset(keep_candidate_origin=False)
 
-    def test_update_candidate_in_area(self):
+    def test_update_candidate_accepts_valid_fix(self):
+        # No geographic expected-area gate: any valid fix is stored (Korea, US, ...).
         self.assertTrue(guidance.update_candidate_origin(37.5, 127.0, ts=100.0))
         self.assertTrue(guidance._MISSION_t.candidate_origin_valid)
-
-    def test_update_candidate_rejects_outside_area(self):
-        self.assertFalse(guidance.update_candidate_origin(0.0, 0.0, ts=100.0))
-        self.assertFalse(guidance._MISSION_t.candidate_origin_valid)
+        guidance.reset(keep_candidate_origin=False)
+        self.assertTrue(guidance.update_candidate_origin(38.86, -104.79, ts=100.0))  # US site
+        self.assertTrue(guidance._MISSION_t.candidate_origin_valid)
 
     def test_pre_release_lock(self):
         guidance.update_candidate_origin(37.5, 127.0, ts=100.0)
