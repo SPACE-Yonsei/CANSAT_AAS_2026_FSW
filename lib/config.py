@@ -46,16 +46,8 @@ XBEE_RATE_HZ = 10
 CAMERA_FPS = 30
 
 
-#must be deleted
-# GPS sanity gates.  Defaults are for the current Korea test area; update these
-# before operating at a distant site.
-# ±1 km radius from expected drop zone center, converted to degrees:
-#   lat: 1000 m / 111320 m/deg ≈ 0.009 deg
-#   lon: 1000 m / (111320 * cos(37°)) ≈ 0.011 deg
-GPS_EXPECTED_LAT_CENTER_DEG = 37.5    # Seoul/Yonsei test default; update for competition site
-GPS_EXPECTED_LON_CENTER_DEG = 127.0
-GPS_EXPECTED_LAT_RADIUS_DEG = 2.0     # ±220 km (covers Korea test area)
-GPS_EXPECTED_LON_RADIUS_DEG = 2.0     # ±170 km
+# GPS sanity gates.  No geographic expected-area box: any valid GPS fix is
+# accepted so the system works at any site (Korea, US, anywhere).
 GPS_MIN_SATS = 4
 GPS_MAX_VALID_SPEED_MPS = 40.0
 

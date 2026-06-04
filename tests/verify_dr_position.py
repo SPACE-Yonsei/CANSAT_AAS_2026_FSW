@@ -27,8 +27,8 @@ from tools.interactive_ctrl_parafoil_sim import (
 from Sensor_Motor import guidance
 from lib import config
 
-ORIGIN_LAT = float(config.GPS_EXPECTED_LAT_CENTER_DEG)
-ORIGIN_LON = float(config.GPS_EXPECTED_LON_CENTER_DEG)
+ORIGIN_LAT = 37.5    # arbitrary test origin (site-independent)
+ORIGIN_LON = 127.0
 TARGET_E   = 0.0
 TARGET_N   = 900.0
 

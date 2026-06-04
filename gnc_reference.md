@@ -1047,7 +1047,7 @@ return None
 | G-P6 | HDOP > 3.0 | 0 | `nan` |
 | G-P7 | jump rate > 30 m/s | 0 | `nan` |
 | G-P8 | 좌표 (0,0) sentinel | 0 | `nan` |
-| G-P9 | 기대 영역 외 (`GPS_EXPECTED_*_RADIUS`) | 0 | `nan` |
+| G-P9 | ~~기대 영역 외~~ (제거됨: 지리적 박스 게이트 없음, 전 세계 좌표 허용) | — | — |
 | G-P10 | SIM_GPS_ACTIVE=True | 1 (강제) | 시뮬 좌표 |
 
 **motion_health 결정 조건** (모두 AND)

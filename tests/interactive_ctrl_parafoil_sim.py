@@ -637,10 +637,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run the selected preset without pausing")
     parser.add_argument("--list-cases", action="store_true",
                         help="print preset cycle input sets and exit")
-    parser.add_argument("--origin-lat", type=float,
-                        default=float(config.GPS_EXPECTED_LAT_CENTER_DEG))
-    parser.add_argument("--origin-lon", type=float,
-                        default=float(config.GPS_EXPECTED_LON_CENTER_DEG))
+    parser.add_argument("--origin-lat", type=float, default=37.5)
+    parser.add_argument("--origin-lon", type=float, default=127.0)
     parser.add_argument("--target-e", type=float, default=0.0,
                         help="target east coordinate in meters from origin")
     parser.add_argument("--target-n", type=float, default=900.0,

@@ -54,23 +54,6 @@ def _optional_float(value):
     return float(value) if _is_finite(value) else None
 
 
-def _in_expected_area(lat: float, lon: float) -> bool:
-    try:
-        lat_center = float(config.GPS_EXPECTED_LAT_CENTER_DEG)
-        lon_center = float(config.GPS_EXPECTED_LON_CENTER_DEG)
-        lat_radius = float(config.GPS_EXPECTED_LAT_RADIUS_DEG)
-        lon_radius = float(config.GPS_EXPECTED_LON_RADIUS_DEG)
-    except (TypeError, ValueError):
-        lat_center = 37.0
-        lon_center = 126.6
-        lat_radius = 0.009
-        lon_radius = 0.011
-    return (
-        abs(float(lat) - lat_center) <= lat_radius
-        and abs(float(lon) - lon_center) <= lon_radius
-    )
-
-
 def _is_placeholder_latlon(lat: float, lon: float) -> bool:
     return abs(float(lat)) <= GPS_NULL_LAT_TOL and abs(float(lon)) <= GPS_NULL_LON_TOL
 
@@ -96,8 +79,6 @@ def _eval_pos_fidelity(
     if not (-90.0 <= float(lat) <= 90.0 and -180.0 <= float(lon) <= 180.0):
         return False
     if _is_placeholder_latlon(float(lat), float(lon)):
-        return False
-    if not _in_expected_area(float(lat), float(lon)):
         return False
     if int(fix_quality) < 1:
         return False

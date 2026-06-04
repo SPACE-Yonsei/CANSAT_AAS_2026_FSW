@@ -381,30 +381,16 @@ def lock_origin(lat: float, lon: float, source: str = "") -> None:
         logger.info("Target projected on lock: E=%.1f N=%.1f", tE, tN)
 
 
-def _in_expected_area(lat: float, lon: float) -> bool:
-    """config GPS_EXPECTED_* 박스 안인지. center/radius가 없으면 항상 통과."""
-    try:
-        clat = config.GPS_EXPECTED_LAT_CENTER_DEG
-        clon = config.GPS_EXPECTED_LON_CENTER_DEG
-        rlat = config.GPS_EXPECTED_LAT_RADIUS_DEG
-        rlon = config.GPS_EXPECTED_LON_RADIUS_DEG
-    except AttributeError:
-        return True
-    return abs(lat - clat) <= rlat and abs(lon - clon) <= rlon
-
-
 def update_candidate_origin(lat: float, lon: float, ts: float,
                             quality: float = 1.0) -> bool:
     """유효한 GPS position을 candidate origin으로 저장 (state 무관, < 3에서도 가능).
 
-    pos_health가 true인 표본만 호출해야 한다(호출측 책임). expected-area gate를
-    추가로 통과해야 저장한다. origin_ready여도 candidate는 갱신하지만(진단용),
-    lock된 origin은 절대 덮어쓰지 않는다.
+    pos_health가 true인 표본만 호출해야 한다(호출측 책임). 지리적 expected-area
+    제한은 없다 — 한국/미국 등 어떤 사이트의 유효 좌표든 저장한다. origin_ready여도
+    candidate는 갱신하지만(진단용), lock된 origin은 절대 덮어쓰지 않는다.
     """
     mi_t = _MISSION_t
     if not (_ok(lat) and _ok(lon) and _ok(ts)):
-        return False
-    if not _in_expected_area(float(lat), float(lon)):
         return False
     mi_t.candidate_origin_lat = float(lat)
     mi_t.candidate_origin_lon = float(lon)
