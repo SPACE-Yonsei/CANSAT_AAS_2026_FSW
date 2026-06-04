@@ -199,15 +199,19 @@ GYRZ_SIGN      = 1.0
 ACC_X_SIGN     = 1.0
 ACC_Y_SIGN     = 1.0
 
-# Yaw-rate controller gains (FF-only: all PID gains 0)
-KP_GPS_CLOSED  = 0.0
-KI_GPS_CLOSED   = 0.0
+# Yaw-rate controller gains.
+# Based on first-flight log fit (K=0.63, tau=0.5), conservatively reduced
+# for second/third-flight failure cases and lower-confidence DR modes.
+KP_GPS_CLOSED   = 0.53
+KI_GPS_CLOSED   = 1.06
 KD_GPS_CLOSED   = 0.0
-KP_DR_M_CLOSED  = 0.0
-KI_DR_M_CLOSED  = 0.0
+
+KP_DR_M_CLOSED  = 0.40
+KI_DR_M_CLOSED  = 0.79
 KD_DR_M_CLOSED  = 0.0
-KP_DR_PM_CLOSED = 0.0
-KI_DR_PM_CLOSED = 0.0
+
+KP_DR_PM_CLOSED = 0.30
+KI_DR_PM_CLOSED = 0.60
 KD_DR_PM_CLOSED = 0.0
 
 # Feedforward scale per mode. GPS=1.0; DR rides the FF curve at reduced
