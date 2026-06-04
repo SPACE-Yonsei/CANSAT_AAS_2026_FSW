@@ -8,7 +8,7 @@ GPS 8필드 페이로드 → handle_gps() → guidance → control 전체 파이
   course_deg (= 사용자 표기상 course_seg), speed_mps,
   motion_health, motion_ts
 
-이 값들이 handle_gps() → guidance.UpdateRaws() → DecideControlMode()
+이 값들이 handle_gps() → guidance.UpdateRaw() → DecideControlMode()
 → ProduceL1Input() → ProduceL1Output() → ProduceCtrlOutput() 파이프라인을
 거쳐 모터 방향(좌/우/중립 PWM)으로 올바르게 변환되는지 확인한다.
 
@@ -226,7 +226,7 @@ def run() -> None:
 
         # ── 2. Guidance 파이프라인 ────────────────────────────────────────────
         snap   = motorapp._cache_snapshot()
-        guidance.UpdateRaws(snap.latest_gps, snap.latest_imu, snap.latest_baro, now)
+        guidance.UpdateRaw(snap.latest_gps, snap.latest_imu, snap.latest_baro, now)
         mode   = guidance.DecideControlMode(now)
         l1_in  = guidance.ProduceL1Input(now)
         l1_out = guidance.ProduceL1Output(l1_in)

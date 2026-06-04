@@ -123,8 +123,9 @@ def run():
         imu   = _make_imu(row)
         baro  = _make_baro(row)
 
-        guidance.UpdateRaws(gps, imu, baro, mono)
-        guidance.TryInitStateFromPosOnly(mono)
+        guidance.UpdateRaw(gps, imu, baro, mono)
+        _flags = guidance.ComputeFreshFlags(mono)
+        guidance.FillDRAnchor(_flags, mono)
 
         gz_dps = math.degrees(imu.gyrz_rad_s) if math.isfinite(imu.gyrz_rad_s) else math.nan
         mode = guidance.DecideControlMode(mono)
@@ -170,7 +171,7 @@ def run():
         actual_mode = row.get("control_mode", "")
         mi = guidance._MISSION_t
         origin_ready = math.isfinite(mi.origin_lat) and math.isfinite(mi.origin_lon)
-        dr_valid     = guidance.dr_is_valid(guidance._STATE_t.dr)
+        dr_valid     = guidance.dr_anchor_valid(guidance._STATE_t.dr)
 
         results.append({
             "timestamp":     row.get("timestamp", ""),

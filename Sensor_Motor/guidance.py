@@ -226,10 +226,6 @@ def dr_current_valid(dr: DRState) -> bool:
     )
 
 
-def dr_is_valid(dr: DRState) -> bool:
-    return dr_anchor_valid(dr)
-
-
 def last_v_valid(dr: DRState) -> bool:
     return isfinite(dr.current_V) or isfinite(dr.anchor_V)
 
@@ -274,10 +270,6 @@ def _is_dr_mode(mode) -> bool:
     return _mode_value(mode).startswith("DR_")
 
 
-def is_guidance_mode(mode) -> bool:
-    return _is_gps_tracking_mode(mode) or _is_dr_mode(mode)
-
-
 def _dr_source_field(mode) -> str:
     if not _is_dr_mode(mode):
         return ""
@@ -307,17 +299,6 @@ def _mode_uses_gyro_feedback(mode) -> bool:
     value = _mode_value(mode)
     return mode == ControlMode.GPS_TRACKING_CLOSED or (
         value.startswith("DR_") and value.endswith("_CLOSED")
-    )
-
-
-def _mode_estimates_position(mode) -> bool:
-    return isinstance(mode, ControlMode) and _mode_value(mode).startswith("DR_PM_")
-
-
-def _mode_estimates_motion(mode) -> bool:
-    value = _mode_value(mode)
-    return isinstance(mode, ControlMode) and (
-        value.startswith("DR_M_") or value.startswith("DR_PM_")
     )
 
 
@@ -439,9 +420,6 @@ def UpdateRaw(gps=None, imu=None, baro=None, now: float | None = None) -> None:
             if _ok(sink):
                 st_t.baro.sink_rate = float(sink)
                 st_t.baro.valid = True
-
-
-UpdateRaws = UpdateRaw
 
 
 def ComputeFreshFlags(now: float) -> SensorFreshFlags:
@@ -632,11 +610,6 @@ def DecideControlMode(gps=None, imu=None, baro=None, now: float | None = None) -
     mode = SelectControlMode(flags, now)
     _STATE_t.nav.control_mode = mode
     return mode
-
-
-def TryInitStateFromPosOnly(now: float) -> None:
-    flags = ComputeFreshFlags(now)
-    FillDRAnchor(flags, now)
 
 
 def _estimate_course_for_mode(mode: ControlMode, now: float, dt: float):
@@ -980,11 +953,6 @@ def _choose_yaw_rate_limit_rad_s(mode: ControlMode) -> float:
     if attr is None:
         return 0.0
     return math.radians(getattr(config, attr, 0.0))
-
-
-# Backward-compatible alias (older call sites expect this name, rad/s).
-def _choose_yaw_rate_limit(mode: ControlMode) -> float:
-    return _choose_yaw_rate_limit_rad_s(mode)
 
 
 def ProduceL1Output(l1in: L1Input) -> L1Output:

@@ -105,16 +105,6 @@ def _is_gps_open(mode) -> bool:
     return _mode_str(mode) == "GPS_TRACKING_OPEN"
 
 
-def _is_dr_closed(mode) -> bool:
-    s = _mode_str(mode)
-    return s.startswith("DR_") and s.endswith("_CLOSED")
-
-
-def _is_dr_open(mode) -> bool:
-    s = _mode_str(mode)
-    return s.startswith("DR_") and s.endswith("_OPEN")
-
-
 def _is_dr_m(mode) -> bool:
     return _mode_str(mode).startswith("DR_M_")
 
@@ -215,12 +205,6 @@ def reset() -> None:
     _prev_time            = 0.0
     _prev_left_angle_deg  = NEUTRAL_ARM_DEG
     _prev_right_angle_deg = NEUTRAL_ARM_DEG
-
-
-def sync_prev_angles(left_deg: float, right_deg: float) -> None:
-    global _prev_left_angle_deg, _prev_right_angle_deg
-    _prev_left_angle_deg  = left_deg
-    _prev_right_angle_deg = right_deg
 
 
 def WriteNeutral(now: float, control_mode: ControlMode = ControlMode.FAIL) -> CtrlOutput:

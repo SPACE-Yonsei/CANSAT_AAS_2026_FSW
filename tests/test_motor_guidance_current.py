@@ -58,7 +58,7 @@ class TestPosOnlyDrAnchorInit(unittest.TestCase):
 
         self.assertFalse(l1_input.valid)
         self.assertEqual(l1_input.reason, "NO_HEADING_SOURCE")
-        self.assertFalse(guidance.dr_is_valid(state.dr))
+        self.assertFalse(guidance.dr_anchor_valid(state.dr))
 
     def test_yaw_initializes_pos_only_dr_anchor(self):
         now = 100.0
@@ -70,7 +70,7 @@ class TestPosOnlyDrAnchorInit(unittest.TestCase):
 
         self.assertTrue(l1_input.valid)
         self.assertEqual(l1_input.reason, "DR_TRACKING")
-        self.assertTrue(guidance.dr_is_valid(state.dr))
+        self.assertTrue(guidance.dr_anchor_valid(state.dr))
         self.assertAlmostEqual(state.dr.anchor_course, math.radians(30.0))
 
 
