@@ -97,7 +97,7 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertFalse(out.valid)
         self.assertEqual(out.reason, "V_TOO_SMALL")
 
-    # ── Guards: invalid input, FAIL, DETUMBLING, target reached ─────────────
+    # ── Guards: invalid input, FAIL, target reached ─────────────────────────
     def test_invalid_input_passthrough(self):
         out = guidance.ProduceL1Output(
             _l1in(ControlMode.GPS_TRACKING_CLOSED, valid=False, reason="GPS_NAV_INVALID"))
@@ -108,14 +108,6 @@ class TestProduceL1Output(unittest.TestCase):
         out = guidance.ProduceL1Output(_l1in(ControlMode.FAIL))
         self.assertFalse(out.valid)
         self.assertEqual(out.reason, "FAIL")
-
-    def test_detumbling_mode(self):
-        out = guidance.ProduceL1Output(_l1in(ControlMode.DETUMBLING))
-        self.assertTrue(out.control_valid)
-        self.assertFalse(out.nominal)
-        self.assertFalse(out.pid_enabled)
-        self.assertEqual(out.reason, "DETUMBLING")
-        self.assertEqual(out.yaw_rate_cmd, 0.0)
 
     def test_target_reached(self):
         out = guidance.ProduceL1Output(

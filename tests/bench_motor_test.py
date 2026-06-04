@@ -7,9 +7,6 @@ _ctrl_cycle 파이프라인을 직접 재현한다.
 
 ControlMode별 파이프라인 (motorapp._ctrl_cycle 기준):
 
-  DETUMBLING:
-    _should_detumble → ProduceDetumbleOutput(now, gz_meas) → MoveServo
-
   GPS_TRACKING_CLOSED / GPS_TRACKING_OPEN /
   DR_TRACKING_CLOSED  / DR_TRACKING_OPEN:
     ProduceL1Input → ProduceL1Output
@@ -237,35 +234,6 @@ def _run_tracking_case(
     _move_or_print(ss_out)
 
 
-# ── DETUMBLING ────────────────────────────────────────────────────────────────
-#
-# motorapp._ctrl_cycle 파이프라인:
-#   _should_detumble → ProduceDetumbleOutput(now, gz_meas) → MoveServo
-#
-# ProduceCtrlOutput을 거치지 않는다.
-
-def _run_detumble_case(gyrz_dps: float) -> None:
-    now = time.monotonic()
-    control.reset()
-
-    # _ctrl_cycle에서 ProduceDetumbleOutput을 직접 호출하는 것과 동일
-    out = control.ProduceDetumbleOutput(now, gyrz_dps)
-
-    applied_delta = _applied_delta(out)
-    print(
-        f"  control_mode : {out.control_mode}"
-    )
-    print(
-        f"  gyrz         : {gyrz_dps:+.1f}dps  "
-        f"delta={out.delta_arm_deg:+.1f}deg  applied={applied_delta:+.1f}deg"
-    )
-    print(
-        f"  SERVO        : left={out.left_angle_deg:.1f}deg({out.left_pw}us)  "
-        f"right={out.right_angle_deg:.1f}deg({out.right_pw}us)"
-    )
-    _move_or_print(out)
-
-
 # ── 감도 테이블 ───────────────────────────────────────────────────────────────
 #
 # nu → yaw_rate_cmd → delta_ff → arm 각도
@@ -360,16 +328,6 @@ CASES = [
         "tracking",
         (tE + 111.8, tN, 0.0, 5.0, 0.0, ControlMode.GPS_TRACKING_OPEN),
     ),
-    (
-        "CASE 6 | DETUMBLING | right rotation +250dps",
-        "detumble",
-        (250.0,),
-    ),
-    (
-        "CASE 7 | DETUMBLING | left rotation -250dps",
-        "detumble",
-        (-250.0,),
-    ),
 ]
 
 
@@ -404,8 +362,6 @@ def main() -> None:
 
             if kind == "tracking":
                 _run_tracking_case(*args)
-            elif kind == "detumble":
-                _run_detumble_case(*args)
 
             user = input("\n  [Enter=next  q=quit] > ").strip().lower()
             if user == "q":

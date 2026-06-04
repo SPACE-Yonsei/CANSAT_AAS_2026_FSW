@@ -146,12 +146,6 @@ RESULT_FIELDS = [
 ]
 
 
-def _should_detumble(gyrz_dps):
-    if not getattr(config, "DETUMBLE_ENABLE", False):
-        return False
-    return _fin(gyrz_dps) and abs(gyrz_dps) > config.DETUMBLE_GYRZ_THRESHOLD_DPS
-
-
 def replay(rows):
     # 시간순 정렬
     rows = sorted(rows, key=lambda r: (_f(r, "monotonic_s") if _fin(_f(r, "monotonic_s")) else 0.0))
@@ -194,18 +188,9 @@ def replay(rows):
 
         gyrz_dps = _f(row, "imu_gyrz_deg_s")
 
-        # DETUMBLING 선점 (motorapp 정책 미러)
-        if state >= 3 and _should_detumble(gyrz_dps):
-            guidance.UpdateRaw(gps, imu, baro, now)
-            guidance.ComputeFreshFlags(now)
-            guidance._STATE_t.nav.control_mode = ControlMode.DETUMBLING
-            mode = ControlMode.DETUMBLING
-            l1in = guidance.L1Input(valid=False, reason="DETUMBLING", control_mode=mode)
-            l1out = guidance.ProduceL1Output(l1in)
-        else:
-            mode = guidance.DecideControlMode(gps, imu, baro, now)
-            l1in = guidance.ProduceL1Input(now)
-            l1out = guidance.ProduceL1Output(l1in)
+        mode = guidance.DecideControlMode(gps, imu, baro, now)
+        l1in = guidance.ProduceL1Input(now)
+        l1out = guidance.ProduceL1Output(l1in)
 
         # 서보 PWM 추정 (하드웨어 없음)
         ctrl_in = control.ProduceCtrlInput(l1out, now)
@@ -281,7 +266,7 @@ def summarize(results, raw_rows, out_md):
     after_dur = defaultdict(float)
     before_dur = defaultdict(float)
     failreason_dur = defaultdict(float)
-    cat_dur = defaultdict(float)   # FAIL / GPS_TRACKING / DR_M / DR_PM / DETUMBLING
+    cat_dur = defaultdict(float)   # FAIL / GPS_TRACKING / DR_M / DR_PM
     l1in_valid = 0.0
     l1out_valid = 0.0
     yaw_sat = 0.0
@@ -294,7 +279,7 @@ def summarize(results, raw_rows, out_md):
             return "DR_PM"
         if mode.startswith("DR_M_"):
             return "DR_M"
-        return mode  # FAIL / DETUMBLING
+        return mode  # FAIL or unknown
 
     for i in in34:
         r = results[i]
@@ -332,7 +317,7 @@ def summarize(results, raw_rows, out_md):
     lines.append("## 1. Mode duration — BEFORE (logged) vs AFTER (replay), state 3+4\n")
     lines.append("| Category | BEFORE s (%) | AFTER s (%) |")
     lines.append("|---|---|---|")
-    cats = ["FAIL", "GPS_TRACKING", "DR_M", "DR_PM", "DETUMBLING"]
+    cats = ["FAIL", "GPS_TRACKING", "DR_M", "DR_PM"]
     before_grouped = defaultdict(float)
     for k, v in before_cat.items():
         if k.startswith("GPS_TRACKING"):

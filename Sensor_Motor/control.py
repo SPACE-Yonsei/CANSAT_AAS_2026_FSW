@@ -441,47 +441,6 @@ def ProduceCtrlOutput(
     return out_t
 
 
-# ── Detumbling 전용 출력 ──────────────────────────────────────────────────────
-
-def ProduceDetumbleOutput(
-    now: float,
-    angular_velocity_meas_deg_s: float = float("nan"),
-) -> CtrlOutput:
-    """DETUMBLING mode output — 비례 제동.
-
-    KP_DETUMBLE > 0: delta = -KP * omega_z, ±DELTA_ARM_MAX_DEG 포화.
-    KP_DETUMBLE = 0: legacy bang-bang (이전 동작 유지).
-    """
-    out_t = CtrlOutput(timestamp=now, control_mode=ControlMode.DETUMBLING)
-    out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
-
-    gyro_finite  = math.isfinite(angular_velocity_meas_deg_s)
-    gyro_spike   = gyro_finite and abs(angular_velocity_meas_deg_s) > GYRO_SPIKE_LIMIT_DEG_S
-    sensor_valid = gyro_finite and not gyro_spike
-    out_t.sensor_valid  = sensor_valid
-    out_t.gyro_rejected = gyro_spike
-    if not sensor_valid or abs(angular_velocity_meas_deg_s) <= config.CTRL_ERROR_DEADBAND_DEG_S:
-        out_t.valid = True
-        return out_t
-
-    if config.KP_DETUMBLE > 0.0:
-        raw   = -config.KP_DETUMBLE * angular_velocity_meas_deg_s
-        delta = max(-DELTA_ARM_MAX_DEG, min(DELTA_ARM_MAX_DEG, raw))
-    else:
-        delta = -math.copysign(DELTA_ARM_MAX_DEG, angular_velocity_meas_deg_s)
-
-    left_pw, right_pw, left_angle, right_angle, delta_arm = ConnectRoMo(delta)
-    out_t.angular_velocity_error_deg_s = -angular_velocity_meas_deg_s
-    out_t.delta_arm_deg   = delta_arm
-    out_t.motor_cmd       = delta_arm
-    out_t.left_angle_deg  = left_angle
-    out_t.right_angle_deg = right_angle
-    out_t.left_pw         = left_pw
-    out_t.right_pw        = right_pw
-    out_t.valid           = True
-    return out_t
-
-
 # ── pigpio 바인딩 ──────────────────────────────────────────────────────────────
 
 def init_control():

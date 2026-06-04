@@ -68,7 +68,6 @@ class ControlMode(str, Enum):
     DR_PM_YB_OPEN = "DR_PM_YB_OPEN"
     DR_PM_Y_OPEN = "DR_PM_Y_OPEN"
 
-    DETUMBLING = "DETUMBLING"
     FAIL = "FAIL"
 
 
@@ -566,7 +565,7 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
         return _fail("NO_ORIGIN" if not mi_t.origin_ready else "NO_TARGET")
 
     # DR safety guard #5: gyrz가 과도하면 정상 guidance에 G(gyro)를 쓰지 않는다.
-    # (DETUMBLING은 motorapp이 별도 선점한다.) gyro_ok=False면 GPS도 OPEN으로 간다.
+    # gyro_ok=False sends GPS tracking through the OPEN path.
     gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", float("inf"))
     gyro_ok = flags.imu_gyrz_fresh and (
         not isfinite(st_t.imu.gyr_z)
@@ -922,9 +921,6 @@ def ProduceL1Input(now: float) -> L1Input:
     if mode == ControlMode.FAIL:
         return L1Input(valid=False, reason=st_t.nav.fail_reason or "FAIL",
                        control_mode=mode)
-    if mode == ControlMode.DETUMBLING:
-        return L1Input(valid=False, reason="DETUMBLING", control_mode=mode)
-
     if not mi_t.origin_ready:
         return L1Input(valid=False, reason="NO_ORIGIN", control_mode=mode)
     if not mi_t.target_ready:
@@ -952,7 +948,7 @@ def ProduceL1Input(now: float) -> L1Input:
 
 
 # Per-mode yaw-rate limit (deg/s) keyed by ControlMode.value. Missing modes
-# (DETUMBLING/FAIL/unknown) fall through to 0.0.
+# (FAIL/unknown) fall through to 0.0.
 _YAW_RATE_LIMIT_DPS_BY_MODE = {
     ControlMode.GPS_TRACKING_CLOSED.value: "GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS",
     ControlMode.GPS_TRACKING_OPEN.value:   "GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS",
@@ -968,7 +964,6 @@ _YAW_RATE_LIMIT_DPS_BY_MODE = {
     ControlMode.DR_PM_YBA_OPEN.value:      "DR_PM_YBA_YAW_RATE_LIMIT_DPS",
     ControlMode.DR_PM_YB_OPEN.value:       "DR_PM_YB_YAW_RATE_LIMIT_DPS",
     ControlMode.DR_PM_Y_OPEN.value:        "DR_PM_Y_YAW_RATE_LIMIT_DPS",
-    ControlMode.DETUMBLING.value:          "DETUMBLING_YAW_RATE_LIMIT_DPS",
     ControlMode.FAIL.value:                "FAIL_YAW_RATE_LIMIT_DPS",
 }
 
@@ -1016,18 +1011,6 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
 
     if l1in.control_mode == ControlMode.FAIL:
         return _invalid("FAIL")
-
-    if l1in.control_mode == ControlMode.DETUMBLING:
-        lim = _choose_yaw_rate_limit_rad_s(ControlMode.DETUMBLING)
-        output_t.control_valid = True
-        output_t.valid = True
-        output_t.nominal = False
-        output_t.reason = "DETUMBLING"
-        output_t.pid_enabled = False
-        output_t.yaw_rate_cmd = 0.0
-        output_t.yaw_rate_limit = lim
-        output_t.yaw_rate_limit_dps = math.degrees(lim)
-        return output_t
 
     for v in (l1in.E, l1in.N, l1in.target_E, l1in.target_N, l1in.course, l1in.V):
         if not _ok(v):

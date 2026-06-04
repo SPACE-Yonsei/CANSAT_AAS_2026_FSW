@@ -26,8 +26,6 @@ _CACHE_t     = _Cache()          # 최신 raw 센서 데이터 (handle_* 스레�
 _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
 _PREV_STATE: int = 0
-_DETUMBLE_ACTIVE: bool = False
-_DETUMBLE_EXIT_START: float = math.nan
 _DO_CTRL_RESET: bool = False
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
@@ -92,58 +90,6 @@ def _cache_snapshot() -> _Cache:
         target_lat=t_lat,
         target_lon=t_lon,
     )
-
-
-def _fresh_gyrz_dps(snap_t: _Cache, now: float) -> Optional[float]:
-    imu = snap_t.latest_imu
-    ts = getattr(imu, "ts", None)
-    gyrz = getattr(imu, "gyrz_rad_s", None)
-    health = bool(getattr(imu, "health", 0))
-    try:
-        ts_f = float(ts)
-        gyrz_f = float(gyrz)
-    except (TypeError, ValueError):
-        return None
-    if not health or not math.isfinite(ts_f) or not math.isfinite(gyrz_f):
-        return None
-    if now - ts_f > config.IMU_FRESH_MAX_AGE_S:
-        return None
-    return math.degrees(gyrz_f)
-
-
-def _should_detumble(snap_t: _Cache, now: float) -> bool:
-    global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
-
-    if not config.DETUMBLE_ENABLE:
-        _DETUMBLE_ACTIVE = False
-        _DETUMBLE_EXIT_START = math.nan
-        return False
-
-    gyrz_dps = _fresh_gyrz_dps(snap_t, now)
-    if gyrz_dps is None:
-        _DETUMBLE_ACTIVE = False
-        _DETUMBLE_EXIT_START = math.nan
-        return False
-
-    abs_gyrz = abs(gyrz_dps)
-    if _DETUMBLE_ACTIVE:
-        if abs_gyrz <= config.DETUMBLE_EXIT_THRESHOLD_DPS:
-            if not math.isfinite(_DETUMBLE_EXIT_START):
-                _DETUMBLE_EXIT_START = now
-                return True
-            if now - _DETUMBLE_EXIT_START < config.DETUMBLE_EXIT_HOLD_S:
-                return True
-            _DETUMBLE_ACTIVE = False
-            _DETUMBLE_EXIT_START = math.nan
-            return False
-        _DETUMBLE_EXIT_START = math.nan
-        return True
-
-    if abs_gyrz >= config.DETUMBLE_GYRZ_THRESHOLD_DPS:
-        _DETUMBLE_ACTIVE = True
-        _DETUMBLE_EXIT_START = math.nan
-        return True
-    return False
 
 
 # ── 가속도계 중력 제거 ────────────────────────────────────────────────────────
@@ -395,7 +341,7 @@ def handle_target_coord(data: str) -> None:
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
     global STATE, _PREV_STATE
-    global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START, _DO_CTRL_RESET
+    global _DO_CTRL_RESET
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -411,8 +357,6 @@ def handle_flight_state(data: str) -> None:
             prevstate.clear_start_point()
             guidance.reset()   # origin_ready=False 포함 → handle_gps가 재잠금 가능
             _DO_CTRL_RESET = True
-            _DETUMBLE_ACTIVE = False
-            _DETUMBLE_EXIT_START = math.nan
 
     # PAYLOAD_RELEASE(4) 이상에서 origin lock은 handle_gps가 첫 유효 GPS로 수행한다.
     if _DO_CTRL_RESET:
@@ -622,19 +566,6 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
         _publish_motor_diag(main_queue, manual_out, snap_t, f"MANUAL_{MOTOR_CTRL_MODE}")
         return manual_out
 
-    # ── [2] DETUMBLING ────────────────────────────────────────────────────────
-    if _should_detumble(snap_t, now):
-        guidance._STATE_t.nav.control_mode = guidance.ControlMode.DETUMBLING
-        gz_meas = _fresh_gyrz_dps(snap_t, now)
-        if gz_meas is None:
-            gz_meas = math.nan
-        ctrl_out_t = control.ProduceDetumbleOutput(now, gz_meas)
-        control.sync_prev_angles(ctrl_out_t.left_angle_deg, ctrl_out_t.right_angle_deg)
-        control.MoveServo(PI, ctrl_out_t)
-        sensorlog.log_motor_raw(state, motor_enabled, MOTOR_CTRL_MODE, ctrl_out_t, snap=snap_t, event="DETUMBLING")
-        _publish_motor_diag(main_queue, ctrl_out_t, snap_t, "DETUMBLING")
-        return ctrl_out_t
-
     # ── guidance 기반 자율 추종 (유일한 제어 경로) ───────────────────────────
     # 모든 control mode는 guidance.DecideControlMode만 만든다. motorapp은 자체
     # control mode나 fallback/heading 분기를 만들지 않는다. FAIL이면 ProduceL1Input이
@@ -728,7 +659,6 @@ def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
     global STATE
-    global _DETUMBLE_ACTIVE, _DETUMBLE_EXIT_START
 
     prevstate.init_prevstate()
     # Restore flight state so _ctrl_cycle is not blocked on the first cycle.
@@ -737,9 +667,6 @@ def init() -> None:
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
-    _DETUMBLE_ACTIVE = False
-    _DETUMBLE_EXIT_START = math.nan
-
     # target 좌표 복원
     t_lat, t_lon = prevstate.get_target_gps()
     if (-90.0 <= float(t_lat) <= 90.0

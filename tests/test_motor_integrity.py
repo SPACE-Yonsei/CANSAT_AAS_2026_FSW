@@ -464,11 +464,11 @@ class TestResetGuidanceStateFullReset(unittest.TestCase):
         s.dr_start_E = 1.0; s.dr_start_N = 2.0
         s.dr_start_V = 3.0; s.dr_start_course = 0.5; s.dr_start_time = 100.0
         s.yaw_at_dropout = 0.7; s.gyro_integral_since_dropout = 0.9
-        s.last_dr_update_time = 100.5; s.detumble_exit_start = 99.0
+        s.last_dr_update_time = 100.5
         guidance.reset_guidance_state_for_flight(s)
         for attr in ("dr_start_E", "dr_start_N", "dr_start_V", "dr_start_course",
                      "dr_start_time", "yaw_at_dropout",
-                     "last_dr_update_time", "detumble_exit_start"):
+                     "last_dr_update_time"):
             self.assertTrue(math.isnan(getattr(s, attr)), f"{attr} not nan")
         self.assertEqual(s.gyro_integral_since_dropout, 0.0)
 

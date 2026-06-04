@@ -73,32 +73,5 @@ class TestPosOnlyDrAnchorInit(unittest.TestCase):
         self.assertAlmostEqual(state.dr.anchor_course, math.radians(30.0))
 
 
-class TestCurrentDetumblingOutput(unittest.TestCase):
-    def _detumble_output(self, gyrz_deg_s):
-        return control.ProduceDetumbleOutput(100.0, gyrz_deg_s)
-
-    def test_left_rotation_commands_max_right_damping(self):
-        out = self._detumble_output(-250.0)
-
-        self.assertEqual(out.control_mode, guidance.ControlMode.DETUMBLING)
-        self.assertAlmostEqual(out.delta_arm_deg, control.DELTA_ARM_MAX_DEG)
-        self.assertAlmostEqual(
-            out.left_angle_deg,
-            control.NEUTRAL_ARM_DEG - control.DELTA_ARM_MAX_DEG / 2.0,
-        )
-        self.assertAlmostEqual(out.right_angle_deg, control.ARM_MAX_DEG)
-
-    def test_right_rotation_commands_max_left_damping(self):
-        out = self._detumble_output(250.0)
-
-        self.assertEqual(out.control_mode, guidance.ControlMode.DETUMBLING)
-        self.assertAlmostEqual(out.delta_arm_deg, -control.DELTA_ARM_MAX_DEG)
-        self.assertAlmostEqual(out.left_angle_deg, control.ARM_MAX_DEG)
-        self.assertAlmostEqual(
-            out.right_angle_deg,
-            control.NEUTRAL_ARM_DEG - control.DELTA_ARM_MAX_DEG / 2.0,
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

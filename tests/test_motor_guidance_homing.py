@@ -357,19 +357,6 @@ class TestProduceL1Output(unittest.TestCase):
         self.assertFalse(out.control_valid)
         self.assertAlmostEqual(out.yaw_rate_cmd, 0.0)
 
-    def test_detumbling_mode_zero_yaw_rate_cmd(self):
-        inp = guidance.L1Input()
-        inp.valid = True
-        inp.control_mode = ControlMode.DETUMBLING
-        inp.confidence = 1.0
-        inp.dr_method = DRMethod.NONE
-        out = produceL1output(inp)
-        self.assertTrue(out.control_valid)
-        self.assertAlmostEqual(out.yaw_rate_cmd, 0.0)
-        self.assertFalse(out.pid_enabled)
-        self.assertIsNone(out.kp_override)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # TEST 9: Saturated sine
 # ══════════════════════════════════════════════════════════════════════════════
@@ -481,55 +468,6 @@ class TestMotorOutput(unittest.TestCase):
         self.assertEqual(cmd.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(cmd.right_pw, control.RIGHT_NEUTRAL)
 
-    def test_detumbling_open_loop_counters_yaw_rate(self):
-        """DETUMBLING: yaw_rate_cmd=0 and gyro sign selects opposite fixed brake."""
-        inp = guidance.L1Input()
-        inp.valid = True
-        inp.control_mode = ControlMode.DETUMBLING
-        inp.confidence = 1.0
-        inp.dr_method = DRMethod.NONE
-        g_out = produceL1output(inp)
-        self.assertFalse(g_out.pid_enabled)
-        control.reset()
-        control._integral_deg = 12.0
-        control._prev_error_deg = 7.0
-        measured_dps = 50.0
-        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), measured_dps, _now())
-        self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
-        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_arm_deg, -config.DETUMBLE_BRAKE_DELTA_DEG)
-        self.assertAlmostEqual(control._integral_deg, 12.0)
-        self.assertAlmostEqual(control._prev_error_deg, 7.0)
-
-    def test_detumbling_open_loop_reverses_with_gyro_sign(self):
-        inp = guidance.L1Input()
-        inp.valid = True
-        inp.control_mode = ControlMode.DETUMBLING
-        inp.confidence = 1.0
-        inp.dr_method = DRMethod.NONE
-        g_out = produceL1output(inp)
-        control.reset()
-        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), -50.0, _now())
-        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_arm_deg, config.DETUMBLE_BRAKE_DELTA_DEG)
-
-    def test_detumbling_open_loop_no_gyro_gives_zero_brake(self):
-        inp = guidance.L1Input()
-        inp.valid = True
-        inp.control_mode = ControlMode.DETUMBLING
-        inp.confidence = 1.0
-        inp.dr_method = DRMethod.NONE
-        g_out = produceL1output(inp)
-        control.reset()
-        cmd = control.ProduceCtrlOutput(control.ProduceCtrlInput(g_out, _now()), float("nan"), _now())
-        self.assertEqual(cmd.control_mode, ControlMode.DETUMBLING)
-        self.assertFalse(cmd.sensor_valid)
-        self.assertAlmostEqual(cmd.delta_ff_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_pid_deg, 0.0)
-        self.assertAlmostEqual(cmd.delta_arm_deg, 0.0)
-
     def test_open_mode_keeps_guidance_control_mode(self):
         """GPS_TRACKING_OPEN remains the only reported control mode."""
         l1 = self._make_gps_tracking_l1(closed=False)
@@ -603,52 +541,7 @@ class TestCanDeadReckon(unittest.TestCase):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TEST: _should_detumble — reads latest IMU sample from state.imu_history
 # ══════════════════════════════════════════════════════════════════════════════
-
-class TestShouldDetumble(unittest.TestCase):
-    def _push_imu(self, state, gyrz_rad_s, ts):
-        state.imu_history.append(ImuSample(
-            timestamp=ts, gyr_z=gyrz_rad_s, gyrz_valid=True,
-        ))
-
-    def test_below_threshold_not_detumbling(self):
-        state = GuidanceState()
-        now = _now()
-        self._push_imu(state, math.radians(10.0), now)
-        fresh = FreshResult()
-        fresh.imu_gyrz_fresh = True
-        self.assertFalse(guidance._should_detumble(state, fresh, now))
-
-    def test_above_threshold_detumbles(self):
-        state = GuidanceState()
-        now = _now()
-        gz = math.radians(config.DETUMBLE_GYRZ_THRESHOLD_DPS + 10.0)
-        self._push_imu(state, gz, now)
-        fresh = FreshResult()
-        fresh.imu_gyrz_fresh = True
-        self.assertTrue(guidance._should_detumble(state, fresh, now))
-
-    def test_stale_gyrz_no_detumble(self):
-        state = GuidanceState()
-        now = _now()
-        gz = math.radians(config.DETUMBLE_GYRZ_THRESHOLD_DPS + 10.0)
-        self._push_imu(state, gz, now)
-        fresh = FreshResult()
-        fresh.imu_gyrz_fresh = False
-        self.assertFalse(guidance._should_detumble(state, fresh, now))
-
-    def test_exit_hold_keeps_detumbling(self):
-        state = GuidanceState()
-        state.nav_control_mode = ControlMode.DETUMBLING
-        now = _now()
-        gz = math.radians(config.DETUMBLE_EXIT_THRESHOLD_DPS - 5.0)
-        self._push_imu(state, gz, now)
-        fresh = FreshResult()
-        fresh.imu_gyrz_fresh = True
-        # First call starts the hold timer; should still be True
-        self.assertTrue(guidance._should_detumble(state, fresh, now))
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TEST: history-driven anchor (replaces last_fresh_* fields)

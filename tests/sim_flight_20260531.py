@@ -116,13 +116,6 @@ def run():
 
     results = []
     mode_counts: dict[str, int] = {}
-    detumble_exits = 0
-    detumble_active = False
-
-    # DETUMBLING 내부 상태 직접 관리 (모듈 변수 참조)
-    guidance._DETUMBLE_ACTIVE      = False
-    guidance._DETUMBLE_EXIT_START  = math.nan
-
     for row in rows_in:
         mono  = _f(row, "monotonic_s")
         state = int(_f(row, "flight_state", 0))
@@ -133,62 +126,43 @@ def run():
         guidance.UpdateRaws(gps, imu, baro, mono)
         guidance.TryInitStateFromPosOnly(mono)
 
-        # DETUMBLING 판정
         gz_dps = math.degrees(imu.gyrz_rad_s) if math.isfinite(imu.gyrz_rad_s) else math.nan
-        should_detumble = False
-        if math.isfinite(gz_dps):
-            abs_gz = abs(gz_dps)
-            if guidance._DETUMBLE_ACTIVE:
-                if abs_gz <= config.DETUMBLE_EXIT_THRESHOLD_DPS:
-                    if not math.isfinite(guidance._DETUMBLE_EXIT_START):
-                        guidance._DETUMBLE_EXIT_START = mono
-                    if mono - guidance._DETUMBLE_EXIT_START < config.DETUMBLE_EXIT_HOLD_S:
-                        should_detumble = True
-                    else:
-                        guidance._DETUMBLE_ACTIVE = False
-                        guidance._DETUMBLE_EXIT_START = math.nan
-                        detumble_exits += 1
-                else:
-                    guidance._DETUMBLE_EXIT_START = math.nan
-                    should_detumble = True
-            elif abs_gz >= config.DETUMBLE_GYRZ_THRESHOLD_DPS:
-                guidance._DETUMBLE_ACTIVE = True
-                guidance._DETUMBLE_EXIT_START = math.nan
-                should_detumble = True
+        mode = guidance.DecideControlMode(mono)
+        sim_mode = mode.value
 
-        if should_detumble:
-            ctrl_out = control.ProduceDetumbleOutput(mono, gz_dps)
-            sim_mode = "DETUMBLING"
+        if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
+                    guidance.ControlMode.GPS_TRACKING_OPEN,
+                    guidance.ControlMode.DR_M_GBA_CLOSED,
+                    guidance.ControlMode.DR_M_GB_CLOSED,
+                    guidance.ControlMode.DR_M_G_CLOSED,
+                    guidance.ControlMode.DR_M_YBA_OPEN,
+                    guidance.ControlMode.DR_M_YB_OPEN,
+                    guidance.ControlMode.DR_M_Y_OPEN,
+                    guidance.ControlMode.DR_PM_GBA_CLOSED,
+                    guidance.ControlMode.DR_PM_GB_CLOSED,
+                    guidance.ControlMode.DR_PM_G_CLOSED,
+                    guidance.ControlMode.DR_PM_YBA_OPEN,
+                    guidance.ControlMode.DR_PM_YB_OPEN,
+                    guidance.ControlMode.DR_PM_Y_OPEN):
+            l1_in  = guidance.ProduceL1Input(mono)
+            l1_out = guidance.ProduceL1Output(l1_in)
+            l1_valid = l1_out.control_valid
+            dist_m   = l1_out.distance_to_target if l1_valid else math.nan
+            nu_deg   = math.degrees(l1_out.nu) if l1_valid and math.isfinite(l1_out.nu) else math.nan
+            # 제어 출력 (단순화: yaw_rate_cmd → delta 변환)
+            delta_cmd = math.degrees(l1_out.yaw_rate_cmd) * 0.1 if l1_valid else 0.0
+            delta_cmd = max(-control.DELTA_ARM_MAX_DEG, min(control.DELTA_ARM_MAX_DEG, delta_cmd))
+            lp, rp, la, ra, da = control.ConnectRoMo(delta_cmd)
+            ctrl_out = control.CtrlOutput(
+                timestamp=mono, left_pw=lp, right_pw=rp,
+                left_angle_deg=la, right_angle_deg=ra,
+                delta_arm_deg=da, valid=l1_valid,
+            )
+        else:
             l1_valid = False
             dist_m   = math.nan
             nu_deg   = math.nan
-        else:
-            mode = guidance.DecideControlMode(mono)
-            sim_mode = mode.value
-
-            if mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
-                        guidance.ControlMode.GPS_TRACKING_OPEN,
-                        guidance.ControlMode.DR_TRACKING_CLOSED,
-                        guidance.ControlMode.DR_TRACKING_OPEN):
-                l1_in  = guidance.ProduceL1Input(mono)
-                l1_out = guidance.ProduceL1Output(l1_in)
-                l1_valid = l1_out.control_valid
-                dist_m   = l1_out.distance_to_target if l1_valid else math.nan
-                nu_deg   = math.degrees(l1_out.nu) if l1_valid and math.isfinite(l1_out.nu) else math.nan
-                # 제어 출력 (단순화: yaw_rate_cmd → delta 변환)
-                delta_cmd = math.degrees(l1_out.yaw_rate_cmd) * 0.1 if l1_valid else 0.0
-                delta_cmd = max(-control.DELTA_ARM_MAX_DEG, min(control.DELTA_ARM_MAX_DEG, delta_cmd))
-                lp, rp, la, ra, da = control.ConnectRoMo(delta_cmd)
-                ctrl_out = control.CtrlOutput(
-                    timestamp=mono, left_pw=lp, right_pw=rp,
-                    left_angle_deg=la, right_angle_deg=ra,
-                    delta_arm_deg=da, valid=l1_valid,
-                )
-            else:
-                l1_valid = False
-                dist_m   = math.nan
-                nu_deg   = math.nan
-                ctrl_out = control.CtrlOutput(timestamp=mono, valid=False)
+            ctrl_out = control.CtrlOutput(timestamp=mono, valid=False)
 
         mode_counts[sim_mode] = mode_counts.get(sim_mode, 0) + 1
 
@@ -226,10 +200,14 @@ def run():
 
     # ── 요약 통계 ─────────────────────────────────────────────────────────────
     total = len(results)
-    homing_modes = {"GPS_TRACKING_CLOSED","GPS_TRACKING_OPEN",
-                    "DR_TRACKING_CLOSED","DR_TRACKING_OPEN"}
+    homing_modes = {
+        "GPS_TRACKING_CLOSED", "GPS_TRACKING_OPEN",
+        "DR_M_GBA_CLOSED", "DR_M_GB_CLOSED", "DR_M_G_CLOSED",
+        "DR_M_YBA_OPEN", "DR_M_YB_OPEN", "DR_M_Y_OPEN",
+        "DR_PM_GBA_CLOSED", "DR_PM_GB_CLOSED", "DR_PM_G_CLOSED",
+        "DR_PM_YBA_OPEN", "DR_PM_YB_OPEN", "DR_PM_Y_OPEN",
+    }
     homing_rows  = [r for r in results if r["sim_mode"] in homing_modes]
-    detumble_rows= [r for r in results if r["sim_mode"] == "DETUMBLING"]
     fail_rows    = [r for r in results if r["sim_mode"] == "FAIL"]
     origin_set_t = next((r["timestamp"] for r in results if r["origin_ready"]=="1"), "미설정")
     dr_set_t     = next((r["timestamp"] for r in results if r["dr_valid"]=="1"), "미설정")
@@ -244,7 +222,6 @@ def run():
     final_dist = f"{dist_vals[-1]:.1f} m" if dist_vals else "—"
     min_dist   = f"{min(dist_vals):.1f} m" if dist_vals else "—"
 
-    # detumble 탈출 횟수
     # cross-track = nu_deg 기반 (L1 geometry: xte ≈ dist * sin(nu))
     xte_vals = []
     for r in homing_rows:
@@ -279,7 +256,6 @@ def run():
         f"| Origin 설정 | {origin_set_t} | Fix 1 효과 |",
         f"| DR anchor 설정 | {dr_set_t} | Fix 1 효과 |",
         f"| HOMING 첫 진입 | {homing_first_t} | 고도 {homing_first_alt} m |",
-        f"| DETUMBLING 탈출 횟수 | {detumble_exits}회 | Fix 3·4 효과 |",
         "",
         "## 제어 성능 (HOMING 구간)",
         "",
@@ -297,7 +273,6 @@ def run():
         f"| Origin 설정 | 미설정 (전 구간 nan) | {origin_set_t} |",
         f"| DR anchor | 미설정 | {dr_set_t} |",
         f"| HOMING 진입 | 0회 | {len(homing_rows)} 사이클 |",
-        f"| DETUMBLING 탈출 | 0회 | {detumble_exits}회 |",
         f"| FAIL 사이클 | {len(rows_in)} ({pct(len(rows_in))}) | {len(fail_rows)} ({pct(len(fail_rows))}) |",
     ]
 

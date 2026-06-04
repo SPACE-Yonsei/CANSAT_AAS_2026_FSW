@@ -68,7 +68,7 @@ MOTOR_MANUAL_RIGHT = "RIGHT"
 
 # Gyro spike / PID integral decay (used by control.py)
 # 250→1500: 자유낙하 로그에서 정상 spin이 1227 dps까지 도달했음.
-# 250으로 두면 DETUMBLING 모드와 PID 전체가 비활성화되어 제동이 불가함.
+# Keep this above normal spin rates so only IMU glitches are rejected.
 # spike(IMU glitch)는 단발 노이즈이므로 BNO085 측정 범위(±2000 dps) 안쪽에 마진을 두고 1500 사용.
 GYRO_SPIKE_LIMIT_DEG_S = 1500.0
 INTEGRAL_DECAY_RATE    = 0.95    # 자이로 값을 못 받을 때 적분항 사이클당 감쇠율
@@ -153,19 +153,6 @@ DR_PM_YBA_YAW_RATE_LIMIT_DPS           = 20.0
 DR_PM_YB_YAW_RATE_LIMIT_DPS            = 15.0
 DR_PM_Y_YAW_RATE_LIMIT_DPS             = 10.0
 
-# Detumbling
-# 실측(20260531) State3+4 |gyr_z| p99=141 dps, max=159 dps.
-# 200 dps 임계값은 실제 비행에서 미도달 → DETUMBLE 미진입.
-# 100 dps(p95 근방)로 낮춰 실제 spin 구간에서 진입 가능하게 수정.
-# EXIT 30→20: 출구 히스테리시스 확대로 chattering 방지.
-DETUMBLE_ENABLE             = True
-# 닭 1·2차 실측: |gyrz| p50≈57~61, p90≈153~162, max≈217~224 dps.
-# 진입 120은 정상 spin(p50~60, p90~155) 한복판이라 1차에서 디텀블 747회 채터링.
-# 진입 120→150(≈p90, 진짜 텀블만), 이탈 100→80, hold 0.05→0.3s로 히스테리시스 확대.
-DETUMBLE_GYRZ_THRESHOLD_DPS = 120.0
-DETUMBLE_EXIT_THRESHOLD_DPS = 80.0
-DETUMBLE_EXIT_HOLD_S        = 0.3
-
 # Sensor sign conventions
 # Body→NED rotation uses ZYX Euler from BNO085 raw degree output (no re-mapping).
 # GYRZ_SIGN = 1.0: raw BNO085 gyrz is already negated in handle_imu
@@ -197,10 +184,6 @@ KD_DR_PM_CLOSED = 0.0
 # authority since its rate command is less trustworthy.
 DR_M_FF_SCALE    = 0.8
 DR_PM_FF_SCALE   = 0.6
-
-# Proportional gain for DETUMBLING: delta_arm_deg = -KP_DETUMBLE * omega_z_dps
-# 0.0 = legacy bang-bang (max deflection). >0 = proportional braking.
-KP_DETUMBLE = 0.8
 
 KD_YAW_RATE = 0.0
 

@@ -179,19 +179,12 @@ class TestProduceL1Input(unittest.TestCase):
         self.assertFalse(l1.valid)
         self.assertEqual(l1.reason, "NO_COURSE_SOURCE")
 
-    # ── Guard: FAIL / DETUMBLING short-circuit ───────────────────────────────
+    # ── Guard: FAIL short-circuit ────────────────────────────────────────────
     def test_fail_mode_invalid(self):
         guidance._STATE_t.nav.control_mode = guidance.ControlMode.FAIL
         l1 = guidance.ProduceL1Input(NOW)
         self.assertFalse(l1.valid)
         self.assertEqual(l1.reason, "FAIL")
-
-    def test_detumbling_mode_invalid(self):
-        guidance._STATE_t.nav.control_mode = guidance.ControlMode.DETUMBLING
-        l1 = guidance.ProduceL1Input(NOW)
-        self.assertFalse(l1.valid)
-        self.assertEqual(l1.reason, "DETUMBLING")
-
 
 if __name__ == "__main__":
     unittest.main()

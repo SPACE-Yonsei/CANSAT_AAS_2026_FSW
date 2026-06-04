@@ -57,7 +57,6 @@ DEFAULT_INPUTS: dict[str, Any] = {
     "imu_health": True,
     "baro_sample": SAMPLE_SEND,
     "baro_health": True,
-    "detumble_enable": bool(config.DETUMBLE_ENABLE),
 }
 
 EDIT_FIELD_ORDER = [
@@ -79,7 +78,6 @@ EDIT_FIELD_ORDER = [
     "baro_health",
     "alt_m",
     "sink_rate_mps",
-    "detumble_enable",
 ]
 
 BOOL_FIELDS = {
@@ -88,7 +86,6 @@ BOOL_FIELDS = {
     "gps_motion_ok",
     "imu_health",
     "baro_health",
-    "detumble_enable",
 }
 INT_FIELDS = {"state"}
 SAMPLE_FIELDS = {"gps_sample", "imu_sample", "baro_sample"}
@@ -164,26 +161,6 @@ PRESETS: dict[str, list[Case]] = {
             course_deg=0.0,
             yaw_deg=0.0,
             gyrz_nav_deg_s=0.0,
-        ),
-        case(
-            "detumbling_entry",
-            "Fresh gyro above DETUMBLE_GYRZ_THRESHOLD_DPS.",
-            e_m=-210.0,
-            n_m=160.0,
-            course_deg=5.0,
-            yaw_deg=5.0,
-            gyrz_nav_deg_s=250.0,
-        ),
-        case(
-            "detumbling_exit_hold_start",
-            "Gyro falls below exit threshold; current code starts hold then falls through.",
-            gyrz_nav_deg_s=10.0,
-        ),
-        case(
-            "detumbling_exit_after_hold",
-            "After DETUMBLE_EXIT_HOLD_S, normal GPS tracking resumes.",
-            dt_s=float(config.DETUMBLE_EXIT_HOLD_S) + 0.20,
-            gyrz_nav_deg_s=10.0,
         ),
         case(
             "dr_closed_after_gps_dropout",
@@ -276,9 +253,8 @@ PRESETS: dict[str, list[Case]] = {
         ),
         case(
             "gyro_spike_control_fallback",
-            "DETUMBLE disabled only for this diagnostic: gyro spike should hit control fallback.",
+            "Gyro spike should hit control fallback without a separate spin-brake mode.",
             reset_before=True,
-            detumble_enable=False,
             state=3,
             motor_enabled=True,
             e_m=-220.0,
@@ -349,7 +325,6 @@ class Simulator:
         self.inputs = dict(inputs)
         self.now = time.monotonic()
         self.fake_pi = FakePi()
-        self.original_detumble_enable = bool(config.DETUMBLE_ENABLE)
         self._patch_prevstate()
         self.reset_runtime()
 
@@ -374,7 +349,7 @@ class Simulator:
         self._set_target_from_local_ne()
 
     def restore(self) -> None:
-        config.DETUMBLE_ENABLE = self.original_detumble_enable
+        pass
 
     def _set_target_from_local_ne(self) -> None:
         lat, lon = ne_to_latlon(
@@ -384,7 +359,6 @@ class Simulator:
 
     def run_cycle(self, values: dict[str, Any]) -> control.CtrlOutput | None:
         self.inputs.update(values)
-        config.DETUMBLE_ENABLE = bool(self.inputs["detumble_enable"])
         dt_s = max(0.0, float(self.inputs["dt_s"]))
         self.now += dt_s
 
@@ -550,7 +524,6 @@ def print_case_input(label: str, note: str, values: dict[str, Any]) -> None:
         f"gps={values['gps_sample']} pos={int(values['gps_pos_ok'])} mot={int(values['gps_motion_ok'])}",
         f"imu={values['imu_sample']} health={int(values['imu_health'])}",
         f"baro={values['baro_sample']} health={int(values['baro_health'])}",
-        f"detumble={int(values['detumble_enable'])}",
     ]
     print("input: " + " | ".join(compact))
     print("sensor: " + " | ".join(sensors))

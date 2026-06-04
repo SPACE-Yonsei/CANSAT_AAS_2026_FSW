@@ -57,10 +57,8 @@ class TestMotorappCycle(unittest.TestCase):
 
     def _run(self, *, mode, l1in=None, l1out=None, ctrlout=None):
         self.m_l1out = mock.Mock(return_value=l1out)
-        self.m_step = mock.Mock(return_value=ctrlout)
+        self.m_ctrlout = mock.Mock(return_value=ctrlout)
         with contextlib.ExitStack() as stack:
-            stack.enter_context(mock.patch.object(motorapp, "_should_detumble",
-                                                  return_value=False))
             stack.enter_context(mock.patch.object(motorapp.guidance, "DecideControlMode",
                                                   side_effect=self._decide(mode)))
             stack.enter_context(mock.patch.object(motorapp.sensorlog, "log_motor_raw",
@@ -73,7 +71,8 @@ class TestMotorappCycle(unittest.TestCase):
                                                       return_value=l1in))
             stack.enter_context(mock.patch.object(motorapp.guidance, "ProduceL1Output",
                                                   self.m_l1out))
-            stack.enter_context(mock.patch.object(motorapp.control, "step", self.m_step))
+            stack.enter_context(mock.patch.object(motorapp.control, "ProduceCtrlOutput",
+                                                  self.m_ctrlout))
             return motorapp._ctrl_cycle(None, 100.0)
 
     # ── Case 1: FAIL → neutral, no self-fallback ────────────────────────────
@@ -82,7 +81,7 @@ class TestMotorappCycle(unittest.TestCase):
                         l1in=guidance.L1Input(valid=False, reason="FAIL",
                                               control_mode=ControlMode.FAIL))
         self.m_l1out.assert_not_called()       # no L1Output / step on FAIL
-        self.m_step.assert_not_called()
+        self.m_ctrlout.assert_not_called()
         self.assertEqual(self.log_calls[-1]["event"], "FAIL")
         self.assertEqual(out.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(out.right_pw, control.RIGHT_NEUTRAL)
@@ -96,7 +95,7 @@ class TestMotorappCycle(unittest.TestCase):
         out = self._run(mode=mode, l1in=_valid_l1in(mode),
                         l1out=_valid_l1out(mode), ctrlout=ctrlout)
         self.m_l1out.assert_called_once()
-        self.m_step.assert_called_once()
+        self.m_ctrlout.assert_called_once()
         self.move_mock.assert_called_once()
         self.assertEqual(self.log_calls[-1]["event"], "DR_PM_GB_CLOSED")
         self.assertIs(out, ctrlout)
@@ -107,7 +106,7 @@ class TestMotorappCycle(unittest.TestCase):
         l1in = guidance.L1Input(valid=False, reason="NO_SPEED_SOURCE", control_mode=mode)
         out = self._run(mode=mode, l1in=l1in)
         self.m_l1out.assert_not_called()
-        self.m_step.assert_not_called()
+        self.m_ctrlout.assert_not_called()
         self.assertEqual(out.reason, "NO_SPEED_SOURCE")
         self.assertEqual(out.left_pw, control.LEFT_NEUTRAL)
         self.assertEqual(self.log_calls[-1]["event"], "DR_PM_G_CLOSED")
@@ -119,7 +118,7 @@ class TestMotorappCycle(unittest.TestCase):
                                   reason="LOW_CONFIDENCE", control_mode=mode)
         out = self._run(mode=mode, l1in=_valid_l1in(mode), l1out=l1out)
         self.m_l1out.assert_called_once()
-        self.m_step.assert_not_called()
+        self.m_ctrlout.assert_not_called()
         self.assertEqual(out.reason, "LOW_CONFIDENCE")
         self.assertEqual(out.left_pw, control.LEFT_NEUTRAL)
 
@@ -130,7 +129,7 @@ class TestMotorappCycle(unittest.TestCase):
                                      control_mode=mode)  # defaults → neutral pulses
         out = self._run(mode=mode, l1in=_valid_l1in(mode),
                         l1out=_valid_l1out(mode), ctrlout=ctrlout)
-        self.m_step.assert_called_once()
+        self.m_ctrlout.assert_called_once()
         self.move_mock.assert_called_once()
         self.assertFalse(out.valid)
         self.assertEqual(out.reason, "NAN_CMD")
