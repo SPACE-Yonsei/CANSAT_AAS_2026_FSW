@@ -199,20 +199,14 @@ GYRZ_SIGN      = 1.0
 ACC_X_SIGN     = 1.0
 ACC_Y_SIGN     = 1.0
 
-# Yaw-rate controller gains
-# 20260531 실측 angular_velocity_err 평균 -38.85 dps → 폐루프 보정 활성
-KP_GPS_CLOSED  = 0.35
-
-# Per-mode PID gains for the new ControlMode taxonomy (yaw-rate loop, deg/s).
-# GPS uses the existing KP_GPS_CLOSED. DR_M (position from GPS) is slightly
-# weaker; DR_PM (position dead-reckoned) is the most conservative.
-# KI/KD default to 0.0 (P-only loop) — kept explicit so they can be tuned per mode.
+# Yaw-rate controller gains (FF-only: all PID gains 0)
+KP_GPS_CLOSED  = 0.0
 KI_GPS_CLOSED   = 0.0
 KD_GPS_CLOSED   = 0.0
-KP_DR_M_CLOSED  = 0.25
+KP_DR_M_CLOSED  = 0.0
 KI_DR_M_CLOSED  = 0.0
 KD_DR_M_CLOSED  = 0.0
-KP_DR_PM_CLOSED = 0.18
+KP_DR_PM_CLOSED = 0.0
 KI_DR_PM_CLOSED = 0.0
 KD_DR_PM_CLOSED = 0.0
 
