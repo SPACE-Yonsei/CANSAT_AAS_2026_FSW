@@ -85,22 +85,12 @@ class MissionFrame:
     origin_lat: float = nan
     origin_lon: float = nan
     origin_ready: bool = False
-    origin_lock_source: str = ""   # "PRE_RELEASE_GPS" | "RELEASE_GPS" | "LATE_GPS"
+    origin_lock_source: str = ""   # "STATE4_FIRST_GPS"
     target_E: float = nan
     target_N: float = nan
     target_ready: bool = False
     _target_lat: float = nan
     _target_lon: float = nan
-
-    # Candidate origin (State 1~2부터 저장, State 3 진입 시 lock 후보)
-    candidate_origin_lat: float = nan
-    candidate_origin_lon: float = nan
-    candidate_origin_E: float = 0.0
-    candidate_origin_N: float = 0.0
-    candidate_origin_ts: float = nan
-    candidate_origin_quality: float = 0.0
-    candidate_origin_valid: bool = False
-    _state3_entry_ts: float = nan
 
 
 @dataclass
@@ -379,67 +369,6 @@ def lock_origin(lat: float, lon: float, source: str = "") -> None:
         mi_t.target_N = tN
         mi_t.target_ready = True
         logger.info("Target projected on lock: E=%.1f N=%.1f", tE, tN)
-
-
-def update_candidate_origin(lat: float, lon: float, ts: float,
-                            quality: float = 1.0) -> bool:
-    """유효한 GPS position을 candidate origin으로 저장 (state 무관, < 3에서도 가능).
-
-    pos_health가 true인 표본만 호출해야 한다(호출측 책임). 지리적 expected-area
-    제한은 없다 — 한국/미국 등 어떤 사이트의 유효 좌표든 저장한다. origin_ready여도
-    candidate는 갱신하지만(진단용), lock된 origin은 절대 덮어쓰지 않는다.
-    """
-    mi_t = _MISSION_t
-    if not (_ok(lat) and _ok(lon) and _ok(ts)):
-        return False
-    mi_t.candidate_origin_lat = float(lat)
-    mi_t.candidate_origin_lon = float(lon)
-    mi_t.candidate_origin_ts = float(ts)
-    mi_t.candidate_origin_quality = float(quality)
-    mi_t.candidate_origin_valid = True
-    return True
-
-
-def note_state3_entry(now: float) -> None:
-    """State 3 최초 진입 시각 기록 (origin_lock_source 분류용)."""
-    mi_t = _MISSION_t
-    if not isfinite(mi_t._state3_entry_ts):
-        mi_t._state3_entry_ts = float(now)
-
-
-def try_lock_origin_from_candidate(now: float) -> str | None:
-    """State 3 이상에서 candidate origin으로 origin을 lock 시도.
-
-    이미 origin_ready이면 덮어쓰지 않고 None 반환. candidate age가
-    CANDIDATE_ORIGIN_MAX_AGE_S 이하일 때만 lock한다. lock하면 origin_lock_source
-    문자열을 반환한다. ALLOW_LATE_ORIGIN_LOCK=False면 state3 진입 이후 취득한
-    candidate(late)는 lock하지 않는다.
-    """
-    mi_t = _MISSION_t
-    if mi_t.origin_ready:
-        return None
-    if not mi_t.candidate_origin_valid:
-        return None
-    cts = mi_t.candidate_origin_ts
-    if not isfinite(cts):
-        return None
-    age = now - cts
-    if age < 0.0 or age > config.CANDIDATE_ORIGIN_MAX_AGE_S:
-        return None
-
-    s3 = mi_t._state3_entry_ts
-    if isfinite(s3) and cts < s3 - 1e-6:
-        source = "PRE_RELEASE_GPS"
-    elif isfinite(s3) and cts <= s3 + 2.0:
-        source = "RELEASE_GPS"
-    else:
-        source = "LATE_GPS"
-
-    if source == "LATE_GPS" and not getattr(config, "ALLOW_LATE_ORIGIN_LOCK", True):
-        return None
-
-    lock_origin(mi_t.candidate_origin_lat, mi_t.candidate_origin_lon, source=source)
-    return source
 
 
 def _is_fresh(valid: bool, ts: float, now: float, max_age: float) -> bool:
@@ -1172,12 +1101,11 @@ def set_target(lat: float, lon: float) -> None:
         logger.info("set_target: saved (lat=%.6f lon=%.6f), waiting for origin", lat, lon)
 
 
-def reset(keep_candidate_origin: bool = True) -> None:
-    """origin/nav/DR을 초기화. target lat/lon과 candidate origin은 보존한다.
+def reset() -> None:
+    """origin/nav/DR을 초기화. target lat/lon만 보존한다.
 
-    candidate origin은 State 1~2 pre-release 구간에서 취득해 두는 값이라,
-    State 전이마다 호출되는 reset이 이를 지우면 candidate origin 정책이 무력화된다.
-    그래서 기본적으로 보존한다(keep_candidate_origin=False로 완전 초기화 가능).
+    State 전이(< 4)마다 호출되며 origin_ready를 False로 풀어, 다음 State 4 진입
+    후 첫 유효 GPS로 origin을 재잠금할 수 있게 한다.
     """
     global _MISSION_t, _STATE_t
     prev = _MISSION_t
@@ -1186,14 +1114,5 @@ def reset(keep_candidate_origin: bool = True) -> None:
     _MISSION_t = MissionFrame()
     _MISSION_t._target_lat = saved_lat
     _MISSION_t._target_lon = saved_lon
-    if keep_candidate_origin and prev.candidate_origin_valid:
-        _MISSION_t.candidate_origin_lat = prev.candidate_origin_lat
-        _MISSION_t.candidate_origin_lon = prev.candidate_origin_lon
-        _MISSION_t.candidate_origin_E = prev.candidate_origin_E
-        _MISSION_t.candidate_origin_N = prev.candidate_origin_N
-        _MISSION_t.candidate_origin_ts = prev.candidate_origin_ts
-        _MISSION_t.candidate_origin_quality = prev.candidate_origin_quality
-        _MISSION_t.candidate_origin_valid = True
     _STATE_t = GuidanceState()
-    logger.info("guidance.reset(): origin/nav/DR cleared; target%s preserved",
-                "+candidate" if keep_candidate_origin else "")
+    logger.info("guidance.reset(): origin/nav/DR cleared; target preserved")

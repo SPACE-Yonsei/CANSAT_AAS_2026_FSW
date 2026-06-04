@@ -127,12 +127,9 @@ DR_CONF_AGE_1_S = 5.0
 DR_CONF_AGE_2_S = 30.0
 DR_CONF_AGE_3_S = 60.0
 
-# ── Candidate origin policy ──────────────────────────────────────────────────
-# State 1~2에서도 GPS position을 candidate origin으로 저장해두고, State 3 진입 시
-# candidate age가 MAX_AGE 이하이면 origin으로 lock한다. State 3 이후 첫 GPS가
-# 늦게 들어와도 late lock을 허용하여 DR anchor 생성 지연을 줄인다.
-CANDIDATE_ORIGIN_MAX_AGE_S = 30.0
-ALLOW_LATE_ORIGIN_LOCK     = True
+# ── Origin lock policy ───────────────────────────────────────────────────────
+# candidate 없음. STATE >= 4(PAYLOAD_RELEASE 이상)에서 처음 들어오는 유효 GPS
+# 좌표를 그대로 origin으로 lock한다(motorapp.handle_gps). 별도 튜닝 상수 없음.
 
 # Yaw rate limits per control mode (deg/s)
 # 35→60: 정상비행 spin 분포가 35 dps 근처까지 올라와 제어 여유를 확보하기 위해 상향

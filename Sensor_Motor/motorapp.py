@@ -263,19 +263,13 @@ def handle_gps(data: str) -> None:
     with _UPDATE_LOCK:
         _CACHE_t.latest_gps = sample
 
-    # candidate origin: state 무관(< 3 포함)하게 유효 GPS position을 저장해 둔다.
-    # gpsapp의 pos_health가 expected-area/jump gate를 이미 통과한 표본만 true.
-    if pos_health and math.isfinite(lat) and math.isfinite(lon):
-        guidance.update_candidate_origin(lat, lon, pos_ts)
-
-    # origin lock: state >= 3이고 아직 origin_ready가 아니면 candidate로 lock 시도.
-    # candidate가 state3 진입 전 표본이면 PRE_RELEASE_GPS, 이후면 LATE_GPS.
-    if STATE >= 3 and not guidance._MISSION_t.origin_ready:
-        src = guidance.try_lock_origin_from_candidate(time.monotonic())
-        if src and math.isfinite(guidance._MISSION_t.origin_lat):
-            prevstate.update_start_point(
-                guidance._MISSION_t.origin_lat,
-                guidance._MISSION_t.origin_lon, True)
+    # origin lock: candidate 없음. STATE >= 4(PAYLOAD_RELEASE 이상)에서 처음 들어오는
+    # 유효 GPS 좌표를 무조건 origin으로 잠근다. origin_ready면 덮어쓰지 않으므로
+    # "첫 유효 좌표"만 origin이 된다.
+    if (STATE >= 4 and not guidance._MISSION_t.origin_ready
+            and pos_health and math.isfinite(lat) and math.isfinite(lon)):
+        guidance.lock_origin(lat, lon, source="STATE4_FIRST_GPS")
+        prevstate.update_start_point(lat, lon, True)
 
 
 def handle_imu(data: str) -> None:
@@ -420,17 +414,7 @@ def handle_flight_state(data: str) -> None:
             _DETUMBLE_ACTIVE = False
             _DETUMBLE_EXIT_START = math.nan
 
-    # PAYLOAD_RELEASE(4) 진입 시각 기록 + candidate origin으로 즉시 lock 시도.
-    if new_state >= 4:
-        _now = time.monotonic()
-        guidance.note_state3_entry(_now)
-        if not guidance._MISSION_t.origin_ready:
-            src = guidance.try_lock_origin_from_candidate(_now)
-            if src and math.isfinite(guidance._MISSION_t.origin_lat):
-                prevstate.update_start_point(
-                    guidance._MISSION_t.origin_lat,
-                    guidance._MISSION_t.origin_lon, True)
-
+    # PAYLOAD_RELEASE(4) 이상에서 origin lock은 handle_gps가 첫 유효 GPS로 수행한다.
     if _DO_CTRL_RESET:
         control.reset()
 

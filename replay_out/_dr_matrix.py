@@ -5,7 +5,7 @@ from Sensor_Motor import guidance as g
 from Sensor_Motor.guidance import ControlMode
 
 def setup(gyrz_dps=10.0):
-    g.reset(keep_candidate_origin=False)
+    g.reset()
     m = g._MISSION_t; s = g._STATE_t
     m.origin_ready = True; m.target_ready = True
     m.origin_lat, m.origin_lon = 37.0, 127.0

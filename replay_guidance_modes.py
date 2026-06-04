@@ -169,12 +169,10 @@ def replay(rows):
 
         # 상태 전이 처리 (motorapp 미러)
         if prev_state is None or state != prev_state:
-            if state < 3 and prev_state is not None and prev_state != state:
+            if state < 4 and prev_state is not None and prev_state != state:
                 guidance.reset()
                 control.reset()
                 target_set = False
-            if state >= 3:
-                guidance.note_state3_entry(now)
         prev_state = state
 
         # target lock (로그 target_lat/lon)
@@ -188,11 +186,11 @@ def replay(rows):
         imu = _build_imu(row, now)
         baro = _build_baro(row, now)
 
-        # candidate origin + lock (motorapp.handle_gps / handle_flight_state 미러)
-        if gps.pos_health and _fin(_f(row, "gps_lat")):
-            guidance.update_candidate_origin(_f(row, "gps_lat"), _f(row, "gps_lon"), gps.pos_ts)
-        if state >= 3 and not guidance._MISSION_t.origin_ready:
-            guidance.try_lock_origin_from_candidate(now)
+        # origin lock (motorapp.handle_gps 미러): STATE>=4 첫 유효 GPS를 origin으로.
+        if (state >= 4 and not guidance._MISSION_t.origin_ready
+                and gps.pos_health and _fin(_f(row, "gps_lat"))):
+            guidance.lock_origin(_f(row, "gps_lat"), _f(row, "gps_lon"),
+                                 source="STATE4_FIRST_GPS")
 
         gyrz_dps = _f(row, "imu_gyrz_deg_s")
 

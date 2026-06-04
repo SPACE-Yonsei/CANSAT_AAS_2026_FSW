@@ -1,9 +1,14 @@
-"""Candidate-origin policy and DR safety guards (guidance.py)."""
+"""Origin-lock policy and DR safety guards (guidance.py / motorapp.py).
+
+Origin policy: no candidate. The first valid GPS fix received at STATE >= 4
+(PAYLOAD_RELEASE) is locked as origin; later fixes never overwrite it.
+"""
 import math
 import unittest
 from math import radians
+from unittest.mock import patch
 
-from Sensor_Motor import guidance
+from Sensor_Motor import guidance, motorapp
 from Sensor_Motor.sensor_types import _BaroFromApp, _GpsFromApp, _ImuFromApp
 from lib import config
 
@@ -32,58 +37,68 @@ def _baro(sink=3.0, age=0.0):
 
 
 def _mission():
-    guidance.reset(keep_candidate_origin=False)
+    guidance.reset()
     mi = guidance._MISSION_t
     mi.origin_lat, mi.origin_lon, mi.origin_ready = 37.5, 127.0, True
     mi.target_E, mi.target_N, mi.target_ready = 100.0, 0.0, True
 
 
-class TestCandidateOrigin(unittest.TestCase):
+class TestStateFourOriginLock(unittest.TestCase):
+    """state>=4에서 처음 들어오는 유효 GPS가 무조건 origin이 된다 (candidate 없음)."""
+
     def setUp(self):
-        guidance.reset(keep_candidate_origin=False)
+        guidance.reset()
+        motorapp.STATE = 0
 
-    def test_update_candidate_accepts_valid_fix(self):
-        # No geographic expected-area gate: any valid fix is stored (Korea, US, ...).
-        self.assertTrue(guidance.update_candidate_origin(37.5, 127.0, ts=100.0))
-        self.assertTrue(guidance._MISSION_t.candidate_origin_valid)
-        guidance.reset(keep_candidate_origin=False)
-        self.assertTrue(guidance.update_candidate_origin(38.86, -104.79, ts=100.0))  # US site
-        self.assertTrue(guidance._MISSION_t.candidate_origin_valid)
+    def _send(self, lat, lon, pos=1, course=90.0, speed=5.0, ts=None):
+        ts = NOW if ts is None else ts
+        # 8 fields: lat,lon,pos_health,pos_ts,course,speed,motion_health,motion_ts
+        motorapp.handle_gps(f"{lat},{lon},{pos},{ts:.4f},{course},{speed},1,{ts:.4f}")
 
-    def test_pre_release_lock(self):
-        guidance.update_candidate_origin(37.5, 127.0, ts=100.0)
-        guidance.note_state3_entry(110.0)
-        src = guidance.try_lock_origin_from_candidate(120.0)   # age 20 <= 30
-        self.assertEqual(src, "PRE_RELEASE_GPS")
-        self.assertTrue(guidance._MISSION_t.origin_ready)
-        self.assertEqual(guidance._MISSION_t.origin_lock_source, "PRE_RELEASE_GPS")
-
-    def test_release_lock_window(self):
-        guidance.note_state3_entry(100.0)
-        guidance.update_candidate_origin(37.5, 127.0, ts=101.0)   # within +2s
-        self.assertEqual(guidance.try_lock_origin_from_candidate(102.0), "RELEASE_GPS")
-
-    def test_late_lock(self):
-        guidance.note_state3_entry(100.0)
-        guidance.update_candidate_origin(37.5, 127.0, ts=105.0)   # after +2s
-        self.assertEqual(guidance.try_lock_origin_from_candidate(106.0), "LATE_GPS")
-
-    def test_too_old_candidate_rejected(self):
-        guidance.note_state3_entry(200.0)
-        guidance.update_candidate_origin(37.5, 127.0, ts=100.0)   # age 100 > 30
-        self.assertIsNone(guidance.try_lock_origin_from_candidate(200.0))
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_no_lock_below_state4(self, mock_update):
+        motorapp.STATE = 3
+        self._send(37.5, 127.0)
         self.assertFalse(guidance._MISSION_t.origin_ready)
+        mock_update.assert_not_called()
 
-    def test_no_overwrite_when_ready(self):
-        guidance.lock_origin(37.5, 127.0, source="PRE_RELEASE_GPS")
-        guidance.update_candidate_origin(37.6, 127.1, ts=999.0)
-        self.assertIsNone(guidance.try_lock_origin_from_candidate(1000.0))
-        self.assertEqual(guidance._MISSION_t.origin_lat, 37.5)  # unchanged
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_first_valid_fix_at_state4_locks(self, mock_update):
+        motorapp.STATE = 4
+        self._send(38.86, -104.79)   # US site (any coordinate works)
+        mi = guidance._MISSION_t
+        self.assertTrue(mi.origin_ready)
+        self.assertAlmostEqual(mi.origin_lat, 38.86)
+        self.assertAlmostEqual(mi.origin_lon, -104.79)
+        self.assertEqual(mi.origin_lock_source, "STATE4_FIRST_GPS")
+        mock_update.assert_called_once()
 
-    def test_candidate_survives_reset(self):
-        guidance.update_candidate_origin(37.5, 127.0, ts=100.0)
-        guidance.reset()   # default keep_candidate_origin=True
-        self.assertTrue(guidance._MISSION_t.candidate_origin_valid)
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_first_fix_wins_no_overwrite(self, mock_update):
+        motorapp.STATE = 4
+        self._send(38.86, -104.79)
+        self._send(40.00, -105.00)   # later fix must be ignored
+        mi = guidance._MISSION_t
+        self.assertAlmostEqual(mi.origin_lat, 38.86)
+        self.assertAlmostEqual(mi.origin_lon, -104.79)
+        self.assertEqual(mock_update.call_count, 1)
+
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_invalid_fix_does_not_lock(self, mock_update):
+        motorapp.STATE = 4
+        self._send(37.5, 127.0, pos=0)   # pos_health=0 → not a valid fix
+        self.assertFalse(guidance._MISSION_t.origin_ready)
+        mock_update.assert_not_called()
+
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_relock_after_reset(self, mock_update):
+        motorapp.STATE = 4
+        self._send(38.86, -104.79)
+        self.assertTrue(guidance._MISSION_t.origin_ready)
+        guidance.reset()                 # state<4 전이 시 motorapp이 호출
+        self.assertFalse(guidance._MISSION_t.origin_ready)
+        self._send(40.00, -105.00)       # 재진입 후 첫 좌표로 재잠금
+        self.assertAlmostEqual(guidance._MISSION_t.origin_lat, 40.00)
 
 
 class TestDRSafetyGuards(unittest.TestCase):
