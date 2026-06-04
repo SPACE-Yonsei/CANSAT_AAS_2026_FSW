@@ -105,7 +105,7 @@ def _make_baro(row):
 
 def run():
     guidance.reset()
-    guidance.set_target(TARGET_LAT, TARGET_LON)
+    guidance.set_target_point(TARGET_LAT, TARGET_LON)
 
     rows_in = []
     with INPUT_CSV.open(newline="", encoding="utf-8-sig") as f:
@@ -168,7 +168,8 @@ def run():
 
         # 실제 비행과의 비교
         actual_mode = row.get("control_mode", "")
-        origin_ready = guidance._MISSION_t.origin_ready
+        mi = guidance._MISSION_t
+        origin_ready = math.isfinite(mi.origin_lat) and math.isfinite(mi.origin_lon)
         dr_valid     = guidance.dr_is_valid(guidance._STATE_t.dr)
 
         results.append({

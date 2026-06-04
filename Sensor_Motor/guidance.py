@@ -83,13 +83,8 @@ class DRMethod(str, Enum):
 class MissionFrame:
     origin_lat: float = nan
     origin_lon: float = nan
-    origin_ready: bool = False
-    origin_lock_source: str = ""   # "STATE3_FIRST_GPS"
-    target_E: float = nan
-    target_N: float = nan
-    target_ready: bool = False
-    _target_lat: float = nan
-    _target_lon: float = nan
+    target_lat: float = nan
+    target_lon: float = nan
 
 
 @dataclass
@@ -352,22 +347,30 @@ def _compute_dr_confidence(age: float) -> float:
     return _clamp(conf, 0.0, 1.0)
 
 
-def lock_origin(lat: float, lon: float, source: str = "") -> None:
-    mi_t = _MISSION_t
-    mi_t.origin_lat = float(lat)
-    mi_t.origin_lon = float(lon)
-    mi_t.origin_ready = True
-    if source:
-        mi_t.origin_lock_source = source
+def set_origin_point(lat: float, lon: float) -> None:
+    _MISSION_t.origin_lat = float(lat)
+    _MISSION_t.origin_lon = float(lon)
     _STATE_t.gps.E = 0.0
     _STATE_t.gps.N = 0.0
-    logger.info("Origin locked: lat=%.6f lon=%.6f source=%s", lat, lon, source or "?")
-    if _ok(mi_t._target_lat) and _ok(mi_t._target_lon):
-        tN, tE = latlon_to_ne(mi_t._target_lat, mi_t._target_lon, lat, lon)
-        mi_t.target_E = tE
-        mi_t.target_N = tN
-        mi_t.target_ready = True
-        logger.info("Target projected on lock: E=%.1f N=%.1f", tE, tN)
+    logger.info("Origin set: lat=%.6f lon=%.6f", lat, lon)
+
+
+def set_target_point(lat: float, lon: float) -> None:
+    _MISSION_t.target_lat = float(lat)
+    _MISSION_t.target_lon = float(lon)
+    logger.info("Target set: lat=%.6f lon=%.6f", lat, lon)
+
+
+def _get_target_ne() -> tuple[float, float] | None:
+    mi_t = _MISSION_t
+    if not (_ok(mi_t.origin_lat) and _ok(mi_t.origin_lon)):
+        return None
+    if not (_ok(mi_t.target_lat) and _ok(mi_t.target_lon)):
+        return None
+    tN, tE = latlon_to_ne(
+        mi_t.target_lat, mi_t.target_lon, mi_t.origin_lat, mi_t.origin_lon
+    )
+    return tE, tN
 
 
 def _is_fresh(valid: bool, ts: float, now: float, max_age: float) -> bool:
@@ -386,7 +389,7 @@ def UpdateRaw(gps=None, imu=None, baro=None, now: float | None = None) -> None:
             lon = getattr(gps, "lon", None)
             pos_ts = getattr(gps, "pos_ts", None)
             if _ok(lat) and _ok(lon) and _ok(pos_ts):
-                if mi_t.origin_ready:
+                if _ok(mi_t.origin_lat) and _ok(mi_t.origin_lon):
                     N, E = latlon_to_ne(float(lat), float(lon),
                                         mi_t.origin_lat, mi_t.origin_lon)
                     st_t.gps.E = E
@@ -561,8 +564,10 @@ def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
     mi_t = _MISSION_t
     st_t = _STATE_t
     st_t.nav.fail_reason = "FAIL"
-    if not mi_t.origin_ready or not mi_t.target_ready:
-        return _fail("NO_ORIGIN" if not mi_t.origin_ready else "NO_TARGET")
+    origin_ready = _ok(mi_t.origin_lat) and _ok(mi_t.origin_lon)
+    target_ready = _ok(mi_t.target_lat) and _ok(mi_t.target_lon)
+    if not origin_ready or not target_ready:
+        return _fail("NO_ORIGIN" if not origin_ready else "NO_TARGET")
 
     # DR safety guard #5: gyrz가 과도하면 정상 guidance에 G(gyro)를 쓰지 않는다.
     # gyro_ok=False sends GPS tracking through the OPEN path.
@@ -894,22 +899,23 @@ def _make_l1input_from_nav(mode: ControlMode, reason: str) -> L1Input:
         vE = nav.V * math.sin(nav.course)
         vN = nav.V * math.cos(nav.course)
 
+    target_ne = _get_target_ne()
     valid = (
         isfinite(nav.E) and isfinite(nav.N)
         and isfinite(nav.V) and nav.V >= config.V_MIN_MPS
         and isfinite(nav.course)
-        and isfinite(mi_t.target_E) and isfinite(mi_t.target_N)
-        and mi_t.target_ready and mi_t.origin_ready
+        and target_ne is not None
     )
     if not valid:
         return L1Input(valid=False, reason="NAV_INVALID", control_mode=mode,
                        dr_method=dr_method, confidence=confidence)
+    target_E, target_N = target_ne
 
     return L1Input(
         valid=True, reason=reason, control_mode=mode, dr_method=dr_method,
         confidence=confidence,
         E=nav.E, N=nav.N, V=nav.V, course=nav.course, vE=vE, vN=vN,
-        target_E=mi_t.target_E, target_N=mi_t.target_N,
+        target_E=target_E, target_N=target_N,
     )
 
 
@@ -921,9 +927,9 @@ def ProduceL1Input(now: float) -> L1Input:
     if mode == ControlMode.FAIL:
         return L1Input(valid=False, reason=st_t.nav.fail_reason or "FAIL",
                        control_mode=mode)
-    if not mi_t.origin_ready:
+    if not (_ok(mi_t.origin_lat) and _ok(mi_t.origin_lon)):
         return L1Input(valid=False, reason="NO_ORIGIN", control_mode=mode)
-    if not mi_t.target_ready:
+    if not (_ok(mi_t.target_lat) and _ok(mi_t.target_lon)):
         return L1Input(valid=False, reason="NO_TARGET", control_mode=mode)
 
     if _is_gps_tracking_mode(mode):
@@ -1064,38 +1070,17 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
     return output_t
 
 
-def set_target(lat: float, lon: float) -> None:
-    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
-        logger.warning("set_target: invalid coords lat=%.6f lon=%.6f", lat, lon)
-        return
-    if abs(lat) < 1e-9 and abs(lon) < 1e-9:
-        logger.warning("set_target: (0,0) sentinel rejected")
-        return
-    _MISSION_t._target_lat = lat
-    _MISSION_t._target_lon = lon
-    if _MISSION_t.origin_ready:
-        tN, tE = latlon_to_ne(lat, lon, _MISSION_t.origin_lat, _MISSION_t.origin_lon)
-        _MISSION_t.target_E = tE
-        _MISSION_t.target_N = tN
-        _MISSION_t.target_ready = True
-        logger.info("set_target: projected E=%.1f N=%.1f", tE, tN)
-    else:
-        _MISSION_t.target_ready = False
-        logger.info("set_target: saved (lat=%.6f lon=%.6f), waiting for origin", lat, lon)
-
-
 def reset() -> None:
-    """origin/nav/DR을 초기화. target lat/lon만 보존한다.
+    """origin/nav/DR을 초기화하고 target lat/lon만 보존한다.
 
-    State 전이(< 4)마다 호출되며 origin_ready를 False로 풀어, 다음 State 4 진입
-    후 첫 유효 GPS로 origin을 재잠금할 수 있게 한다.
+    lock 여부는 motorapp이 관리한다. guidance는 frame 값만 비우고 채운다.
     """
     global _MISSION_t, _STATE_t
     prev = _MISSION_t
-    saved_lat = prev._target_lat
-    saved_lon = prev._target_lon
+    saved_lat = prev.target_lat
+    saved_lon = prev.target_lon
     _MISSION_t = MissionFrame()
-    _MISSION_t._target_lat = saved_lat
-    _MISSION_t._target_lon = saved_lon
+    _MISSION_t.target_lat = saved_lat
+    _MISSION_t.target_lon = saved_lon
     _STATE_t = GuidanceState()
     logger.info("guidance.reset(): origin/nav/DR cleared; target preserved")

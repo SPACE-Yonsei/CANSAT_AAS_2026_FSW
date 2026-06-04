@@ -145,11 +145,8 @@ SCENARIOS = [
 def _reset_for_scenario() -> None:
     """guidance + motorapp 캐시 초기화 후 origin / target 수동 설정."""
     guidance.reset()
-    mi = guidance._MISSION_t
-    mi.origin_lat   = ORIGIN_LAT
-    mi.origin_lon   = ORIGIN_LON
-    mi.origin_ready = True
-    guidance.set_target(TARGET_LAT, TARGET_LON)
+    guidance.set_origin_point(ORIGIN_LAT, ORIGIN_LON)
+    guidance.set_target_point(TARGET_LAT, TARGET_LON)
     motorapp._CACHE_t.latest_gps  = _GpsFromApp()
     motorapp._CACHE_t.latest_imu  = _ImuFromApp()
     motorapp._CACHE_t.latest_baro = _BaroFromApp()

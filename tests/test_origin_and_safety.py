@@ -1,7 +1,7 @@
 """Origin-lock policy and DR safety guards (guidance.py / motorapp.py).
 
-Origin policy: no candidate. The first valid GPS fix received at STATE >= 4
-(PAYLOAD_RELEASE) is locked as origin; later fixes never overwrite it.
+Origin policy: no candidate. The first valid GPS fix received at STATE >= 3
+(DESCENT) is locked as origin; later fixes never overwrite it.
 """
 import math
 import unittest
@@ -38,9 +38,18 @@ def _baro(sink=3.0, age=0.0):
 
 def _mission():
     guidance.reset()
+    origin_lat = 37.5
+    origin_lon = 127.0
+    target_lon = origin_lon + math.degrees(
+        100.0 / (guidance.EARTH_RADIUS_M * math.cos(math.radians(origin_lat)))
+    )
+    guidance.set_origin_point(origin_lat, origin_lon)
+    guidance.set_target_point(origin_lat, target_lon)
+
+
+def _origin_ready() -> bool:
     mi = guidance._MISSION_t
-    mi.origin_lat, mi.origin_lon, mi.origin_ready = 37.5, 127.0, True
-    mi.target_E, mi.target_N, mi.target_ready = 100.0, 0.0, True
+    return math.isfinite(mi.origin_lat) and math.isfinite(mi.origin_lon)
 
 
 class TestDescentOriginLock(unittest.TestCase):
@@ -49,6 +58,7 @@ class TestDescentOriginLock(unittest.TestCase):
     def setUp(self):
         guidance.reset()
         motorapp.STATE = 0
+        motorapp._ORIGIN_LOCKED = False
 
     def _send(self, lat, lon, pos=1, course=90.0, speed=5.0, ts=None):
         ts = NOW if ts is None else ts
@@ -59,7 +69,8 @@ class TestDescentOriginLock(unittest.TestCase):
     def test_no_lock_below_state3(self, mock_update):
         motorapp.STATE = 2          # APOGEE: 아직 origin 안 잡음
         self._send(37.5, 127.0)
-        self.assertFalse(guidance._MISSION_t.origin_ready)
+        self.assertFalse(_origin_ready())
+        self.assertFalse(motorapp._ORIGIN_LOCKED)
         mock_update.assert_not_called()
 
     @patch.object(motorapp.prevstate, "update_start_point")
@@ -67,10 +78,10 @@ class TestDescentOriginLock(unittest.TestCase):
         motorapp.STATE = 3          # DESCENT 첫 유효 좌표
         self._send(38.86, -104.79)   # US site (any coordinate works)
         mi = guidance._MISSION_t
-        self.assertTrue(mi.origin_ready)
+        self.assertTrue(_origin_ready())
+        self.assertTrue(motorapp._ORIGIN_LOCKED)
         self.assertAlmostEqual(mi.origin_lat, 38.86)
         self.assertAlmostEqual(mi.origin_lon, -104.79)
-        self.assertEqual(mi.origin_lock_source, "STATE3_FIRST_GPS")
         mock_update.assert_called_once()
 
     @patch.object(motorapp.prevstate, "update_start_point")
@@ -95,18 +106,43 @@ class TestDescentOriginLock(unittest.TestCase):
     def test_invalid_fix_does_not_lock(self, mock_update):
         motorapp.STATE = 3
         self._send(37.5, 127.0, pos=0)   # pos_health=0 → not a valid fix
-        self.assertFalse(guidance._MISSION_t.origin_ready)
+        self.assertFalse(_origin_ready())
+        self.assertFalse(motorapp._ORIGIN_LOCKED)
         mock_update.assert_not_called()
 
     @patch.object(motorapp.prevstate, "update_start_point")
     def test_relock_after_reset(self, mock_update):
         motorapp.STATE = 3
         self._send(38.86, -104.79)
-        self.assertTrue(guidance._MISSION_t.origin_ready)
+        self.assertTrue(_origin_ready())
         guidance.reset()                 # state<4 전이 시 motorapp이 호출
-        self.assertFalse(guidance._MISSION_t.origin_ready)
+        motorapp._ORIGIN_LOCKED = False
+        self.assertFalse(_origin_ready())
         self._send(40.00, -105.00)       # 재진입 후 첫 좌표로 재잠금
         self.assertAlmostEqual(guidance._MISSION_t.origin_lat, 40.00)
+
+
+class TestTargetLock(unittest.TestCase):
+    def setUp(self):
+        guidance.reset()
+        guidance._MISSION_t.target_lat = math.nan
+        guidance._MISSION_t.target_lon = math.nan
+        motorapp._TARGET_LOCKED = False
+
+    @patch.object(motorapp.prevstate, "FIX_TARGET_GPS", False)
+    def test_first_valid_target_wins_no_overwrite(self):
+        motorapp.handle_target_coord("37.500000,127.000000")
+        motorapp.handle_target_coord("38.000000,128.000000")
+        mi = guidance._MISSION_t
+        self.assertTrue(motorapp._TARGET_LOCKED)
+        self.assertAlmostEqual(mi.target_lat, 37.5)
+        self.assertAlmostEqual(mi.target_lon, 127.0)
+
+    @patch.object(motorapp.prevstate, "FIX_TARGET_GPS", False)
+    def test_invalid_target_does_not_lock(self):
+        motorapp.handle_target_coord("0,0")
+        self.assertFalse(motorapp._TARGET_LOCKED)
+        self.assertFalse(math.isfinite(guidance._MISSION_t.target_lat))
 
 
 class TestDRSafetyGuards(unittest.TestCase):

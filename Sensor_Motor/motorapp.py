@@ -27,6 +27,8 @@ _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 
 _PREV_STATE: int = 0
 _DO_CTRL_RESET: bool = False
+_ORIGIN_LOCKED: bool = False
+_TARGET_LOCKED: bool = False
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _STEER_MODE: str = ""
@@ -42,10 +44,10 @@ def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> No
         return
     mi  = guidance._MISSION_t
 
-    s_lat = f"{mi.origin_lat:.6f}"  if (mi.origin_ready and math.isfinite(mi.origin_lat))  else "nan"
-    s_lon = f"{mi.origin_lon:.6f}"  if (mi.origin_ready and math.isfinite(mi.origin_lon))  else "nan"
-    t_lat = f"{mi._target_lat:.6f}" if math.isfinite(mi._target_lat)                        else "nan"
-    t_lon = f"{mi._target_lon:.6f}" if math.isfinite(mi._target_lon)                        else "nan"
+    s_lat = f"{mi.origin_lat:.6f}" if math.isfinite(mi.origin_lat) else "nan"
+    s_lon = f"{mi.origin_lon:.6f}" if math.isfinite(mi.origin_lon) else "nan"
+    t_lat = f"{mi.target_lat:.6f}" if math.isfinite(mi.target_lat) else "nan"
+    t_lon = f"{mi.target_lon:.6f}" if math.isfinite(mi.target_lon) else "nan"
 
     imu = snap_t.latest_imu
     if imu.yaw_rad is not None and math.isfinite(float(imu.yaw_rad)):
@@ -78,8 +80,8 @@ def _publish_motor_diag(main_queue, ctrl_out, snap_t, guidance_state: str) -> No
 
 def _cache_snapshot() -> _Cache:
     try:
-        t_lat = float(guidance._MISSION_t._target_lat)
-        t_lon = float(guidance._MISSION_t._target_lon)
+        t_lat = float(guidance._MISSION_t.target_lat)
+        t_lon = float(guidance._MISSION_t.target_lon)
     except Exception:
         t_lat = None
         t_lon = None
@@ -176,6 +178,7 @@ def _compute_linear_acc(
 # ── 센서 핸들러 ───────────────────────────────────────────────────────────────
 
 def handle_gps(data: str) -> None:
+    global _ORIGIN_LOCKED
     """GPS 페이로드 파싱 후 _CACHE_t 갱신.
 
     Payload (8 fields): lat,lon,pos_health,pos_ts,course_deg,speed_mps,motion_health,motion_ts
@@ -210,11 +213,12 @@ def handle_gps(data: str) -> None:
         _CACHE_t.latest_gps = sample
 
     # origin lock: candidate 없음. STATE >= 3(DESCENT 이상)에서 처음 들어오는 유효
-    # GPS 좌표를 무조건 origin으로 잠근다. origin_ready면 덮어쓰지 않으므로 DESCENT
+    # GPS 좌표를 무조건 origin으로 잠근다. 이미 잠겼으면 덮어쓰지 않으므로 DESCENT
     # 진입 후 "첫 유효 좌표"만 origin이 된다.
-    if (STATE >= 3 and not guidance._MISSION_t.origin_ready
+    if (STATE >= 3 and not _ORIGIN_LOCKED
             and pos_health and math.isfinite(lat) and math.isfinite(lon)):
-        guidance.lock_origin(lat, lon, source="STATE3_FIRST_GPS")
+        guidance.set_origin_point(lat, lon)
+        _ORIGIN_LOCKED = True
         prevstate.update_start_point(lat, lon, True)
 
 
@@ -314,7 +318,10 @@ def handle_barometer(data: str) -> None:
 
 
 def handle_target_coord(data: str) -> None:
-    """타겟 좌표 수신. 유효성 검사 후 guidance.set_target()에 위임."""
+    """타겟 좌표 수신. 최초 유효 좌표만 guidance frame에 저장한다."""
+    global _TARGET_LOCKED
+    if _TARGET_LOCKED:
+        return
     fields = data.split(",")
     if len(fields) != 2:
         return
@@ -335,13 +342,14 @@ def handle_target_coord(data: str) -> None:
             fixed_lon,
         )
         return
-    guidance.set_target(lat, lon)
+    guidance.set_target_point(lat, lon)
+    _TARGET_LOCKED = True
 
 
 def handle_flight_state(data: str) -> None:
     """비행 상태 업데이트. 상태 3 미만이면 guidance/controller 리셋."""
     global STATE, _PREV_STATE
-    global _DO_CTRL_RESET
+    global _DO_CTRL_RESET, _ORIGIN_LOCKED
     try:
         new_state = int(data.split(",")[0])
     except (ValueError, IndexError):
@@ -355,8 +363,9 @@ def handle_flight_state(data: str) -> None:
         STATE       = new_state
         if new_state < 4:   # PAYLOAD_RELEASE(4) 이전: 가이던스 리셋
             prevstate.clear_start_point()
-            guidance.reset()   # origin_ready=False 포함 → handle_gps가 재잠금 가능
+            guidance.reset()   # origin point 초기화 → handle_gps가 재잠금 가능
             _DO_CTRL_RESET = True
+            _ORIGIN_LOCKED = False
 
     # PAYLOAD_RELEASE(4) 이상에서 origin lock은 handle_gps가 첫 유효 GPS로 수행한다.
     if _DO_CTRL_RESET:
@@ -658,7 +667,7 @@ def dispatch(msg: str) -> None:
 def init() -> None:
     """prevstate 복원 + 컨트롤러/pigpio 초기화."""
     global PI, MOTOR_ENABLED, RELEASE_ACTION_ENABLED, EGG_ACTION_ENABLED
-    global STATE
+    global STATE, _ORIGIN_LOCKED, _TARGET_LOCKED
 
     prevstate.init_prevstate()
     # Restore flight state so _ctrl_cycle is not blocked on the first cycle.
@@ -667,22 +676,26 @@ def init() -> None:
     MOTOR_ENABLED = prevstate.is_motor_enabled()
     RELEASE_ACTION_ENABLED = True
     EGG_ACTION_ENABLED = True
+    _ORIGIN_LOCKED = False
+    _TARGET_LOCKED = False
     # target 좌표 복원
     t_lat, t_lon = prevstate.get_target_gps()
     if (-90.0 <= float(t_lat) <= 90.0
             and -180.0 <= float(t_lon) <= 180.0
             and not (t_lat == 0.0 and t_lon == 0.0)):
-        guidance.set_target(float(t_lat), float(t_lon))
+        guidance.set_target_point(float(t_lat), float(t_lon))
+        _TARGET_LOCKED = True
 
     # origin 복원 (PREV_START_LOCKED==1일 때만 반환)
-    # lock_origin()이 target 재투영까지 처리한다.
+    # set_origin_point()은 frame origin과 현재 GPS local point만 초기화한다.
     start = prevstate.get_start_point()
     if start is not None:
         lat, lon = start
         if (-90.0 <= float(lat) <= 90.0
                 and -180.0 <= float(lon) <= 180.0
                 and not (lat == 0.0 and lon == 0.0)):
-            guidance.lock_origin(float(lat), float(lon))
+            guidance.set_origin_point(float(lat), float(lon))
+            _ORIGIN_LOCKED = True
             logger.info("Origin restored from prevstate: lat=%.6f lon=%.6f", lat, lon)
 
     control.reset()

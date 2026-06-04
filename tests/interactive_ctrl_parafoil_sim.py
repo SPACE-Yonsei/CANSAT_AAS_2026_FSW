@@ -534,17 +534,26 @@ def print_cycle_output(sim: Simulator, ctrl_out: control.CtrlOutput | None) -> N
     mi = guidance._MISSION_t
     mode = st.nav.control_mode.value if hasattr(st.nav.control_mode, "value") else str(st.nav.control_mode)
     dr_method = st.dr.method.value if hasattr(st.dr.method, "value") else str(st.dr.method)
+    origin_ready = math.isfinite(mi.origin_lat) and math.isfinite(mi.origin_lon)
+    target_ready = math.isfinite(mi.target_lat) and math.isfinite(mi.target_lon)
+    if origin_ready and target_ready:
+        target_N, target_E = guidance.latlon_to_ne(
+            mi.target_lat, mi.target_lon, mi.origin_lat, mi.origin_lon
+        )
+    else:
+        target_E = math.nan
+        target_N = math.nan
     print("-" * 78)
     print(
         "guidance: "
         f"mode={mode} dr={dr_method} conf={safe_num(st.nav.confidence):.2f} "
-        f"origin={int(mi.origin_ready)} target={int(mi.target_ready)}"
+        f"origin={int(origin_ready)} target={int(target_ready)}"
     )
     print(
         "nav: "
         f"E={safe_num(st.nav.E):.2f} N={safe_num(st.nav.N):.2f} "
         f"course={safe_deg(st.nav.course):.2f}deg V={safe_num(st.nav.V):.2f}m/s "
-        f"target_E={safe_num(mi.target_E):.2f} target_N={safe_num(mi.target_N):.2f}"
+        f"target_E={safe_num(target_E):.2f} target_N={safe_num(target_N):.2f}"
     )
     if ctrl_out is None:
         print("control: no CtrlOutput returned (blocked, landed, disabled, or FAIL/off path)")

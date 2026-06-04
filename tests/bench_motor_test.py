@@ -63,23 +63,14 @@ def _wrap_deg(angle_deg: float) -> float:
 
 def _configure_mission() -> tuple[float, float]:
     guidance.reset()
-    mi = guidance._MISSION_t
-    mi.origin_lat = ORIGIN_LAT
-    mi.origin_lon = ORIGIN_LON
-    mi.origin_ready = True
-    mi._raw_lat = ORIGIN_LAT
-    mi._raw_lon = ORIGIN_LON
-
-    guidance.set_target(TARGET_LAT, TARGET_LON)
+    guidance.set_origin_point(ORIGIN_LAT, ORIGIN_LON)
+    guidance.set_target_point(TARGET_LAT, TARGET_LON)
     target_N, target_E = guidance.latlon_to_ne(
         TARGET_LAT,
         TARGET_LON,
         ORIGIN_LAT,
         ORIGIN_LON,
     )
-    mi.target_E = target_E
-    mi.target_N = target_N
-    mi.target_ready = True
     return target_E, target_N
 
 

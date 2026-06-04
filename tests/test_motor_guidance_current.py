@@ -31,11 +31,13 @@ class TestCurrentGuidanceOutput(unittest.TestCase):
 class TestPosOnlyDrAnchorInit(unittest.TestCase):
     def setUp(self):
         guidance.reset()
-        mission = guidance._MISSION_t
-        mission.origin_ready = True
-        mission.target_ready = True
-        mission.target_E = 100.0
-        mission.target_N = 0.0
+        origin_lat = 37.0
+        origin_lon = 127.0
+        target_lon = origin_lon + math.degrees(
+            100.0 / (guidance.EARTH_RADIUS_M * math.cos(math.radians(origin_lat)))
+        )
+        guidance.set_origin_point(origin_lat, origin_lon)
+        guidance.set_target_point(origin_lat, target_lon)
 
     def _set_pos_only_state(self, now):
         state = guidance._STATE_t

@@ -153,6 +153,8 @@ def replay(rows):
     control.reset()
     prev_state = None
     target_set = False
+    origin_locked = False
+    origin_lock_source = ""
     results = []
 
     for row in rows:
@@ -166,14 +168,15 @@ def replay(rows):
             if state < 4 and prev_state is not None and prev_state != state:
                 guidance.reset()
                 control.reset()
-                target_set = False
+                origin_locked = False
+                origin_lock_source = ""
         prev_state = state
 
         # target lock (로그 target_lat/lon)
         if not target_set:
             tlat, tlon = _f(row, "target_lat"), _f(row, "target_lon")
             if _fin(tlat) and _fin(tlon) and abs(tlat) > 1e-9 and abs(tlon) > 1e-9:
-                guidance.set_target(tlat, tlon)
+                guidance.set_target_point(tlat, tlon)
                 target_set = True
 
         gps = _build_gps(row, now)
@@ -181,10 +184,11 @@ def replay(rows):
         baro = _build_baro(row, now)
 
         # origin lock (motorapp.handle_gps 미러): STATE>=3 첫 유효 GPS를 origin으로.
-        if (state >= 3 and not guidance._MISSION_t.origin_ready
+        if (state >= 3 and not origin_locked
                 and gps.pos_health and _fin(_f(row, "gps_lat"))):
-            guidance.lock_origin(_f(row, "gps_lat"), _f(row, "gps_lon"),
-                                 source="STATE3_FIRST_GPS")
+            guidance.set_origin_point(_f(row, "gps_lat"), _f(row, "gps_lon"))
+            origin_locked = True
+            origin_lock_source = "STATE3_FIRST_GPS"
 
         gyrz_dps = _f(row, "imu_gyrz_deg_s")
 
@@ -224,7 +228,7 @@ def replay(rows):
             "yaw_rate_cmd_dps": round(ctrl_in.angular_velocity_cmd_deg_s, 3),
             "left_pwm_est": ctrl_out.left_pw,
             "right_pwm_est": ctrl_out.right_pw,
-            "origin_lock_source": guidance._MISSION_t.origin_lock_source,
+            "origin_lock_source": origin_lock_source,
             "yaw_saturated": int(bool(getattr(ctrl_out, "saturated", False))),
             "servo_saturated": int(bool(getattr(ctrl_out, "saturated", False))),
             "before_mode": str(row.get("control_mode", "")).replace("ControlMode.", ""),

@@ -1,62 +1,82 @@
-"""Origin (start point) lock now lives inside the guidance pipeline.
+"""motorapp-owned origin/target lock policy."""
 
-handle_gps / handle_flight_state only refresh _CACHE; the actual origin set
-is performed by guidance.produceL1input from _CACHE snapshots during
-ctrl_parafoil.  These tests verify the new contract.
-"""
-
-import time
+import math
 import unittest
 from unittest.mock import patch
 
-from Sensor_Motor import motorapp, guidance
+from Sensor_Motor import guidance, motorapp
+from Sensor_Motor.sensor_types import _Cache
 
 
-def _reset_motor_cache() -> None:
+NOW = 1000.0
+
+
+def _reset() -> None:
+    guidance.reset()
+    guidance._MISSION_t.target_lat = math.nan
+    guidance._MISSION_t.target_lon = math.nan
     motorapp.STATE = 0
-    motorapp._ORIGIN_SAVED = False
-    motorapp._CACHE = motorapp._Cache()
-    motorapp._GUIDANCE_STATE = guidance.GuidanceState()
-    motorapp._TARGET_LAT = None
-    motorapp._TARGET_LON = None
-    motorapp._START_LAT = None
-    motorapp._START_LON = None
+    motorapp._PREV_STATE = 0
+    motorapp._CACHE_t = _Cache()
+    motorapp._ORIGIN_LOCKED = False
+    motorapp._TARGET_LOCKED = False
 
 
-def _gps_msg(lat=37.560700, lon=126.930700, course=90.0, speed=5.0, ts=None) -> str:
-    if ts is None:
-        ts = time.monotonic()
-    return f"{lat},{lon},{ts:.4f},{course},{speed},{ts:.4f}"
+def _gps_msg(lat=37.560700, lon=126.930700, pos=1, ts=NOW) -> str:
+    return f"{lat},{lon},{pos},{ts:.4f},90.0,5.0,1,{ts:.4f}"
 
 
 class TestStartPointLock(unittest.TestCase):
     def setUp(self) -> None:
-        _reset_motor_cache()
+        _reset()
 
     @patch.object(motorapp.prevstate, "update_start_point")
-    def test_handle_gps_does_not_lock_origin(self, mock_update) -> None:
-        """handle_gps must not lock origin or write to prevstate."""
-        motorapp.STATE = 3
-        motorapp.handle_gps(_gps_msg(course=999.0))
-        self.assertIsNone(motorapp._CACHE.start_lat)
-        self.assertFalse(motorapp._GUIDANCE_STATE.origin_ready)
-        mock_update.assert_not_called()
-
-    @patch.object(motorapp.prevstate, "update_start_point")
-    def test_origin_set_via_guidance_pipeline(self, mock_update) -> None:
-        """A full decidefresh → produceL1input cycle locks the origin."""
+    def test_handle_gps_locks_first_valid_origin_at_state3(self, mock_update) -> None:
         motorapp.STATE = 3
         motorapp.handle_gps(_gps_msg())
-        # Simulate one ctrl_parafoil cycle by invoking guidance directly
-        snap = motorapp._cache_snapshot()
-        now = time.monotonic()
-        fresh = guidance.decidefresh(snap.latest_gps, snap.latest_imu,
-                                      snap.latest_baro,
-                                      motorapp._GUIDANCE_STATE, now)
-        guidance.produceL1input(fresh, snap.latest_gps, snap.latest_imu,
-                                 motorapp._GUIDANCE_STATE, motorapp.STATE, now)
-        self.assertTrue(motorapp._GUIDANCE_STATE.origin_ready)
-        self.assertAlmostEqual(motorapp._GUIDANCE_STATE.origin_lat, 37.560700)
+        motorapp.handle_gps(_gps_msg(lat=38.0, lon=127.5))
+
+        mi = guidance._MISSION_t
+        self.assertTrue(motorapp._ORIGIN_LOCKED)
+        self.assertAlmostEqual(mi.origin_lat, 37.560700)
+        self.assertAlmostEqual(mi.origin_lon, 126.930700)
+        self.assertEqual(mock_update.call_count, 1)
+
+    @patch.object(motorapp.prevstate, "update_start_point")
+    def test_handle_gps_does_not_lock_before_state3(self, mock_update) -> None:
+        motorapp.STATE = 2
+        motorapp.handle_gps(_gps_msg())
+
+        self.assertFalse(motorapp._ORIGIN_LOCKED)
+        self.assertFalse(math.isfinite(guidance._MISSION_t.origin_lat))
+        mock_update.assert_not_called()
+
+    @patch.object(motorapp.prevstate, "clear_start_point")
+    @patch.object(motorapp.control, "reset")
+    def test_state_reset_unlocks_origin_only(self, _mock_control_reset, mock_clear) -> None:
+        motorapp._ORIGIN_LOCKED = True
+        motorapp._TARGET_LOCKED = True
+        guidance.set_origin_point(37.0, 127.0)
+        guidance.set_target_point(37.1, 127.1)
+        motorapp.STATE = 4
+
+        motorapp.handle_flight_state("2")
+
+        self.assertFalse(motorapp._ORIGIN_LOCKED)
+        self.assertTrue(motorapp._TARGET_LOCKED)
+        self.assertFalse(math.isfinite(guidance._MISSION_t.origin_lat))
+        self.assertTrue(math.isfinite(guidance._MISSION_t.target_lat))
+        mock_clear.assert_called_once()
+
+    @patch.object(motorapp.prevstate, "FIX_TARGET_GPS", False)
+    def test_target_coord_locks_first_valid_target(self) -> None:
+        motorapp.handle_target_coord("37.500000,127.000000")
+        motorapp.handle_target_coord("38.000000,128.000000")
+
+        mi = guidance._MISSION_t
+        self.assertTrue(motorapp._TARGET_LOCKED)
+        self.assertAlmostEqual(mi.target_lat, 37.5)
+        self.assertAlmostEqual(mi.target_lon, 127.0)
 
 
 if __name__ == "__main__":

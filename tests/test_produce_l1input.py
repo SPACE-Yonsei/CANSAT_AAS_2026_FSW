@@ -20,13 +20,13 @@ SINK_V = min(3.0 * config.DR_SINK_TO_HSPEED_GAIN, config.V_MAX_DR_MPS)
 
 def _prepare_mission():
     guidance.reset()
-    mission = guidance._MISSION_t
-    mission.origin_lat = 37.0
-    mission.origin_lon = 127.0
-    mission.origin_ready = True
-    mission.target_E = 100.0
-    mission.target_N = 0.0
-    mission.target_ready = True
+    origin_lat = 37.0
+    origin_lon = 127.0
+    target_lon = origin_lon + math.degrees(
+        100.0 / (guidance.EARTH_RADIUS_M * math.cos(math.radians(origin_lat)))
+    )
+    guidance.set_origin_point(origin_lat, origin_lon)
+    guidance.set_target_point(origin_lat, target_lon)
 
 
 def _gps(pos=True, motion=True, age=0.0):
