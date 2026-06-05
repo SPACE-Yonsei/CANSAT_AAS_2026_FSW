@@ -71,6 +71,8 @@ The current exhaustive run reports these FAIL reasons:
 
 - `NO_ORIGIN`: origin is not set.
 - `NO_TARGET`: origin is set but target is not set.
+- `NO_COURSE_SOURCE`: GPS position is fresh enough to seed DR, but no usable
+  course source exists.
 - `NO_GUIDANCE_SOURCE`: origin and target are set, but neither GPS tracking nor
   a valid DR fallback source can support guidance.
 - `DR_TIMEOUT`: DR current exists, but the anchor age exceeds
@@ -85,7 +87,7 @@ The SIL harness imports and calls the production modules directly:
 - `Sensor_Motor.control`
 - `Sensor_Motor.motorapp` for the integration test
 
-The harness does not copy `SelectControlMode`, `DecideControlMode`,
+The harness does not copy `DecideControlMode`,
 `ProduceL1Input`, `ProduceL1Output`, `ProduceCtrlInput`, or
 `ProduceCtrlOutput`. Test cases call these functions through qualified module
 names after `importlib.reload()`.

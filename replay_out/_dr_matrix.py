@@ -31,6 +31,11 @@ def flags(s, **kw):
     return f
 
 NOW = 100.0
+
+def run_fillnav(s, now=NOW):
+    g.FillNav(s.flags, now)
+    return s.nav.control_mode
+
 # (label, gps_pos, gps_motion, gyrz, yaw, baro, acc, gyrz_dps) -> expected
 CASES = [
     # GPS tracking
@@ -60,7 +65,7 @@ allok=True
 for label, kw, exp in CASES:
     m, s = setup(gyrz_dps=10.0)
     flags(s, **kw)
-    got = g.SelectControlMode(s.flags, NOW)
+    got = run_fillnav(s, NOW)
     ok = (got == exp)
     allok &= ok
     print(f'{label:24}{exp.value:24}{got.value:24}{"✓" if ok else "✗ FAIL"}')
@@ -70,16 +75,16 @@ print("\n--- 안전 가드 데모 ---")
 # guard #5: high gyrz -> gyro not used -> falls to yaw (OPEN) even though gyrz fresh
 m,s=setup(gyrz_dps=200.0)
 flags(s, imu_gyrz_fresh=1, imu_yaw_fresh=1, baro_sink_fresh=1, acc_fresh=1)
-print("guard#5 gyrz=200dps (>120):", g.SelectControlMode(s.flags,NOW).value, "(기대: DR_PM_YBA_OPEN — gyro 배제)")
+print("guard#5 gyrz=200dps (>120):", run_fillnav(s,NOW).value, "(기대: DR_PM_YBA_OPEN — gyro 배제)")
 # guard #1: anchor too old -> DR_TIMEOUT FAIL
 m,s=setup(); s.dr.anchor_time=10.0  # age 90 > 60
 flags(s, imu_gyrz_fresh=1, baro_sink_fresh=1, acc_fresh=1)
-r=g.SelectControlMode(s.flags,NOW)
+r=run_fillnav(s,NOW)
 print("guard#1 anchor age=90s (>60):", r.value, "/ reason:", s.nav.fail_reason, "(기대: FAIL/DR_TIMEOUT)")
 # no origin
 m,s=setup(); m.origin_ready=False
 flags(s, imu_gyrz_fresh=1, baro_sink_fresh=1, acc_fresh=1)
-r=g.SelectControlMode(s.flags,NOW)
+r=run_fillnav(s,NOW)
 print("no origin:", r.value, "/ reason:", s.nav.fail_reason)
 
 print("\nALL 12 DR CASES + GPS + FAIL MAPPED CORRECTLY:", allok)

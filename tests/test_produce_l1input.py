@@ -150,8 +150,6 @@ class TestProduceL1Input(unittest.TestCase):
 
     # ── Case G: no speed source → invalid NO_SPEED_SOURCE ────────────────────
     def test_case_g_no_speed_source(self):
-        # establish flags (gyrz fresh, baro stale, gps stale); mode falls to FAIL
-        self._decide(None, _imu(gyrz=True), _baro())
         dr = guidance._STATE_t.dr
         dr.current_E = 10.0
         dr.current_N = 20.0
@@ -164,27 +162,50 @@ class TestProduceL1Input(unittest.TestCase):
         dr.yaw_at_anchor = nan
         dr.last_step_time = NOW - 0.1
         dr.gyro_integral = 0.0
-        guidance._STATE_t.nav.control_mode = guidance.ControlMode.DR_PM_G_CLOSED
+        mode = self._decide(None, _imu(gyrz=True), _baro())
+        self.assertEqual(mode, guidance.ControlMode.FAIL)
+        self.assertEqual(guidance._STATE_t.nav.fail_reason, "NO_GUIDANCE_SOURCE")
         l1 = guidance.ProduceL1Input(NOW)
         self.assertFalse(l1.valid)
-        self.assertEqual(l1.reason, "NO_SPEED_SOURCE")
+        self.assertEqual(l1.reason, "NO_GUIDANCE_SOURCE")
 
     # ── Case H: yaw stale in a Y mode → invalid NO_COURSE_SOURCE ─────────────
-    def test_case_h_no_course_source(self):
+    def test_case_h_produce_l1input_does_not_mutate_nav_or_dr(self):
         _seed_dr()
         # yaw absent → imu_yaw_fresh False; natural mode would be DR_PM_GB
-        self._decide(None, _imu(gyrz=True), _baro(sink=True))
-        guidance._STATE_t.nav.control_mode = guidance.ControlMode.DR_PM_YB_OPEN
+        mode = self._decide(None, _imu(gyrz=True), _baro(sink=True))
+        self.assertEqual(mode, guidance.ControlMode.DR_PM_GB_CLOSED)
+        before = (
+            guidance._STATE_t.nav.E,
+            guidance._STATE_t.nav.N,
+            guidance._STATE_t.nav.V,
+            guidance._STATE_t.nav.course,
+            guidance._STATE_t.dr.current_E,
+            guidance._STATE_t.dr.current_N,
+            guidance._STATE_t.dr.current_V,
+            guidance._STATE_t.dr.current_course,
+        )
         l1 = guidance.ProduceL1Input(NOW)
-        self.assertFalse(l1.valid)
-        self.assertEqual(l1.reason, "NO_COURSE_SOURCE")
+        after = (
+            guidance._STATE_t.nav.E,
+            guidance._STATE_t.nav.N,
+            guidance._STATE_t.nav.V,
+            guidance._STATE_t.nav.course,
+            guidance._STATE_t.dr.current_E,
+            guidance._STATE_t.dr.current_N,
+            guidance._STATE_t.dr.current_V,
+            guidance._STATE_t.dr.current_course,
+        )
+        self.assertTrue(l1.valid, l1.reason)
+        self.assertEqual(before, after)
 
     # ── Guard: FAIL short-circuit ────────────────────────────────────────────
     def test_fail_mode_invalid(self):
-        guidance._STATE_t.nav.control_mode = guidance.ControlMode.FAIL
+        mode = self._decide(None, None, None)
+        self.assertEqual(mode, guidance.ControlMode.FAIL)
         l1 = guidance.ProduceL1Input(NOW)
         self.assertFalse(l1.valid)
-        self.assertEqual(l1.reason, "FAIL")
+        self.assertEqual(l1.reason, "NO_GUIDANCE_SOURCE")
 
 if __name__ == "__main__":
     unittest.main()

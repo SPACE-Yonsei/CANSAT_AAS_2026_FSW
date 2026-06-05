@@ -1,0 +1,3 @@
+case,mode,out_valid,out_reason,decide_call_count,l1input_call_count,l1output_call_count,ctrlinput_call_count,ctrloutput_call_count,log_call_count,cached_gps_pos_health,cached_gps_motion_health,cached_imu_gyrz_dps,cached_baro_sink_rate,delta_arm_deg,left_pw,right_pw
+valid_guidance_control,GPS_TRACKING_CLOSED,True,OK,1,1,1,1,1,1,1,1,-12.000000000000002,3.0,153.03022985981295,1657,1591
+invalid_no_target_neutral,FAIL,False,NO_TARGET,1,1,0,0,0,1,1,1,-12.000000000000002,3.0,0.0,1591,1524

@@ -124,8 +124,6 @@ def run():
         baro  = _make_baro(row)
 
         guidance.UpdateRaw(gps, imu, baro, mono)
-        _flags = guidance.ComputeFreshFlags(mono)
-        guidance.FillDRAnchor(_flags, mono)
 
         gz_dps = math.degrees(imu.gyrz_rad_s) if math.isfinite(imu.gyrz_rad_s) else math.nan
         mode = guidance.DecideControlMode(mono)

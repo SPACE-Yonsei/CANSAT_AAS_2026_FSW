@@ -145,7 +145,7 @@ DR_CONF_AGE_3_S = 60.0
 # ── DR safety guards (명시적 상수: getattr fallback이 inf로 꺼지지 않도록 보장) ──
 # DR_PM 한 cycle 위치 적분이 이 거리를 넘으면 비정상으로 보고 update reject.
 DR_MAX_POSITION_JUMP_M          = 3.0
-# DR anchor가 이보다 오래되면 SelectControlMode가 DR_TIMEOUT으로 FAIL.
+# DR anchor가 이보다 오래되면 FillNav가 DR_TIMEOUT으로 FAIL.
 DR_MAX_AGE_S                    = 45.0
 # DR confidence가 이보다 낮으면 ProduceL1Output이 LOW_DR_CONFIDENCE로 invalid.
 DR_MIN_CONFIDENCE_FOR_CONTROL   = 0.20

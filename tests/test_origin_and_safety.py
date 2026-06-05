@@ -193,6 +193,7 @@ class TestDRSafetyGuards(unittest.TestCase):
         saved = config.DR_MAX_POSITION_JUMP_M
         try:
             config.DR_MAX_POSITION_JUMP_M = 0.001   # force any propagation to exceed
+            guidance.DecideControlMode(NOW + 0.2)
             l1 = guidance.ProduceL1Input(NOW + 0.2)
             self.assertFalse(l1.valid)
             self.assertEqual(l1.reason, "DR_POSITION_JUMP")

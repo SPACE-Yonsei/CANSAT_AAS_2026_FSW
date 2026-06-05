@@ -121,7 +121,7 @@ class NavState:
     valid: bool = False
     timestamp: float = nan
     control_mode: ControlMode = ControlMode.FAIL
-    fail_reason: str = "FAIL"     # SelectControlMode/guard가 FAIL 사유를 담는다
+    fail_reason: str = "FAIL"     # FillNav/guard가 FAIL 사유를 담는다
     speed_clamped: bool = False   # DR speed가 V_MAX_DR_MPS로 clamp되었는지
     baro_sink_spike: bool = False # 직전 사이클 baro sink 스파이크 거부 여부
     baro_sink_filtered: float = nan  # EMA 필터링된 sink (하강=양수), 디버그/로그용
@@ -301,6 +301,15 @@ def _mode_uses_gyro_feedback(mode) -> bool:
     value = _mode_value(mode)
     return mode == ControlMode.GPS_TRACKING_CLOSED or (
         value.startswith("DR_") and value.endswith("_CLOSED")
+    )
+
+
+def _gyro_ok_for_control(flags: SensorFreshFlags) -> bool:
+    st_t = _STATE_t
+    gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", 120.0)
+    return flags.imu_gyrz_fresh and (
+        not isfinite(st_t.imu.gyr_z)
+        or abs(math.degrees(st_t.imu.gyr_z)) <= gyrz_max
     )
 
 
@@ -495,6 +504,8 @@ def ComputeFreshFlags(now: float) -> SensorFreshFlags:
     flags.gps_motion_fresh = _is_fresh(
         st_t.gps.motion_valid, st_t.gps.motion_ts, now, config.GPS_FRESH_MAX_AGE_S
     )
+    if flags.gps_motion_fresh and not flags.gps_pos_fresh:
+        flags.gps_motion_fresh = False
     imu_base_fresh = _is_fresh(True, st_t.imu.ts, now, config.IMU_FRESH_MAX_AGE_S)
     flags.imu_yaw_fresh = imu_base_fresh and st_t.imu.yaw_valid and isfinite(st_t.imu.yaw)
     flags.imu_gyrz_fresh = imu_base_fresh and st_t.imu.gyrz_valid and isfinite(st_t.imu.gyr_z)
@@ -538,8 +549,121 @@ def ComputeFreshFlags(now: float) -> SensorFreshFlags:
     return flags
 
 
+def _reset_nav_for_cycle(now: float) -> None:
+    st_t = _STATE_t
+    baro_sink_spike = st_t.nav.baro_sink_spike
+    baro_sink_filtered = st_t.nav.baro_sink_filtered
+    st_t.nav = NavState(
+        timestamp=now,
+        baro_sink_spike=baro_sink_spike,
+        baro_sink_filtered=baro_sink_filtered,
+    )
+
+
+def _nav_is_complete(nav: NavState) -> bool:
+    return (
+        isfinite(nav.E) and isfinite(nav.N)
+        and isfinite(nav.V) and isfinite(nav.course)
+        and isfinite(nav.vE) and isfinite(nav.vN)
+    )
+
+
+def _set_nav_fail(reason: str, flags: SensorFreshFlags | None = None) -> None:
+    st_t = _STATE_t
+    st_t.nav.control_mode = ControlMode.FAIL
+    st_t.nav.fail_reason = reason
+    st_t.nav.valid = False
+    if flags is not None:
+        flags.nav_valid = False
+        flags.dr_current_valid = dr_current_valid(st_t.dr)
+        flags.dr_anchor_valid = dr_anchor_valid(st_t.dr)
+        st_t.flags = flags
+
+
+def _finish_nav(mode: ControlMode, reason: str,
+                flags: SensorFreshFlags, now: float) -> ControlMode:
+    st_t = _STATE_t
+    st_t.nav.control_mode = mode
+    st_t.nav.fail_reason = reason
+    st_t.nav.valid = _nav_is_complete(st_t.nav)
+    st_t.nav.timestamp = now
+    flags.nav_valid = st_t.nav.valid
+    flags.dr_current_valid = dr_current_valid(st_t.dr)
+    flags.dr_anchor_valid = dr_anchor_valid(st_t.dr)
+    st_t.flags = flags
+    if not st_t.nav.valid:
+        _set_nav_fail("NAV_INVALID", flags)
+        return ControlMode.FAIL
+    return mode
+
+
+def _dr_age_too_old(now: float) -> bool:
+    dr = _STATE_t.dr
+    dr_age = now - dr.anchor_time if isfinite(dr.anchor_time) else float("inf")
+    return dr_age > getattr(config, "DR_MAX_AGE_S", 45.0)
+
+
+def _seed_dr_from_gps_position_only(flags: SensorFreshFlags, now: float) -> bool:
+    st_t = _STATE_t
+    dr = st_t.dr
+    if dr_anchor_valid(dr):
+        return True
+    course = _bootstrap_course(flags)
+    if not isfinite(course):
+        return False
+    speed = _bootstrap_speed(flags)
+    yaw = st_t.imu.yaw if flags.imu_yaw_fresh else nan
+    dr_lock(dr, st_t.gps.E, st_t.gps.N, speed, course, yaw, now)
+    return True
+
+
+def _dr_m_mode_from_sources(flags: SensorFreshFlags) -> ControlMode | None:
+    st_t = _STATE_t
+    gyro_ok = _gyro_ok_for_control(flags)
+    if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
+        return ControlMode.DR_M_GBA_CLOSED
+    if gyro_ok and flags.baro_sink_fresh:
+        return ControlMode.DR_M_GB_CLOSED
+    if gyro_ok and last_v_valid(st_t.dr):
+        return ControlMode.DR_M_G_CLOSED
+    if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
+        return ControlMode.DR_M_YBA_OPEN
+    if flags.imu_yaw_fresh and flags.baro_sink_fresh:
+        return ControlMode.DR_M_YB_OPEN
+    if flags.imu_yaw_fresh and last_v_valid(st_t.dr):
+        return ControlMode.DR_M_Y_OPEN
+    return None
+
+
+def _dr_pm_mode_from_sources(flags: SensorFreshFlags) -> ControlMode | None:
+    st_t = _STATE_t
+    gyro_ok = _gyro_ok_for_control(flags)
+    if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
+        return ControlMode.DR_PM_GBA_CLOSED
+    if gyro_ok and flags.baro_sink_fresh:
+        return ControlMode.DR_PM_GB_CLOSED
+    if gyro_ok and last_v_valid(st_t.dr):
+        return ControlMode.DR_PM_G_CLOSED
+    if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
+        return ControlMode.DR_PM_YBA_OPEN
+    if flags.imu_yaw_fresh and flags.baro_sink_fresh:
+        return ControlMode.DR_PM_YB_OPEN
+    if flags.imu_yaw_fresh and last_v_valid(st_t.dr):
+        return ControlMode.DR_PM_Y_OPEN
+    return None
+
+
 def FillNav(flags: SensorFreshFlags, now: float) -> None:
     st_t = _STATE_t
+    mi_t = _MISSION_t
+    _reset_nav_for_cycle(now)
+
+    origin_ready = _ok(mi_t.origin_lat) and _ok(mi_t.origin_lon)
+    target_ready = _ok(mi_t.target_lat) and _ok(mi_t.target_lon)
+    if not origin_ready or not target_ready:
+        _set_nav_fail("NO_ORIGIN" if not origin_ready else "NO_TARGET", flags)
+        return
+
     if flags.gps_pos_fresh and flags.gps_motion_fresh:
         st_t.nav.E = st_t.gps.E
         st_t.nav.N = st_t.gps.N
@@ -550,7 +674,53 @@ def FillNav(flags: SensorFreshFlags, now: float) -> None:
         st_t.nav.confidence = 1.0
         st_t.nav.valid = True
         st_t.nav.timestamp = now
-        flags.nav_valid = True
+        imu_yaw = st_t.imu.yaw if flags.imu_yaw_fresh else nan
+        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, st_t.gps.V, st_t.gps.course, imu_yaw, now)
+        mode = (ControlMode.GPS_TRACKING_CLOSED if _gyro_ok_for_control(flags)
+                else ControlMode.GPS_TRACKING_OPEN)
+        _finish_nav(mode, "GPS_NAV", flags, now)
+        return
+
+    if flags.gps_pos_fresh and flags.gps_motion_stale:
+        if not (isfinite(st_t.gps.E) and isfinite(st_t.gps.N)):
+            _set_nav_fail("GPS_POS_NAN", flags)
+            return
+        if dr_anchor_valid(st_t.dr) and _dr_age_too_old(now):
+            _set_nav_fail("DR_TIMEOUT", flags)
+            return
+        if not _seed_dr_from_gps_position_only(flags, now):
+            _set_nav_fail("NO_COURSE_SOURCE", flags)
+            return
+        flags.dr_anchor_valid = dr_anchor_valid(st_t.dr)
+        flags.dr_current_valid = dr_current_valid(st_t.dr)
+        mode = _dr_m_mode_from_sources(flags)
+        if mode is None:
+            _set_nav_fail("NO_GUIDANCE_SOURCE", flags)
+            return
+        ok, reason = _fill_nav_for_dr_m_mode(mode, now)
+        if not ok:
+            _set_nav_fail(reason, flags)
+            return
+        _finish_nav(mode, reason, flags, now)
+        return
+
+    flags.dr_current_valid = dr_current_valid(st_t.dr)
+    if flags.dr_current_valid:
+        if _dr_age_too_old(now):
+            _set_nav_fail("DR_TIMEOUT", flags)
+            return
+        mode = _dr_pm_mode_from_sources(flags)
+        if mode is None:
+            _set_nav_fail("NO_GUIDANCE_SOURCE", flags)
+            return
+        ok, reason = _fill_nav_for_dr_pm_mode(mode, now)
+        if not ok:
+            _set_nav_fail(reason, flags)
+            return
+        _finish_nav(mode, reason, flags, now)
+        return
+
+    _set_nav_fail("NO_GUIDANCE_SOURCE", flags)
 
 
 def _bootstrap_course(flags: SensorFreshFlags) -> float:
@@ -580,94 +750,6 @@ def _bootstrap_speed(flags: SensorFreshFlags) -> float:
     return config.V_MIN_MPS
 
 
-def FillDRAnchor(flags: SensorFreshFlags, now: float) -> None:
-    st_t = _STATE_t
-    if flags.gps_pos_fresh and flags.gps_motion_fresh:
-        imu_yaw = st_t.imu.yaw if flags.imu_yaw_fresh else nan
-        dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, st_t.gps.V, st_t.gps.course, imu_yaw, now)
-    elif flags.gps_pos_fresh and flags.gps_motion_stale:
-        course = _bootstrap_course(flags)
-        if isfinite(course):
-            speed = _bootstrap_speed(flags)
-            if not dr_anchor_valid(st_t.dr):
-                yaw = st_t.imu.yaw if flags.imu_yaw_fresh else nan
-                dr_lock(st_t.dr, st_t.gps.E, st_t.gps.N, speed, course, yaw, now)
-            st_t.dr.current_E = st_t.gps.E
-            st_t.dr.current_N = st_t.gps.N
-            st_t.dr.current_course = course
-            st_t.dr.current_V = speed
-            st_t.dr.current_time = now
-            st_t.dr.confidence = 1.0 if not isfinite(st_t.dr.anchor_time) else _compute_dr_confidence(now - st_t.dr.anchor_time)
-    flags.dr_anchor_valid = dr_anchor_valid(st_t.dr)
-    flags.dr_current_valid = dr_current_valid(st_t.dr)
-    st_t.flags = flags
-
-
-def _fail(reason: str) -> ControlMode:
-    _STATE_t.nav.fail_reason = reason
-    return ControlMode.FAIL
-
-
-def SelectControlMode(flags: SensorFreshFlags, now: float) -> ControlMode:
-    mi_t = _MISSION_t
-    st_t = _STATE_t
-    st_t.nav.fail_reason = "FAIL"
-    origin_ready = _ok(mi_t.origin_lat) and _ok(mi_t.origin_lon)
-    target_ready = _ok(mi_t.target_lat) and _ok(mi_t.target_lon)
-    if not origin_ready or not target_ready:
-        return _fail("NO_ORIGIN" if not origin_ready else "NO_TARGET")
-
-    # DR safety guard #5: gyrz가 과도하면 정상 guidance에 G(gyro)를 쓰지 않는다.
-    # gyro_ok=False sends GPS tracking through the OPEN path.
-    # config 누락 시 fallback을 inf가 아니라 추천값으로 둬 guard가 꺼지지 않게 한다.
-    gyrz_max = getattr(config, "DR_MAX_YAW_RATE_DPS_FOR_CONTROL", 120.0)
-    gyro_ok = flags.imu_gyrz_fresh and (
-        not isfinite(st_t.imu.gyr_z)
-        or abs(math.degrees(st_t.imu.gyr_z)) <= gyrz_max
-    )
-
-    if flags.gps_pos_fresh and flags.gps_motion_fresh:
-        return ControlMode.GPS_TRACKING_CLOSED if gyro_ok else ControlMode.GPS_TRACKING_OPEN
-
-    # DR safety guard #1: anchor가 너무 오래되면 DR을 신뢰하지 않는다.
-    dr_age = now - st_t.dr.anchor_time if isfinite(st_t.dr.anchor_time) else float("inf")
-    dr_too_old = dr_age > getattr(config, "DR_MAX_AGE_S", 45.0)
-
-    if flags.gps_pos_fresh and flags.gps_motion_stale and flags.dr_current_valid:
-        if dr_too_old:
-            return _fail("DR_TIMEOUT")
-        if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
-            return ControlMode.DR_M_GBA_CLOSED
-        if gyro_ok and flags.baro_sink_fresh:
-            return ControlMode.DR_M_GB_CLOSED
-        if gyro_ok and last_v_valid(st_t.dr):
-            return ControlMode.DR_M_G_CLOSED
-        if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
-            return ControlMode.DR_M_YBA_OPEN
-        if flags.imu_yaw_fresh and flags.baro_sink_fresh:
-            return ControlMode.DR_M_YB_OPEN
-        if flags.imu_yaw_fresh and last_v_valid(st_t.dr):
-            return ControlMode.DR_M_Y_OPEN
-
-    if flags.dr_current_valid:
-        if dr_too_old:
-            return _fail("DR_TIMEOUT")
-        if gyro_ok and flags.baro_sink_fresh and flags.acc_fresh:
-            return ControlMode.DR_PM_GBA_CLOSED
-        if gyro_ok and flags.baro_sink_fresh:
-            return ControlMode.DR_PM_GB_CLOSED
-        if gyro_ok and last_v_valid(st_t.dr):
-            return ControlMode.DR_PM_G_CLOSED
-        if flags.imu_yaw_fresh and flags.baro_sink_fresh and flags.acc_fresh:
-            return ControlMode.DR_PM_YBA_OPEN
-        if flags.imu_yaw_fresh and flags.baro_sink_fresh:
-            return ControlMode.DR_PM_YB_OPEN
-        if flags.imu_yaw_fresh and last_v_valid(st_t.dr):
-            return ControlMode.DR_PM_Y_OPEN
-
-    return _fail("NO_GUIDANCE_SOURCE")
-
-
 def DecideControlMode(gps=None, imu=None, baro=None, now: float | None = None) -> ControlMode:
     if now is None and isinstance(gps, (int, float)):
         now = float(gps)
@@ -677,10 +759,7 @@ def DecideControlMode(gps=None, imu=None, baro=None, now: float | None = None) -
     UpdateRaw(gps, imu, baro, now)
     flags = ComputeFreshFlags(now)
     FillNav(flags, now)
-    FillDRAnchor(flags, now)
-    mode = SelectControlMode(flags, now)
-    _STATE_t.nav.control_mode = mode
-    return mode
+    return _STATE_t.nav.control_mode
 
 
 def _estimate_course_for_mode(mode: ControlMode, now: float, dt: float):
@@ -979,24 +1058,13 @@ def ProduceL1Input(now: float) -> L1Input:
         return L1Input(valid=False, reason="NO_TARGET", control_mode=mode)
 
     if _is_gps_tracking_mode(mode):
-        if not (isfinite(st_t.nav.E) and isfinite(st_t.nav.N)
-                and isfinite(st_t.nav.V) and isfinite(st_t.nav.course)):
-            return L1Input(valid=False, reason="GPS_NAV_INVALID", control_mode=mode)
-        return _make_l1input_from_nav(mode, reason="GPS_NAV")
+        reason = "GPS_NAV"
+    elif _is_dr_mode(mode):
+        reason = mode.value
+    else:
+        return L1Input(valid=False, reason="UNKNOWN_MODE", control_mode=mode)
 
-    if _mode_value(mode).startswith("DR_M_"):
-        ok, reason = _fill_nav_for_dr_m_mode(mode, now)
-        if not ok:
-            return L1Input(valid=False, reason=reason, control_mode=mode)
-        return _make_l1input_from_nav(mode, reason=reason)
-
-    if _mode_value(mode).startswith("DR_PM_"):
-        ok, reason = _fill_nav_for_dr_pm_mode(mode, now)
-        if not ok:
-            return L1Input(valid=False, reason=reason, control_mode=mode)
-        return _make_l1input_from_nav(mode, reason=reason)
-
-    return L1Input(valid=False, reason="UNKNOWN_MODE", control_mode=mode)
+    return _make_l1input_from_nav(mode, reason=reason)
 
 
 # Per-mode yaw-rate limit (deg/s) keyed by ControlMode.value. Missing modes

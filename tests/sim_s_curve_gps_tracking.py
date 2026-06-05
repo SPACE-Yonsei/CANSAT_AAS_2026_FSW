@@ -20,7 +20,7 @@ and, for ~10 samples along the path, print 4 quantities:
                                    differential, post slew-rate limit)
 
 Each mode is forced by feeding the sensor-freshness pattern that
-guidance.SelectControlMode requires for it (GPS pos/motion, gyrz, yaw, baro
+guidance.DecideControlMode/FillNav requires for it (GPS pos/motion, gyrz, yaw, baro
 sink, lin-acc). The actually-selected mode is verified per step.
 
 Servo zero calibration (deg=0): right pulse = RIGHT_SERVO_ZERO_US (636 us),
@@ -101,7 +101,7 @@ TARGET_LAT, TARGET_LON = ne_to_latlon(TARGET_DIST_N_M, TARGET_DIST_E_M,
 
 # ── per-mode sensor-freshness recipe ─────────────────────────────────────────
 def _freshness_for(mode: ControlMode) -> dict:
-    """Which sensor channels must be fresh for SelectControlMode to pick `mode`.
+    """Which sensor channels must be fresh for FillNav to pick `mode`.
 
     Uses guidance's own mode-decoders so the recipe tracks the source code.
     """
