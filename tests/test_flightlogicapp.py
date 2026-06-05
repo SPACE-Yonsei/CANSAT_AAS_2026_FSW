@@ -32,7 +32,6 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.sim_active = False
         flightlogicapp._ascent_baseline_alt = None
         flightlogicapp._cal_done = False
-        flightlogicapp._cal_warned = False
         flightlogicapp.reset_release_predictor(flightlogicapp.release_predictor)
         prevstate.update_target_gps(37.56, 126.93)
 

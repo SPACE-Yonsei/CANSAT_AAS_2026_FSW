@@ -37,7 +37,6 @@ _ascent_baseline_alt: Optional[float] = None
 # (~300m)가 baseline 오염과 맞물려 조기 ASCENT/APOGEE 전이를 일으키던 문제 방지.
 # 수동 SS 명령(force)은 이 게이트를 우회한다.
 _cal_done: bool = False
-_cal_warned: bool = False
 
 # Solenoid lower bound: reject "sensor dead" 0 mm; slight slack under TF-Luna min valid (200 mm).
 SOLENOID_MIN_MM = 100.0
@@ -99,7 +98,7 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
-    global max_alt, solenoid_count, solenoid_done, _cal_done, _cal_warned, _ascent_baseline_alt
+    global max_alt, solenoid_count, solenoid_done, _cal_done, _ascent_baseline_alt
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     solenoid_count = 0
@@ -108,7 +107,6 @@ def to_launch_pad(main_queue, force: bool = False) -> None:
     reset_release_predictor(release_predictor)
     # 발사대 복귀(재무장) → 발사 전 CAL 재요구
     _cal_done = False
-    _cal_warned = False
     _ascent_baseline_alt = None
     _set_state(main_queue, 0, force=force)
 
@@ -493,15 +491,13 @@ def handle_target_coord(data: str, main_queue) -> None:
 
 
 def handle_reset_alt(_data: str, _main_queue) -> None:
-    global max_alt, recent_alt, _ascent_baseline_alt, _cal_done, _cal_warned
+    global max_alt, recent_alt, _ascent_baseline_alt, _cal_done
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     recent_alt = []
     _ascent_baseline_alt = None   # CAL 후 재샘플링 → 새 기준선 확립
     _cal_done = True              # CAL 완료 → ASCENT 자동 전이 허용
-    _cal_warned = False
     reset_release_predictor(release_predictor)
-    logger.info("CAL received: ascent launch detection armed")
 
 
 
@@ -547,12 +543,9 @@ def barometer_logic(main_queue, alt: float) -> None:
         prevstate.update_maxalt(max_alt)
 
     if state == 0:
-        global _ascent_baseline_alt, _cal_warned
+        global _ascent_baseline_alt
         if not _cal_done:
             # CAL 전: ASCENT 전이 잠금. baseline도 확정하지 않아 워밍업 오염을 피한다.
-            if not _cal_warned:
-                logger.info("ASCENT locked: awaiting CAL before launch detection")
-                _cal_warned = True
             return
         if _ascent_baseline_alt is None:
             _ascent_baseline_alt = alt   # CAL 후 첫 (보정된) 샘플을 기준선으로
