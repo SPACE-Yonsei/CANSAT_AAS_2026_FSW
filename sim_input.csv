@@ -1,0 +1,11 @@
+cycle,gps_pos,gps_motion,yaw,gyrz,baro,acc,payload_E,payload_N,course_deg,speed_mps,yaw_deg,gyrz_dps,baro_sink
+1,on,on,on,on,on,on,0,0,0,4,0,0,2
+2,on,on,on,on,on,on,0,0,0,4,0,0,2
+3,on,off,on,on,on,on,0,0,0,4,0,0,2
+4,on,off,on,on,on,on,0,0,0,4,0,0,2
+5,on,off,on,on,on,on,0,0,0,4,0,0,2
+6,off,off,on,on,on,on,0,0,0,4,0,0,2
+7,off,off,on,on,on,on,0,0,0,4,0,0,2
+8,off,off,on,on,on,on,0,0,0,4,0,0,2
+9,off,off,on,on,on,on,0,0,0,4,0,0,2
+10,off,off,on,on,on,on,0,0,0,4,0,0,2
