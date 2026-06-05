@@ -687,7 +687,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{tlm_data.voltage:.3f},{tlm_data.current:.2f},"                                       # current 0.01A res
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
         f"{tlm_data.acc_x:.3f},{tlm_data.acc_y:.3f},{tlm_data.acc_z:.3f},"
-        f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.4f},{-tlm_data.gps_lon:.4f},{tlm_data.gps_sats},"
+        f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.4f},{tlm_data.gps_lon:.4f},{tlm_data.gps_sats},"
         f"{tlm_data.cmd_echo},,"
         # ── Optional fields (after blank field ,, per spec) ───────────────────
         f"{tlm_data.power:.3f},"

@@ -36,11 +36,23 @@ class TestCurrentGpsAppFidelity(unittest.TestCase):
             )
         )
 
-    def test_position_fidelity_rejects_unexpected_longitude(self):
+    def test_position_fidelity_accepts_valid_us_west_longitude(self):
+        self.assertTrue(
+            gpsapp._eval_pos_fidelity(
+                lat=38.8977,
+                lon=-77.0365,
+                hdop=1.0,
+                sats=8,
+                fix_quality=1,
+                now=100.0,
+            )
+        )
+
+    def test_position_fidelity_rejects_out_of_range_longitude(self):
         self.assertFalse(
             gpsapp._eval_pos_fidelity(
-                lat=37.56,
-                lon=50.0,
+                lat=38.8977,
+                lon=-181.0,
                 hdop=1.0,
                 sats=8,
                 fix_quality=1,
