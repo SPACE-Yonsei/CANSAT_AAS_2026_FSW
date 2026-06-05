@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import threading
 import time
 from typing import Optional
@@ -49,9 +50,9 @@ class TelemetryData:
     gyro_roll: float = 0.0
     gyro_pitch: float = 0.0
     gyro_yaw: float = 0.0
-    acc_x: float = 0.0
-    acc_y: float = 0.0
-    acc_z: float = 0.0
+    acc_roll: float = 0.0
+    acc_pitch: float = 0.0
+    acc_yaw: float = 0.0
     mag_roll: float = 0.0
     mag_pitch: float = 0.0
     mag_yaw: float = 0.0
@@ -121,9 +122,42 @@ def set_timedelta(timestr: str) -> bool:
     global ST_timedelta
 
     if timestr.upper() == "GPS":
-        ST_timedelta = timedelta(seconds=0)
-        prevstate.update_st_timedelta(0.0)
-        return True
+        # GPS 시간 수신: tlm_data.gps_time (HH:MM:SS 형식, UTC)
+        gps_time_str = tlm_data.gps_time.strip()
+        
+        if not gps_time_str or gps_time_str == "00:00:00":
+            logger.warning("ST,GPS: GPS 시간 없음 (GPS 신호 미수신 또는 미동기)")
+            return False
+        
+        try:
+            # GPS 시간 파싱 (HH:MM:SS, UTC)
+            gps_time_obj = datetime.strptime(gps_time_str, "%H:%M:%S")
+            today = datetime.now().date()
+            gps_datetime = datetime.combine(today, gps_time_obj.time())
+            
+            # 시스템 시간을 UTC 기반 GPS 시간으로 설정
+            # subprocess를 사용해서 실제 시스템 시간 업데이트 (Raspberry Pi: date 명령어)
+            time_str = gps_datetime.strftime("%H:%M:%S")
+            try:
+                # Linux에서는 date 명령어로 시간 설정 (root 권한 필요)
+                subprocess.run(
+                    ["sudo", "date", "-s", time_str],
+                    check=False,
+                    capture_output=True,
+                    timeout=5
+                )
+                logger.info(f"ST,GPS: 시스템 시간 설정 → {time_str} (GPS UTC)")
+            except Exception as e:
+                logger.warning(f"ST,GPS: 시스템 시간 설정 실패 (sudo 권한?): {e}")
+            
+            # ST_timedelta 리셋 (GPS가 시스템 시간의 기준이 됨)
+            ST_timedelta = timedelta(seconds=0)
+            prevstate.update_st_timedelta(0.0)
+            return True
+        
+        except ValueError as e:
+            logger.error(f"ST,GPS: GPS 시간 파싱 실패 ({gps_time_str}): {e}")
+            return False
 
     try:
         target = datetime.strptime(timestr, "%H:%M:%S")
@@ -536,9 +570,9 @@ def command_handler(recv_msg: str) -> None:
             tlm_data.filtered_roll = float(fields[0])
             tlm_data.filtered_pitch = float(fields[1])
             tlm_data.filtered_yaw = float(fields[2])
-            tlm_data.acc_x = float(fields[3])
-            tlm_data.acc_y = float(fields[4])
-            tlm_data.acc_z = float(fields[5])
+            tlm_data.acc_roll = float(fields[3])
+            tlm_data.acc_pitch = float(fields[4])
+            tlm_data.acc_yaw = float(fields[5])
             tlm_data.mag_roll = float(fields[6])
             tlm_data.mag_pitch = float(fields[7])
             tlm_data.mag_yaw = float(fields[8])
@@ -686,7 +720,7 @@ def _send_one_tlm_frame(serial_instance) -> None:
         f"{tlm_data.altitude:.2f},{tlm_data.temperature:.2f},{tlm_data.pressure / 10.0:.1f},"  # pressure hPa→kPa
         f"{tlm_data.voltage:.3f},{tlm_data.current:.2f},"                                       # current 0.01A res
         f"{tlm_data.gyro_roll:.3f},{tlm_data.gyro_pitch:.3f},{tlm_data.gyro_yaw:.3f},"
-        f"{tlm_data.acc_x:.3f},{tlm_data.acc_y:.3f},{tlm_data.acc_z:.3f},"
+        f"{tlm_data.acc_roll:.3f},{tlm_data.acc_pitch:.3f},{tlm_data.acc_yaw:.3f},"
         f"{tlm_data.gps_time},{tlm_data.gps_alt:.2f},{tlm_data.gps_lat:.4f},{tlm_data.gps_lon:.4f},{tlm_data.gps_sats},"
         f"{tlm_data.cmd_echo},,"
         # ── Optional fields (after blank field ,, per spec) ───────────────────

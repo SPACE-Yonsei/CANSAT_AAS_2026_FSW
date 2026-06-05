@@ -3,7 +3,7 @@
     "decoder": 0,
     "frameDetection": 0,
     "frameEnd": "\r",
-    "frameParser": "// Lost-packet tracker (closure, persists across frames)\nvar _prevPktCount = -1;\nvar _lostCount = 0;\n\nfunction parse(frame) {\n    try {\n        if (typeof frame !== 'string') return [];\n        frame = frame.replace(/[\\r\\n]+$/, '');\n        if (frame.length > 0 && frame.charAt(0) === '$') {\n            frame = frame.substring(1);\n        }\n        var result = frame.split(',');\n        for (var i = 0; i < result.length; i++) {\n            result[i] = String(result[i] || '').trim();\n        }\n        // PACKET_COUNT is field index 2 (0-based after $ strip)\n        // Calculate lost = gaps in PACKET_COUNT sequence\n        try {\n            var cur = parseInt(result[2], 10);\n            if (!isNaN(cur)) {\n                if (_prevPktCount < 0 || cur <= _prevPktCount) {\n                    // 최초 수신 또는 CAL 리셋 감지\n                    _lostCount = 0;\n                } else if (cur > _prevPktCount + 1) {\n                    _lostCount += cur - _prevPktCount - 1;\n                }\n                _prevPktCount = cur;\n            }\n        } catch(e) {}\n        result.push(String(_lostCount));\n        return result;\n    } catch (e) {\n        return [];\n    }\n}\n",
+    "frameParser": "// Lost-packet tracker (closure, persists across frames)\nvar _prevPktCount = -1;\nvar _lostCount = 0;\nvar _rxCount = 0;\n\nfunction parse(frame) {\n    try {\n        if (typeof frame !== 'string') return [];\n        frame = frame.replace(/[\\r\\n]+$/, '');\n        if (frame.length > 0 && frame.charAt(0) === '$') {\n            frame = frame.substring(1);\n        }\n        var result = frame.split(',');\n        for (var i = 0; i < result.length; i++) {\n            result[i] = String(result[i] || '').trim();\n        }\n        // PACKET_COUNT is field index 2 (0-based after $ strip)\n        // Calculate lost = gaps in PACKET_COUNT sequence\n        try {\n            var cur = parseInt(result[2], 10);\n            if (!isNaN(cur)) {\n                if (_prevPktCount < 0 || cur <= _prevPktCount) {\n                    // 최초 수신 또는 CAL 리셋 감지\n                    _lostCount = 0;\n                    _rxCount = 0;\n                } else if (cur > _prevPktCount + 1) {\n                    _lostCount += cur - _prevPktCount - 1;\n                }\n                _prevPktCount = cur;\n                _rxCount += 1;\n            }\n        } catch(e) {}\n        result.push(String(_lostCount));\n        result.push(String(_rxCount));\n        return result;\n    } catch (e) {\n        return [];\n    }\n}\n",
     "frameStart": "",
     "groups": [
         {
@@ -23,7 +23,7 @@
                     "title": "Accelerometer X",
                     "units": "m/s^2",
                     "value": "--.--",
-                    "widget": "x"
+                    "widget": ""
                 },
                 {
                     "alarm": 0,
@@ -40,7 +40,7 @@
                     "title": "Accelerometer Y",
                     "units": "m/s^2",
                     "value": "--.--",
-                    "widget": "y"
+                    "widget": ""
                 },
                 {
                     "alarm": 0,
@@ -57,11 +57,11 @@
                     "title": "Accelerometer Z",
                     "units": "m/s^2",
                     "value": "--.--",
-                    "widget": "z"
+                    "widget": ""
                 }
             ],
             "title": "Accelerometer",
-            "widget": "accelerometer"
+            "widget": "datagrid"
         },
         {
             "datasets": [
@@ -80,7 +80,7 @@
                     "title": "Gyro roll",
                     "units": "deg/s",
                     "value": "--.--",
-                    "widget": "x"
+                    "widget": ""
                 },
                 {
                     "alarm": 0,
@@ -97,7 +97,7 @@
                     "title": "Gyro pitch",
                     "units": "deg/s",
                     "value": "--.--",
-                    "widget": "y"
+                    "widget": ""
                 },
                 {
                     "alarm": 0,
@@ -114,11 +114,11 @@
                     "title": "Gyro yaw",
                     "units": "deg/s",
                     "value": "--.--",
-                    "widget": "z"
+                    "widget": ""
                 }
             ],
             "title": "Gyroscope",
-            "widget": "gyro"
+            "widget": "datagrid"
         },
         {
             "datasets": [
@@ -328,6 +328,23 @@
                     "max": 0,
                     "min": 0,
                     "title": "Lost Packets",
+                    "units": "",
+                    "value": "0",
+                    "widget": ""
+                },
+                {
+                    "alarm": 0,
+                    "fft": false,
+                    "fftSamples": 256,
+                    "fftSamplingRate": 100,
+                    "graph": false,
+                    "index": 48,
+                    "led": false,
+                    "ledHigh": 1,
+                    "log": false,
+                    "max": 0,
+                    "min": 0,
+                    "title": "Received Packets",
                     "units": "",
                     "value": "0",
                     "widget": ""
