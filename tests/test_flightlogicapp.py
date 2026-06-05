@@ -30,6 +30,9 @@ class TestFlightLogicApp(unittest.TestCase):
         flightlogicapp.solenoid_done = False
         flightlogicapp.sim_enable = False
         flightlogicapp.sim_active = False
+        flightlogicapp._ascent_baseline_alt = None
+        flightlogicapp._cal_done = False
+        flightlogicapp._cal_warned = False
         flightlogicapp.reset_release_predictor(flightlogicapp.release_predictor)
         prevstate.update_target_gps(37.56, 126.93)
 
@@ -38,10 +41,29 @@ class TestFlightLogicApp(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_launchpad_to_ascent(self):
+        # ASCENT 자동 전이는 CAL(=handle_reset_alt) 이후에만 허용된다.
         q = queue.Queue()
+        flightlogicapp.handle_reset_alt("RESET", q)   # CAL 수행 → ASCENT 무장
+        flightlogicapp.barometer_logic(q, 100.0)       # 첫 (보정된) 샘플 → baseline=100
+        flightlogicapp.barometer_logic(q, 210.0)       # risen=110 (>100)
+        flightlogicapp.barometer_logic(q, 220.0)
+        flightlogicapp.barometer_logic(q, 230.0)
+        self.assertEqual(flightlogicapp.state, 1)
+
+    def test_ascent_locked_until_cal(self):
+        # CAL 전에는 +100m 이상 상승해도 state 0에 머문다 (고지대 오탐 방지).
+        q = queue.Queue()
+        flightlogicapp.barometer_logic(q, 100.0)
         flightlogicapp.barometer_logic(q, 210.0)
         flightlogicapp.barometer_logic(q, 220.0)
         flightlogicapp.barometer_logic(q, 230.0)
+        self.assertEqual(flightlogicapp.state, 0)
+        # CAL 후에는 baseline이 재확정되고 ASCENT가 정상 동작한다.
+        flightlogicapp.handle_reset_alt("RESET", q)
+        flightlogicapp.barometer_logic(q, 230.0)       # baseline=230
+        flightlogicapp.barometer_logic(q, 340.0)       # risen=110
+        flightlogicapp.barometer_logic(q, 345.0)
+        flightlogicapp.barometer_logic(q, 350.0)
         self.assertEqual(flightlogicapp.state, 1)
 
     def test_max_alt_persisted_to_prevstate(self):

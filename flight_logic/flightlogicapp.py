@@ -27,10 +27,17 @@ distance_health = 0
 sim_enable = False
 sim_active = False
 
-# 발사 감지 기준선: 부팅/CAL 직후 첫 고도값을 저장해
-# abs 30m가 아닌 "기준선 대비 +30m" 상승을 ASCENT 조건으로 사용.
+# 발사 감지 기준선: CAL 직후 첫 (보정된) 고도값을 저장해
+# abs 30m가 아닌 "기준선 대비 +100m" 상승을 ASCENT 조건으로 사용.
 # CAL 후 고도가 ~0m로 리셋되면 None으로 초기화 → 재샘플링.
 _ascent_baseline_alt: Optional[float] = None
+
+# 발사 전 CAL 강제 게이트: CAL 명령(MID_flight_alt_reset)을 받기 전에는
+# state 0→1(ASCENT) 자동 전이를 잠근다. 고지대 발사장에서 미보정 raw 해발고도
+# (~300m)가 baseline 오염과 맞물려 조기 ASCENT/APOGEE 전이를 일으키던 문제 방지.
+# 수동 SS 명령(force)은 이 게이트를 우회한다.
+_cal_done: bool = False
+_cal_warned: bool = False
 
 # Solenoid lower bound: reject "sensor dead" 0 mm; slight slack under TF-Luna min valid (200 mm).
 SOLENOID_MIN_MM = 100.0
@@ -92,13 +99,17 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
-    global max_alt, solenoid_count, solenoid_done
+    global max_alt, solenoid_count, solenoid_done, _cal_done, _cal_warned, _ascent_baseline_alt
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     solenoid_count = 0
     solenoid_done = False
     prevstate.update_solenoid_state(solenoid_count, solenoid_done)
     reset_release_predictor(release_predictor)
+    # 발사대 복귀(재무장) → 발사 전 CAL 재요구
+    _cal_done = False
+    _cal_warned = False
+    _ascent_baseline_alt = None
     _set_state(main_queue, 0, force=force)
 
 
@@ -482,12 +493,15 @@ def handle_target_coord(data: str, main_queue) -> None:
 
 
 def handle_reset_alt(_data: str, _main_queue) -> None:
-    global max_alt, recent_alt, _ascent_baseline_alt
+    global max_alt, recent_alt, _ascent_baseline_alt, _cal_done, _cal_warned
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
     recent_alt = []
     _ascent_baseline_alt = None   # CAL 후 재샘플링 → 새 기준선 확립
+    _cal_done = True              # CAL 완료 → ASCENT 자동 전이 허용
+    _cal_warned = False
     reset_release_predictor(release_predictor)
+    logger.info("CAL received: ascent launch detection armed")
 
 
 
@@ -533,9 +547,15 @@ def barometer_logic(main_queue, alt: float) -> None:
         prevstate.update_maxalt(max_alt)
 
     if state == 0:
-        global _ascent_baseline_alt
+        global _ascent_baseline_alt, _cal_warned
+        if not _cal_done:
+            # CAL 전: ASCENT 전이 잠금. baseline도 확정하지 않아 워밍업 오염을 피한다.
+            if not _cal_warned:
+                logger.info("ASCENT locked: awaiting CAL before launch detection")
+                _cal_warned = True
+            return
         if _ascent_baseline_alt is None:
-            _ascent_baseline_alt = alt   # 부팅/CAL 후 첫 샘플을 기준선으로
+            _ascent_baseline_alt = alt   # CAL 후 첫 (보정된) 샘플을 기준선으로
         risen = alt - _ascent_baseline_alt
         cnt_ascent = cnt_ascent + 1 if risen > 100 else 0
         if cnt_ascent >= 3:
@@ -629,11 +649,14 @@ def send_current_state_thread(main_queue) -> None:
 
 
 def init() -> None:
-    global state, max_alt, solenoid_count, solenoid_done
+    global state, max_alt, solenoid_count, solenoid_done, _cal_done
     prevstate.init_prevstate()
     state = prevstate.PREV_STATE
     max_alt = prevstate.PREV_MAX_ALT
     solenoid_count, solenoid_done = prevstate.get_solenoid_state()
+    # 지상(state 0) 부팅이면 CAL 전까지 ASCENT 잠금. 비행 중 재부팅(state>0)이면
+    # barometerapp이 PREV_ALT_CAL을 복원하므로 이미 보정된 것으로 간주.
+    _cal_done = state > 0
 
 
 def flightlogicapp_main(main_queue, main_pipe) -> None:
