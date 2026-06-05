@@ -66,7 +66,7 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
     elif unpacked.msg_id == appargs.CommAppArg.MID_RouteCmd_CAL:
         # Comm forwards either "<value>" (single token) or "CAL,<value>" (legacy).
         # Accept both: first numeric token is treated as additive offset delta.
-        # If no numeric token is present, snap altitude origin to current ALTITUDE.
+        # If no numeric token is present, snap current altitude to zero.
         parts = [x.strip() for x in (unpacked.data or "").split(",") if x.strip()]
         delta: Optional[float] = None
         for token in parts:
@@ -78,7 +78,9 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
         if delta is not None:
             BAROMETER_OFFSET += delta
         else:
-            BAROMETER_OFFSET = ALTITUDE
+            # ALTITUDE is already relative (raw - offset); accumulate so repeated
+            # CAL keeps snapping current altitude to 0 instead of un-calibrating.
+            BAROMETER_OFFSET += ALTITUDE
         prevstate.update_altcal(BAROMETER_OFFSET)
         msgstructure.send_msg(
             main_queue,
