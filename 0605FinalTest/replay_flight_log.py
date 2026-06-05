@@ -14,13 +14,14 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+ARTIFACT_DIR = Path(__file__).resolve().parent
 
 from Sensor_Motor import control, guidance, motorapp
 from lib import config
 
 
 DEFAULT_RAW_MOTOR = ROOT / "motorlogs" / "motor_control_20260604_161105.csv"
-DEFAULT_OUT = ROOT / "replay_control_output.csv"
+DEFAULT_OUT = ARTIFACT_DIR / "replay_control_output.csv"
 DEFAULT_TARGET_OFFSET_N_M = 30.0
 DEFAULT_TARGET_OFFSET_E_M = 0.0
 ALLOWED_FAIL_REASONS = {

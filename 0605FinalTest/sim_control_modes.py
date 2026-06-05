@@ -13,6 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+ARTIFACT_DIR = Path(__file__).resolve().parent
 
 from lib import config
 from Sensor_Motor import control, guidance
@@ -335,7 +336,7 @@ def summarize(rows: list[dict[str, object]]) -> dict[str, Counter]:
 def main() -> int:
     apply_tuned_config()
     rows = run_all_cases(NOW)
-    csv_path = ROOT / "control_mode_matrix.csv"
+    csv_path = ARTIFACT_DIR / "control_mode_matrix.csv"
     write_csv(rows, csv_path)
     summary = summarize(rows)
     mode_counts = summary["modes"]

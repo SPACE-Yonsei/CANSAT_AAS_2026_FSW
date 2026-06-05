@@ -24,7 +24,7 @@ and `Sensor_Motor.motorapp` modules directly.
 Tool:
 
 ```bash
-python tools/replay_flight_log.py --output replay_control_output.csv
+python 0605FinalTest/replay_flight_log.py
 ```
 
 Default replay input:
@@ -52,7 +52,7 @@ Current default replay summary:
 Tool:
 
 ```bash
-python tools/sim_closed_loop_yaw_rate.py --output closed_loop_yaw_rate_results.csv
+python 0605FinalTest/sim_closed_loop_yaw_rate.py
 ```
 
 Plant:
@@ -118,5 +118,5 @@ Go for flight only after bench/HIL also confirms:
 4. Replay a longer real drop log containing synchronized GPS, IMU, barometer,
    and motor cycles.
 5. Identify `K` and `tau` from bench yaw-rate response, then rerun
-   `tools/sim_closed_loop_yaw_rate.py`.
+   `0605FinalTest/sim_closed_loop_yaw_rate.py`.
 6. Retune PID/FF only after the measured plant envelope is known.

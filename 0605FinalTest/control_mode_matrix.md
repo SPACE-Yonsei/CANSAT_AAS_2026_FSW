@@ -5,13 +5,14 @@
 From the repository root:
 
 ```bash
-python tools/sim_control_modes.py
-pytest -q tests/test_control_mode_matrix.py
-pytest -q tests/test_motorapp_integration.py
+python 0605FinalTest/sim_control_modes.py
+pytest -q 0605FinalTest/test_control_mode_matrix.py
+pytest -q 0605FinalTest/test_motorapp_integration.py
 ```
 
-`tools/sim_control_modes.py` writes `control_mode_matrix.csv` in the repository
-root and prints mode counts, unreachable modes, and FAIL reason counts.
+`0605FinalTest/sim_control_modes.py` writes
+`0605FinalTest/control_mode_matrix.csv` and prints mode counts, unreachable
+modes, and FAIL reason counts.
 
 ## CSV columns
 

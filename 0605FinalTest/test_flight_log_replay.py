@@ -2,7 +2,7 @@ import math
 from collections import Counter
 
 from Sensor_Motor import control
-from tools import replay_flight_log
+import replay_flight_log
 
 
 RAW_MOTOR_LOG = replay_flight_log.ROOT / "motorlogs" / "motor_control_20260604_161105.csv"

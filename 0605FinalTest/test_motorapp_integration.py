@@ -1,6 +1,6 @@
 import math
 
-from tools import sim_control_modes as sim
+import sim_control_modes as sim
 
 
 class FakePi:

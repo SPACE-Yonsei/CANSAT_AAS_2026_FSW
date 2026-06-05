@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from tools import sim_control_modes as sim
+import sim_control_modes as sim
 
 
 @pytest.fixture(scope="module")

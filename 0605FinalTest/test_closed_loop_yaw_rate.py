@@ -1,6 +1,6 @@
 from collections import Counter
 
-from tools import sim_closed_loop_yaw_rate as sim
+import sim_closed_loop_yaw_rate as sim
 
 
 def test_closed_loop_yaw_rate_acceptance(tmp_path):

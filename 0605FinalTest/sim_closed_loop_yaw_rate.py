@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+ARTIFACT_DIR = Path(__file__).resolve().parent
 
 from Sensor_Motor import control
 from Sensor_Motor.guidance import ControlMode
@@ -27,7 +28,7 @@ MODE_CASES = [
 ]
 DT = 0.05
 DURATION = 10.0
-DEFAULT_OUT = ROOT / "closed_loop_yaw_rate_results.csv"
+DEFAULT_OUT = ARTIFACT_DIR / "closed_loop_yaw_rate_results.csv"
 
 FIELDNAMES = [
     "mode",
