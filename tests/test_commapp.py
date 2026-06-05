@@ -194,11 +194,32 @@ class TestCommApp(unittest.TestCase):
         self.assertEqual(commapp.tlm_data.mode, "F")
 
     def test_tlm_multiline_for_console(self):
-        line = "$1070," + ",".join(str(i) for i in range(29)) + "\n"
+        fields = [
+            "$1070", "21:41:21", "307", "F", "LAUNCH_PAD",
+            "322.65", "29.77", "97.5",
+            "6.882", "0.42",
+            "0.000", "-0.000", "-0.000",
+            "-2.262", "1.074", "9.422",
+            "12:41:18", "0.00", "0.0000", "-0.0000", "0",
+            "CMD", "", "2.879",
+            "21.113", "-4.450", "-68.200",
+            "0.0", "6.613", "13.423", "42.000",
+            "37.111111", "127.111111",
+            "37.222222", "127.222222",
+            "37.333333", "127.333333",
+            "123.45", "1500", "1500", "GUIDE", "1", "0", "1", "0", "543.2",
+        ]
+        line = ",".join(fields) + "\n"
         pretty = commapp._tlm_multiline_for_console(line)
         self.assertIn("\n", pretty)
-        self.assertIn("meta", pretty)
-        self.assertIn("gps", pretty)
+        self.assertIn("  baro   : 322.65,29.77,97.5", pretty)
+        self.assertIn("  power  : 6.882,0.42,2.879", pretty)
+        self.assertIn("  gyro   : 0.000,-0.000,-0.000", pretty)
+        self.assertIn("  acc    : -2.262,1.074,9.422", pretty)
+        self.assertIn("  gps    : 12:41:18,0.00,0.0000,-0.0000,0", pretty)
+        self.assertIn("  mag    : 21.113,-4.450,-68.200", pretty)
+        self.assertIn("  extra  : CMD,0.0,6.613,13.423,42.000", pretty)
+        self.assertIn("  guide  : 37.111111,127.111111,37.222222,127.222222", pretty)
 
     def test_command_handler_drops_malformed_numeric_payload(self):
         msg = msgstructure.fill_msg(

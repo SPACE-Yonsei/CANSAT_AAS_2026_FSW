@@ -599,15 +599,18 @@ def _tlm_multiline_for_console(line: str) -> str:
     """Pretty multi-line TLM for local logs only (radio line stays one CSV row)."""
     parts = line.rstrip("\n\r").split(",")
     if len(parts) >= 30:
-        hdr = ",".join(parts[0:5])
-        baro = ",".join(parts[5:8])
-        elec = ",".join(parts[8:11])
-        gyro = ",".join(parts[11:14])
-        acc = ",".join(parts[14:17])
-        mag = ",".join(parts[17:20])
-        gps = ",".join(parts[20:25])
-        extra = ",".join(parts[25:30])
-        return (
+        def field(index: int) -> str:
+            return parts[index] if index < len(parts) else ""
+
+        hdr = ",".join(field(i) for i in range(0, 5))
+        baro = ",".join(field(i) for i in range(5, 8))
+        elec = ",".join((field(8), field(9), field(23)))
+        gyro = ",".join(field(i) for i in range(10, 13))
+        acc = ",".join(field(i) for i in range(13, 16))
+        gps = ",".join(field(i) for i in range(16, 21))
+        mag = ",".join(field(i) for i in range(24, 27))
+        extra = ",".join((field(21), field(27), field(28), field(29), field(30)))
+        text = (
             "TLM\n"
             f"  meta   : {hdr}\n"
             f"  baro   : {baro}\n"
@@ -618,6 +621,10 @@ def _tlm_multiline_for_console(line: str) -> str:
             f"  gps    : {gps}\n"
             f"  extra  : {extra}"
         )
+        guide = ",".join(field(i) for i in range(31, 46))
+        if any(field(i) for i in range(31, 46)):
+            text += f"\n  guide  : {guide}"
+        return text
     # Unusual field count (e.g. cmd_echo with comma): wrap every 5 fields
     lines = []
     for i in range(0, len(parts), 5):
