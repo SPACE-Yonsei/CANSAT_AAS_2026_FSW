@@ -1190,7 +1190,13 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
         sin_nu_eff = math.sin(nu_clamped)
 
     _v_max = config.V_MAX_DR_MPS if _is_dr_mode(l1in.control_mode) else config.V_MAX_MPS
-    V_eff = _clamp(l1in.V, config.V_MIN_MPS, _v_max)
+    # 조향식 전용 속도 하한: 2V/L·sinν는 V에 비례하므로, DR 속도 추정이 V_MIN으로
+    # 붕괴하면(baro sink≈0) nu가 커도 명령이 0에 수렴한다. 검증 게이트/DR 위치
+    # 적분과 분리된 하한으로 저속에서도 실제 선회 권한을 유지한다(L1_STEER_V_FLOOR_MPS).
+    _v_floor = max(config.V_MIN_MPS,
+                   getattr(config, "L1_STEER_V_FLOOR_MPS", config.V_MIN_MPS))
+    _v_floor = min(_v_floor, _v_max)
+    V_eff = _clamp(l1in.V, _v_floor, _v_max)
     yaw_rate_cmd_pre_conf = 2.0 * V_eff / config.L_GAIN_M * sin_nu_eff
     yaw_rate_cmd = yaw_rate_cmd_pre_conf * conf  # confidence scaling: 1.0 for GPS, dr.confidence for DR
     # lim은 함수 진입부에서 mode 기준으로 이미 채워졌다(output_t.yaw_rate_limit).

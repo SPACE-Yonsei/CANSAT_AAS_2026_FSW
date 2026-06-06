@@ -65,7 +65,9 @@ def test_dr_mode_yaw_rate_uses_confidence_scaling():
     checked = False
     for row in rows:
         if row["l1out_valid"] and abs(row["nu_est_deg"]) > trace.config.NU_DEADBAND_DEG:
-            v_eff = min(max(row["nav_V"], trace.config.V_MIN_MPS), trace.config.V_MAX_DR_MPS)
+            _v_floor = max(trace.config.V_MIN_MPS,
+                           getattr(trace.config, "L1_STEER_V_FLOOR_MPS", trace.config.V_MIN_MPS))
+            v_eff = min(max(row["nav_V"], _v_floor), trace.config.V_MAX_DR_MPS)
             nu_eff = max(-math.pi / 2.0, min(math.pi / 2.0, math.radians(row["nu_est_deg"])))
             unscaled = 2.0 * v_eff / trace.config.L_GAIN_M * math.sin(nu_eff)
             scaled = unscaled * row["dr_confidence"]

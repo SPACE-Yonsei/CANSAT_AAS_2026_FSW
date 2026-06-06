@@ -286,7 +286,11 @@ def handle_imu(data: str) -> None:
         imu = _ImuFromApp(
             roll_rad=math.radians(roll_deg),
             pitch_rad=math.radians(pitch_deg),
-            yaw_rad=math.radians(yaw_deg),
+            # IMU yaw(BNO)는 Z-up CCW+; 반전 → nav heading CW+(우회전+)로 gz·GPS
+            # course(NE CW+)와 동일 규약. guidance는 yaw를 NE heading=course로 쓰므로
+            # (DR yaw-course / bootstrap course / acc 투영), 반전해야 GPS와 같은 nu
+            # 부호로 조향한다. (gz만 반전하고 yaw를 안 하면 DR yaw 경로가 역조향)
+            yaw_rad=math.radians(-yaw_deg),
             accx_mps2=accx_mps2,
             accy_mps2=accy_mps2,
             accz_mps2=accz_mps2,

@@ -108,16 +108,25 @@ MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
 # L_GAIN_M=12: 자유낙하 로그 V≈-7 m/s 기준 응답 시정수 L/(2V) ≈ 0.7-1s.
 # 목표 반경 5m 진입 시 응답을 강화.
 # 로그 기반 재튜닝 후보: 15~18 m (현재 12는 응답이 다소 공격적일 수 있음, 비행 로그로 확정)
-L_GAIN_M     = 12.0
+L_GAIN_M     = 8.0    # 20260606: 12→8 (감도 상향). nu 응답 시정수 L/(2V)를 단축해 같은 nu에서 yaw_rate_cmd ↑.
 V_MIN_MPS    = 0.5
 V_MAX_MPS    = 15.0
 # 20260531: baro_sink 초기 5.04→3.0 캡으로 L1 출력 약화. 7.0으로 확대했으나
 # baro sink spike/EMA 필터 도입(아래 DR_BARO_SINK_* 참고)에 맞춰 보수적으로 6.5 시작.
 V_MAX_DR_MPS = 6.5
 
+# L1 조향식 yaw_rate_cmd = 2·V/L·sin(nu)는 V에 비례한다. DR 속도 추정이
+# baro sink≈0(벤치/완만한 강하)에서 V_MIN(0.5)으로 붕괴하면 nu가 커도 명령이
+# 사실상 0이 된다(로그 run_20260606_171741: DR med|nu|=66°인데 med|cmd|=2.8dps).
+# 조향식에만 적용하는 속도 하한 — 검증 게이트(nav.V≥V_MIN)와 DR 위치 적분에는
+# 미적용 — 으로 저속 추정에서도 실제 선회를 명령한다.
+# 0.5=기존 동작(무효과), 권장 4.0, 보수적 3.0, 공격적 5~6. 실비행 V≈6~8에선 거의 안 묶임.
+L1_STEER_V_FLOOR_MPS = 4.0
+
 # nu deadband: 작은 각도 오차에서는 yaw_rate_cmd=0 및 모터 중립 유지.
 # 미세 진동 방지. |nu| < NU_DEADBAND_DEG이면 움직임 없음.
-NU_DEADBAND_DEG = 5.0
+# 20260606: 5→3 (감도 상향). GPS_CLOSED nu가 대부분 <5°라 조향 FF가 83% 죽던 문제 완화.
+NU_DEADBAND_DEG = 3.0
 
 # Sensor freshness thresholds
 GPS_FRESH_MAX_AGE_S         = 5.0

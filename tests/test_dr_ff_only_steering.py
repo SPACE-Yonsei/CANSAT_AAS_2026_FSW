@@ -169,6 +169,26 @@ class TestGyrzSignConvention(unittest.TestCase):
         self.assertIsNotNone(gz)
         self.assertAlmostEqual(gz, math.radians(-10.0), places=6)
 
+    def test_handle_imu_yaw_matches_gyrz_rotation_sense(self):
+        """yaw도 gz와 같은 nav 회전 규약(우회전 +)이어야 DR yaw-course가
+        gyro-course/GPS와 같은 nu 부호로 조향한다.
+
+        BNO는 Z-up CCW+: 물리적 우회전(CW)이면 raw yaw 감소 + raw gz 음수.
+        nav 변환 후엔 둘 다 '우회전 = +'여야 한다 (gz>0, yaw 증가).
+        수정 전엔 yaw_rad=+yaw_deg라 우회전 시 yaw가 감소 → DR yaw-course 역조향.
+        """
+        try:
+            from Sensor_Motor import motorapp
+        except Exception as exc:  # pragma: no cover - 환경 의존
+            self.skipTest(f"motorapp import 불가: {exc}")
+        # roll,pitch,yaw,ax,ay,az,gyrx,gyry,gyrz,health,sample_ts,yaw_offset
+        motorapp.handle_imu("0,0,20,0,0,9.81,0,0,-25,1,1000.0,0")
+        yaw_a = motorapp._CACHE_t.latest_imu.yaw_rad
+        motorapp.handle_imu("0,0,15,0,0,9.81,0,0,-25,1,1000.1,0")  # 우회전: raw yaw 20→15
+        snap = motorapp._CACHE_t.latest_imu
+        self.assertGreater(snap.gyrz_rad_s, 0.0)        # 우회전 → nav gz > 0
+        self.assertGreater(snap.yaw_rad, yaw_a)         # 우회전 → nav yaw 증가(동일 방향)
+
 
 class TestMotorLogSchemaParity(unittest.TestCase):
     def test_header_row_length_match(self):
