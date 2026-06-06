@@ -4,8 +4,11 @@
 GPS FF 데드밴드(5)에 걸려 delta_ff=0이 되었다. 남은 rate-damping PID가 측정 gyro만
 죽이려다 heading 보정과 반대로(nu와 반대 부호) 팔을 움직였다(부호 반대 ~29%).
 
-수정: DR은 기본적으로 PID 제거(FF-only) + DR 전용 데드밴드/정규화 기준으로 FF 감도 회복.
-GPS 모드 동작은 불변. 본 테스트는 그 동작을 고정한다.
+수정(1): DR은 기본적으로 PID 제거(FF-only). gyro가 heading FF를 뒤집지 못한다.
+수정(2, 20260606 개정): DR FF는 GPS_TRACKING_CLOSED와 "동일한" 곡선(같은 deadband=5,
+같은 정규화 기준=GPS_CLOSED limit)을 타고 per-mode limit과 ff_scale(<1)로만 약화된다.
+→ 같은 (nu,V)에서 항상 DR ≤ GPS (강도 역전 없음). 저속 응답은 L1_STEER_V_FLOOR_MPS가
+보강한다. GPS 모드 동작은 불변. 본 테스트는 그 동작을 고정한다.
 """
 import math
 import unittest
@@ -57,8 +60,10 @@ class TestDrPidRemoved(unittest.TestCase):
 
     def test_dr_ff_only_steers_toward_command_despite_opposing_gyro(self):
         """핵심 회귀: nu>0(우회전 명령)인데 우측으로 빠르게 회전 중(gyro+)이어도
-        FF-only DR은 명령 부호(우)대로 팔을 움직인다. (이전엔 PID가 -방향으로 뒤집음)"""
-        out = _dr_cmd(cmd_dps=+3.77, gyrz_meas_dps=+31.45)
+        FF-only DR은 명령 부호(우)대로 팔을 움직인다. (이전엔 PID가 -방향으로 뒤집음)
+        명령은 GPS와 공유하는 데드밴드(5 dps)보다 큰 대표값을 쓴다(실비행에선
+        L1_STEER_V_FLOOR 덕에 의미있는 nu에서 cmd>5 dps)."""
+        out = _dr_cmd(cmd_dps=+12.0, gyrz_meas_dps=+31.45)
         self.assertGreater(out.delta_total_deg, 0.0)
         self.assertGreater(out.delta_arm_deg, 0.0)
         self.assertEqual(out.delta_pid_deg, 0.0)        # PID 제거 → 기여 없음
@@ -68,57 +73,50 @@ class TestDrPidRemoved(unittest.TestCase):
 
     def test_dr_ff_only_left_command_despite_opposing_gyro(self):
         """좌회전 명령(nu<0) + 좌로 회전 중(gyro<0)에도 팔은 좌(-)로 간다."""
-        out = _dr_cmd(cmd_dps=-3.77, gyrz_meas_dps=-31.45)
+        out = _dr_cmd(cmd_dps=-12.0, gyrz_meas_dps=-31.45)
         self.assertLess(out.delta_total_deg, 0.0)
         self.assertLess(out.delta_arm_deg, 0.0)
         self.assertEqual(out.delta_pid_deg, 0.0)
 
     def test_dr_pid_never_active_even_with_huge_gyro(self):
-        out = _dr_cmd(cmd_dps=+2.0, gyrz_meas_dps=+200.0)
+        out = _dr_cmd(cmd_dps=+12.0, gyrz_meas_dps=+200.0)
         self.assertEqual(out.delta_pid_deg, 0.0)
         self.assertFalse(out.dr_pid_active)
         self.assertGreater(out.delta_total_deg, 0.0)
 
 
 class TestDrFeedforwardDeadbandAndSensitivity(unittest.TestCase):
-    def test_dr_deadband_separate_from_gps(self):
-        """DR 데드밴드 < GPS 데드밴드: 그 사이 명령에서 GPS는 FF=0, DR은 FF≠0."""
-        gps_db = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-        dr_db = config.DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-        self.assertLess(dr_db, gps_db)
-        cmd = 0.5 * (dr_db + gps_db)   # dr_db < cmd < gps_db
+    def test_dr_uses_gps_deadband_and_ref(self):
+        """DR은 GPS와 동일한 FF 데드밴드(5)와 GPS_CLOSED 정규화 기준을 쓴다(분리 노브 폐기)."""
+        out = _dr_cmd(cmd_dps=20.0, gyrz_meas_dps=0.0)   # DR_M_GBA_CLOSED
+        self.assertAlmostEqual(out.ff_deadband_dps,
+                               config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S, places=9)
+        self.assertAlmostEqual(out.ff_ref_dps,
+                               config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS, places=9)
 
-        gps = _dr_cmd(cmd_dps=cmd, gyrz_meas_dps=0.0,
-                      mode=guidance.ControlMode.GPS_TRACKING_OPEN,
-                      limit=config.GPS_TRACKING_OPEN_YAW_RATE_LIMIT_DPS,
-                      pid_enabled=False)
-        self.assertEqual(gps.delta_ff_deg, 0.0)
-        self.assertEqual(gps.delta_total_deg, 0.0)
-
-        dr = _dr_cmd(cmd_dps=cmd, gyrz_meas_dps=0.0)
-        self.assertGreater(dr.delta_ff_deg, 0.0)
-        self.assertGreater(dr.delta_total_deg, 0.0)
-
-    def test_ff_ref_decouples_sensitivity_from_limit(self):
-        """정규화 기준(ref)을 limit보다 작게 두면 같은 명령에서 더 큰 deflection."""
-        cmd, limit = 3.77, config.DR_M_GBA_YAW_RATE_LIMIT_DPS
+    def test_ff_ref_smaller_than_limit_increases_deflection(self):
+        """angular_velocity_to_delta_ff 함수 계약: ref<limit이면 같은 명령에서 더 큰
+        deflection(이 곡선 특성 자체는 유효하나, DR 경로는 더 이상 작은 ref를 쓰지 않는다)."""
+        cmd, limit = 3.77, 50.0
         d_ref_small = control.angular_velocity_to_delta_ff(
-            cmd, limit, deadband_dps=1.0, ref_dps=config.DR_FF_REF_DPS)
+            cmd, limit, deadband_dps=1.0, ref_dps=6.0)
         d_ref_limit = control.angular_velocity_to_delta_ff(
             cmd, limit, deadband_dps=1.0, ref_dps=limit)
         self.assertGreater(d_ref_small, d_ref_limit)
         self.assertGreater(d_ref_limit, 0.0)
 
     def test_ff_monotonic_in_command(self):
-        ref = config.DR_FF_REF_DPS
-        small = control.angular_velocity_to_delta_ff(2.0, 50.0, deadband_dps=1.0, ref_dps=ref)
-        large = control.angular_velocity_to_delta_ff(8.0, 50.0, deadband_dps=1.0, ref_dps=ref)
+        small = control.angular_velocity_to_delta_ff(8.0, 60.0, deadband_dps=5.0, ref_dps=60.0)
+        large = control.angular_velocity_to_delta_ff(30.0, 60.0, deadband_dps=5.0, ref_dps=60.0)
         self.assertGreater(large, small)
 
     def test_dr_ff_delta_cap(self):
-        """감도 상향이 full hard-over로 가지 않도록 DR FF cap 적용."""
+        """DR 권한 상한 cap이 실제로 동작(높은 명령에서 pre-cap > cap)."""
         cap = config.DR_FF_DELTA_LIMIT_DEG
-        out = _dr_cmd(cmd_dps=config.DR_M_GBA_YAW_RATE_LIMIT_DPS, gyrz_meas_dps=0.0)
+        # 큰 명령(GPS limit)으로 강제해 DR 곡선이 cap을 넘게 한다.
+        out = _dr_cmd(cmd_dps=config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS,
+                      gyrz_meas_dps=0.0,
+                      limit=config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS)
         self.assertLessEqual(abs(out.delta_total_deg), cap + 1e-6)
         # cap 전 FF가 cap보다 컸음을 확인(= cap이 실제로 동작)
         self.assertGreater(abs(out.delta_ff_pre_cap_deg), cap)
@@ -134,6 +132,94 @@ class TestGpsPathUnchanged(unittest.TestCase):
         self.assertNotEqual(out.delta_pid_deg, 0.0)   # PID 살아있음
         self.assertFalse(out.dr_pid_active)            # DR 아님
         self.assertEqual(out.ff_deadband_dps, config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S)
+
+
+class TestDrNotStrongerThanGps(unittest.TestCase):
+    """핵심 보장: 같은 (nu, V)에서 어떤 DR 모드도 GPS_TRACKING_CLOSED보다 세게(=더 큰
+    팔 변위로) 조향하지 않는다. 또한 방향(부호)은 GPS와 동일하다.
+
+    전체 파이프라인(ProduceL1Output → ProduceCtrlInput → ProduceCtrlOutput)을 실제
+    per-mode yaw-rate limit과 함께 돌려 비교한다. DR confidence=1.0(최강 DR)로 둔다.
+    """
+
+    DR_MODES = [
+        guidance.ControlMode.DR_M_GBA_CLOSED,
+        guidance.ControlMode.DR_M_GB_CLOSED,
+        guidance.ControlMode.DR_M_G_CLOSED,
+        guidance.ControlMode.DR_M_YBA_OPEN,
+        guidance.ControlMode.DR_M_YB_OPEN,
+        guidance.ControlMode.DR_M_Y_OPEN,
+        guidance.ControlMode.DR_PM_GBA_CLOSED,
+        guidance.ControlMode.DR_PM_GB_CLOSED,
+        guidance.ControlMode.DR_PM_G_CLOSED,
+        guidance.ControlMode.DR_PM_YBA_OPEN,
+        guidance.ControlMode.DR_PM_YB_OPEN,
+        guidance.ControlMode.DR_PM_Y_OPEN,
+    ]
+
+    @staticmethod
+    def _delta_ff_for(mode, nu_deg, V, conf=1.0):
+        nu = math.radians(nu_deg)
+        dist = 200.0
+        is_gps = mode in (guidance.ControlMode.GPS_TRACKING_CLOSED,
+                          guidance.ControlMode.GPS_TRACKING_OPEN)
+        l1in = guidance.L1Input(
+            valid=True, reason=mode.value, control_mode=mode,
+            dr_method=(guidance.DRMethod.NONE if is_gps
+                       else guidance.DRMethod.GYRO_INTEGRATION),
+            confidence=conf, E=0.0, N=0.0, V=V, course=0.0,
+            vE=0.0, vN=V,
+            target_E=dist * math.sin(nu), target_N=dist * math.cos(nu),
+        )
+        l1out = guidance.ProduceL1Output(l1in)
+        control.reset()
+        ci = control.ProduceCtrlInput(l1out, now=1.0)
+        # gyrz_meas=0: GPS는 FF+PID 최대 권한 — DR이 그보다도 작아야 함(보수적 비교).
+        co = control.ProduceCtrlOutput(ci, angular_velocity_meas_deg_s=0.0, now=1.0)
+        return l1out, co
+
+    def test_dr_delta_ff_never_exceeds_gps_closed(self):
+        nus = [3.0, 6.0, 10.0, 20.0, 30.0, 45.0, 60.0, 90.0]
+        Vs = [4.0, 5.0, 6.0, 6.5]
+        eps = 1e-6
+        for V in Vs:
+            for nu in nus:
+                _, gps = self._delta_ff_for(
+                    guidance.ControlMode.GPS_TRACKING_CLOSED, nu, V)
+                for mode in self.DR_MODES:
+                    _, dr = self._delta_ff_for(mode, nu, V)
+                    with self.subTest(mode=mode.value, nu=nu, V=V):
+                        # 세기: DR FF ≤ GPS_CLOSED FF
+                        self.assertLessEqual(
+                            dr.delta_ff_deg, gps.delta_ff_deg + eps,
+                            f"{mode.value} delta_ff={dr.delta_ff_deg:.3f} > "
+                            f"GPS={gps.delta_ff_deg:.3f} at nu={nu},V={V}")
+                        # 총 팔 변위도 GPS_CLOSED(FF+PID) 이하
+                        self.assertLessEqual(
+                            abs(dr.delta_arm_deg), abs(gps.delta_arm_deg) + eps)
+
+    def test_dr_ff_proportional_not_saturated_at_typical_cmd(self):
+        """실측(run_20260606_203310) DR 명령 분포 |cmd| 중앙값 ~24 dps. NEW config에서
+        이 영역의 DR FF는 cap(±60)에 붙지 않고 비례 응답이어야 한다(OLD ref=6는 94%가
+        cap에 붙는 뱅뱅이었다). 대표점 V=6, nu=20°(cmd≈29 dps)로 고정한다."""
+        cap = config.DR_FF_DELTA_LIMIT_DEG
+        _, dr = self._delta_ff_for(guidance.ControlMode.DR_M_GBA_CLOSED, 20.0, 6.0)
+        self.assertGreater(abs(dr.delta_ff_deg), config.CTRL_DELTA_MIN_EFFECTIVE_DEG)
+        self.assertLess(abs(dr.delta_ff_deg), cap - 1.0)   # 포화 아님(비례 구간)
+        # pre-cap도 cap을 넘지 않아야 비례(전 영역 뱅뱅이 아님을 확인)
+        self.assertLessEqual(abs(dr.delta_ff_pre_cap_deg), cap + 1e-6)
+
+    def test_dr_direction_matches_gps(self):
+        for nu in (5.0, 20.0, 60.0):
+            _, gps = self._delta_ff_for(
+                guidance.ControlMode.GPS_TRACKING_CLOSED, nu, 6.0)
+            for mode in self.DR_MODES:
+                _, dr = self._delta_ff_for(mode, nu, 6.0)
+                with self.subTest(mode=mode.value, nu=nu):
+                    if abs(dr.delta_arm_deg) > 1e-6:
+                        self.assertEqual(
+                            math.copysign(1.0, dr.delta_arm_deg),
+                            math.copysign(1.0, gps.delta_arm_deg))
 
 
 class TestL1SignConvention(unittest.TestCase):

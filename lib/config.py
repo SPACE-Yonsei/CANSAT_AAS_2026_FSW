@@ -87,17 +87,13 @@ CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 # 덮어써 측정 gyro만 죽이려다 nu와 반대로 조향한다(실측 부호 반대 ~29%).
 # 따라서 DR은 기본적으로 PID를 끄고 FF(heading 기반)만 사용한다.
 DR_PID_ENABLED = False                          # 롤백 필요 시 True (DR PID 복귀)
-# DR FF 명령 데드밴드(deg/s). GPS(5.0)와 분리해 작은 yaw_rate_cmd도 FF로 살린다.
-DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 1.0
-# DR FF expo 정규화 분모(deg/s) = "감도" 노브. clamp limit과 분리한다.
-# mode yaw-rate limit(50 등)으로 정규화하면 DR cmd(≤~5)가 곡선 floor(~5°)에 깔려
-# nu에 비례하지 않는다. 더 작은 기준으로 정규화해 nu 비례 응답을 살린다(낮을수록 민감).
-# 20260606 raw_motor.csv 분석: DR 구간 |nu_clamped| 평균 69.6°(중앙값 90° 포화)인데
-# delta_ff는 평균 12.9°에 그쳐 nu가 안 줄었다(부호는 정확, saturated 0). 실측 DR
-# yaw_rate_cmd(~3 dps)에 정규화 기준을 맞춰 nu 비례 응답을 ~2배로 키운다(20→10).
-DR_FF_REF_DPS = 6
-# DR FF 출력 cap(deg). 일반 천장(±160)보다 작게 둬 감도 상향이 full hard-over/나선
-# (spiral)로 가지 않게 한다.
+# 20260606(개정): DR은 GPS_TRACKING_CLOSED와 "동일한" FF 곡선/데드밴드(=CTRL_ANGULAR_
+# VELOCITY_DEADBAND_DEG_S, 5.0)/정규화 기준(=GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS)을
+# 쓴다(control.ProduceCtrlOutput). per-mode yaw-rate limit(명령 클램프)과 ff_scale(<1)로만
+# 약화 → 같은 (nu,V)에서 항상 DR ≤ GPS. (이전 DR 전용 감도 노브 DR_FF_REF_DPS=6,
+# DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S=1.0 은 작은 명령 영역에서 DR을 GPS보다 세게
+# 만드는 강도 역전을 일으켜 폐기. 저속 응답은 L1_STEER_V_FLOOR_MPS가 보강한다.)
+# DR FF 출력 cap(deg): 신뢰도 낮은 DR의 팔 권한 상한(GPS≤±160 대비 보수적 안전 마진).
 DR_FF_DELTA_LIMIT_DEG = 60.0
 
 # Manual steering (used by motorapp.py)

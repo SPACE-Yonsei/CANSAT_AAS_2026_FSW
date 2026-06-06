@@ -375,27 +375,24 @@ def ProduceCtrlOutput(
     dt = _clamp_dt(now, _prev_time, 0.1, 0.01, 0.2)
 
     # ── 피드포워드 (모드별 권한 스케일 적용) ─────────────────────────────────
-    # limit과 ff_scale은 서로 다른 역할이므로 중복 약화가 아니다:
-    #   - yaw_rate_limit_dps: 명령(yaw-rate)의 최대 크기. FF curve 정규화의 분모.
-    #     mode 신뢰도가 낮을수록 작은 limit → 같은 입력에서 더 완만한 곡선.
-    #   - ff_scale: 산출된 arm authority 자체를 DR 신뢰도에 따라 줄이는 출력 스케일.
-    # 즉 limit은 "얼마나 빠르게 돌라고 명령하나", ff_scale은 "그 명령에 팔을 얼마나
-    # 깊게 쓰나"를 정한다. limit이 이미 명령을 줄이지만, 추가로 ff_scale을 곱하는 것은
-    # DR mode에서 보수적 권한을 한 단계 더 두기 위한 의도된 설계다.
+    # DR은 GPS_TRACKING_CLOSED와 "동일한" FF 곡선을 탄다: 같은 데드밴드(GPS)와 같은
+    # 정규화 기준(GPS_CLOSED yaw-rate limit). DR이 GPS와 달라지는 곳은 두 군데뿐이다.
+    #   - yaw_rate_limit_dps: 명령(yaw-rate) 클램프 한계. DR은 per-mode로 GPS(60)보다
+    #     작아 같은 (nu,V)에서 명령이 더 일찍 잘린다.
+    #   - ff_scale(<1): 산출된 arm authority를 DR 신뢰도에 따라 한 단계 더 줄인다.
+    # 두 약화는 모두 단조 감소이고 정규화 분모(ref)는 GPS와 동일하므로, 같은 (nu,V)에서
+    # 항상 delta_ff_DR ≤ delta_ff_GPS_CLOSED 이 성립한다(강도 역전 없음).
+    # NOTE: DR ref을 자체 per-mode limit으로 두면 분모가 GPS(60)보다 작아져 곡선이 더
+    # 가팔라지고, 작은 명령 영역에서 DR이 GPS보다 세지는 역전이 생긴다. 그래서 ref은
+    # 반드시 GPS_CLOSED limit으로 고정한다.
     ff_scale = _ff_scale_for_mode(control_mode)
-    # DR은 GPS와 분리된 데드밴드/정규화 기준을 쓴다(작은 명령도 nu 비례로 살림).
-    if is_dr:
-        ff_deadband = getattr(config, "DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S",
-                              config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S)
-        ff_ref = getattr(config, "DR_FF_REF_DPS", None)
-    else:
-        ff_deadband = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
-        ff_ref = None
+    ff_deadband = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
+    ff_ref = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS if is_dr else None
     delta_ff = angular_velocity_to_delta_ff(
         angular_velocity_cmd_deg_s, yaw_rate_limit_dps,
         deadband_dps=ff_deadband, ref_dps=ff_ref) * ff_scale
     delta_ff_pre_cap = delta_ff
-    # DR FF 출력 cap: 감도 상향이 full hard-over/나선으로 가지 않도록 별도 제한.
+    # DR FF 출력 cap: 신뢰도 낮은 DR의 팔 권한 상한(GPS≤±160 대비 보수적 안전 마진).
     if is_dr:
         dr_ff_cap = getattr(config, "DR_FF_DELTA_LIMIT_DEG", DELTA_ARM_MAX_DEG)
         delta_ff = _clamp(delta_ff, -dr_ff_cap, dr_ff_cap)
