@@ -588,6 +588,7 @@ def _ctrl_cycle(main_queue, now: float) -> Optional[control.CtrlOutput]:
                              event=event, reason=l1_out_t.reason,
                              l1_in=l1_in_t, l1_out=l1_out_t)
 
+
     gz_meas = snap_t.latest_imu.gyrz_rad_s or 0.0
     gz_meas = math.degrees(float(gz_meas))   # rad/s → deg/s (control.step 기대 단위)
     ctrl_in_t  = control.ProduceCtrlInput(l1_out_t, now)

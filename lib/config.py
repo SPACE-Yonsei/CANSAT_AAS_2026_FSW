@@ -120,7 +120,7 @@ LIN_ACC_USE_SAMPLE_AGE_GATE = True
 # Accelerometer-aided DR.
 # 내부 로직은 USE_ACC_BLEND_CORRECTION만 사용한다 (acc는 weak blend, double
 # integration 아님).
-USE_ACC_BLEND_CORRECTION   = True
+USE_ACC_BLEND_CORRECTION   = False
 # 20260531 실측: lin_acc XY mag mean=1.32, 누적 velocity error 최대 3.6 m/s
 # 1.5로 축소하여 오염 샘플 비율 감소
 ACC_LIMIT_MPS2             = 1.5
@@ -207,11 +207,11 @@ KI_GPS_CLOSED   = 1.06
 KD_GPS_CLOSED   = 0.0
 
 KP_DR_M_CLOSED  = 0.40
-KI_DR_M_CLOSED  = 0.79
+KI_DR_M_CLOSED  = 0.25
 KD_DR_M_CLOSED  = 0.0
 
 KP_DR_PM_CLOSED = 0.30
-KI_DR_PM_CLOSED = 0.60
+KI_DR_PM_CLOSED = 0.2
 KD_DR_PM_CLOSED = 0.0
 
 # Feedforward scale per mode. GPS=1.0; DR rides the FF curve at reduced
