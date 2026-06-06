@@ -127,7 +127,7 @@ Use included scripts:
 ```bash
 chmod +x startup.sh setup_systemd_service.sh
 ./setup_systemd_service.sh
-sudo systemctl start cansat-fsw.service
+s
 sudo systemctl status cansat-fsw.service
 ```
 
