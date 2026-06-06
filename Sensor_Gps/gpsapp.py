@@ -268,7 +268,7 @@ def read_and_send_gps_data(Main_Queue: Queue, gps_instance):
                 )
                 sim_null = SIM_GPS_NULL
         if sim_sample is not None:
-            GPS_TIME = time.strftime("%H:%M:%S")
+            GPS_TIME = time.strftime("%H:%M:%S", time.gmtime())   # SIM도 UTC로 통일
             GPS_LAT, GPS_LON, GPS_ALT, GPS_SPEED_MS, GPS_COURSE = sim_sample
             GPS_SATS = max(int(getattr(config, "GPS_MIN_SATS", 4)), 4)
             GPS_FIX_QUALITY = 1

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import math
 import os
@@ -115,7 +115,9 @@ def set_cmdecho(cmd_str: str) -> None:
 
 
 def get_current_time() -> str:
-    return (datetime.now() - ST_timedelta).strftime("%H:%M:%S")
+    # Mission time은 UTC 기준. datetime.now(timezone.utc)는 OS 타임존과 무관하게
+    # 항상 UTC를 반환하므로, ST_timedelta=0(기본)이면 미션시간 = UTC 벽시계.
+    return (datetime.now(timezone.utc) - ST_timedelta).strftime("%H:%M:%S")
 
 
 def set_timedelta(timestr: str) -> bool:
@@ -164,7 +166,8 @@ def set_timedelta(timestr: str) -> bool:
     except ValueError:
         return False
 
-    now = datetime.now()
+    # ST 오프셋도 UTC 기준으로 계산 (get_current_time과 일관성 유지).
+    now = datetime.now(timezone.utc)
     today_target = now.replace(
         hour=target.hour, minute=target.minute, second=target.second, microsecond=0
     )
