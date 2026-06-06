@@ -92,7 +92,10 @@ DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 1.0
 # DR FF expo 정규화 분모(deg/s) = "감도" 노브. clamp limit과 분리한다.
 # mode yaw-rate limit(50 등)으로 정규화하면 DR cmd(≤~5)가 곡선 floor(~5°)에 깔려
 # nu에 비례하지 않는다. 더 작은 기준으로 정규화해 nu 비례 응답을 살린다(낮을수록 민감).
-DR_FF_REF_DPS = 20.0
+# 20260606 raw_motor.csv 분석: DR 구간 |nu_clamped| 평균 69.6°(중앙값 90° 포화)인데
+# delta_ff는 평균 12.9°에 그쳐 nu가 안 줄었다(부호는 정확, saturated 0). 실측 DR
+# yaw_rate_cmd(~3 dps)에 정규화 기준을 맞춰 nu 비례 응답을 ~2배로 키운다(20→10).
+DR_FF_REF_DPS = 6
 # DR FF 출력 cap(deg). 일반 천장(±160)보다 작게 둬 감도 상향이 full hard-over/나선
 # (spiral)로 가지 않게 한다.
 DR_FF_DELTA_LIMIT_DEG = 60.0
