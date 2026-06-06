@@ -75,13 +75,21 @@ def command_handler(main_queue, recv_msg: str, _barometer_instance=None) -> None
                 break
             except ValueError:
                 continue
-        if delta is not None:
-            BAROMETER_OFFSET += delta
-        else:
-            # ALTITUDE is already relative (raw - offset); accumulate so repeated
-            # CAL keeps snapping current altitude to 0 instead of un-calibrating.
-            BAROMETER_OFFSET += ALTITUDE
+        # offset 갱신과 동시에 in-memory ALTITUDE를 즉시 새 기준으로 내린다.
+        # (다음 read 사이클까지 옛 고도값이 남아 send 스레드가 RESET 이후
+        #  옛 고값을 flightlogic으로 보내 max_alt를 재오염시키는 창을 닫음)
+        with _baro_lock:
+            if delta is not None:
+                BAROMETER_OFFSET += delta
+                ALTITUDE -= delta
+            else:
+                # ALTITUDE is already relative (raw - offset); accumulate so repeated
+                # CAL keeps snapping current altitude to 0 instead of un-calibrating.
+                BAROMETER_OFFSET += ALTITUDE
+                ALTITUDE = 0.0
         prevstate.update_altcal(BAROMETER_OFFSET)
+        # 먼저 flightlogic의 max_alt를 0으로 초기화하도록 RESET 송신.
+        # (ALTITUDE가 이미 0으로 내려가 있어 이후 옛 고값 프레임은 생기지 않음)
         msgstructure.send_msg(
             main_queue,
             appargs.BarometerAppArg.AppID,
