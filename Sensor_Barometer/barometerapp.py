@@ -170,22 +170,27 @@ def read_barometer_data() -> None:
 
             prs = _median(_prs_window)
             tmp = _median(_tmp_window)
-            alt = _median(_alt_window) - BAROMETER_OFFSET
+            alt_abs = _median(_alt_window)   # 해발 절대고도 (offset 적용 전)
 
-            # sink_rate: median 필터 이후 미분 + EMA smoothing
             now_mono = time.monotonic()
             sink_rate_sample: Optional[float] = None
-            if _last_filtered_alt is not None and _last_alt_mono_ts is not None:
-                dt = now_mono - _last_alt_mono_ts
-                if dt >= SINK_RATE_MIN_DT_S:
-                    raw_sink = (_last_filtered_alt - alt) / dt  # positive = 하강
-                    if abs(raw_sink) <= SINK_RATE_MAX_VALID_MPS:
-                        _sink_rate_ema = _ema(_sink_rate_ema, raw_sink, SINK_RATE_EMA_ALPHA)
-                        sink_rate_sample = _sink_rate_ema
-            _last_filtered_alt = alt
-            _last_alt_mono_ts  = now_mono
-
+            # offset은 ALTITUDE 기록과 동일한 락 구간에서 읽어 원자화한다.
+            # (락 밖에서 옛 offset으로 alt를 계산해 두면, 그 사이 CAL 핸들러가
+            #  offset/ALTITUDE를 갱신해도 이 스레드가 옛 alt(예: 300m)를 다시
+            #  덮어써 RESET 이후 옛 고도 프레임이 flightlogic으로 새어나가
+            #  baseline=0 직후 false ASCENT(state 1 조기 전이)를 유발하던 레이스 차단)
             with _baro_lock:
+                alt = alt_abs - BAROMETER_OFFSET
+                # sink_rate: median 필터 이후 미분 + EMA smoothing
+                if _last_filtered_alt is not None and _last_alt_mono_ts is not None:
+                    dt = now_mono - _last_alt_mono_ts
+                    if dt >= SINK_RATE_MIN_DT_S:
+                        raw_sink = (_last_filtered_alt - alt) / dt  # positive = 하강
+                        if abs(raw_sink) <= SINK_RATE_MAX_VALID_MPS:
+                            _sink_rate_ema = _ema(_sink_rate_ema, raw_sink, SINK_RATE_EMA_ALPHA)
+                            sink_rate_sample = _sink_rate_ema
+                _last_filtered_alt = alt
+                _last_alt_mono_ts  = now_mono
                 PRESSURE    = prs
                 TEMPERATURE = tmp
                 ALTITUDE    = alt
