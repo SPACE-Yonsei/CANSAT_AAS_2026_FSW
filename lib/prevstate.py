@@ -21,8 +21,8 @@ from typing import Any, Dict, Optional
 _STATE_FILE = Path(__file__).with_name("prevstate.json")
 
 FIX_TARGET_GPS: bool = True
-DEFAULT_TARGET_LAT: float = 38.376000
-DEFAULT_TARGET_LON: float = -79.607872
+DEFAULT_TARGET_LAT: float = 38.376016667
+DEFAULT_TARGET_LON: float = -79.607872222
 
 
 # Public state variables used by other modules

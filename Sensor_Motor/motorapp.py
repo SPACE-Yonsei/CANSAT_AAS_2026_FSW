@@ -28,8 +28,8 @@ _UPDATE_LOCK = threading.Lock()  # _CACHE_t 보호
 _PREV_STATE: int = 0
 _ORIGIN_LOCKED: bool = False
 
-TARGET_LAT = 38.376017   # 38°22'33.66"N
-TARGET_LON = -79.607872  # 79°36'28.34"W
+TARGET_LAT = 38.376016667    # 38°22'33.66"N
+TARGET_LON = -79.607872222   # 79°36'28.34"W
 
 # 수동 조향 모드: "" = auto(L1 guidance), "LEFT"/"RIGHT"/"NEUTRAL" = 고정 override
 _STEER_MODE: str = ""
