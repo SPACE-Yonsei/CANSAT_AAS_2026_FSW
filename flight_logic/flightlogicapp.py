@@ -55,6 +55,8 @@ cnt_apogee = 0
 cnt_release = 0
 cnt_landed = 0
 cnt_egg_drop = 0
+egg_drop_sent = 0           # 에그 드롭 명령 송신 횟수 (state 5 진입마다 0으로 재무장)
+EGG_DROP_MAX_SENDS = 2      # 솔레노이드 깜빡임 방지: 명령은 최대 2번만 송신
 solenoid_count = 0
 solenoid_done = False
 release_predictor = ReleasePredictorState()
@@ -98,9 +100,10 @@ def _set_state(main_queue, new_state: int, force: bool = False) -> None:
 
 
 def to_launch_pad(main_queue, force: bool = False) -> None:
-    global max_alt, solenoid_count, solenoid_done, _cal_done, _ascent_baseline_alt
+    global max_alt, solenoid_count, solenoid_done, _cal_done, _ascent_baseline_alt, egg_drop_sent
     max_alt = 0.0
     prevstate.update_maxalt(max_alt)
+    egg_drop_sent = 0
     solenoid_count = 0
     solenoid_done = False
     prevstate.update_solenoid_state(solenoid_count, solenoid_done)
@@ -164,6 +167,8 @@ def to_release(main_queue, force: bool = False, reason: str = "TRIGGER") -> None
 
 
 def to_egg(main_queue, force: bool = False) -> None:
+    global egg_drop_sent
+    egg_drop_sent = 0   # state 5 진입 시 에그 드롭 명령 카운터 재무장
     _set_state(main_queue, 5, force=force)   # PROBE_RELEASE (솔레노이드, 에그 2m)
     # SS,4 can skip SS,3; refresh motor target from prevstate so guidance is not TARGET_UNSET.
     if _has_release_target():
@@ -177,7 +182,11 @@ def to_egg(main_queue, force: bool = False) -> None:
 
 
 def _send_egg_drop(main_queue) -> None:
-    logger.info("Egg drop triggered")
+    global egg_drop_sent
+    if egg_drop_sent >= EGG_DROP_MAX_SENDS:
+        return
+    egg_drop_sent += 1
+    logger.info("Egg drop triggered (%d/%d)", egg_drop_sent, EGG_DROP_MAX_SENDS)
     msgstructure.send_msg(
         main_queue,
         appargs.FlightlogicAppArg.AppID,
