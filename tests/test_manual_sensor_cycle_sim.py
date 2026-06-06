@@ -173,7 +173,8 @@ def test_gyro_spike_not_used_in_closed_pid():
     assert spike["delta_pid_deg"] == 0.0
     # neighbouring cycles are the normal CLOSED DR mode (shows it is the spike)
     assert by_cycle[4]["mode"].endswith("_CLOSED")
-    assert by_cycle[4]["pid_enabled"] is True
+    # 신 계약: DR closed는 기본 FF-only(PID 제거). 롤백(DR_PID_ENABLED=True) 시에만 PID.
+    assert by_cycle[4]["pid_enabled"] is bool(sim.config.DR_PID_ENABLED)
     assert by_cycle[6]["mode"].endswith("_CLOSED")
 
 

@@ -219,14 +219,25 @@ def test_invalid_l1output_yaw_rate_limit_is_finite(matrix_rows):
 
 
 def test_closed_modes_have_pid_gain(matrix_rows):
+    # 신 계약: DR은 기본 FF-only(PID 제거). GPS_CLOSED만 PID 유지.
+    # DR_PID_ENABLED=True(롤백)일 때만 DR closed가 과거처럼 PID 게인을 쓴다.
+    dr_pid = getattr(sim.config, "DR_PID_ENABLED", False)
     for row in matrix_rows:
         mode = row["mode"]
         if mode == sim.guidance.ControlMode.GPS_TRACKING_CLOSED.value:
             assert math.isclose(row["kp_used"], sim.config.KP_GPS_CLOSED)
         elif mode.startswith("DR_M_") and mode.endswith("_CLOSED"):
-            assert math.isclose(row["kp_used"], sim.config.KP_DR_M_CLOSED)
+            if dr_pid:
+                assert math.isclose(row["kp_used"], sim.config.KP_DR_M_CLOSED)
+            else:
+                assert row["delta_pid_deg"] == 0.0
+                assert row["kp_used"] == 0.0
         elif mode.startswith("DR_PM_") and mode.endswith("_CLOSED"):
-            assert math.isclose(row["kp_used"], sim.config.KP_DR_PM_CLOSED)
+            if dr_pid:
+                assert math.isclose(row["kp_used"], sim.config.KP_DR_PM_CLOSED)
+            else:
+                assert row["delta_pid_deg"] == 0.0
+                assert row["kp_used"] == 0.0
         elif mode.endswith("_OPEN") or mode == sim.guidance.ControlMode.FAIL.value:
             assert row["delta_pid_deg"] == 0.0
             assert row["kp_used"] == 0.0

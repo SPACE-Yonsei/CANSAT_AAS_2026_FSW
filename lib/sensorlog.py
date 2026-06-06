@@ -343,6 +343,18 @@ _MOTOR_RAW_HEADER = [
     "kp_used",
     "ff_scale",
     "d_total",
+    # ── DR 조향 원인 추적 (강화: nu/FF/course 분해; 뒤에만 추가) ──
+    "nu_clamped_deg",
+    "sin_nu_eff",
+    "yaw_rate_cmd_pre_conf_dps",
+    "course_gyro_deg",
+    "course_yaw_deg",
+    "course_selected_deg",
+    "course_source_reason",
+    "ff_deadband_dps",
+    "ff_ref_dps",
+    "dr_pid_active",
+    "delta_ff_pre_cap_deg",
 ]
 
 
@@ -555,6 +567,18 @@ def log_motor_raw(
             _motor_f(ctrl_out, "kp_used"),
             _motor_f(ctrl_out, "ff_scale"),
             _motor_f(ctrl_out, "delta_total_deg"),
+            # ── DR 조향 원인 추적 (강화) ──
+            _motor_deg(l1_out, "nu_clamped"),
+            _motor_f(l1_out, "sin_nu_eff"),
+            _motor_deg(l1_out, "yaw_rate_cmd_pre_conf"),
+            _motor_deg(dr, "dbg_course_gyro"),
+            _motor_deg(dr, "dbg_course_yaw"),
+            _motor_deg(dr, "dbg_course_selected"),
+            str(getattr(dr, "dbg_course_reason", "")),
+            _motor_f(ctrl_out, "ff_deadband_dps"),
+            _motor_f(ctrl_out, "ff_ref_dps"),
+            int(bool(getattr(ctrl_out, "dr_pid_active", False))),
+            _motor_f(ctrl_out, "delta_ff_pre_cap_deg"),
         ]
 
         if raw_w is not None:

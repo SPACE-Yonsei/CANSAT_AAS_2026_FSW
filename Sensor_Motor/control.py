@@ -113,6 +113,10 @@ def _is_dr_pm(mode) -> bool:
     return _mode_str(mode).startswith("DR_PM_")
 
 
+def _is_dr(mode) -> bool:
+    return _is_dr_m(mode) or _is_dr_pm(mode)
+
+
 def _select_pid_gains(mode, kp_override):
     """모드별 (kp, ki, kd) 반환. kp_override가 있으면 kp만 대체.
 
@@ -190,6 +194,11 @@ class CtrlOutput:
     ff_scale:      float = 1.0
     # 이 사이클에 실제로 적용된 mode별 yaw-rate limit(deg/s). 디버그/로그용.
     yaw_rate_limit_dps: float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    # FF 데드밴드/정규화 기준(이번 사이클 적용값) + DR PID 활성 여부 + cap 전 FF. 로그용.
+    ff_deadband_dps: float = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
+    ff_ref_dps:      float = config.GPS_TRACKING_CLOSED_YAW_RATE_LIMIT_DPS
+    dr_pid_active:   bool  = False
+    delta_ff_pre_cap_deg: float = 0.0
     reason:        str   = "INIT"
 
 
@@ -261,20 +270,31 @@ def ProduceCtrlInput(l1_output, now: float) -> CtrlInput:
 
 # ── 피드포워드 형상 + 믹서 ────────────────────────────────────────────────────
 
-def angular_velocity_to_delta_ff(cmd_dps: float, limit_dps: Optional[float] = None) -> float:
+def angular_velocity_to_delta_ff(
+    cmd_dps: float,
+    limit_dps: Optional[float] = None,
+    deadband_dps: Optional[float] = None,
+    ref_dps: Optional[float] = None,
+) -> float:
     """yaw-rate 명령(deg/s) → 차동 arm 각도(deg).
 
     Expo 곡선 + 데드밴드 + 부호 보존 (양수=오른쪽 회전).
 
-    limit_dps: 이 mode의 yaw-rate limit(deg/s). FF curve 정규화의 분모로 쓴다.
-        None/NaN/0 이하이면 GPS_CLOSED limit을 안전 기본값으로 사용한다.
-        (구버전 1-인자 호출 backward compat: limit 생략 시 GPS_CLOSED 기준.)
+    limit_dps: 명령 클램핑 한계(deg/s). None/NaN/0 이하이면 GPS_CLOSED limit fallback.
+    deadband_dps: FF 데드밴드(deg/s). None이면 config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S.
+        DR은 더 작은 데드밴드를 받아 작은 yaw_rate_cmd도 FF로 살린다.
+    ref_dps: expo 곡선 정규화 분모(deg/s). None이면 limit_dps(기존 동작).
+        clamp limit과 분리한 "감도" 노브 — DR은 limit(50 등)보다 작은 ref로 정규화해
+        작은 명령에도 nu 비례 응답이 살아나게 한다. x는 [0,1]로 cap한다.
     """
     lim = _resolve_yaw_rate_limit_dps(limit_dps)
+    deadband = (config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
+                if deadband_dps is None else float(deadband_dps))
+    ref = lim if ref_dps is None else _resolve_yaw_rate_limit_dps(ref_dps)
     clamped = _clamp(cmd_dps, -lim, lim)
-    if abs(clamped) < config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S:
+    if abs(clamped) < deadband:
         return 0.0
-    x = abs(clamped) / lim
+    x = min(abs(clamped) / ref, 1.0)
     delta = (config.CTRL_DELTA_MIN_EFFECTIVE_DEG
              + (DELTA_ARM_MAX_DEG - config.CTRL_DELTA_MIN_EFFECTIVE_DEG) * (x ** config.CTRL_EXPO))
     return math.copysign(delta, clamped)
@@ -318,6 +338,7 @@ def ProduceCtrlOutput(
 
     control_mode = _as_control_mode(cmd.control_mode)
     out_t = CtrlOutput(timestamp=now, control_mode=control_mode)
+    is_dr = _is_dr(control_mode)
 
     # ── FAIL 모드 → 중립 ─────────────────────────────────────────────────────
     if _is_fail_mode(control_mode):
@@ -362,8 +383,26 @@ def ProduceCtrlOutput(
     # 깊게 쓰나"를 정한다. limit이 이미 명령을 줄이지만, 추가로 ff_scale을 곱하는 것은
     # DR mode에서 보수적 권한을 한 단계 더 두기 위한 의도된 설계다.
     ff_scale = _ff_scale_for_mode(control_mode)
-    delta_ff = angular_velocity_to_delta_ff(angular_velocity_cmd_deg_s, yaw_rate_limit_dps) * ff_scale
+    # DR은 GPS와 분리된 데드밴드/정규화 기준을 쓴다(작은 명령도 nu 비례로 살림).
+    if is_dr:
+        ff_deadband = getattr(config, "DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S",
+                              config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S)
+        ff_ref = getattr(config, "DR_FF_REF_DPS", None)
+    else:
+        ff_deadband = config.CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S
+        ff_ref = None
+    delta_ff = angular_velocity_to_delta_ff(
+        angular_velocity_cmd_deg_s, yaw_rate_limit_dps,
+        deadband_dps=ff_deadband, ref_dps=ff_ref) * ff_scale
+    delta_ff_pre_cap = delta_ff
+    # DR FF 출력 cap: 감도 상향이 full hard-over/나선으로 가지 않도록 별도 제한.
+    if is_dr:
+        dr_ff_cap = getattr(config, "DR_FF_DELTA_LIMIT_DEG", DELTA_ARM_MAX_DEG)
+        delta_ff = _clamp(delta_ff, -dr_ff_cap, dr_ff_cap)
     out_t.ff_scale = ff_scale
+    out_t.ff_deadband_dps = ff_deadband
+    out_t.ff_ref_dps = (yaw_rate_limit_dps if ff_ref is None else ff_ref)
+    out_t.delta_ff_pre_cap_deg = delta_ff_pre_cap
 
     # ── Gyro 스파이크 거부 ────────────────────────────────────────────────────
     gyro_finite  = math.isfinite(angular_velocity_meas_deg_s)
@@ -383,6 +422,9 @@ def ProduceCtrlOutput(
         and DELTA_ARM_MAX_DEG > 0.0
         and sensor_valid
     )
+    # DR_PID_ENABLED=False면 guidance가 DR에서 pid_enabled=False로 내려 pid_active=False다.
+    # 이 플래그로 "DR에서 PID가 실제로 돌았는지"를 로그로 검증한다(정상 시 항상 0).
+    out_t.dr_pid_active = bool(is_dr and pid_active)
 
     if pid_active:
         out_t.angular_velocity_meas_deg_s = angular_velocity_meas_deg_s
@@ -410,10 +452,13 @@ def ProduceCtrlOutput(
         delta_sum = delta_ff
 
     # ── 합산 + 총 클램핑 ──────────────────────────────────────────────────────
-    authority_saturated = abs(delta_sum) > DELTA_ARM_MAX_DEG
+    # DR은 DR_FF_DELTA_LIMIT_DEG, 그 외는 일반 천장(±DELTA_ARM_MAX_DEG)으로 클램핑.
+    delta_limit = (getattr(config, "DR_FF_DELTA_LIMIT_DEG", DELTA_ARM_MAX_DEG)
+                   if is_dr else DELTA_ARM_MAX_DEG)
+    authority_saturated = abs(delta_sum) > delta_limit
     saturated = command_clamped or authority_saturated
     out_t.saturated = saturated
-    delta_total = _clamp(delta_sum, -DELTA_ARM_MAX_DEG, DELTA_ARM_MAX_DEG)
+    delta_total = _clamp(delta_sum, -delta_limit, delta_limit)
 
     # ── delta_total → arm 각도 ────────────────────────────────────────────────
     _, _, left_des, right_des, delta_arm = ConnectRoMo(delta_total)

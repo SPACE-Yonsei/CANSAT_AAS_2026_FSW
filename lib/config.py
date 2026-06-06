@@ -81,6 +81,22 @@ CTRL_ERROR_DEADBAND_DEG_S            = 5.0    # PID 에러 데드밴드
 CTRL_K_I                             = 0.0    # PID 적분 게인 (PID OFF: 0, 권장 시작값: 0.01)
 CTRL_I_LIMIT_DEG                     = 15.0   # PID 적분 포화 한계
 
+# ── DR 전용 제어 권한 (DR = FF-only 조향; rate-damping PID 제거) ───────────────
+# 배경: DR에서는 V가 바닥(~0.5 m/s)이라 L1 yaw_rate_cmd가 작고(≤~5 dps), GPS FF
+# 데드밴드(5)에 걸려 FF가 죽는다. 그 결과 남은 rate-damping PID가 heading FF를
+# 덮어써 측정 gyro만 죽이려다 nu와 반대로 조향한다(실측 부호 반대 ~29%).
+# 따라서 DR은 기본적으로 PID를 끄고 FF(heading 기반)만 사용한다.
+DR_PID_ENABLED = False                          # 롤백 필요 시 True (DR PID 복귀)
+# DR FF 명령 데드밴드(deg/s). GPS(5.0)와 분리해 작은 yaw_rate_cmd도 FF로 살린다.
+DR_CTRL_ANGULAR_VELOCITY_DEADBAND_DEG_S = 1.0
+# DR FF expo 정규화 분모(deg/s) = "감도" 노브. clamp limit과 분리한다.
+# mode yaw-rate limit(50 등)으로 정규화하면 DR cmd(≤~5)가 곡선 floor(~5°)에 깔려
+# nu에 비례하지 않는다. 더 작은 기준으로 정규화해 nu 비례 응답을 살린다(낮을수록 민감).
+DR_FF_REF_DPS = 20.0
+# DR FF 출력 cap(deg). 일반 천장(±160)보다 작게 둬 감도 상향이 full hard-over/나선
+# (spiral)로 가지 않게 한다.
+DR_FF_DELTA_LIMIT_DEG = 60.0
+
 # Manual steering (used by motorapp.py)
 MANUAL_STEER_DELTA_DEG = 60.0   # MTR 수동 명령 시 서보 deflection (deg)
 

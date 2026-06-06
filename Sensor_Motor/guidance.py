@@ -108,6 +108,12 @@ class DRState:
     method: DRMethod = DRMethod.NONE
     confidence: float = 0.0
 
+    # ── course 추정 원인 추적용 디버그 (제어 동작 불변, 로그 전용; rad) ──
+    dbg_course_gyro: float = nan
+    dbg_course_yaw: float = nan
+    dbg_course_selected: float = nan
+    dbg_course_reason: str = ""
+
 
 @dataclass
 class NavState:
@@ -206,6 +212,11 @@ class L1Output:
     nav_N: float = nan                # mirror of pos_N
     V: float = 0.0                    # mirror of ground_speed_mps (L1Input.V)
     course: float = nan               # vehicle course (rad) from L1Input
+
+    # ── DR 조향 원인 추적용 디버그 미러 (제어 동작 불변, 로그 전용) ──
+    nu_clamped: float = nan           # rad, ±pi/2로 clamp된 nu
+    sin_nu_eff: float = nan           # NU_DEADBAND 적용 후 sin(nu_clamped)
+    yaw_rate_cmd_pre_conf: float = 0.0  # rad/s, confidence 곱하기 전 yaw_rate_cmd
 
 
 _MISSION_t = MissionFrame()
@@ -775,31 +786,51 @@ def _estimate_course_for_mode(mode: ControlMode, now: float, dt: float):
     imu = st_t.imu
     flags = st_t.flags
 
+    # 디버그 필드 초기화(이번 추정에서 채워지는 값만 유효; 로그 전용, 제어 영향 없음)
+    dr.dbg_course_gyro = nan
+    dr.dbg_course_yaw = nan
+    dr.dbg_course_selected = nan
+    dr.dbg_course_reason = ""
+
     if _mode_uses_gyro(mode):
         if not (flags.imu_gyrz_fresh and isfinite(imu.gyr_z)):
+            dr.dbg_course_reason = "NO_COURSE_SOURCE"
             return (False, nan, "NO_COURSE_SOURCE")
         dr.gyro_integral += imu.gyr_z * config.GYRZ_SIGN * dt
         base = dr.anchor_course if isfinite(dr.anchor_course) else dr.current_course
         if not isfinite(base):
+            dr.dbg_course_reason = "NO_COURSE_SOURCE"
             return (False, nan, "NO_COURSE_SOURCE")
         course_gyro = _wrap_pi(base + dr.gyro_integral)
+        dr.dbg_course_gyro = course_gyro
         if (flags.imu_yaw_fresh and isfinite(imu.yaw)
                 and isfinite(dr.yaw_at_anchor) and isfinite(dr.anchor_course)):
             course_yaw = _wrap_pi(dr.anchor_course + _wrap_pi(imu.yaw - dr.yaw_at_anchor))
+            dr.dbg_course_yaw = course_yaw
             limit = math.radians(getattr(config, "YAW_GYRO_BLEND_MAX_DEG", 45.0))
             if abs(_wrap_pi(course_yaw - course_gyro)) <= limit:
-                return (True, _circular_mean(course_yaw, course_gyro), "COURSE_GYRO_YAW")
+                selected = _circular_mean(course_yaw, course_gyro)
+                dr.dbg_course_selected = selected
+                dr.dbg_course_reason = "COURSE_GYRO_YAW"
+                return (True, selected, "COURSE_GYRO_YAW")
+        dr.dbg_course_selected = course_gyro
+        dr.dbg_course_reason = "COURSE_GYRO"
         return (True, course_gyro, "COURSE_GYRO")
 
     if _mode_uses_yaw(mode):
         if not (flags.imu_yaw_fresh and isfinite(imu.yaw)):
+            dr.dbg_course_reason = "NO_COURSE_SOURCE"
             return (False, nan, "NO_COURSE_SOURCE")
         if isfinite(dr.yaw_at_anchor) and isfinite(dr.anchor_course):
             course = _wrap_pi(dr.anchor_course + _wrap_pi(imu.yaw - dr.yaw_at_anchor))
         else:
             course = _wrap_pi(imu.yaw)
+        dr.dbg_course_yaw = course
+        dr.dbg_course_selected = course
+        dr.dbg_course_reason = "COURSE_YAW"
         return (True, course, "COURSE_YAW")
 
+    dr.dbg_course_reason = "NO_COURSE_SOURCE"
     return (False, nan, "NO_COURSE_SOURCE")
 
 
@@ -1160,19 +1191,26 @@ def ProduceL1Output(l1in: L1Input) -> L1Output:
 
     _v_max = config.V_MAX_DR_MPS if _is_dr_mode(l1in.control_mode) else config.V_MAX_MPS
     V_eff = _clamp(l1in.V, config.V_MIN_MPS, _v_max)
-    yaw_rate_cmd = 2.0 * V_eff / config.L_GAIN_M * sin_nu_eff
-    yaw_rate_cmd *= conf  # confidence scaling: 1.0 for GPS, dr.confidence for DR
+    yaw_rate_cmd_pre_conf = 2.0 * V_eff / config.L_GAIN_M * sin_nu_eff
+    yaw_rate_cmd = yaw_rate_cmd_pre_conf * conf  # confidence scaling: 1.0 for GPS, dr.confidence for DR
     # lim은 함수 진입부에서 mode 기준으로 이미 채워졌다(output_t.yaw_rate_limit).
     yaw_rate_cmd = _clamp(yaw_rate_cmd, -lim, lim)
 
     output_t.target_bearing = target_bearing
     output_t.nu = nu
     output_t.yaw_rate_cmd = yaw_rate_cmd
+    output_t.nu_clamped = nu_clamped
+    output_t.sin_nu_eff = sin_nu_eff
+    output_t.yaw_rate_cmd_pre_conf = yaw_rate_cmd_pre_conf
     output_t.control_valid = True
     output_t.valid = True
     output_t.nominal = True
     output_t.reason = l1in.reason
-    output_t.pid_enabled = _mode_uses_gyro_feedback(l1in.control_mode)
+    # DR은 기본적으로 FF-only(heading 기반). rate-damping PID가 heading FF를 덮어써
+    # nu와 반대로 조향하는 문제를 막는다. DR_PID_ENABLED=True면 기존 PID 동작 복귀.
+    output_t.pid_enabled = _mode_uses_gyro_feedback(l1in.control_mode) and not (
+        _is_dr_mode(l1in.control_mode) and not getattr(config, "DR_PID_ENABLED", False)
+    )
     return output_t
 
 
